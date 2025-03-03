@@ -5,6 +5,7 @@
 
 1. The example hook [Counter.sol](src/Counter.sol) demonstrates the `beforeSwap()` and `afterSwap()` hooks
 2. The test template [Counter.t.sol](test/Counter.t.sol) preconfigures the v4 pool manager, test tokens, and test liquidity.
+3. The [ExtendedBaseHook.sol](src/base/ExtendedBaseHook.sol) provides a complete implementation of all hook functions with proper access control and validation.
 
 <details>
 <summary>Updating to v4-template:latest</summary>
@@ -56,6 +57,99 @@ forge script script/Anvil.s.sol \
 ```
 
 See [script/](script/) for hook deployment, pool creation, liquidity provision, and swapping.
+
+---
+
+## Lessons Learned: ExtendedBaseHook and Uniswap v4 Integration
+
+When working with Uniswap v4 hooks, especially when extending the `ExtendedBaseHook` base contract, the following lessons and best practices should be considered:
+
+### 1. State Mutability
+
+- **Always use `view` instead of `pure`** for functions that interact with state, even indirectly
+- Common issues:
+  - `getHookPermissions()` should be `view` not `pure` 
+  - `validateHookAddress()` should be `internal view` not `internal pure`
+  - These issues often appear as state mutability errors during compilation
+
+### 2. Hook Address Validation
+
+- **Always override `validateHookAddress()`** in derived hook contracts
+- Use `HookMiner.find()` to generate proper hook addresses
+- Implement with:
+  ```solidity
+  function validateHookAddress(ExtendedBaseHook _this) internal view override {
+      Hooks.validateHookPermissions(_this, getHookPermissions());
+  }
+  ```
+- Ensure deployed hook addresses match the permission flags
+
+### 3. PoolManager Interaction Pattern
+
+- **Use the unlock pattern** for all state-modifying operations:
+  ```solidity
+  // CORRECT way to modify liquidity:
+  poolManager.unlock(abi.encode(key, params));
+  
+  // INCORRECT - will revert with ManagerLocked():
+  poolManager.modifyLiquidity(key, params, "");
+  ```
+  
+- **Implement `IUnlockCallback` interface** for contracts that call `unlock()`
+  ```solidity
+  contract MyContract is IUnlockCallback {
+      function unlockCallback(bytes calldata data) external returns (bytes memory) {
+          // Decode data and perform operations
+          // ...
+      }
+  }
+  ```
+
+### 4. Balance Settlement
+
+- **Always settle balances** after operations that modify state:
+  ```solidity
+  // After modifyLiquidity, handle the returned delta
+  (BalanceDelta delta, ) = poolManager.modifyLiquidity(key, params, "");
+  
+  // Handle negative amounts (paying the pool)
+  if (amount0 < 0) {
+      uint256 absAmount0 = uint256(uint128(-amount0));
+      CurrencySettler.settle(key.currency0, poolManager, address(this), absAmount0, false);
+  }
+  
+  // Handle positive amounts (receiving from pool)
+  if (amount0 > 0) {
+      uint256 absAmount0 = uint256(uint128(amount0));
+      CurrencySettler.take(key.currency0, poolManager, address(this), absAmount0, false);
+  }
+  ```
+
+- **Be careful with type conversions** when converting `int128` to `uint256`:
+  - Convert through `uint128` first to avoid overflow/underflow
+  - Use the absolute value (negate negative values) before conversion
+
+### 5. Token Preparation
+
+- **Mint tokens** to your contract before interactions
+- **Approve the PoolManager** to spend tokens
+- Ensure sufficient token balance for all operations
+  ```solidity
+  // Before interacting with PoolManager
+  token0.mint(address(this), 1000000);
+  token1.mint(address(this), 1000000);
+  token0.approve(address(poolManager), type(uint256).max);
+  token1.approve(address(poolManager), type(uint256).max);
+  ```
+
+### 6. Common Errors
+
+- `ManagerLocked()`: Not using the unlock pattern
+- `CurrencyNotSettled()`: Not properly settling balances after operations
+- Arithmetic underflow/overflow: Incorrect handling of signed integers
+- Invalid hook address: Mismatched permissions or incorrect address mining
+
+See full implementation examples in [ExtendedBaseHook.t.sol](test/base/ExtendedBaseHook.t.sol).
 
 ---
 
