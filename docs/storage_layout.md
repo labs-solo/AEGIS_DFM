@@ -33,7 +33,7 @@ No other state variables are declared in `ExtendedBaseHook`.
 **Contract**: `FullRange` (formerly `BaseCustomAccounting.sol`)
 
 - **`mapping(PoolId => PoolInfo) public poolInfo`**  
-  &nbsp;&nbsp;• Maps each pool’s `PoolId` to a `PoolInfo` struct containing:  
+  &nbsp;&nbsp;• Maps each pool's `PoolId` to a `PoolInfo` struct containing:  
   &nbsp;&nbsp;&nbsp;&nbsp;• `bool isInitialized`  
   &nbsp;&nbsp;&nbsp;&nbsp;• `uint128 totalLiquidity`  
   &nbsp;&nbsp;• Additional fields can be added as needed.
@@ -114,7 +114,7 @@ flowchart LR
         EBH["poolManager (immutable)"]
     end
 
-    subgraph ReentrancyGuard [ReentrancyGuard (solmate)]
+    subgraph RG["ReentrancyGuard (solmate)"]
         RGstate("(internal state slots for nonReentrant)")
     end
 
