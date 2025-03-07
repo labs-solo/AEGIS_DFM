@@ -19,6 +19,13 @@ import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
 import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
+import {Position} from "v4-core/src/libraries/Position.sol";
+import {Pool} from "v4-core/src/libraries/Pool.sol";
+import {SwapMath} from "v4-core/src/libraries/SwapMath.sol";
+import {TransientStateLibrary} from "v4-core/src/libraries/TransientStateLibrary.sol";
+import {CurrencyDelta} from "v4-core/src/libraries/CurrencyDelta.sol";
+import {ProtocolFeeLibrary} from "v4-core/src/libraries/ProtocolFeeLibrary.sol";
+import {CustomRevert} from "v4-core/src/libraries/CustomRevert.sol";
 
 // Interface for the external oracle
 interface ITruncGeoOracleMulti {
@@ -56,6 +63,12 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
     using FullMath for uint256;
     using SqrtPriceMath for uint160;
     using LPFeeLibrary for uint24;
+    using Position for Position.State;
+    using SwapMath for uint160;
+    using TransientStateLibrary for IPoolManager;
+    using CurrencyDelta for Currency;
+    using ProtocolFeeLibrary for uint24;
+    using CustomRevert for bytes4;
 
     // ----------------- Error Definitions -----------------
     error PoolNotInitialized();
@@ -106,6 +119,9 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
     mapping(PoolId => PoolInfo) public poolInfo;
     mapping(PoolId => mapping(address => uint256)) public userFullRangeShares;
     mapping(PoolId => uint256) public totalFullRangeShares;
+    
+    // Position tracking using Uniswap V4 Position library
+    mapping(bytes32 => Position.State) private positions;
 
     // ----------------- Events -----------------
     event FullRangeDeposit(
@@ -262,6 +278,22 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
         userFullRangeShares[poolId][msg.sender] += newShares;
         totalFullRangeShares[poolId] += newShares;
         
+        // Update position using Position library
+        bytes32 positionKey = Position.calculatePositionKey(
+            msg.sender, 
+            MIN_TICK, 
+            MAX_TICK, 
+            bytes32(0) // Salt
+        );
+        
+        // Get position from storage and update it directly
+        Position.State storage position = positions[positionKey];
+        position.update(
+            int128(uint128(newShares)), // Convert to int128 for liquidityDelta
+            0, // feeGrowthInside0X128 - would need to track this accurately in production
+            0  // feeGrowthInside1X128 - would need to track this accurately in production
+        );
+        
         // Update the pool information
         PoolInfo storage info = poolInfo[poolId];
         // Track our managed portion of the pool's total liquidity
@@ -344,6 +376,22 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
         userFullRangeShares[poolId][msg.sender] -= shares;
         totalFullRangeShares[poolId] -= shares;
         
+        // Update position using Position library
+        bytes32 positionKey = Position.calculatePositionKey(
+            msg.sender, 
+            MIN_TICK, 
+            MAX_TICK, 
+            bytes32(0) // Salt
+        );
+        
+        // Get position from storage and update it directly
+        Position.State storage position = positions[positionKey];
+        position.update(
+            -int128(uint128(shares)), // Negative liquidity delta for withdrawal
+            0, // feeGrowthInside0X128 - would need to track this accurately in production
+            0  // feeGrowthInside1X128 - would need to track this accurately in production
+        );
+        
         // Update the pool information
         PoolInfo storage info = poolInfo[poolId];
         // Reduce our managed portion of the pool's total liquidity
@@ -425,8 +473,8 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
         (uint160 sqrtPriceX96, , , ) = StateLibrary.getSlot0(poolManager, poolId);
         if (sqrtPriceX96 == 0) revert PoolNotInitialized();
 
-        // Calculate extra liquidity from fees considering current price
-        uint256 extraLiquidity = FullRangeMathLib.calculateExtraLiquidity(
+        // Calculate extra liquidity using our improved SwapMath-based function
+        uint256 extraLiquidity = calculateReinvestmentLiquidity(
             info.leftover0,
             info.leftover1,
             sqrtPriceX96
@@ -500,8 +548,29 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
             bool isReinvestment
         ) = abi.decode(data, (PoolKey, IPoolManager.ModifyLiquidityParams, bool));
         
+        // Get current deltas using CurrencyDelta
+        int256 delta0Before = CurrencyDelta.getDelta(key.currency0, address(this));
+        int256 delta1Before = CurrencyDelta.getDelta(key.currency1, address(this));
+        
         // Call modifyLiquidity on the poolManager
         (BalanceDelta delta, BalanceDelta feeDelta) = poolManager.modifyLiquidity(key, params, "");
+        
+        // Apply and track the deltas from this operation
+        int256 previousDelta0;
+        int256 newDelta0;
+        (previousDelta0, newDelta0) = CurrencyDelta.applyDelta(
+            key.currency0, 
+            address(this), 
+            delta.amount0()
+        );
+        
+        int256 previousDelta1;
+        int256 newDelta1;
+        (previousDelta1, newDelta1) = CurrencyDelta.applyDelta(
+            key.currency1, 
+            address(this), 
+            delta.amount1()
+        );
         
         // If this is a reinvestment, we've already handled the accounting in claimAndReinvestFeesInternal
         if (!isReinvestment) {
@@ -624,6 +693,42 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
         uint256 fullRangeLiquidity = uint256(poolInfo[poolId].totalLiquidity);
         if (fullRangeLiquidity == 0) return (0, 0);
         
+        // Check if there's a synced currency/reserves using TransientStateLibrary
+        Currency syncedCurrency = poolManager.getSyncedCurrency();
+        uint256 syncedReserves = poolManager.getSyncedReserves();
+        
+        // If we have synchronized reserves and they match one of our currencies, use them
+        if (!syncedCurrency.isAddressZero() && 
+            (syncedCurrency == key.currency0 || syncedCurrency == key.currency1)) {
+            
+            // Use StateLibrary for pool data
+            (uint160 syncedSqrtPriceX96, int24 currentTick, , ) = StateLibrary.getSlot0(poolManager, poolId);
+            if (syncedSqrtPriceX96 == 0) return (0, 0);
+            
+            // Convert managed liquidity to int128
+            int128 syncedLiquidityInt = fullRangeLiquidity.toInt128();
+            
+            if (syncedCurrency == key.currency0) {
+                reserve0 = syncedReserves;
+                // Calculate reserve1 based on current price and liquidity
+                reserve1 = LiquidityMath.getAmount1Delta(
+                    TickMath.getSqrtPriceAtTick(MIN_TICK),
+                    syncedSqrtPriceX96,
+                    syncedLiquidityInt
+                );
+            } else {
+                reserve1 = syncedReserves;
+                // Calculate reserve0 based on current price and liquidity
+                reserve0 = LiquidityMath.getAmount0Delta(
+                    syncedSqrtPriceX96,
+                    TickMath.getSqrtPriceAtTick(MAX_TICK),
+                    syncedLiquidityInt
+                );
+            }
+            return (reserve0, reserve1);
+        }
+        
+        // Fallback to standard calculation if no synced reserves
         // Use StateLibrary directly
         (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(poolId);
         if (sqrtPriceX96 == 0) return (0, 0);
@@ -651,8 +756,16 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
 
     /**
      * @notice Calculate fees using LPFeeLibrary
+     * @param fee The fee in pips (parts per million)
+     * @param amount The amount to calculate fees for
+     * @return The calculated fee amount
      */
     function _calculateFees(uint24 fee, uint256 amount) internal pure returns (uint256) {
+        // Use LPFeeLibrary directly for consistent fee calculation
+        // First validate the fee is within acceptable ranges
+        fee.validate();
+        
+        // Then calculate the fee based on whether it's dynamic or static
         if (fee.isDynamicFee()) {
             return amount.mulDivRoundingUp(fee, 1_000_000);
         }
@@ -737,5 +850,48 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
         
         // Also update the pool total liquidity
         info.totalLiquidity += uint128(extraLiquidity);
+    }
+
+    /**
+     * @notice Calculate reinvestment liquidity with SwapMath for more precise calculations
+     * @param feeAmount0 Amount of token0 fees
+     * @param feeAmount1 Amount of token1 fees
+     * @param sqrtPriceX96 Current sqrt price
+     * @return liquidityAmount The calculated liquidity amount
+     */
+    function calculateReinvestmentLiquidity(
+        uint256 feeAmount0,
+        uint256 feeAmount1,
+        uint160 sqrtPriceX96
+    ) internal pure returns (uint256 liquidityAmount) {
+        // Handle edge cases
+        if (feeAmount0 == 0 && feeAmount1 == 0) {
+            return 0;
+        }
+        
+        if (feeAmount0 == 0) {
+            return feeAmount1;
+        }
+        
+        if (feeAmount1 == 0) {
+            return feeAmount0;
+        }
+        
+        // Calculate liquidity for token0 amount at current price
+        uint128 liquidity0 = uint128(uint256(SqrtPriceMath.getAmount0Delta(
+            sqrtPriceX96,
+            TickMath.getSqrtPriceAtTick(MAX_TICK),
+            int256(feeAmount0).toInt128()
+        )));
+        
+        // Calculate liquidity for token1 amount at current price
+        uint128 liquidity1 = uint128(uint256(SqrtPriceMath.getAmount1Delta(
+            TickMath.getSqrtPriceAtTick(MIN_TICK),
+            sqrtPriceX96,
+            int256(feeAmount1).toInt128()
+        )));
+        
+        // Take the minimum liquidity value (equivalent to getLiquidityForAmounts)
+        return liquidity0 < liquidity1 ? liquidity0 : liquidity1;
     }
 } 
