@@ -5,17 +5,20 @@ import {ExtendedBaseHook} from "./base/ExtendedBaseHook.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {BeforeSwapDelta} from "v4-core/src/types/BeforeSwapDelta.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {FullRangeMathLib} from "./libraries/FullRangeMathLib.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
-import {CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
 import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {LiquidityMath} from "./libraries/LiquidityMath.sol";
+import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
+import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 
 // Interface for the external oracle
 interface ITruncGeoOracleMulti {
@@ -46,6 +49,13 @@ interface ITruncGeoOracleMulti {
 contract FullRange is ExtendedBaseHook, IUnlockCallback {
     using CurrencyLibrary for Currency;
     using BalanceDeltaLibrary for BalanceDelta;
+    using StateLibrary for IPoolManager;
+    using PoolIdLibrary for PoolKey;
+    using SafeCast for uint256;
+    using SafeCast for int256;
+    using FullMath for uint256;
+    using SqrtPriceMath for uint160;
+    using LPFeeLibrary for uint24;
 
     // ----------------- Error Definitions -----------------
     error PoolNotInitialized();
@@ -395,6 +405,9 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
         // Decode the result to get the BalanceDelta with fees
         BalanceDelta feeDelta = abi.decode(result, (BalanceDelta));
         
+        // Settle the currency delta before proceeding
+        poolManager.settle();
+        
         // Extract fee amounts (ensuring they're positive)
         uint256 feeAmount0 = uint256(uint128(feeDelta.amount0()));
         uint256 feeAmount1 = uint256(uint128(feeDelta.amount1()));
@@ -452,6 +465,9 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
             
             // Call unlock on the poolManager which will trigger unlockCallback for reinvestment
             poolManager.unlock(reinvestData);
+            
+            // Settle the currency delta after reinvestment
+            poolManager.settle();
             
             // Emit the FeesReinvested event
             emit FeesReinvested(poolId, feeAmount0, feeAmount1, extraLiquidity);
@@ -603,52 +619,44 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
      * @param poolId The pool ID
      * @return reserve0 The reserve of token0 for FullRange-managed liquidity only
      * @return reserve1 The reserve of token1 for FullRange-managed liquidity only
-     * @dev This function calculates reserves ONLY for the liquidity managed by FullRange.sol,
-     *      not the entire pool's liquidity. This is critical because other users can add
-     *      liquidity to the same pool independently of the FullRange contract.
-     *      
-     *      This function is virtual and can be overridden by derived contracts if needed.
      */
     function _getPoolReserves(PoolKey calldata key, PoolId poolId) internal view virtual returns (uint256 reserve0, uint256 reserve1) {
-        // Get ONLY the FullRange-managed liquidity amount
-        // This is tracked in poolInfo and represents just our portion of the pool's total liquidity
         uint256 fullRangeLiquidity = uint256(poolInfo[poolId].totalLiquidity);
-        if (fullRangeLiquidity == 0) {
-            return (0, 0);
-        }
+        if (fullRangeLiquidity == 0) return (0, 0);
         
-        // Get the current price to calculate token amounts
-        (uint160 sqrtPriceX96, , , ) = StateLibrary.getSlot0(poolManager, poolId);
-        if (sqrtPriceX96 == 0) {
-            return (0, 0); // Pool not initialized
-        }
+        // Use StateLibrary directly
+        (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(poolId);
+        if (sqrtPriceX96 == 0) return (0, 0);
         
-        // For a full range position (MIN_TICK to MAX_TICK), we need to calculate:
-        // - amount0 = liquidity * (1/sqrt(P_current) - 1/sqrt(P_max))
-        // - amount1 = liquidity * (sqrt(P_current) - sqrt(P_min))
+        // Use SafeCast for safe conversions
+        int128 liquidityInt = fullRangeLiquidity.toInt128();
         
-        // Convert to int128 for the calculation
-        int128 liquidityInt = int128(uint128(fullRangeLiquidity));
-        
-        // Get the price at MIN_TICK and MAX_TICK
+        // Use TickMath for price calculations
         uint160 sqrtPriceMinX96 = TickMath.getSqrtPriceAtTick(MIN_TICK);
         uint160 sqrtPriceMaxX96 = TickMath.getSqrtPriceAtTick(MAX_TICK);
         
-        // Calculate amount0 - token0 is concentrated below the current price
+        // Use LiquidityMath for amount calculations
         reserve0 = LiquidityMath.getAmount0Delta(
-            sqrtPriceX96,      // Current price 
-            sqrtPriceMaxX96,   // Max price
-            liquidityInt       // Our liquidity
+            sqrtPriceX96,
+            sqrtPriceMaxX96,
+            liquidityInt
         );
         
-        // Calculate amount1 - token1 is concentrated above the current price
         reserve1 = LiquidityMath.getAmount1Delta(
-            sqrtPriceMinX96,   // Min price
-            sqrtPriceX96,      // Current price
-            liquidityInt       // Our liquidity
+            sqrtPriceMinX96,
+            sqrtPriceX96,
+            liquidityInt
         );
-        
-        return (reserve0, reserve1);
+    }
+
+    /**
+     * @notice Calculate fees using LPFeeLibrary
+     */
+    function _calculateFees(uint24 fee, uint256 amount) internal pure returns (uint256) {
+        if (fee.isDynamicFee()) {
+            return amount.mulDivRoundingUp(fee, 1_000_000);
+        }
+        return amount * fee / 1_000_000;
     }
 
     /**
@@ -713,6 +721,9 @@ contract FullRange is ExtendedBaseHook, IUnlockCallback {
         
         // Call unlock on the poolManager which will trigger unlockCallback for reinvestment
         poolManager.unlock(reinvestData);
+        
+        // Settle the currency delta after reinvestment
+        poolManager.settle();
         
         // Emit the FeesReinvested event
         emit FeesReinvested(poolId, info.leftover0, info.leftover1, extraLiquidity);
