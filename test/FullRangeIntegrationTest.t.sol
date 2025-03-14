@@ -12,22 +12,26 @@ pragma solidity 0.8.26;
  */
 
 import "forge-std/Test.sol";
-import {FullRange} from "../src/FullRange.sol";
-import {FullRangePoolManager} from "../src/FullRangePoolManager.sol";
-import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
-import {FullRangeOracleManager} from "../src/FullRangeOracleManager.sol";
-import {FullRangeUtils} from "../src/FullRangeUtils.sol";
-import {IFullRange, DepositParams, WithdrawParams} from "../src/interfaces/IFullRange.sol";
-import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import "../src/FullRange.sol";
+import "../src/FullRangePoolManager.sol";
+import "../src/FullRangeLiquidityManager.sol";
+import "../src/FullRangeOracleManager.sol";
+import "../src/FullRangeDynamicFeeManager.sol";
+import "../src/FullRangeUtils.sol";
+import "../src/interfaces/IFullRange.sol";
+import "../src/base/ExtendedBaseHook.sol";
 
-// v4-core imports
+// Uniswap V4 imports
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
+
+// For hook address mining
+import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 
 // Minimal Mocks for integration testing - marking as abstract since we don't need to implement all IPoolManager functions
 abstract contract MockPoolManagerFinal is IPoolManager {
@@ -121,6 +125,7 @@ contract FullRangeIntegrationTest is Test {
     FullRangePoolManager poolManager;
     FullRangeLiquidityManager liquidityManager;
     FullRangeOracleManager oracleManager;
+    FullRangeDynamicFeeManager dynamicFeeManager;
     
     address gov = address(this);
     address mockToken0 = address(0xAA);
@@ -143,6 +148,9 @@ contract FullRangeIntegrationTest is Test {
             IPoolManager(address(mockPoolManager)), 
             address(mockOracle)
         );
+        
+        // Create dynamic fee manager with default parameters
+        dynamicFeeManager = new FullRangeDynamicFeeManager(500, 10000, 2000000);
         
         // Create hook permission flags for all hook functions
         uint160 flags = uint160(
@@ -169,6 +177,7 @@ contract FullRangeIntegrationTest is Test {
             poolManager,
             liquidityManager,
             oracleManager,
+            dynamicFeeManager,
             gov
         );
         
@@ -186,6 +195,7 @@ contract FullRangeIntegrationTest is Test {
             poolManager,
             liquidityManager,
             oracleManager,
+            dynamicFeeManager,
             gov
         );
         
