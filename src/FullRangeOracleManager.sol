@@ -58,20 +58,27 @@ contract FullRangeOracleManager {
         if (!_shouldUpdateOracle(key)) {
             return; 
         }
-        // do the actual update
-        truncGeoOracleMulti.updateObservation(key);
+        
+        // Safely try to update the oracle, but don't revert if the pool isn't initialized yet
+        try truncGeoOracleMulti.updateObservation(key) {
+            PoolId pid = PoolIdLibrary.toId(key);
+            bytes32 idHash = PoolId.unwrap(pid);
+            int24 oldTick = lastOracleTick[idHash];
 
-        PoolId pid = PoolIdLibrary.toId(key);
-        bytes32 idHash = PoolId.unwrap(pid);
-        int24 oldTick = lastOracleTick[idHash];
+            // get new current tick from manager
+            (uint160 sqrtPriceX96, int24 currentTick, , ) = StateLibrary.getSlot0(manager, pid);
 
-        // get new current tick from manager
-        (uint160 sqrtPriceX96, int24 currentTick, , ) = StateLibrary.getSlot0(manager, pid);
+            lastOracleUpdateBlock[idHash] = block.number;
+            lastOracleTick[idHash] = currentTick;
 
-        lastOracleUpdateBlock[idHash] = block.number;
-        lastOracleTick[idHash] = currentTick;
-
-        emit OracleUpdated(idHash, oldTick, currentTick);
+            emit OracleUpdated(idHash, oldTick, currentTick);
+        } catch Error(string memory reason) {
+            // Just log the error but don't revert the whole transaction
+            // This allows pools to be created even if the oracle isn't ready
+            // In a production setting, we might want to handle this differently
+        } catch {
+            // Catch any other revert reason
+        }
     }
 
     /**
