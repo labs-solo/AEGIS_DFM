@@ -315,19 +315,19 @@ contract FullRangeE2ETestBase is Test {
         // 4. Set up permissions between contracts
         console.log("Setting up permissions between contracts...");
         
-        // Set FullRange hook address in pool manager
-        poolManagerContract.setFullRangeAddress(hookAddress);
-        
         // Transfer ownership of dynamicFeeManager to governance
         dynamicFeeManager.transferOwnership(governance);
         
         vm.stopPrank();
         
-        // We don't need to call acceptOwnership since the Solmate Owned contract transfers ownership directly
-        
-        // Test a privileged operation as governance
+        // Switch to governance for setting the FullRange address in pool manager
         vm.startPrank(governance);
         
+        // Set FullRange hook address in pool manager
+        console.log("Setting FullRange address in PoolManager as governance...");
+        poolManagerContract.setFullRangeAddress(hookAddress);
+        
+        // Test a privileged operation as governance
         uint256 testMinFee = 0;
         uint256 testMaxFee = 10000;
         dynamicFeeManager.setFeeBounds(testMinFee, testMaxFee);
