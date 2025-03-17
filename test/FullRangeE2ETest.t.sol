@@ -186,9 +186,9 @@ contract FullRangeE2ETestBase is Test {
 
     // Helper function to advance blocks (useful for later phases)
     function _advanceBlocks(uint256 _blocks) internal {
-        for (uint256 i = 0; i < _blocks; i++) {
-            vm.roll(block.number + 1);
-        }
+        uint256 startBlock = block.number;
+        vm.roll(startBlock + _blocks);
+        console.log("Advanced blocks from %d to %d", startBlock, block.number);
     }
 
     // Helper function to simulate price volatility (useful for later phases)
