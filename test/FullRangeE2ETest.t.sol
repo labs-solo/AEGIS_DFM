@@ -319,13 +319,18 @@ contract FullRangeE2ETestBase is Test {
         
         vm.stopPrank();
         
-        // Verify as governance - no need to accept ownership as it's directly transferred
+        // We don't need to call acceptOwnership since the Solmate Owned contract transfers ownership directly
+        
+        // Test a privileged operation as governance
         vm.startPrank(governance);
         
-        // Test some privileged operation as governance
-        uint24 testMaxFee = 50000; // 5%
-        dynamicFeeManager.setMaxFeePpm(testMaxFee);
-        assertEq(dynamicFeeManager.maxFeePpm(), testMaxFee, "Governance can't set max fee");
+        uint256 testMinFee = 0;
+        uint256 testMaxFee = 10000;
+        dynamicFeeManager.setFeeBounds(testMinFee, testMaxFee);
+        
+        // Verify the max fee was set
+        assertEq(dynamicFeeManager.maxFeePpm(), testMaxFee, "Max fee not set correctly");
+        assertEq(dynamicFeeManager.minFeePpm(), testMinFee, "Min fee not set correctly");
         
         vm.stopPrank();
         
