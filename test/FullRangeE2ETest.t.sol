@@ -19,6 +19,7 @@ import "../src/FullRangeOracleManager.sol";
 import "../src/FullRangeDynamicFeeManager.sol";
 import "../src/FullRangeUtils.sol";
 import "../src/interfaces/IFullRange.sol";
+import "../src/oracle/TruncGeoOracleMulti.sol";
 
 // Uniswap V4 imports
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -104,6 +105,9 @@ contract FullRangeE2ETestBase is Test {
     uint24 internal constant MAX_DYNAMIC_FEE = 100000; // 10%
     uint24 internal constant BASE_FEE = 3000; // 0.3%
     uint24 internal constant SURGE_MULTIPLIER = 10; // 10x fee multiplier during high volatility
+
+    // Replace mock oracle with real oracle
+    TruncGeoOracleMulti public truncGeoOracle;
 
     function setUp() public virtual {
         // Step 1: Fork Unichain Sepolia testnet
@@ -234,6 +238,10 @@ contract FullRangeE2ETestBase is Test {
         // 1. First deploy the component contracts
         console.log("Deploying component contracts...");
         
+        // Deploy the real TruncGeoOracleMulti for testing
+        truncGeoOracle = new TruncGeoOracleMulti(IPoolManager(UNICHAIN_SEPOLIA_POOL_MANAGER));
+        console.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
+        
         // Deploy pool manager with the Uniswap V4 Pool Manager reference and governance
         poolManagerContract = new FullRangePoolManager(
             IPoolManager(UNICHAIN_SEPOLIA_POOL_MANAGER),
@@ -248,10 +256,10 @@ contract FullRangeE2ETestBase is Test {
         );
         console.log("FullRangeLiquidityManager deployed at:", address(liquidityManager));
         
-        // Deploy oracle manager
+        // Deploy oracle manager with the real oracle
         oracleManager = new FullRangeOracleManager(
             IPoolManager(UNICHAIN_SEPOLIA_POOL_MANAGER),
-            address(0) // placeholder for TruncGeoOracleMulti 
+            address(truncGeoOracle) // Use the real TruncGeoOracleMulti
         );
         console.log("FullRangeOracleManager deployed at:", address(oracleManager));
         
@@ -508,6 +516,12 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
         // Store the pool ID for later phases
         tokenATokenBPoolId = poolIdAB;
         
+        console.log("Enabling oracle for TokenA/TokenB pool...");
+        // Maximum tick movement allowed per update (about 9% price change)
+        int24 maxTickMove = 900;
+        truncGeoOracle.enableOracleForPool(poolKeyAB, maxTickMove);
+        console.log("Oracle enabled for TokenA/TokenB pool");
+        
         console.log("Pool TokenA/TokenB created successfully (ID stored for later phases)");
         
         // Verify pool was created correctly
@@ -536,6 +550,10 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
         
         // Store the pool ID for later phases
         tokenAWETHPoolId = poolIdAWETH;
+        
+        console.log("Enabling oracle for TokenA/WETH pool...");
+        truncGeoOracle.enableOracleForPool(poolKeyAWETH, maxTickMove);
+        console.log("Oracle enabled for TokenA/WETH pool");
         
         console.log("Pool TokenA/WETH created successfully (ID stored for later phases)");
         
