@@ -319,11 +319,13 @@ contract FullRangeE2ETestBase is Test {
         
         vm.stopPrank();
         
-        // Verify permissions as governance
+        // Verify as governance - no need to accept ownership as it's directly transferred
         vm.startPrank(governance);
         
-        // Accept ownership of dynamicFeeManager
-        dynamicFeeManager.acceptOwnership();
+        // Test some privileged operation as governance
+        uint24 testMaxFee = 50000; // 5%
+        dynamicFeeManager.setMaxFeePpm(testMaxFee);
+        assertEq(dynamicFeeManager.maxFeePpm(), testMaxFee, "Governance can't set max fee");
         
         vm.stopPrank();
         
