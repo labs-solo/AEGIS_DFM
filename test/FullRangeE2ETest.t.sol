@@ -65,14 +65,14 @@ contract FullRangeE2ETestBase is Test {
     // Unichain Sepolia chain ID
     uint256 public constant UNICHAIN_SEPOLIA_CHAIN_ID = 1301;
 
-    // Uniswap V4 Unichain Sepolia Deployment Addresses
-    address public constant UNICHAIN_SEPOLIA_POOL_MANAGER = 0x00b036b58a818b1bc34d502d3fe730db729e62ac;
-    address public constant UNICHAIN_SEPOLIA_UNIVERSAL_ROUTER = 0xf70536b3bcc1bd1a972dc186a2cf84cc6da6be5d;
-    address public constant UNICHAIN_SEPOLIA_POSITION_MANAGER = 0xf969aee60879c54baaed9f3ed26147db216fd664;
-    address public constant UNICHAIN_SEPOLIA_STATE_VIEW = 0xc199f1072a74d4e905aba1a84d9a45e2546b6222;
-    address public constant UNICHAIN_SEPOLIA_QUOTER = 0x56dcd40a3f2d466f48e7f48bdbe5cc9b92ae4472;
-    address public constant UNICHAIN_SEPOLIA_POOL_SWAP_TEST = 0x9140a78c1a137c7ff1c151ec8231272af78a99a4;
-    address public constant UNICHAIN_SEPOLIA_POOL_MODIFY_LIQUIDITY_TEST = 0x5fa728c0a5cfd51bee4b060773f50554c0c8a7ab;
+    // Uniswap V4 Unichain Sepolia Deployment Addresses - with correct checksums
+    address public constant UNICHAIN_SEPOLIA_POOL_MANAGER = 0x00B036B58a818B1BC34d502D3fE730Db729e62AC;
+    address public constant UNICHAIN_SEPOLIA_UNIVERSAL_ROUTER = 0xf70536B3bcC1bD1a972dc186A2cf84cC6da6Be5D;
+    address public constant UNICHAIN_SEPOLIA_POSITION_MANAGER = 0xf969Aee60879C54bAAed9F3eD26147Db216Fd664;
+    address public constant UNICHAIN_SEPOLIA_STATE_VIEW = 0xc199F1072a74D4e905ABa1A84d9a45E2546B6222;
+    address public constant UNICHAIN_SEPOLIA_QUOTER = 0x56DCD40A3F2d466F48e7F48bDBE5Cc9B92Ae4472;
+    address public constant UNICHAIN_SEPOLIA_POOL_SWAP_TEST = 0x9140a78c1A137c7fF1c151EC8231272aF78a99A4;
+    address public constant UNICHAIN_SEPOLIA_POOL_MODIFY_LIQUIDITY_TEST = 0x5fa728C0A5cfd51BEe4B060773f50554c0C8A7AB;
     
     // Environment status flags
     bool public environmentInitialized = false;
