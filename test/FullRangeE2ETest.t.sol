@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 /**
  * @title FullRangeE2ETest
- * @notice End-to-End integration tests for FullRange on Sepolia testnet
+ * @notice End-to-End integration tests for FullRange on Unichain Sepolia testnet
  * This file implements all 7 phases of testing as described in Integration_Test.md
  * Phase 1: Environment Setup & Network Forking
  */
@@ -58,18 +58,21 @@ contract FullRangeE2ETestBase is Test {
     MockERC20 public tokenB;
     MockERC20 public weth; // For later phases
 
-    // Sepolia fork ID
+    // Unichain Sepolia fork ID
     uint256 public forkId;
     uint256 public forkBlock;
 
-    // Uniswap V4 Sepolia Deployment Addresses
-    address public constant SEPOLIA_POOL_MANAGER = 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543;
-    address public constant SEPOLIA_UNIVERSAL_ROUTER = 0x3a9d48ab9751398bbfa63ad67599bb04e4bdf98b;
-    address public constant SEPOLIA_POSITION_MANAGER = 0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4;
-    address public constant SEPOLIA_STATE_VIEW = 0xe1dd9c3fa50edb962e442f60dfbc432e24537e4c;
-    address public constant SEPOLIA_QUOTER = 0x61b3f2011a92d183c7dbadbda940a7555ccf9227;
-    address public constant SEPOLIA_POOL_SWAP_TEST = 0x9b6b46e2c869aa39918db7f52f5557fe577b6eee;
-    address public constant SEPOLIA_POOL_MODIFY_LIQUIDITY_TEST = 0x0c478023803a644c94c4ce1c1e7b9a087e411b0a;
+    // Unichain Sepolia chain ID
+    uint256 public constant UNICHAIN_SEPOLIA_CHAIN_ID = 1301;
+
+    // Uniswap V4 Unichain Sepolia Deployment Addresses
+    address public constant UNICHAIN_SEPOLIA_POOL_MANAGER = 0x00b036b58a818b1bc34d502d3fe730db729e62ac;
+    address public constant UNICHAIN_SEPOLIA_UNIVERSAL_ROUTER = 0xf70536b3bcc1bd1a972dc186a2cf84cc6da6be5d;
+    address public constant UNICHAIN_SEPOLIA_POSITION_MANAGER = 0xf969aee60879c54baaed9f3ed26147db216fd664;
+    address public constant UNICHAIN_SEPOLIA_STATE_VIEW = 0xc199f1072a74d4e905aba1a84d9a45e2546b6222;
+    address public constant UNICHAIN_SEPOLIA_QUOTER = 0x56dcd40a3f2d466f48e7f48bdbe5cc9b92ae4472;
+    address public constant UNICHAIN_SEPOLIA_POOL_SWAP_TEST = 0x9140a78c1a137c7ff1c151ec8231272af78a99a4;
+    address public constant UNICHAIN_SEPOLIA_POOL_MODIFY_LIQUIDITY_TEST = 0x5fa728c0a5cfd51bee4b060773f50554c0c8a7ab;
     
     // Environment status flags
     bool public environmentInitialized = false;
@@ -79,13 +82,13 @@ contract FullRangeE2ETestBase is Test {
     address public fullRangeAddress;
 
     function setUp() public virtual {
-        // Step 1: Fork Sepolia testnet
-        forkId = vm.createFork(vm.envString("SEPOLIA_RPC_URL"));
+        // Step 1: Fork Unichain Sepolia testnet
+        forkId = vm.createFork(vm.envString("UNICHAIN_SEPOLIA_RPC_URL"));
         vm.selectFork(forkId);
         forkBlock = block.number;
         
-        console.log("Forked Sepolia at block:", forkBlock);
-        assertEq(block.chainid, 11155111, "Not on Sepolia testnet");
+        console.log("Forked Unichain Sepolia at block:", forkBlock);
+        assertEq(block.chainid, UNICHAIN_SEPOLIA_CHAIN_ID, "Not on Unichain Sepolia testnet");
 
         // Step 2: Set up test accounts with ETH
         _setupTestAccounts();
@@ -100,7 +103,7 @@ contract FullRangeE2ETestBase is Test {
         environmentInitialized = true;
 
         // Log setup completion
-        console.log("Test environment setup complete at Sepolia block:", forkBlock);
+        console.log("Test environment setup complete at Unichain Sepolia block:", forkBlock);
         console.log("Test accounts funded with ETH and tokens");
     }
 
@@ -200,12 +203,12 @@ contract FullRangeE2ETestBase is Test {
 contract FullRangeE2ETest is FullRangeE2ETestBase {
     /**
      * @notice Phase 1 Test: Environment Setup & Network Forking
-     * This test validates that our Sepolia fork is working correctly
+     * This test validates that our Unichain Sepolia fork is working correctly
      * and that we have properly set up our test environment.
      */
     function testPhase1_EnvironmentSetup() public {
-        // 1. Validate Sepolia network configuration
-        assertEq(block.chainid, 11155111, "Not on Sepolia testnet");
+        // 1. Validate Unichain Sepolia network configuration
+        assertEq(block.chainid, UNICHAIN_SEPOLIA_CHAIN_ID, "Not on Unichain Sepolia testnet");
         assertTrue(forkBlock > 0, "Fork block should be greater than 0");
         
         // 2. Validate environment initialization flag
@@ -234,18 +237,18 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
         _advanceBlocks(5);
         assertEq(block.number, initialBlock + 5, "Block advancement failed");
         
-        // 7. Verify Uniswap V4 contracts on Sepolia
-        assertTrue(address(SEPOLIA_POOL_MANAGER).code.length > 0, "PoolManager contract not found");
-        assertTrue(address(SEPOLIA_UNIVERSAL_ROUTER).code.length > 0, "UniversalRouter contract not found");
-        assertTrue(address(SEPOLIA_POSITION_MANAGER).code.length > 0, "PositionManager contract not found");
+        // 7. Verify Uniswap V4 contracts on Unichain Sepolia
+        assertTrue(address(UNICHAIN_SEPOLIA_POOL_MANAGER).code.length > 0, "PoolManager contract not found");
+        assertTrue(address(UNICHAIN_SEPOLIA_UNIVERSAL_ROUTER).code.length > 0, "UniversalRouter contract not found");
+        assertTrue(address(UNICHAIN_SEPOLIA_POSITION_MANAGER).code.length > 0, "PositionManager contract not found");
         
-        console.log("Uniswap V4 contracts verified on Sepolia:");
-        console.log("- PoolManager:", SEPOLIA_POOL_MANAGER);
-        console.log("- PositionManager:", SEPOLIA_POSITION_MANAGER);
-        console.log("- Universal Router:", SEPOLIA_UNIVERSAL_ROUTER);
+        console.log("Uniswap V4 contracts verified on Unichain Sepolia:");
+        console.log("- PoolManager:", UNICHAIN_SEPOLIA_POOL_MANAGER);
+        console.log("- PositionManager:", UNICHAIN_SEPOLIA_POSITION_MANAGER);
+        console.log("- Universal Router:", UNICHAIN_SEPOLIA_UNIVERSAL_ROUTER);
         
         // Log success
-        console.log("Phase 1 test passed: Environment successfully set up on Sepolia fork");
+        console.log("Phase 1 test passed: Environment successfully set up on Unichain Sepolia fork");
         console.log("Current block number:", block.number);
     }
 
@@ -255,7 +258,7 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
      */
     function testPhase2_ContractDeployment() public {
         // TODO: Implement in next stage
-        // Will deploy FullRange contract suite on Sepolia
+        // Will deploy FullRange contract suite on Unichain Sepolia
     }
 
     /**
