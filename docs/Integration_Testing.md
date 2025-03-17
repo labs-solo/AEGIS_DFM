@@ -8,13 +8,27 @@ This document explains how to run the full end-to-end (E2E) integration tests fo
 2. A Sepolia RPC URL (from Infura, Alchemy, or other providers)
 3. Environment setup: export `SEPOLIA_RPC_URL=<your-sepolia-rpc-url>`
 
+## Uniswap V4 on Sepolia
+
+Our integration tests use the official Uniswap V4 contracts deployed on Sepolia testnet:
+
+| Contract | Address |
+|----------|---------|
+| PoolManager | 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543 |
+| Universal Router | 0x3a9d48ab9751398bbfa63ad67599bb04e4bdf98b |
+| PositionManager | 0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4 |
+| StateView | 0xe1dd9c3fa50edb962e442f60dfbc432e24537e4c |
+| Quoter | 0x61b3f2011a92d183c7dbadbda940a7555ccf9227 |
+
+For the complete list, see the [official Uniswap V4 deployments documentation](https://docs.uniswap.org/contracts/v4/deployments).
+
 ## Testing Phases
 
 The integration testing is divided into 7 phases as outlined in `Integration_Test.md`. Each phase builds upon the previous one to ensure comprehensive testing of the FullRange system.
 
 ### Phase 1: Environment Setup & Network Forking
 
-This phase validates that the testing environment is correctly set up with a Sepolia fork, test accounts, and mock tokens.
+This phase validates that the testing environment is correctly set up with a Sepolia fork, test accounts, and mock tokens. It also verifies that the Uniswap V4 contracts are accessible on the forked network.
 
 To run Phase 1 test:
 
@@ -27,6 +41,9 @@ export SEPOLIA_RPC_URL=<your-sepolia-rpc-url>
 
 # Alternatively, run the test directly with forge
 forge test --match-path test/FullRangeE2ETest.t.sol --match-test "testPhase1" -vvv
+
+# For demonstration purposes only (does not require an RPC URL)
+./script/run_phase1_test.sh
 ```
 
 Expected output:
@@ -36,6 +53,7 @@ Expected output:
 - Verification of account balances
 - Simple token transfer test
 - Block advancement test
+- Verification of Uniswap V4 contracts on Sepolia
 
 ### Phase 2: FullRange Contract Suite Deployment
 
