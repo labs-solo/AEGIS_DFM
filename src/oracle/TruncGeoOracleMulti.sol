@@ -57,8 +57,12 @@ contract TruncGeoOracleMulti {
         PoolId pid = key.toId();
         bytes32 id = PoolId.unwrap(pid);
         require(states[id].cardinality == 0, "Pool already enabled");
-        if (key.fee != 0 || key.tickSpacing != 60) // Using constant value 60 for phase 1
+        
+        // Allow both the dynamic fee (0x800000 == 8388608) and fee == 0 pools
+        // Both should have tick spacing == 60
+        if ((key.fee != 0 && key.fee != 8388608) || key.tickSpacing != 60)
             revert OnlyOneOraclePoolAllowed();
+        
         maxAbsTickMove[id] = initialMaxAbsTickMove;
         (, int24 tick,,) = StateLibrary.getSlot0(poolManager, pid);
         (states[id].cardinality, states[id].cardinalityNext) = observations[id].initialize(_blockTimestamp(), tick);
