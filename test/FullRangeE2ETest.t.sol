@@ -349,10 +349,10 @@ contract FullRangeE2ETestBase is Test {
         
         // 2. Verify permissions are set correctly
         assertEq(address(fullRange.poolManager()), UNICHAIN_SEPOLIA_POOL_MANAGER, "Incorrect pool manager address");
-        assertEq(address(fullRange.poolManagerContract()), address(poolManagerContract), "Incorrect pool manager contract");
+        assertEq(address(fullRange.fullRangePoolManager()), address(poolManagerContract), "Incorrect pool manager contract");
         assertEq(address(fullRange.liquidityManager()), address(liquidityManager), "Incorrect liquidity manager");
         assertEq(address(fullRange.oracleManager()), address(oracleManager), "Incorrect oracle manager");
-        assertEq(address(fullRange.feeManager()), address(dynamicFeeManager), "Incorrect fee manager");
+        assertEq(address(fullRange.dynamicFeeManager()), address(dynamicFeeManager), "Incorrect fee manager");
         assertEq(fullRange.governance(), governance, "Incorrect governance");
         
         // 3. Verify cross-contract references
