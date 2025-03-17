@@ -1,0 +1,40 @@
+#!/bin/bash
+# Script to run Phase 1 of the FullRange integration tests
+
+# Information for the user
+echo "==============================================================="
+echo "MOCK TEST SCRIPT - In real usage, replace with your Sepolia URL"
+echo "==============================================================="
+echo ""
+echo "To run the actual test, you would need to:"
+echo "1. Get a Sepolia RPC URL from providers like Infura or Alchemy"
+echo "2. Export it as an environment variable:"
+echo "   export SEPOLIA_RPC_URL=https://sepolia.infura.io/v3/YOUR_API_KEY"
+echo "3. Run the test:"
+echo "   ./script/run_sepolia_test.sh"
+echo ""
+echo "==============================================================="
+
+# Demo of what the actual test would output
+echo "SIMULATED OUTPUT:"
+echo "Forked Sepolia at block: 5123456"
+echo "Test accounts funded with ETH"
+echo "Mock tokens deployed:"
+echo "TokenA: 0x123..."
+echo "TokenB: 0x456..."
+echo "WETH: 0x789..."
+echo "Tokens minted to test accounts"
+echo "Test environment setup complete at Sepolia block: 5123456"
+echo "Test accounts funded with ETH and tokens"
+echo "Uniswap V4 contracts verified on Sepolia:"
+echo "- PoolManager: 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543"
+echo "- PositionManager: 0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4"
+echo "- Universal Router: 0x3a9d48ab9751398bbfa63ad67599bb04e4bdf98b"
+echo "Phase 1 test passed: Environment successfully set up on Sepolia fork"
+echo "Current block number: 5123461"
+
+echo ""
+echo "==============================================================="
+echo "NOTE: The above is simulated output. Actual tests require a"
+echo "valid Sepolia RPC URL to run against a forked network."
+echo "===============================================================" 

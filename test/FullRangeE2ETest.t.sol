@@ -62,8 +62,14 @@ contract FullRangeE2ETestBase is Test {
     uint256 public forkId;
     uint256 public forkBlock;
 
-    // Network details
-    address public constant SEPOLIA_NETWORK_ADDRESS = 0x1F98431c8aD98523631AE4a59f267346ea31F984; // Example - will be updated
+    // Uniswap V4 Sepolia Deployment Addresses
+    address public constant SEPOLIA_POOL_MANAGER = 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543;
+    address public constant SEPOLIA_UNIVERSAL_ROUTER = 0x3a9d48ab9751398bbfa63ad67599bb04e4bdf98b;
+    address public constant SEPOLIA_POSITION_MANAGER = 0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4;
+    address public constant SEPOLIA_STATE_VIEW = 0xe1dd9c3fa50edb962e442f60dfbc432e24537e4c;
+    address public constant SEPOLIA_QUOTER = 0x61b3f2011a92d183c7dbadbda940a7555ccf9227;
+    address public constant SEPOLIA_POOL_SWAP_TEST = 0x9b6b46e2c869aa39918db7f52f5557fe577b6eee;
+    address public constant SEPOLIA_POOL_MODIFY_LIQUIDITY_TEST = 0x0c478023803a644c94c4ce1c1e7b9a087e411b0a;
     
     // Environment status flags
     bool public environmentInitialized = false;
@@ -227,6 +233,16 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
         uint256 initialBlock = block.number;
         _advanceBlocks(5);
         assertEq(block.number, initialBlock + 5, "Block advancement failed");
+        
+        // 7. Verify Uniswap V4 contracts on Sepolia
+        assertTrue(address(SEPOLIA_POOL_MANAGER).code.length > 0, "PoolManager contract not found");
+        assertTrue(address(SEPOLIA_UNIVERSAL_ROUTER).code.length > 0, "UniversalRouter contract not found");
+        assertTrue(address(SEPOLIA_POSITION_MANAGER).code.length > 0, "PositionManager contract not found");
+        
+        console.log("Uniswap V4 contracts verified on Sepolia:");
+        console.log("- PoolManager:", SEPOLIA_POOL_MANAGER);
+        console.log("- PositionManager:", SEPOLIA_POSITION_MANAGER);
+        console.log("- Universal Router:", SEPOLIA_UNIVERSAL_ROUTER);
         
         // Log success
         console.log("Phase 1 test passed: Environment successfully set up on Sepolia fork");
