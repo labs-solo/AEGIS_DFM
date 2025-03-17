@@ -21,6 +21,9 @@ import "../src/FullRangeUtils.sol";
 import "../src/interfaces/IFullRange.sol";
 import "../src/oracle/TruncGeoOracleMulti.sol";
 
+// Use the ratio math library for calculations
+import {FullRangeRatioMath} from "../src/FullRangeLiquidityManager.sol";
+
 // Uniswap V4 imports
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -610,10 +613,174 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
 
     /**
      * @notice Phase 4 Test: Liquidity Management
-     * This test will be implemented in a future stage
+     * This test validates depositing and withdrawing liquidity through FullRange
      */
     function testPhase4_LiquidityManagement() public {
-        // TODO: Implement in future stages
+        // Run Phase 3 first to ensure pools have been created
+        testPhase3_PoolCreation();
+        
+        console.log("==== Starting Phase 4: Liquidity Management ====");
+        
+        // Setup Alice as our test user
+        vm.startPrank(alice);
+        
+        // Step 1: Approve tokens for the hook to use
+        uint256 approvalAmount = 100 * 10**18; // 100 tokens of each type
+        
+        console.log("Approving tokens for FullRange hook...");
+        tokenA.approve(address(fullRange), approvalAmount);
+        tokenB.approve(address(fullRange), approvalAmount);
+        
+        // Record initial balances
+        uint256 aliceInitialTokenABalance = tokenA.balanceOf(alice);
+        uint256 aliceInitialTokenBBalance = tokenB.balanceOf(alice);
+        
+        console.log("Initial balances - TokenA:", aliceInitialTokenABalance / 1e18, "TokenB:", aliceInitialTokenBBalance / 1e18);
+        
+        // Step 2: Get pool info before deposit
+        (bool hasAccruedFeesBefore, uint128 totalLiqBefore, int24 tickSpacingBefore) = 
+            poolManagerContract.poolInfo(tokenATokenBPoolId);
+            
+        console.log("Pool state before deposit - totalLiquidity:", totalLiqBefore);
+        
+        // Step 3: Create deposit params
+        uint256 amount0Desired = 10 * 10**18; // 10 TokenA
+        uint256 amount1Desired = 10 * 10**18; // 10 TokenB
+        
+        console.log("Depositing liquidity to TokenA/TokenB pool...");
+        console.log("Deposit amounts - TokenA:", amount0Desired / 1e18, "TokenB:", amount1Desired / 1e18);
+        
+        DepositParams memory depositParams = DepositParams({
+            poolId: tokenATokenBPoolId,
+            amount0Desired: amount0Desired,
+            amount1Desired: amount1Desired,
+            amount0Min: amount0Desired * 99 / 100, // 1% slippage tolerance
+            amount1Min: amount1Desired * 99 / 100, // 1% slippage tolerance
+            to: alice,
+            deadline: block.timestamp + 1 hours
+        });
+        
+        // Perform the deposit
+        BalanceDelta depositDelta = fullRange.deposit(depositParams);
+        
+        // Step 4: Get pool info after deposit
+        (bool hasAccruedFeesAfter, uint128 totalLiqAfter, int24 tickSpacingAfter) = 
+            poolManagerContract.poolInfo(tokenATokenBPoolId);
+            
+        console.log("Pool state after deposit - totalLiquidity:", totalLiqAfter);
+        
+        // Verify deposit was successful
+        assertTrue(totalLiqAfter > totalLiqBefore, "Total liquidity should increase after deposit");
+        
+        // Verify the expected shared minted (approximately sqrt(amount0 * amount1))
+        uint256 expectedShares = FullRangeRatioMath.sqrt(amount0Desired * amount1Desired);
+        assertApproxEqAbs(totalLiqAfter, expectedShares, 10, "Total liquidity should be close to expected shares");
+        
+        // Record balances after deposit
+        uint256 aliceAfterDepositTokenABalance = tokenA.balanceOf(alice);
+        uint256 aliceAfterDepositTokenBBalance = tokenB.balanceOf(alice);
+        
+        console.log("Balances after deposit - TokenA:", aliceAfterDepositTokenABalance / 1e18, 
+                   "TokenB:", aliceAfterDepositTokenBBalance / 1e18);
+        
+        // Verify token transfers
+        assertEq(
+            aliceInitialTokenABalance - aliceAfterDepositTokenABalance, 
+            amount0Desired, 
+            "TokenA balance should decrease by deposit amount"
+        );
+        assertEq(
+            aliceInitialTokenBBalance - aliceAfterDepositTokenBBalance, 
+            amount1Desired, 
+            "TokenB balance should decrease by deposit amount"
+        );
+        
+        // Step 5: Test partial withdrawal
+        uint256 sharesToBurn = totalLiqAfter / 2; // Withdraw 50% of position
+        
+        console.log("Withdrawing 50% of liquidity from TokenA/TokenB pool...");
+        console.log("Shares to burn:", sharesToBurn);
+        
+        WithdrawParams memory withdrawParams = WithdrawParams({
+            poolId: tokenATokenBPoolId,
+            sharesBurn: sharesToBurn,
+            amount0Min: amount0Desired * 49 / 100, // Slightly less than 50% due to potential slippage
+            amount1Min: amount1Desired * 49 / 100, // Slightly less than 50% due to potential slippage
+            deadline: block.timestamp + 1 hours
+        });
+        
+        // Perform the withdrawal
+        (BalanceDelta withdrawDelta, uint256 amount0Out, uint256 amount1Out) = fullRange.withdraw(withdrawParams);
+        
+        console.log("Withdraw result - amount0Out:", amount0Out / 1e18, "amount1Out:", amount1Out / 1e18);
+        
+        // Step 6: Get pool info after withdrawal
+        (bool hasAccruedFeesAfterWithdraw, uint128 totalLiqAfterWithdraw, int24 tickSpacingAfterWithdraw) = 
+            poolManagerContract.poolInfo(tokenATokenBPoolId);
+            
+        console.log("Pool state after withdrawal - totalLiquidity:", totalLiqAfterWithdraw);
+        
+        // Verify withdrawal was successful
+        assertEq(
+            totalLiqAfterWithdraw, 
+            totalLiqAfter - uint128(sharesToBurn), 
+            "Total liquidity should decrease by shares burnt"
+        );
+        
+        // Verify final balances
+        uint256 aliceFinalTokenABalance = tokenA.balanceOf(alice);
+        uint256 aliceFinalTokenBBalance = tokenB.balanceOf(alice);
+        
+        console.log("Final balances - TokenA:", aliceFinalTokenABalance / 1e18, 
+                  "TokenB:", aliceFinalTokenBBalance / 1e18);
+        
+        // Verify tokens were received
+        assertEq(
+            aliceFinalTokenABalance - aliceAfterDepositTokenABalance, 
+            amount0Out, 
+            "TokenA balance should increase by withdrawal amount"
+        );
+        assertEq(
+            aliceFinalTokenBBalance - aliceAfterDepositTokenBBalance, 
+            amount1Out, 
+            "TokenB balance should increase by withdrawal amount"
+        );
+        
+        // Test slippage protection by trying a withdrawal with high minimum amounts
+        console.log("Testing slippage protection...");
+        WithdrawParams memory badWithdrawParams = WithdrawParams({
+            poolId: tokenATokenBPoolId,
+            sharesBurn: totalLiqAfterWithdraw / 2,
+            amount0Min: amount0Desired, // Set unreasonably high
+            amount1Min: amount1Desired, // Set unreasonably high
+            deadline: block.timestamp + 1 hours
+        });
+        
+        // Expect revert due to slippage protection
+        vm.expectRevert("TooMuchSlippage");
+        fullRange.withdraw(badWithdrawParams);
+        console.log("Slippage protection working correctly");
+        
+        // Test deadline enforcement
+        console.log("Testing deadline enforcement...");
+        WithdrawParams memory expiredParams = WithdrawParams({
+            poolId: tokenATokenBPoolId,
+            sharesBurn: totalLiqAfterWithdraw / 2,
+            amount0Min: 0,
+            amount1Min: 0,
+            deadline: block.timestamp - 1 // Already expired
+        });
+        
+        // Expect revert due to expired deadline
+        vm.expectRevert("DeadlinePassed");
+        fullRange.withdraw(expiredParams);
+        console.log("Deadline enforcement working correctly");
+        
+        vm.stopPrank();
+        
+        // Log success
+        console.log("Phase 4 test passed: Successfully tested liquidity management");
+        console.log("==== Phase 4 Complete ====");
     }
 
     /**
