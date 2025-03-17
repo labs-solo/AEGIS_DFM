@@ -80,6 +80,30 @@ contract FullRangeE2ETestBase is Test {
     // Deployment addresses for later phases
     address public poolManagerAddress;
     address public fullRangeAddress;
+    
+    // FullRange contract instances
+    FullRange public fullRange;
+    FullRangePoolManager public poolManagerContract;
+    FullRangeLiquidityManager public liquidityManager;
+    FullRangeOracleManager public oracleManager;
+    FullRangeDynamicFeeManager public dynamicFeeManager;
+    
+    // Hook permissions for mining
+    uint24 internal constant BEFORE_INITIALIZE_FLAG = 1 << 0;
+    uint24 internal constant AFTER_INITIALIZE_FLAG = 1 << 1;
+    uint24 internal constant BEFORE_SWAP_FLAG = 1 << 2;
+    uint24 internal constant AFTER_SWAP_FLAG = 1 << 3;
+    uint24 internal constant BEFORE_DONATE_FLAG = 1 << 4;
+    uint24 internal constant AFTER_DONATE_FLAG = 1 << 5;
+    uint24 internal constant BEFORE_MODIFY_POSITION_FLAG = 1 << 6;
+    uint24 internal constant AFTER_MODIFY_POSITION_FLAG = 1 << 7;
+    
+    // Dynamic fee constants
+    uint24 internal constant DYNAMIC_FEE_FLAG = 0x800000;
+    uint24 internal constant MIN_DYNAMIC_FEE = 100; // 0.01%
+    uint24 internal constant MAX_DYNAMIC_FEE = 100000; // 10%
+    uint24 internal constant BASE_FEE = 3000; // 0.3%
+    uint24 internal constant SURGE_MULTIPLIER = 10; // 10x fee multiplier during high volatility
 
     function setUp() public virtual {
         // Step 1: Fork Unichain Sepolia testnet
@@ -195,6 +219,153 @@ contract FullRangeE2ETestBase is Test {
     function _simulateVolatility() internal {
         // Will be implemented in later phases
     }
+
+    /**
+     * @notice Phase 2 - Deploy the FullRange contract suite
+     * @dev This function deploys all required contracts and sets up permissions
+     * @return hookAddress The address of the deployed FullRange hook
+     */
+    function _deployFullRangeContractSuite() internal returns (address hookAddress) {
+        console.log("Starting FullRange contract suite deployment");
+        
+        // Deploy contracts as the deployer
+        vm.startPrank(deployer);
+        
+        // 1. First deploy the component contracts
+        console.log("Deploying component contracts...");
+        
+        // Deploy pool manager
+        poolManagerContract = new FullRangePoolManager(governance);
+        console.log("FullRangePoolManager deployed at:", address(poolManagerContract));
+        
+        // Deploy liquidity manager
+        liquidityManager = new FullRangeLiquidityManager(address(poolManagerContract), governance);
+        console.log("FullRangeLiquidityManager deployed at:", address(liquidityManager));
+        
+        // Deploy oracle manager
+        oracleManager = new FullRangeOracleManager(address(poolManagerContract), governance);
+        console.log("FullRangeOracleManager deployed at:", address(oracleManager));
+        
+        // Deploy dynamic fee manager
+        dynamicFeeManager = new FullRangeDynamicFeeManager(
+            address(oracleManager),
+            address(poolManagerContract),
+            governance
+        );
+        console.log("FullRangeDynamicFeeManager deployed at:", address(dynamicFeeManager));
+        
+        // 2. Calculate the FullRange hook address with required permissions
+        console.log("Mining hook address with required permissions...");
+        uint160 flags = uint160(
+            BEFORE_INITIALIZE_FLAG | 
+            AFTER_INITIALIZE_FLAG | 
+            BEFORE_SWAP_FLAG | 
+            AFTER_SWAP_FLAG | 
+            BEFORE_MODIFY_POSITION_FLAG | 
+            AFTER_MODIFY_POSITION_FLAG
+        );
+        
+        // Get salt and hook address from HookMiner
+        (address hookAddr, bytes32 salt) = HookMiner.find(
+            deployer,
+            flags,
+            type(FullRange).creationCode,
+            abi.encode(
+                UNICHAIN_SEPOLIA_POOL_MANAGER,
+                address(poolManagerContract),
+                address(liquidityManager),
+                address(oracleManager),
+                address(dynamicFeeManager),
+                governance
+            )
+        );
+        
+        console.log("Hook address mined:", hookAddr);
+        console.log("Salt used:", uint256(salt));
+        
+        // 3. Deploy the FullRange hook with the mined address
+        console.log("Deploying FullRange hook...");
+        fullRange = new FullRange{salt: salt}(
+            IPoolManager(UNICHAIN_SEPOLIA_POOL_MANAGER),
+            poolManagerContract,
+            liquidityManager,
+            oracleManager,
+            dynamicFeeManager,
+            governance
+        );
+        
+        hookAddress = address(fullRange);
+        fullRangeAddress = hookAddress;
+        
+        console.log("FullRange hook deployed at:", hookAddress);
+        
+        // 4. Set up permissions between contracts
+        console.log("Setting up permissions between contracts...");
+        
+        // Set FullRange hook address in pool manager
+        poolManagerContract.setFullRangeHook(hookAddress);
+        
+        // Set FullRange hook address in liquidity manager
+        liquidityManager.setFullRangeHook(hookAddress);
+        
+        // Set FullRange hook address in oracle manager
+        oracleManager.setFullRangeHook(hookAddress);
+        
+        // Set FullRange hook address in dynamic fee manager
+        dynamicFeeManager.setFullRangeHook(hookAddress);
+        
+        // Transfer ownership to governance
+        poolManagerContract.transferOwnership(governance);
+        liquidityManager.transferOwnership(governance);
+        oracleManager.transferOwnership(governance);
+        dynamicFeeManager.transferOwnership(governance);
+        
+        vm.stopPrank();
+        
+        // Verify permissions as governance
+        vm.startPrank(governance);
+        
+        // Accept ownership
+        poolManagerContract.acceptOwnership();
+        liquidityManager.acceptOwnership();
+        oracleManager.acceptOwnership();
+        dynamicFeeManager.acceptOwnership();
+        
+        vm.stopPrank();
+        
+        console.log("FullRange contract suite deployment complete");
+        return hookAddress;
+    }
+    
+    /**
+     * @notice Verifies that the contract deployment was successful
+     * @param hookAddress The address of the deployed FullRange hook
+     */
+    function _verifyContractDeployment(address hookAddress) internal view {
+        // 1. Verify the hook address
+        assertTrue(hookAddress != address(0), "Hook address is zero");
+        assertTrue(hookAddress.code.length > 0, "No code at hook address");
+        
+        // 2. Verify permissions are set correctly
+        assertEq(address(fullRange.poolManager()), UNICHAIN_SEPOLIA_POOL_MANAGER, "Incorrect pool manager address");
+        assertEq(address(fullRange.poolManagerContract()), address(poolManagerContract), "Incorrect pool manager contract");
+        assertEq(address(fullRange.liquidityManager()), address(liquidityManager), "Incorrect liquidity manager");
+        assertEq(address(fullRange.oracleManager()), address(oracleManager), "Incorrect oracle manager");
+        assertEq(address(fullRange.feeManager()), address(dynamicFeeManager), "Incorrect fee manager");
+        assertEq(fullRange.governance(), governance, "Incorrect governance");
+        
+        // 3. Verify cross-contract references
+        assertEq(poolManagerContract.fullRangeHook(), hookAddress, "Incorrect hook address in pool manager");
+        assertEq(liquidityManager.fullRangeHook(), hookAddress, "Incorrect hook address in liquidity manager");
+        assertEq(oracleManager.fullRangeHook(), hookAddress, "Incorrect hook address in oracle manager");
+        assertEq(dynamicFeeManager.fullRangeHook(), hookAddress, "Incorrect hook address in dynamic fee manager");
+        
+        // 4. Verify governance ownership
+        assertEq(poolManagerContract.owner(), governance, "Incorrect pool manager owner");
+        assertEq(liquidityManager.owner(), governance, "Incorrect liquidity manager owner");
+        assertEq(oracleManager.owner(), governance, "Incorrect oracle manager owner");
+        assertEq(dynamicFeeManager.owner(), governance, "Incorrect dynamic fee manager owner");
+    }
 }
 
 /**
@@ -254,11 +425,39 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
 
     /**
      * @notice Phase 2 Test: FullRange Contract Suite Deployment
-     * This test will be implemented in the next stage
+     * This test validates the deployment of the FullRange contract suite on the forked network
      */
     function testPhase2_ContractDeployment() public {
-        // TODO: Implement in next stage
-        // Will deploy FullRange contract suite on Unichain Sepolia
+        // First run Phase 1 setup
+        testPhase1_EnvironmentSetup();
+        
+        console.log("==== Starting Phase 2: FullRange Contract Suite Deployment ====");
+        
+        // 1. Deploy the FullRange contract suite
+        address hookAddress = _deployFullRangeContractSuite();
+        
+        // 2. Verify the deployment was successful
+        _verifyContractDeployment(hookAddress);
+        
+        // 3. Test basic functionality
+        vm.startPrank(governance);
+        
+        // Test fee adjustment (simple test to verify connectivity)
+        uint24 newBaseFee = 5000; // 0.5%
+        dynamicFeeManager.setBaseFee(newBaseFee);
+        assertEq(dynamicFeeManager.baseFee(), newBaseFee, "Base fee not updated");
+        
+        // Test oracle configuration
+        uint32 newObservationCardinalityNext = 50;
+        oracleManager.setObservationCardinalityNext(newObservationCardinalityNext);
+        assertEq(oracleManager.observationCardinalityNext(), newObservationCardinalityNext, "Observation cardinality not updated");
+        
+        vm.stopPrank();
+        
+        // Log success
+        console.log("Phase 2 test passed: FullRange contract suite deployed successfully");
+        console.log("Hook address:", hookAddress);
+        console.log("==== Phase 2 Complete ====");
     }
 
     /**
