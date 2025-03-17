@@ -509,7 +509,7 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
         tokenATokenBPoolId = poolIdAB;
         
         console.log("Pool TokenA/TokenB created successfully");
-        console.logBytes32(PoolIdLibrary.unwrap(poolIdAB));
+        console.logBytes32(bytes32(poolIdAB)); // Direct cast to bytes32
         
         // Verify pool was created correctly
         (bool hasAccruedFees, uint128 totalLiquidity, int24 tickSpacing) = poolManagerContract.poolInfo(poolIdAB);
@@ -539,7 +539,7 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
         tokenAWETHPoolId = poolIdAWETH;
         
         console.log("Pool TokenA/WETH created successfully");
-        console.logBytes32(PoolIdLibrary.unwrap(poolIdAWETH));
+        console.logBytes32(bytes32(poolIdAWETH)); // Direct cast to bytes32
         
         // Verify second pool was created correctly
         (hasAccruedFees, totalLiquidity, tickSpacing) = poolManagerContract.poolInfo(poolIdAWETH);
@@ -582,9 +582,9 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
         // Log success
         console.log("Phase 3 test passed: Successfully created pools with dynamic fees");
         console.log("TokenA/TokenB pool ID (bytes32):");
-        console.logBytes32(PoolIdLibrary.unwrap(tokenATokenBPoolId));
+        console.logBytes32(bytes32(tokenATokenBPoolId));
         console.log("TokenA/WETH pool ID (bytes32):");
-        console.logBytes32(PoolIdLibrary.unwrap(tokenAWETHPoolId));
+        console.logBytes32(bytes32(tokenAWETHPoolId));
         console.log("==== Phase 3 Complete ====");
     }
 
