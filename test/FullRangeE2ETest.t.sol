@@ -593,7 +593,7 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
         vm.startPrank(alice);
         
         console.log("Testing revert: Attempting to create pool as non-governance user...");
-        vm.expectRevert(bytes("Only authorized accounts can call this function"));
+        vm.expectRevert(bytes("Not authorized"));
         poolManagerContract.initializeNewPool(poolKeyAB, initialSqrtPriceX96);
         console.log("Correctly reverted on unauthorized caller");
         
