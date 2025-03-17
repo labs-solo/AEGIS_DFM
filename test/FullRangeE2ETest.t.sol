@@ -91,6 +91,10 @@ contract FullRangeE2ETestBase is Test {
     FullRangeOracleManager public oracleManager;
     FullRangeDynamicFeeManager public dynamicFeeManager;
     
+    // Pool IDs for created pools
+    PoolId public tokenATokenBPoolId;
+    PoolId public tokenAWETHPoolId;
+    
     // Reference the standard Hooks flags from Uniswap v4-core library
     // Rather than local definitions that don't match Uniswap's implementation
     
@@ -471,10 +475,113 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
 
     /**
      * @notice Phase 3 Test: Pool Creation with Dynamic Fees
-     * This test will be implemented in a future stage
+     * This test validates creating pools with dynamic fees through FullRange
      */
     function testPhase3_PoolCreation() public {
-        // TODO: Implement in future stages
+        // First run Phase 2 to deploy our contracts
+        testPhase2_ContractDeployment();
+        
+        console.log("==== Starting Phase 3: Pool Creation with Dynamic Fees ====");
+        console.log("Current FullRange address:", fullRangeAddress);
+        console.log("Creating pool with dynamic fees...");
+        
+        // We'll create pools as governance, since it has the proper permissions
+        vm.startPrank(governance);
+        
+        // 1. Create first pool with TokenA and TokenB - use DYNAMIC_FEE_FLAG (0x800000)
+        // Define pool key
+        PoolKey memory poolKeyAB = PoolKey({
+            currency0: Currency.wrap(address(tokenA)),
+            currency1: Currency.wrap(address(tokenB)),
+            fee: DYNAMIC_FEE_FLAG,
+            tickSpacing: 60,
+            hooks: IHooks(fullRangeAddress) // Our FullRange contract is the hook
+        });
+        
+        // Initial sqrt price (approx 1:1 price)
+        uint160 initialSqrtPriceX96 = 79228162514264337593543950336; // 1:1 ratio
+        
+        // Initialize the pool
+        console.log("Initializing TokenA/TokenB pool with dynamic fee...");
+        PoolId poolIdAB = poolManagerContract.initializeNewPool(poolKeyAB, initialSqrtPriceX96);
+        
+        // Store the pool ID for later phases
+        tokenATokenBPoolId = poolIdAB;
+        
+        console.log("Pool TokenA/TokenB created with ID:", bytes32(poolIdAB));
+        
+        // Verify pool was created correctly
+        (bool hasAccruedFees, uint128 totalLiquidity, int24 tickSpacing) = poolManagerContract.poolInfo(poolIdAB);
+        
+        console.log("Pool state - hasAccruedFees:", hasAccruedFees);
+        console.log("Pool state - totalLiquidity:", totalLiquidity);
+        console.log("Pool state - tickSpacing:", tickSpacing);
+        
+        // Assertions for first pool
+        assertFalse(hasAccruedFees, "Pool should not have accrued fees initially");
+        assertEq(totalLiquidity, 0, "Initial liquidity should be zero");
+        assertEq(tickSpacing, 60, "Tick spacing should match the requested value");
+        
+        // 2. Create a second pool with TokenA and WETH
+        PoolKey memory poolKeyAWETH = PoolKey({
+            currency0: Currency.wrap(address(tokenA)),
+            currency1: Currency.wrap(address(weth)),
+            fee: DYNAMIC_FEE_FLAG,
+            tickSpacing: 60,
+            hooks: IHooks(fullRangeAddress)
+        });
+        
+        console.log("Initializing TokenA/WETH pool with dynamic fee...");
+        PoolId poolIdAWETH = poolManagerContract.initializeNewPool(poolKeyAWETH, initialSqrtPriceX96);
+        
+        // Store the pool ID for later phases
+        tokenAWETHPoolId = poolIdAWETH;
+        
+        console.log("Pool TokenA/WETH created with ID:", bytes32(poolIdAWETH));
+        
+        // Verify second pool was created correctly
+        (hasAccruedFees, totalLiquidity, tickSpacing) = poolManagerContract.poolInfo(poolIdAWETH);
+        
+        // Assertions for second pool
+        assertFalse(hasAccruedFees, "WETH pool should not have accrued fees initially");
+        assertEq(totalLiquidity, 0, "WETH pool initial liquidity should be zero");
+        assertEq(tickSpacing, 60, "WETH pool tick spacing should match the requested value");
+        
+        // Test revert: Create a pool with non-dynamic fee
+        PoolKey memory nonDynamicKey = PoolKey({
+            currency0: Currency.wrap(address(tokenB)),
+            currency1: Currency.wrap(address(weth)),
+            fee: 3000, // Standard 0.3% fee
+            tickSpacing: 60,
+            hooks: IHooks(fullRangeAddress)
+        });
+        
+        console.log("Testing revert: Attempting to create pool with non-dynamic fee...");
+        vm.expectRevert(bytes("NotDynamicFee"));
+        poolManagerContract.initializeNewPool(nonDynamicKey, initialSqrtPriceX96);
+        console.log("Correctly reverted on non-dynamic fee");
+        
+        // End governance prank
+        vm.stopPrank();
+        
+        // 5. Test revert: Non-governance caller attempt
+        vm.startPrank(alice);
+        
+        console.log("Testing revert: Attempting to create pool as non-governance user...");
+        vm.expectRevert(bytes("Only authorized accounts can call this function"));
+        poolManagerContract.initializeNewPool(poolKeyAB, initialSqrtPriceX96);
+        console.log("Correctly reverted on unauthorized caller");
+        
+        vm.stopPrank();
+        
+        // Store that pools were created
+        poolsCreated = true;
+        
+        // Log success
+        console.log("Phase 3 test passed: Successfully created pools with dynamic fees");
+        console.log("TokenA/TokenB pool ID:", bytes32(poolIdAB));
+        console.log("TokenA/WETH pool ID:", bytes32(poolIdAWETH));
+        console.log("==== Phase 3 Complete ====");
     }
 
     /**
