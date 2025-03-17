@@ -439,8 +439,10 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
         
         // Test dynamic fee manager
         uint24 newMaxFee = 200000; // 20%
-        dynamicFeeManager.setMaxFeePpm(newMaxFee);
+        uint24 newMinFee = 100;    // 0.01%
+        dynamicFeeManager.setFeeBounds(newMinFee, newMaxFee);
         assertEq(dynamicFeeManager.maxFeePpm(), newMaxFee, "Max fee not updated");
+        assertEq(dynamicFeeManager.minFeePpm(), newMinFee, "Min fee not updated");
         
         // Test pool manager functionality
         PoolKey memory dummyKey = PoolKey({
