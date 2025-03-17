@@ -263,6 +263,11 @@ contract FullRangeE2ETestBase is Test {
         );
         console.log("FullRangeOracleManager deployed at:", address(oracleManager));
         
+        // Set a high block update threshold to effectively disable automatic oracle updates
+        // during the initialization phase of our test
+        oracleManager.setBlockUpdateThreshold(1000);
+        console.log("Oracle manager block update threshold set to disable automatic updates");
+        
         // Deploy dynamic fee manager (min fee, max fee, surge multiplier)
         dynamicFeeManager = new FullRangeDynamicFeeManager(
             MIN_DYNAMIC_FEE,
@@ -516,13 +521,14 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
         // Store the pool ID for later phases
         tokenATokenBPoolId = poolIdAB;
         
+        console.log("Pool TokenA/TokenB created successfully (ID stored for later phases)");
+        
+        // Now that the pool is created, we can enable the oracle for it
         console.log("Enabling oracle for TokenA/TokenB pool...");
         // Maximum tick movement allowed per update (about 9% price change)
         int24 maxTickMove = 900;
         truncGeoOracle.enableOracleForPool(poolKeyAB, maxTickMove);
         console.log("Oracle enabled for TokenA/TokenB pool");
-        
-        console.log("Pool TokenA/TokenB created successfully (ID stored for later phases)");
         
         // Verify pool was created correctly
         (bool hasAccruedFees, uint128 totalLiquidity, int24 tickSpacing) = poolManagerContract.poolInfo(poolIdAB);
@@ -551,11 +557,12 @@ contract FullRangeE2ETest is FullRangeE2ETestBase {
         // Store the pool ID for later phases
         tokenAWETHPoolId = poolIdAWETH;
         
+        console.log("Pool TokenA/WETH created successfully (ID stored for later phases)");
+        
+        // Now enable the oracle for the second pool
         console.log("Enabling oracle for TokenA/WETH pool...");
         truncGeoOracle.enableOracleForPool(poolKeyAWETH, maxTickMove);
         console.log("Oracle enabled for TokenA/WETH pool");
-        
-        console.log("Pool TokenA/WETH created successfully (ID stored for later phases)");
         
         // Verify second pool was created correctly
         (hasAccruedFees, totalLiquidity, tickSpacing) = poolManagerContract.poolInfo(poolIdAWETH);
