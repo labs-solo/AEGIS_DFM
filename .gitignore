@@ -13,3 +13,6 @@ out/
 
 # Node modules
 node_modules/
+
+# Scripts with sensitive API keys
+script/run_with_alchemy.sh
