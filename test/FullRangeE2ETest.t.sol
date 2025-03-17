@@ -76,6 +76,9 @@ contract FullRangeE2ETestBase is Test {
     
     // Environment status flags
     bool public environmentInitialized = false;
+    bool public contractsDeployed = false;
+    bool public poolsCreated = false;
+    bool public liquidityAdded = false;
 
     // Deployment addresses for later phases
     address public poolManagerAddress;
@@ -88,15 +91,8 @@ contract FullRangeE2ETestBase is Test {
     FullRangeOracleManager public oracleManager;
     FullRangeDynamicFeeManager public dynamicFeeManager;
     
-    // Hook permissions for mining
-    uint24 internal constant BEFORE_INITIALIZE_FLAG = 1 << 0;
-    uint24 internal constant AFTER_INITIALIZE_FLAG = 1 << 1;
-    uint24 internal constant BEFORE_SWAP_FLAG = 1 << 2;
-    uint24 internal constant AFTER_SWAP_FLAG = 1 << 3;
-    uint24 internal constant BEFORE_DONATE_FLAG = 1 << 4;
-    uint24 internal constant AFTER_DONATE_FLAG = 1 << 5;
-    uint24 internal constant BEFORE_MODIFY_POSITION_FLAG = 1 << 6;
-    uint24 internal constant AFTER_MODIFY_POSITION_FLAG = 1 << 7;
+    // Reference the standard Hooks flags from Uniswap v4-core library
+    // Rather than local definitions that don't match Uniswap's implementation
     
     // Dynamic fee constants
     uint24 internal constant DYNAMIC_FEE_FLAG = 0x800000;
@@ -266,12 +262,14 @@ contract FullRangeE2ETestBase is Test {
         // 2. Calculate the FullRange hook address with required permissions
         console.log("Mining hook address with required permissions...");
         uint160 flags = uint160(
-            BEFORE_INITIALIZE_FLAG | 
-            AFTER_INITIALIZE_FLAG | 
-            BEFORE_SWAP_FLAG | 
-            AFTER_SWAP_FLAG | 
-            BEFORE_MODIFY_POSITION_FLAG | 
-            AFTER_MODIFY_POSITION_FLAG
+            Hooks.BEFORE_INITIALIZE_FLAG | 
+            Hooks.AFTER_INITIALIZE_FLAG | 
+            Hooks.BEFORE_SWAP_FLAG | 
+            Hooks.AFTER_SWAP_FLAG | 
+            Hooks.BEFORE_ADD_LIQUIDITY_FLAG | 
+            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
+            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
         );
         
         // Get salt and hook address from HookMiner
