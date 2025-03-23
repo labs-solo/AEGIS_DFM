@@ -159,7 +159,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     constructor(
         address _poolManager,
         address _policyManager,
-        address _liquidityManager,
+        address payable _liquidityManager,
         address _dynamicFeeManager
     ) {
         if (_poolManager == address(0)) revert Errors.ZeroPoolManagerAddress();
@@ -226,7 +226,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         }
         
         // Generate a token ID for this pool and store it
-        poolData[poolId].tokenId = PoolTokenIdUtils.generateTokenId(poolId);
+        poolData[poolId].tokenId = PoolTokenIdUtils.toTokenId(poolId);
         
         emit PoolCreated(poolId, key, sqrtPriceX96);
         return poolId;
