@@ -103,20 +103,20 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
      * @notice Constructor
      */
     constructor(
-        address _poolManager,
-        address _policyManager,
-        address payable _liquidityManager,
-        address _dynamicFeeManager
+        IPoolManager _manager,
+        IPoolPolicy _policyManager,
+        FullRangeLiquidityManager _liquidityManager,
+        FullRangeDynamicFeeManager _dynamicFeeManager
     ) {
-        if (_poolManager == address(0)) revert Errors.ZeroPoolManagerAddress();
-        if (_policyManager == address(0)) revert Errors.ZeroPolicyManagerAddress();
-        if (_liquidityManager == address(0)) revert Errors.ZeroAddress();
-        if (_dynamicFeeManager == address(0)) revert Errors.ZeroAddress();
+        if (address(_manager) == address(0)) revert Errors.ZeroAddress();
+        if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
+        if (address(_liquidityManager) == address(0)) revert Errors.ZeroAddress();
+        if (address(_dynamicFeeManager) == address(0)) revert Errors.ZeroAddress();
 
-        poolManager = IPoolManager(_poolManager);
-        policyManager = IPoolPolicy(_policyManager);
-        liquidityManager = FullRangeLiquidityManager(_liquidityManager);
-        dynamicFeeManager = FullRangeDynamicFeeManager(_dynamicFeeManager);
+        poolManager = _manager;
+        policyManager = _policyManager;
+        liquidityManager = _liquidityManager;
+        dynamicFeeManager = _dynamicFeeManager;
         
         validateHookAddress();
     }
@@ -321,7 +321,6 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
      */
     function withdrawETH(WithdrawParams calldata params, PoolKey calldata poolKey)
         external
-        pure
         returns (uint256 amount0Out, uint256 amount1Out)
     {
         revert Errors.NotImplemented();
@@ -336,8 +335,6 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         
         pendingETHPayments[msg.sender] = 0;
         _safeTransferETH(msg.sender, amount);
-        
-        emit ETHClaimed(msg.sender, amount);
     }
 
     /**
@@ -479,8 +476,6 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         
         if (cbData.callbackType == 1) {
             // Deposit process
-            PoolKey memory key = poolKeys[cbData.poolId];
-            
             // No additional processing needed here since we've already
             // updated reserves and minted shares
             return abi.encode("deposit_success");
@@ -495,21 +490,18 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
     }
 
     /**
-     * @notice Hook implementation for beforeInitialize
-     * @dev Required to create a pool
+     * @notice Implementation for beforeInitialize hook
      */
     function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96) 
-        external 
-        override 
-        pure
-        returns (bytes4) 
+        external
+        override
+        returns (bytes4)
     {
         return IHooks.beforeInitialize.selector;
     }
 
     /**
-     * @notice Hook implementation for afterInitialize
-     * @dev Initialize pool data here
+     * @notice Implementation for afterInitialize hook
      */
     function afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
         external
@@ -518,7 +510,7 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
     {
         PoolId poolId = key.toId();
         
-        // Initialize pool data
+        // Store pool key and initialize pool data
         poolData[poolId] = PoolData({
             initialized: true,
             emergencyState: false,
@@ -527,7 +519,6 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
             tokenId: PoolTokenIdUtils.toTokenId(poolId)
         });
         
-        // Store pool key for future reference
         poolKeys[poolId] = key;
         
         // Initialize any policies if required
