@@ -73,6 +73,8 @@ library Errors {
     error PoolUnsupportedTickSpacing(int24 tickSpacing);
     error PoolInvalidFeeOrTickSpacing(uint24 fee, int24 tickSpacing);
     error PoolTickOutOfRange(int24 tick, int24 minTick, int24 maxTick);
+    error PoolInEmergencyState(PoolId poolId);
+    error PoolNotFound(PoolId poolId);
     
     // Liquidity errors
     error InsufficientAmount(uint256 requested, uint256 available);
