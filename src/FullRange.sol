@@ -195,7 +195,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         bytes calldata dynamicFeeValues
     ) external returns (PoolId) {
         // Verify hook is this contract
-        if (address(uint160(key.hooks)) != address(this)) {
+        if (address(key.hooks) != address(this)) {
             revert Errors.InvalidHookAddress(address(key.hooks));
         }
         
@@ -206,20 +206,17 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         }
         
         // Create the pool in the pool manager
-        PoolId poolId = poolManager.initialize(key, sqrtPriceX96, new bytes(0));
+        int24 tick = poolManager.initialize(key, sqrtPriceX96);
+        PoolId poolId = key.toId();
         
         // Set the pool data fields
         poolData[poolId].initialized = true;
         poolData[poolId].key = key;
         
-        // Initialize the pool if a dynamic fee was set
+        // Check if dynamic fee initialization is needed
         if (key.fee & 0x800000 != 0) {
-            // Delegate initialization to the dynamic fee manager
-            try dynamicFeeManager.initializeDynamicFee(
-                poolId,
-                key.fee,
-                dynamicFeeValues
-            ) {
+            // Initialize dynamic fee (code example, adjust as needed)
+            try dynamicFeeManager.initializeOracleData(poolId, tick) {
                 emit PolicyInitializationSucceeded(poolId);
             } catch Error(string memory reason) {
                 emit PolicyInitializationFailed(poolId, reason);
