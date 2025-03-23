@@ -17,7 +17,7 @@ pragma solidity 0.8.26;
  */
 
 import "forge-std/Test.sol";
-import "../src/FullRangeUtils.sol";
+import "../src/utils/FullRangeUtils.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 
 /**

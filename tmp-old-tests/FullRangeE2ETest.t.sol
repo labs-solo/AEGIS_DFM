@@ -26,7 +26,7 @@ import "../src/FullRangePoolManager.sol";
 import "../src/FullRangeLiquidityManager.sol";
 import "../src/FullRangeOracleManager.sol";
 import "../src/FullRangeDynamicFeeManager.sol";
-import "../src/FullRangeUtils.sol";
+import "../src/utils/FullRangeUtils.sol";
 import "../src/interfaces/IFullRange.sol";
 import "../src/oracle/TruncGeoOracleMulti.sol";
 import "../src/token/FullRangePositions.sol";

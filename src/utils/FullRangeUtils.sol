@@ -11,10 +11,10 @@ pragma solidity 0.8.26;
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
-import {MathUtils} from "./libraries/MathUtils.sol";
-import {Errors} from "./errors/Errors.sol";
+import {MathUtils} from "../libraries/MathUtils.sol";
+import {Errors} from "../errors/Errors.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
+import {IPoolPolicy} from "../interfaces/IPoolPolicy.sol";
 
 library FullRangeUtils {
     

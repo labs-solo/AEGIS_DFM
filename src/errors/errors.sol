@@ -32,6 +32,8 @@ library Errors {
     error ArrayLengthMismatch();
     error InvalidCallbackSalt();
     error InvalidPolicyImplementationsLength(uint256 length);
+    error NotInitialized();
+    error ReinvestmentDisabled();
     
     // Math errors
     error DivisionByZero();
