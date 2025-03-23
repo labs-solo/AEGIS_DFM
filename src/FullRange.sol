@@ -251,7 +251,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         }
         
         // Delegate to liquidityManager for calculation and processing
-        return liquidityManager.processDeposit(params, msg.sender);
+        return liquidityManager.deposit(params, msg.sender);
     }
 
     /**
@@ -286,7 +286,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         }
         
         // Delegate to liquidityManager for calculation and processing
-        return liquidityManager.processWithdraw(params, msg.sender);
+        return liquidityManager.withdraw(params, msg.sender);
     }
 
     /**
