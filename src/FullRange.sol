@@ -811,7 +811,11 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      * @return totalShares The total shares
      */
     function getPoolReservesAndShares(PoolId poolId) public view returns (uint256 reserve0, uint256 reserve1, uint128 totalShares) {
-        return (poolReserve0[poolId], poolReserve1[poolId], poolTotalShares[poolId]);
+        reserve0 = poolReserve0[poolId];
+        reserve1 = poolReserve1[poolId];
+        
+        // Get total shares from LiquidityManager using the public view function
+        totalShares = liquidityManager.totalShares(poolId);
     }
     
     /**

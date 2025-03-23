@@ -3,7 +3,7 @@ pragma solidity 0.8.26;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {IPoolPolicy} from "./IPoolPolicy.sol";
+import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 
 /**
  * @title IFeeReinvestmentManager
@@ -65,4 +65,4 @@ interface IFeeReinvestmentManager {
      * @return The amount of pending token1 fees
      */
     function pendingFees1(PoolId poolId) external view returns (uint256);
-}
+} 
