@@ -172,6 +172,18 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
+     * @notice Allows the contract to receive ETH (for failed transfer recovery)
+     */
+    receive() external payable {}
+
+    /**
+     * @notice Returns the address of this hook (for pool initialization).
+     */
+    function getHookAddress() external view returns (address) {
+        return address(this);
+    }
+
+    /**
      * @notice Creates a new pool with FullRange liquidity
      * @param key The pool key containing token information
      * @param sqrtPriceX96 The initial sqrt price of the pool
@@ -183,12 +195,13 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         bytes calldata dynamicFeeValues
     ) external returns (PoolId) {
         // Verify hook is this contract
-        if (address(uint160(uint256(key.hooks))) != address(this)) {
+        if (address(uint160(key.hooks)) != address(this)) {
             revert Errors.InvalidHookAddress(address(key.hooks));
         }
         
         // Check if caller is authorized to create a pool
-        if (!policyManager.canCreatePool(msg.sender)) {
+        address governance = policyManager.getSoloGovernance();
+        if (msg.sender != governance) {
             revert Errors.NotAuthorizedToCreatePool(msg.sender);
         }
         
@@ -245,6 +258,20 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
+     * @notice Deposits ETH and tokens into a Uniswap V4 pool via the FullRange hook
+     * @param params The deposit parameters
+     * @param poolKey The pool key for the deposit
+     */
+    function depositETH(DepositParams calldata params, PoolKey calldata poolKey)
+        external
+        payable
+    {
+        // This function is stubbed for interface compatibility
+        // Actual implementation is delegated to the liquidity manager
+        revert Errors.NotImplemented();
+    }
+
+    /**
      * @notice Withdraws liquidity from a pool
      * @param params The withdraw parameters
      * @return amount0 The amount of token0 withdrawn
@@ -263,6 +290,31 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         
         // Delegate to liquidityManager for calculation and processing
         return liquidityManager.processWithdraw(params, msg.sender);
+    }
+
+    /**
+     * @notice Withdraws liquidity with ETH handling from a Uniswap V4 pool
+     * @param params The withdrawal parameters
+     * @param poolKey The pool key for the withdrawal
+     * @return amount0Out Amount of token0 withdrawn.
+     * @return amount1Out Amount of token1 withdrawn.
+     */
+    function withdrawETH(WithdrawParams calldata params, PoolKey calldata poolKey)
+        external
+        returns (uint256 amount0Out, uint256 amount1Out)
+    {
+        // This function is stubbed for interface compatibility
+        // Actual implementation is delegated to the liquidity manager
+        revert Errors.NotImplemented();
+    }
+
+    /**
+     * @notice Claims pending ETH payments
+     */
+    function claimPendingETH() external {
+        // This function is stubbed for interface compatibility
+        // Actual implementation is delegated to the liquidity manager
+        liquidityManager.claimETH();
     }
 
     /**
@@ -324,6 +376,14 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         bytes4 selector;
         assembly {
             selector := shr(224, calldataload(0))
+        }
+        
+        // Special case for beforeInitialize
+        if (selector == IHooks.beforeInitialize.selector) {
+            assembly {
+                mstore(0, selector)
+                return(0, 32)
+            }
         }
         
         // Special case for beforeSwap to handle dynamic fee
@@ -390,6 +450,10 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     // These functions are stubs that are replaced by the fallback function
     // They are included only for interface compatibility
 
+    function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96) external override returns (bytes4) {
+        return IHooks.beforeInitialize.selector;
+    }
+
     function afterInitialize(address, PoolKey calldata, uint160, int24) external pure override returns (bytes4) {
         return IHooks.afterInitialize.selector;
     }
@@ -440,6 +504,10 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         return (IFullRangeHooks.afterAddLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
     
+    function afterRemoveLiquidityReturnDelta(address, PoolKey calldata, IPoolManager.ModifyLiquidityParams calldata, BalanceDelta, bytes calldata) external pure override returns (bytes4, BalanceDelta) {
+        return (IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+    
     // ------------------ Helper functions for compatibility ------------------
     
     /**
@@ -486,5 +554,35 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      */
     function getPoolReserves(PoolId poolId) public view returns (uint256 reserve0, uint256 reserve1) {
         return (poolData[poolId].reserve0, poolData[poolId].reserve1);
+    }
+
+    /**
+     * @notice Returns information about a pool's state and configuration.
+     * @param poolId The pool ID to query.
+     * @return isInitialized Whether the pool has been initialized. 
+     * @return reserves The current token reserves in the pool.
+     * @return totalShares The total supply of pool shares.
+     * @return tokenId The NFT token ID associated with the pool position.
+     */
+    function getPoolInfo(PoolId poolId) 
+        external 
+        view 
+        returns (
+            bool isInitialized,
+            uint256[2] memory reserves,
+            uint128 totalShares,
+            uint256 tokenId
+        ) 
+    {
+        isInitialized = poolData[poolId].initialized;
+        
+        if (isInitialized) {
+            reserves[0] = poolData[poolId].reserve0;
+            reserves[1] = poolData[poolId].reserve1;
+            totalShares = liquidityManager.totalShares(poolId);
+            tokenId = poolData[poolId].tokenId;
+        }
+        
+        return (isInitialized, reserves, totalShares, tokenId);
     }
 }
