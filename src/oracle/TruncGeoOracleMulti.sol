@@ -8,6 +8,7 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {TruncatedOracle} from "../libraries/TruncatedOracle.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {Errors} from "../errors/Errors.sol";
 
 /**
  * @title TruncGeoOracleMulti
@@ -24,8 +25,8 @@ contract TruncGeoOracleMulti {
     // The Uniswap V4 Pool Manager
     IPoolManager public immutable poolManager;
 
-    error OnlyOneOraclePoolAllowed();
-    error OraclePositionsMustBeFullRange();
+    // Number of historic observations to keep (roughly 24h at 1h sample rate)
+    uint32 internal constant SAMPLE_CAPACITY = 24;
 
     struct ObservationState {
         uint16 index;
@@ -56,12 +57,16 @@ contract TruncGeoOracleMulti {
     function enableOracleForPool(PoolKey calldata key, int24 initialMaxAbsTickMove) external {
         PoolId pid = key.toId();
         bytes32 id = PoolId.unwrap(pid);
-        require(states[id].cardinality == 0, "Pool already enabled");
+        
+        // Check if pool is already enabled
+        if (states[id].cardinality != 0) {
+            revert Errors.OracleOperationFailed("enableOracleForPool", "Pool already enabled");
+        }
         
         // Allow both the dynamic fee (0x800000 == 8388608) and fee == 0 pools
-        // Both should have tick spacing == 60
-        if ((key.fee != 0 && key.fee != 8388608) || key.tickSpacing != 60)
-            revert OnlyOneOraclePoolAllowed();
+        // Support any valid tick spacing (removed the tick spacing constraint)
+        if (key.fee != 0 && key.fee != 8388608)
+            revert Errors.OnlyDynamicFeePoolAllowed();
         
         maxAbsTickMove[id] = initialMaxAbsTickMove;
         (, int24 tick,,) = StateLibrary.getSlot0(poolManager, pid);
@@ -76,7 +81,12 @@ contract TruncGeoOracleMulti {
     function updateObservation(PoolKey calldata key) external {
         PoolId pid = key.toId();
         bytes32 id = PoolId.unwrap(pid);
-        require(states[id].cardinality > 0, "Pool not enabled in oracle");
+        
+        // Check if pool is enabled
+        if (states[id].cardinality == 0) {
+            revert Errors.OracleOperationFailed("updateObservation", "Pool not enabled in oracle");
+        }
+        
         (, int24 tick,,) = StateLibrary.getSlot0(poolManager, pid);
         int24 localMaxAbsTickMove = maxAbsTickMove[id];
         (states[id].index, states[id].cardinality) = observations[id].write(

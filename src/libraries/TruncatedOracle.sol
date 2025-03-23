@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.26;
 
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {MathUtils} from "./MathUtils.sol";
+
 /// @title Oracle
 /// @notice Provides price and liquidity data useful for a wide variety of system designs
 /// @dev Instances of stored oracle data, "observations", are collected in the oracle array
@@ -18,7 +21,8 @@ library TruncatedOracle {
     error TargetPredatesOldestObservation(uint32 oldestTimestamp, uint32 targetTimestamp);
 
     /// @notice This is the max amount of ticks in either direction that the pool is allowed to move at one time
-    int24 constant MAX_ABS_TICK_MOVE = 9116;
+    /// @dev Set to approximately 1% of the total tick range (MIN_TICK to MAX_TICK)
+    int24 constant MAX_ABS_TICK_MOVE = 9116; // = TickMath.MAX_TICK / 100 (rounded)
 
     struct Observation {
         // the block timestamp of the observation
@@ -48,12 +52,17 @@ library TruncatedOracle {
         unchecked {
             uint32 delta = blockTimestamp - last.blockTimestamp;
 
-            // if the current tick moves more than the max abs tick movement
-            // then we truncate it down
-            if ((tick - last.prevTick) > MAX_ABS_TICK_MOVE) {
-                tick = last.prevTick + MAX_ABS_TICK_MOVE;
-            } else if ((tick - last.prevTick) < -MAX_ABS_TICK_MOVE) {
-                tick = last.prevTick - MAX_ABS_TICK_MOVE;
+            // Enforce global tick boundaries using MathUtils for consistency
+            tick = MathUtils.clampTick(tick);
+            
+            // Calculate absolute tick movement using optimized implementation
+            uint24 tickMove = MathUtils.absDiff(tick, last.prevTick);
+            
+            // Cap tick movement if it exceeds the maximum allowed
+            if (tickMove > uint24(MAX_ABS_TICK_MOVE)) {
+                tick = tick > last.prevTick 
+                    ? last.prevTick + MAX_ABS_TICK_MOVE 
+                    : last.prevTick - MAX_ABS_TICK_MOVE;
             }
 
             return Observation({
@@ -168,13 +177,27 @@ library TruncatedOracle {
     /// The result may be the same observation, or adjacent observations.
     /// @dev The answer must be contained in the array, used when the target is located within the stored observation
     /// boundaries: older than the most recent observation and younger, or the same age as, the oldest observation
-    /// @param self The stored oracle array
-    /// @param time The current block.timestamp
-    /// @param target The timestamp at which the reserved observation should be for
-    /// @param index The index of the observation that was most recently written to the observations array
-    /// @param cardinality The number of populated elements in the oracle array
-    /// @return beforeOrAt The observation recorded before, or at, the target
-    /// @return atOrAfter The observation recorded at, or after, the target
+    /**
+     * @notice Performs a binary search to find observations surrounding the target timestamp
+     * @dev Uses a binary search algorithm to efficiently find the observations
+     *      closest to the requested timestamp. The function handles the circular
+     *      buffer structure of the observations array.
+     * 
+     *      The search works by:
+     *      1. Starting with the full range of observations (oldest to newest)
+     *      2. Repeatedly bisecting the range and narrowing the search
+     *      3. Checking if the target falls between the midpoint and its successor
+     *      4. Adjusting the search range accordingly
+     *      5. Continuing until we find two adjacent observations surrounding the target
+     * 
+     * @param self The stored oracle array
+     * @param time The current block.timestamp
+     * @param target The timestamp at which the reserved observation should be for
+     * @param index The index of the observation that was most recently written to the observations array
+     * @param cardinality The number of populated elements in the oracle array
+     * @return beforeOrAt The observation recorded before, or at, the target
+     * @return atOrAfter The observation recorded at, or after, the target
+     */
     function binarySearch(Observation[65535] storage self, uint32 time, uint32 target, uint16 index, uint16 cardinality)
         private
         view

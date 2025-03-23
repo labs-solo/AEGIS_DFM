@@ -4,6 +4,8 @@ pragma solidity 0.8.26;
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {ERC20} from "solmate/src/tokens/ERC20.sol";
+import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 
 /// @notice Library used to interact with PoolManager.sol to settle any open deltas.
 /// To settle a positive delta (a credit to the user), a user may take or mint.
@@ -26,9 +28,9 @@ library CurrencySettler {
         } else {
             manager.sync(currency);
             if (payer != address(this)) {
-                IERC20Minimal(Currency.unwrap(currency)).transferFrom(payer, address(manager), amount);
+                SafeTransferLib.safeTransferFrom(ERC20(Currency.unwrap(currency)), payer, address(manager), amount);
             } else {
-                IERC20Minimal(Currency.unwrap(currency)).transfer(address(manager), amount);
+                SafeTransferLib.safeTransfer(ERC20(Currency.unwrap(currency)), address(manager), amount);
             }
             manager.settle();
         }

@@ -14,6 +14,7 @@ pragma solidity 0.8.26;
 
 import {IFullRange, CallbackData, ModifyLiquidityParams} from "./interfaces/IFullRange.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
+import {Errors} from "./errors/Errors.sol";
 
 /**
  * @dev Minimal contract handling the callback data. 
@@ -39,7 +40,7 @@ contract FullRangeHooks {
 
         // 2. check salt
         if (cd.params.salt != FULL_RANGE_SALT) {
-            revert("InvalidCallbackSalt");
+            revert Errors.ValidationInvalidInput("InvalidCallbackSalt");
         }
 
         // 3. deposit vs. withdrawal identification
@@ -54,7 +55,7 @@ contract FullRangeHooks {
             return abi.encode(BalanceDelta.wrap(0), "withdrawCallback");
         } else {
             // zero liquidityDelta => no-op or revert, up to design
-            revert("ZeroLiquidityDelta");
+            revert Errors.ValidationZeroAmount("liquidityDelta");
         }
     }
 } 

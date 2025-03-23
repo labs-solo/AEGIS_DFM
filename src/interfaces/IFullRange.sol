@@ -4,11 +4,13 @@ pragma solidity 0.8.26;
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 
 /**
  * @title IFullRange
- * @notice Base interface for the FullRange multi-file architecture.
- * @dev Defines core data structures and minimal interface functions for the FullRange system.
+ * @notice Interface for the FullRange Uniswap V4 hook.
+ * @dev Defines core data structures and functions for interacting with FullRange liquidity positions.
  */
 
 /**
@@ -16,34 +18,30 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
  * @param poolId The identifier of the pool to deposit into
  * @param amount0Desired The desired amount of token0 to deposit
  * @param amount1Desired The desired amount of token1 to deposit
- * @param amount0Min The minimum amount of token0 to deposit (slippage protection)
- * @param amount1Min The minimum amount of token1 to deposit (slippage protection)
- * @param to The address that will receive any LP tokens or position NFTs
+ * @param minShares The minimum number of shares to receive (slippage protection)
  * @param deadline The deadline by which the transaction must be executed
  */
 struct DepositParams {
     PoolId poolId;
     uint256 amount0Desired;
     uint256 amount1Desired;
-    uint256 amount0Min;
-    uint256 amount1Min;
-    address to;
+    uint256 minShares;
     uint256 deadline;
 }
 
 /**
  * @notice Parameters for withdrawing liquidity from a pool
  * @param poolId The identifier of the pool to withdraw from
- * @param sharesBurn The amount of LP shares to burn
- * @param amount0Min The minimum amount of token0 to receive (slippage protection)
- * @param amount1Min The minimum amount of token1 to receive (slippage protection)
+ * @param sharesToBurn The amount of LP shares to burn
+ * @param minAmount0 The minimum amount of token0 to receive (slippage protection)
+ * @param minAmount1 The minimum amount of token1 to receive (slippage protection)
  * @param deadline The deadline by which the transaction must be executed
  */
 struct WithdrawParams {
     PoolId poolId;
-    uint256 sharesBurn;
-    uint256 amount0Min;
-    uint256 amount1Min;
+    uint256 sharesToBurn;
+    uint256 minAmount0;
+    uint256 minAmount1;
     uint256 deadline;
 }
 
@@ -77,40 +75,52 @@ struct ModifyLiquidityParams {
 
 /**
  * @notice Interface for the FullRange system
- * @dev Minimal interface for external integrations
+ * @dev Provides functions for depositing/withdrawing liquidity and managing the hook
  */
-interface IFullRange {
+interface IFullRange is IHooks {
     /**
-     * @notice Initializes a new pool with a dynamic fee
-     * @param key The pool key containing currency pair, fee, tickSpacing, and hooks
-     * @param initialSqrtPriceX96 The initial square root price of the pool
-     * @return poolId The ID of the created pool
+     * @notice Returns the address of this hook for use in pool initialization
+     * @return The address of this contract
      */
-    function initializeNewPool(
-        PoolKey calldata key,
-        uint160 initialSqrtPriceX96
-    ) external returns (PoolId poolId);
+    function getHookAddress() external view returns (address);
 
     /**
-     * @notice Deposits liquidity into a pool
+     * @notice Sets the emergency state for a specific pool
+     * @param poolId The pool ID to modify
+     * @param isEmergency Whether to enable or disable emergency state
+     */
+    function setPoolEmergencyState(PoolId poolId, bool isEmergency) external;
+
+    /**
+     * @notice Deposits ETH and tokens into a Uniswap V4 pool via the FullRange hook
      * @param params The deposit parameters
-     * @return delta The balance delta resulting from the deposit
+     * @param poolKey The pool key for the deposit
      */
-    function deposit(DepositParams calldata params) external returns (BalanceDelta delta);
+    function depositETH(DepositParams calldata params, PoolKey calldata poolKey)
+        external
+        payable;
 
     /**
-     * @notice Withdraws liquidity from a pool
+     * @notice Withdraws liquidity with ETH handling from a Uniswap V4 pool
      * @param params The withdrawal parameters
-     * @return delta The balance delta resulting from the withdrawal
-     * @return amount0Out The amount of token0 received
-     * @return amount1Out The amount of token1 received
+     * @param poolKey The pool key for the withdrawal
+     * @return amount0Out Amount of token0 withdrawn.
+     * @return amount1Out Amount of token1 withdrawn.
      */
-    function withdraw(WithdrawParams calldata params) 
-        external 
-        returns (BalanceDelta delta, uint256 amount0Out, uint256 amount1Out);
+    function withdrawETH(WithdrawParams calldata params, PoolKey calldata poolKey)
+        external
+        returns (uint256 amount0Out, uint256 amount1Out);
 
     /**
-     * @notice Claims and reinvests any accrued fees
+     * @notice Allows users to claim any pending ETH payments
      */
-    function claimAndReinvestFees() external;
+    function claimPendingETH() external;
+
+    /**
+     * @notice Claims and reinvests fees for a specific pool
+     * @param poolId The pool ID to reinvest fees for
+     * @return fee0 The amount of token0 fees claimed
+     * @return fee1 The amount of token1 fees claimed
+     */
+    function claimAndReinvestFees(PoolId poolId) external returns (uint256 fee0, uint256 fee1);
 } 

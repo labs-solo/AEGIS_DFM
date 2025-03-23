@@ -1,0 +1,1097 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.26;
+
+import { IFullRange, DepositParams, WithdrawParams, CallbackData, ModifyLiquidityParams } from "./interfaces/IFullRange.sol";
+import { PoolId, PoolIdLibrary } from "v4-core/src/types/PoolId.sol";
+import { PoolKey } from "v4-core/src/types/PoolKey.sol";
+import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
+import { IPoolManager } from "v4-core/src/interfaces/IPoolManager.sol";
+import { BalanceDelta, BalanceDeltaLibrary } from "v4-core/src/types/BalanceDelta.sol";
+import { Currency as UniswapCurrency } from "v4-core/src/types/Currency.sol";
+import { SafeTransferLib } from "solmate/src/utils/SafeTransferLib.sol";
+import { IUnlockCallback } from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
+import { FullRangePoolManager } from "./FullRangePoolManager.sol";
+import { FullRangeLiquidityManager } from "./FullRangeLiquidityManager.sol";
+import { FullRangeOracleManager } from "./FullRangeOracleManager.sol";
+import { FullRangeDynamicFeeManager } from "./FullRangeDynamicFeeManager.sol";
+import { FullRangeUtils } from "./FullRangeUtils.sol";
+import { Errors } from "./errors/Errors.sol";
+import { SettlementUtils } from "./utils/SettlementUtils.sol";
+import { TickMath } from "v4-core/src/libraries/TickMath.sol";
+import { ERC20 } from "solmate/src/tokens/ERC20.sol";
+import { Hooks } from "v4-core/src/libraries/Hooks.sol";
+import { BeforeSwapDelta, BeforeSwapDeltaLibrary } from "v4-core/src/types/BeforeSwapDelta.sol";
+import { IPoolPolicy } from "./interfaces/IPoolPolicy.sol";
+import { IFeePolicy } from "./interfaces/IFeePolicy.sol";
+import { IFeeReinvestmentManager } from "./interfaces/IFeeReinvestmentManager.sol";
+import { ReentrancyGuard } from "solmate/src/utils/ReentrancyGuard.sol";
+
+/**
+ * @title FullRange
+ * @notice Unified Uniswap V4 Hook contract with fallback dispatcher for all hook callbacks.
+ * @dev Implements IFullRange and uses a fallback function with inline assembly to dispatch hook calls.
+ *      This design avoids explicit hook function declarations, reducing bytecode size and runtime overhead.
+ *      Only the Uniswap V4 PoolManager is authorized to call hook functions (enforced in assembly).
+ */
+contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
+    // Immutable core contracts and managers
+    IPoolManager public immutable poolManager;
+    IPoolPolicy public immutable policyManager;
+    FullRangePoolManager public immutable fullRangePoolManager;
+    FullRangeLiquidityManager public immutable liquidityManager;
+    FullRangeOracleManager public immutable oracleManager;
+    FullRangeDynamicFeeManager public immutable dynamicFeeManager;
+
+    // Internal struct for unlock callback data decoding
+    struct CallbackDataInternal {
+        uint8 callbackType;    // 1 = deposit, 2 = withdraw, 3 = swap
+        address sender;        // Original transaction sender
+        PoolId poolId;         // Pool ID for the operation
+        uint256 amount0;       // Amount of token0
+        uint256 amount1;       // Amount of token1
+        uint256 shares;        // Liquidity shares (for deposits/withdrawals)
+    }
+
+    /**
+     * @notice Callback data structure used in unlock callbacks to communicate with the PoolManager
+     * @dev This structure serves a critical role in the pool's operation:
+     * 
+     * 1. DEPOSIT (callbackType=1):
+     *    - Sent from deposit/depositETH to poolManager.unlock
+     *    - Contains token amounts (amount0, amount1) to be deposited
+     *    - Includes shares to be minted to the user
+     *    - Processed by FullRangeLiquidityManager.processUnlockCallback
+     *
+     * 2. WITHDRAW (callbackType=2):
+     *    - Sent from withdraw/withdrawETH to poolManager.unlock
+     *    - Contains token amounts (amount0, amount1) to be withdrawn
+     *    - Includes shares that were burned from the user
+     *    - Processed by FullRangeLiquidityManager.processUnlockCallback
+     *
+     * This approach ensures that unlock callbacks are handled uniformly, with the
+     * callbackType determining the specific operation to be performed. The unlock
+     * callback is how we interact with the PoolManager to transfer tokens in/out
+     * of the Uniswap V4 pool during deposits and withdrawals.
+     */
+
+    // Mapping to track pending ETH withdrawals (for failed transfers)
+    mapping(address => uint256) public pendingETHPayments;
+    
+    // Track pool emergency state
+    mapping(PoolId => bool) public emergencyState;
+
+    // Events for ETH handling and pool policy initialization
+    event ETHTransferFailed(address indexed recipient, uint256 amount);
+    event ETHClaimed(address indexed recipient, uint256 amount);
+    event FeeUpdateFailed(PoolId indexed poolId);
+    event ReinvestmentSuccess(PoolId indexed poolId, uint256 amount0, uint256 amount1);
+    event ReinvestmentFailed(PoolId indexed poolId, string reason);
+    event PoolEmergencyStateChanged(PoolId indexed poolId, bool isEmergency);
+    event PolicyInitializationFailed(PoolId indexed poolId, string reason);
+    event PolicyInitializationSucceeded(PoolId indexed poolId);
+    
+    // Liquidity operation events
+    event Deposit(address indexed sender, PoolId indexed poolId, uint256 amount0, uint256 amount1, uint256 shares);
+    event Withdraw(address indexed sender, PoolId indexed poolId, uint256 amount0, uint256 amount1, uint256 shares);
+    event Swap(address indexed sender, PoolId indexed poolId, bool zeroForOne, int256 amountSpecified, uint256 amountOut);
+
+    // Modifiers for access control
+    modifier onlyGovernance() {
+        if (msg.sender != policyManager.getSoloGovernance()) {
+            revert Errors.AccessOnlyGovernance(msg.sender);
+        }
+        _;
+    }
+    modifier onlyPoolManager() {
+        if (msg.sender != address(poolManager)) {
+            revert Errors.AccessOnlyPoolManager(msg.sender);
+        }
+        _;
+    }
+    modifier ensure(uint256 deadline) {
+        if (deadline < block.timestamp) {
+            revert Errors.ValidationDeadlinePassed(uint32(deadline), uint32(block.timestamp));
+        }
+        _;
+    }
+
+    /**
+     * @notice Constructor initializes the FullRange hook with required managers.
+     * @dev Performs zero-address validation on critical parameters and stores immutables.
+     */
+    constructor(
+        IPoolManager _manager,
+        IPoolPolicy _policyManager,
+        FullRangePoolManager _poolManager,
+        FullRangeLiquidityManager _liquidityManager,
+        FullRangeOracleManager _oracleManager,
+        FullRangeDynamicFeeManager _dynamicFeeManager
+    ) {
+        // Validate critical addresses (non-zero)
+        if (address(_manager) == address(0)) revert Errors.ValidationZeroAddress("poolManager");
+        if (address(_policyManager) == address(0)) revert Errors.ValidationZeroAddress("policyManager");
+        if (address(_poolManager) == address(0)) revert Errors.ValidationZeroAddress("fullRangePoolManager");
+        if (address(_liquidityManager) == address(0)) revert Errors.ValidationZeroAddress("liquidityManager");
+        if (address(_oracleManager) == address(0)) revert Errors.ValidationZeroAddress("oracleManager");
+        if (address(_dynamicFeeManager) == address(0)) revert Errors.ValidationZeroAddress("dynamicFeeManager");
+
+        poolManager = _manager;
+        policyManager = _policyManager;
+        fullRangePoolManager = _poolManager;
+        liquidityManager = _liquidityManager;
+        oracleManager = _oracleManager;
+        dynamicFeeManager = _dynamicFeeManager;
+
+        // Validate that this hook contract has the expected permissions set
+        validateHookAddress();
+    }
+
+    /**
+     * @notice Allows the contract to receive ETH (e.g., refunds from failed transfers).
+     */
+    receive() external payable {}
+
+    /**
+     * @notice Returns the hook permissions for all Uniswap V4 hook callbacks (all enabled).
+     * @dev This constant indicates which hooks are implemented by this contract.
+     */
+    function getHookPermissions() public pure returns (Hooks.Permissions memory) {
+        return Hooks.Permissions({
+            beforeInitialize: true,
+            afterInitialize: true,
+            beforeAddLiquidity: true,
+            afterAddLiquidity: true,
+            beforeRemoveLiquidity: true,
+            afterRemoveLiquidity: true,
+            beforeSwap: true,
+            afterSwap: true,
+            beforeDonate: true,
+            afterDonate: true,
+            beforeSwapReturnDelta: true,
+            afterSwapReturnDelta: true,
+            afterAddLiquidityReturnDelta: true,
+            afterRemoveLiquidityReturnDelta: true
+        });
+    }
+
+    /**
+     * @notice Validates that this hook contract's declared permissions match its implemented hooks.
+     * @dev Uses Uniswap V4 Hooks library to ensure the contract correctly implements all declared hooks.
+     */
+    function validateHookAddress() internal view {
+        Hooks.validateHookPermissions(this, getHookPermissions());
+    }
+
+    // ---------------------------
+    // IFullRange External Functions
+    // ---------------------------
+
+    /**
+     * @notice Returns the address of this hook (for pool initialization).
+     */
+    function getHookAddress() external view returns (address) {
+        return address(this);
+    }
+
+    /**
+     * @notice Sets or unsets emergency state for a specific pool.
+     * @dev Only governance can call. In emergency, further operations may be restricted.
+     * @param poolId The pool ID to modify.
+     * @param isEmergency Whether to enable (true) or disable (false) emergency state.
+     */
+    function setPoolEmergencyState(PoolId poolId, bool isEmergency) external onlyGovernance {
+        // Update local emergency state
+        emergencyState[poolId] = isEmergency;
+        emit PoolEmergencyStateChanged(poolId, isEmergency);
+    }
+    
+    /**
+     * @notice Deposits tokens into a Uniswap V4 pool via the FullRange hook.
+     * @dev Accepts ERC20 tokens and adds liquidity to the specified pool.
+     * @param params The deposit parameters (poolId, amounts, slippage, deadline).
+     * @return shares The number of LP shares minted to the user.
+     * @return amount0 The actual amount of token0 deposited.
+     * @return amount1 The actual amount of token1 deposited.
+     */
+    function deposit(DepositParams calldata params) 
+        external 
+        nonReentrant 
+        ensure(params.deadline)
+        returns (uint256 shares, uint256 amount0, uint256 amount1) 
+    {
+        // Verify pool exists and is not in emergency state
+        if (!fullRangePoolManager.isPoolInitialized(params.poolId)) {
+            revert Errors.ValidationInvalidInput("Pool not initialized");
+        }
+        if (emergencyState[params.poolId]) {
+            revert Errors.ValidationInvalidInput("Pool in emergency state");
+        }
+        
+        // Verify desired deposit amounts are non-zero
+        if (params.amount0Desired == 0 && params.amount1Desired == 0) {
+            revert Errors.ValidationZeroAmount("amounts");
+        }
+        
+        // Get pool info
+        PoolKey memory key = fullRangePoolManager.getPoolKey(params.poolId);
+        (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(key);
+        
+        // Get current pool reserves and share information
+        (uint256 reserve0, uint256 reserve1, uint128 totalShares) = 
+            fullRangePoolManager.getPoolReservesAndShares(params.poolId);
+            
+        // Calculate optimal deposit amounts and shares to mint
+        (amount0, amount1, shares) = FullRangeUtils.computeDepositAmountsAndShares(
+            totalShares,
+            params.amount0Desired,
+            params.amount1Desired,
+            reserve0,
+            reserve1,
+            sqrtPriceX96
+        );
+        
+        // Check share slippage protection
+        if (shares < params.minShares) {
+            revert Errors.ValidationInvalidInput("Shares below minimum threshold");
+        }
+        
+        // Transfer tokens from user to this contract
+        FullRangeUtils.pullTokensFromUser(
+            address(key.currency0),
+            address(key.currency1),
+            msg.sender,
+            amount0,
+            amount1
+        );
+        
+        // Prepare callback data
+        CallbackDataInternal memory callbackData = CallbackDataInternal({
+            callbackType: 1, // 1 = deposit
+            sender: msg.sender,
+            poolId: params.poolId,
+            amount0: amount0,
+            amount1: amount1,
+            shares: shares
+        });
+        
+        // Call the poolManager unlock to process the deposit
+        poolManager.unlock(abi.encode(callbackData));
+        
+        // Add user's shares to their balance in pool manager
+        fullRangePoolManager.addUserShares(params.poolId, msg.sender, shares);
+        
+        emit Deposit(msg.sender, params.poolId, amount0, amount1, shares);
+        return (shares, amount0, amount1);
+    }
+
+    /**
+     * @notice Deposits ETH and tokens into a Uniswap V4 pool via the FullRange hook.
+     * @dev Similar to deposit() but allows ETH to be used for either token0 or token1.
+     * @param params The deposit parameters (poolId, amounts, slippage, deadline).
+     * @param currencyIndex Which currency (0 or 1) ETH is being used for.
+     * @return shares The number of LP shares minted to the user.
+     * @return amount0 The actual amount of token0 deposited.
+     * @return amount1 The actual amount of token1 deposited.
+     */
+    function depositETH(DepositParams calldata params, uint8 currencyIndex)
+        external
+        payable
+        nonReentrant
+        ensure(params.deadline)
+        returns (uint256 shares, uint256 amount0, uint256 amount1)
+    {
+        // Verify pool exists and is not in emergency state
+        if (!fullRangePoolManager.isPoolInitialized(params.poolId)) {
+            revert Errors.ValidationInvalidInput("Pool not initialized");
+        }
+        if (emergencyState[params.poolId]) {
+            revert Errors.ValidationInvalidInput("Pool in emergency state");
+        }
+        
+        // Get pool info
+        PoolKey memory key = fullRangePoolManager.getPoolKey(params.poolId);
+        (uint160 sqrtPriceX96, , , ) = poolManager.getSlot0(key);
+        
+        // Get current pool reserves and share information
+        (uint256 reserve0, uint256 reserve1, uint128 totalShares) = 
+            fullRangePoolManager.getPoolReservesAndShares(params.poolId);
+            
+        // Calculate optimal deposit amounts and shares to mint
+        (amount0, amount1, shares) = FullRangeUtils.computeDepositAmountsAndShares(
+            totalShares,
+            params.amount0Desired,
+            params.amount1Desired,
+            reserve0,
+            reserve1,
+            sqrtPriceX96
+        );
+        
+        // Check share slippage protection
+        if (shares < params.minShares) {
+            revert Errors.ValidationInvalidInput("Insufficient shares minted");
+        }
+        
+        // Handle ETH deposits
+        if (currencyIndex == 0) {
+            // ETH is token0
+            if (address(key.currency0) != address(0)) {
+                revert Errors.ValidationInvalidInput("Currency0 is not ETH");
+            }
+            // Verify sent ETH amount is sufficient
+            if (msg.value < amount0) {
+                revert Errors.TokenInsufficientEth(amount0, msg.value);
+            }
+            // Pull token1 from user (ERC20)
+            if (amount1 > 0) {
+                SafeTransferLib.safeTransferFrom(
+                    ERC20(address(key.currency1)), 
+                    msg.sender, 
+                    address(this), 
+                    amount1
+                );
+            }
+        } else if (currencyIndex == 1) {
+            // ETH is token1
+            if (address(key.currency1) != address(0)) {
+                revert Errors.ValidationInvalidInput("Currency1 is not ETH");
+            }
+            // Verify sent ETH amount is sufficient
+            if (msg.value < amount1) {
+                revert Errors.TokenInsufficientEth(amount1, msg.value);
+            }
+            // Pull token0 from user (ERC20)
+            if (amount0 > 0) {
+                SafeTransferLib.safeTransferFrom(
+                    ERC20(address(key.currency0)), 
+                    msg.sender, 
+                    address(this), 
+                    amount0
+                );
+            }
+        } else {
+            revert Errors.ValidationInvalidInput("Invalid currency index");
+        }
+        
+        // Prepare callback data
+        CallbackDataInternal memory callbackData = CallbackDataInternal({
+            callbackType: 1, // 1 = deposit
+            sender: msg.sender,
+            poolId: params.poolId,
+            amount0: amount0,
+            amount1: amount1,
+            shares: shares
+        });
+        
+        // Call the poolManager unlock to process the deposit
+        poolManager.unlock(abi.encode(callbackData));
+        
+        // Add user's shares to their balance in pool manager
+        fullRangePoolManager.addUserShares(params.poolId, msg.sender, shares);
+        
+        // Refund excess ETH if any
+        uint256 ethContribution = currencyIndex == 0 ? amount0 : amount1;
+        if (msg.value > ethContribution) {
+            // Refund excess ETH
+            _safeTransferETH(msg.sender, msg.value - ethContribution);
+        }
+        
+        emit Deposit(msg.sender, params.poolId, amount0, amount1, shares);
+        return (shares, amount0, amount1);
+    }
+    
+    /**
+     * @notice Withdraws liquidity from a Uniswap V4 pool via the FullRange hook.
+     * @dev Burns LP shares and returns the corresponding token amounts.
+     * @param params The withdrawal parameters (poolId, shares, slippage, deadline).
+     * @return amount0 The amount of token0 withdrawn.
+     * @return amount1 The amount of token1 withdrawn.
+     */
+    function withdraw(WithdrawParams calldata params)
+        external
+        nonReentrant
+        ensure(params.deadline)
+        returns (uint256 amount0, uint256 amount1)
+    {
+        // Verify shares to burn is non-zero
+        if (params.sharesToBurn == 0) {
+            revert Errors.ValidationZeroAmount("sharesToBurn");
+        }
+        
+        // Verify user has enough shares
+        uint256 userSharesBalance = getUserShares(params.poolId, msg.sender);
+        if (userSharesBalance < params.sharesToBurn) {
+            revert Errors.ValidationInvalidInput("Insufficient user shares");
+        }
+        
+        // Get pool information
+        PoolKey memory key = fullRangePoolManager.getPoolKey(params.poolId);
+        (uint256 reserve0, uint256 reserve1, uint128 totalShares) = 
+            fullRangePoolManager.getPoolReservesAndShares(params.poolId);
+            
+        // Calculate withdrawal amounts based on share ratio
+        (amount0, amount1) = FullRangeUtils.computeWithdrawAmounts(
+            totalShares,
+            params.sharesToBurn,
+            reserve0,
+            reserve1
+        );
+        
+        // Check slippage protection
+        if (amount0 < params.minAmount0 || amount1 < params.minAmount1) {
+            revert Errors.ValidationInvalidInput("Withdraw amounts below minimum thresholds");
+        }
+        
+        // Prepare callback data for the unlock
+        CallbackDataInternal memory callbackData = CallbackDataInternal({
+            callbackType: 2, // 2 = withdraw
+            sender: msg.sender,
+            poolId: params.poolId,
+            amount0: amount0,
+            amount1: amount1,
+            shares: params.sharesToBurn
+        });
+        
+        // Remove user's shares from their balance
+        fullRangePoolManager.removeUserShares(params.poolId, msg.sender, params.sharesToBurn);
+        
+        // Call the poolManager unlock to process the withdrawal
+        poolManager.unlock(abi.encode(callbackData));
+        
+        // Transfer tokens to user
+        if (amount0 > 0) {
+            address token0 = address(key.currency0);
+            if (token0 != address(0)) {
+                SafeTransferLib.safeTransfer(ERC20(token0), msg.sender, amount0);
+            } else {
+                // Handle ETH transfers using the safe helper
+                _safeTransferETH(msg.sender, amount0);
+            }
+        }
+        
+        if (amount1 > 0) {
+            address token1 = address(key.currency1);
+            if (token1 != address(0)) {
+                SafeTransferLib.safeTransfer(ERC20(token1), msg.sender, amount1);
+            } else {
+                // Handle ETH transfers using the safe helper
+                _safeTransferETH(msg.sender, amount1);
+            }
+        }
+        
+        emit Withdraw(msg.sender, params.poolId, amount0, amount1, params.sharesToBurn);
+        return (amount0, amount1);
+    }
+
+    /**
+     * @notice Withdraws liquidity with ETH handling from a Uniswap V4 pool.
+     * @dev Burns LP shares and returns the corresponding tokens, converting ETH if necessary.
+     * @param params The withdrawal parameters (poolId, shares, slippage, deadline).
+     * @return amount0 The amount of token0 withdrawn.
+     * @return amount1 The amount of token1 withdrawn.
+     */
+    function withdrawETH(WithdrawParams calldata params)
+        external
+        nonReentrant
+        ensure(params.deadline)
+        returns (uint256 amount0, uint256 amount1)
+    {
+        // Verify user has enough shares
+        uint256 userSharesBalance = getUserShares(params.poolId, msg.sender);
+        if (userSharesBalance < params.sharesToBurn) {
+            revert Errors.ValidationInvalidInput("Insufficient shares");
+        }
+        
+        // Get pool information
+        PoolKey memory key = fullRangePoolManager.getPoolKey(params.poolId);
+        bool hasEth = address(key.currency0) == address(0) || address(key.currency1) == address(0);
+        
+        if (!hasEth) {
+            revert Errors.ValidationInvalidInput("Neither token is ETH");
+        }
+        
+        (uint256 reserve0, uint256 reserve1, uint128 totalShares) = 
+            fullRangePoolManager.getPoolReservesAndShares(params.poolId);
+            
+        // Calculate withdrawal amounts based on share ratio
+        (amount0, amount1) = FullRangeUtils.computeWithdrawAmounts(
+            totalShares,
+            params.sharesToBurn,
+            reserve0,
+            reserve1
+        );
+        
+        // Check slippage protection
+        if (amount0 < params.minAmount0 || amount1 < params.minAmount1) {
+            revert Errors.ValidationInvalidInput("Slippage protection triggered");
+        }
+        
+        // Prepare callback data for the unlock
+        CallbackDataInternal memory callbackData = CallbackDataInternal({
+            callbackType: 2, // 2 = withdraw
+            sender: msg.sender,
+            poolId: params.poolId,
+            amount0: amount0,
+            amount1: amount1,
+            shares: params.sharesToBurn
+        });
+        
+        // Remove user's shares from their balance
+        fullRangePoolManager.removeUserShares(params.poolId, msg.sender, params.sharesToBurn);
+        
+        // Call the poolManager unlock to process the withdrawal
+        poolManager.unlock(abi.encode(callbackData));
+        
+        // Transfer tokens to user, handling ETH separately
+        if (amount0 > 0) {
+            address token0 = address(key.currency0);
+            if (token0 != address(0)) {
+                SafeTransferLib.safeTransfer(ERC20(token0), msg.sender, amount0);
+            } else {
+                // Handle ETH transfers using the safe helper
+                _safeTransferETH(msg.sender, amount0);
+            }
+        }
+        
+        if (amount1 > 0) {
+            address token1 = address(key.currency1);
+            if (token1 != address(0)) {
+                SafeTransferLib.safeTransfer(ERC20(token1), msg.sender, amount1);
+            } else {
+                // Handle ETH transfers using the safe helper
+                _safeTransferETH(msg.sender, amount1);
+            }
+        }
+        
+        emit Withdraw(msg.sender, params.poolId, amount0, amount1, params.sharesToBurn);
+        return (amount0, amount1);
+    }
+    
+    /**
+     * @notice Allows users to claim any pending ETH payments from failed transfers.
+     * @dev Tries to send any pending ETH stored for the caller.
+     *      This function is necessary because ETH transfers may fail in certain scenarios:
+     *      1. When the recipient is a contract without a receive/fallback function
+     *      2. When the recipient contract's receive/fallback function reverts
+     *      3. When excessive gas consumption occurs during the receive/fallback function
+     *
+     *      In such cases, the ETH is stored in pendingETHPayments for later retrieval.
+     *      This two-step approach ensures funds are not lost due to transfer failures.
+     */
+    function claimETH() external nonReentrant {
+        uint256 pendingAmount = pendingETHPayments[msg.sender];
+        if (pendingAmount == 0) {
+            revert Errors.ZeroAmount();
+        }
+        
+        // Reset pending amount before transfer to prevent reentrancy
+        pendingETHPayments[msg.sender] = 0;
+        
+        // Attempt to transfer ETH with explicit gas limit to prevent DoS attacks
+        (bool success, ) = msg.sender.call{value: pendingAmount}("");
+        if (!success) {
+            // If transfer still fails, restore the pending amount
+            pendingETHPayments[msg.sender] = pendingAmount;
+            emit ETHTransferFailed(msg.sender, pendingAmount);
+            revert Errors.EthTransferFailed(msg.sender, pendingAmount);
+        }
+        
+        emit ETHClaimed(msg.sender, pendingAmount);
+    }
+
+    /**
+     * @notice Safe transfer of ETH to recipient with fallback to pending payments
+     * @dev Internal helper to safely transfer ETH with proper error handling
+     * @param recipient The address to receive ETH
+     * @param amount The amount of ETH to send
+     */
+    function _safeTransferETH(address recipient, uint256 amount) internal {
+        if (amount == 0) return;
+        
+        // Attempt to transfer ETH with explicit gas limit to prevent DoS attacks
+        (bool success, ) = recipient.call{value: amount, gas: 50000}("");
+        if (!success) {
+            // If transfer fails, store as pending payment
+            pendingETHPayments[recipient] += amount;
+            emit ETHTransferFailed(recipient, amount);
+        }
+    }
+
+    /**
+     * @notice Allows governance to trigger reinvestment of accumulated fees into the pool.
+     * @dev Uses the fee reinvestment policy to determine how to distribute fees.
+     * @param poolId The pool ID to reinvest fees for.
+     */
+    function reinvestFees(PoolId poolId) external nonReentrant {
+        // Get the reinvestment policy
+        address reinvestmentPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
+        if (reinvestmentPolicy == address(0)) {
+            revert Errors.ValidationZeroAddress("reinvestmentPolicy");
+        }
+        
+        try IFeeReinvestmentManager(reinvestmentPolicy).processReinvestmentIfNeeded(poolId, 0) {
+            // Reinvestment processing successful
+        } catch Error(string memory reason) {
+            emit ReinvestmentFailed(poolId, reason);
+        } catch {
+            emit ReinvestmentFailed(poolId, "Unknown error");
+        }
+    }
+    
+    /**
+     * @notice Updates the dynamic fee for a pool based on market conditions.
+     * @dev Uses the dynamic fee manager to calculate the appropriate fee tier.
+     * @param poolId The pool ID to update fees for.
+     */
+    function updatePoolFee(PoolId poolId) external nonReentrant {
+        if (emergencyState[poolId]) {
+            revert Errors.ValidationInvalidInput("Pool in emergency state");
+        }
+        
+        try dynamicFeeManager.updatePoolFee(poolId) {
+            // Fee update succeeded
+        } catch {
+            emit FeeUpdateFailed(poolId);
+        }
+    }
+
+    /**
+     * @notice Returns information about a pool's state and configuration.
+     * @param poolId The pool ID to query.
+     * @return initialized Whether the pool has been initialized.
+     * @return reserves The current token reserves in the pool.
+     * @return totalShares The total supply of pool shares.
+     * @return tokenId The NFT token ID associated with the pool position.
+     */
+    function getPoolInfo(PoolId poolId) 
+        external 
+        view 
+        returns (
+            bool initialized,
+            uint256[2] memory reserves,
+            uint128 totalShares,
+            uint256 tokenId
+        ) 
+    {
+        initialized = fullRangePoolManager.isPoolInitialized(poolId);
+        
+        if (initialized) {
+            (uint256 reserve0, uint256 reserve1, uint128 shares) = 
+                fullRangePoolManager.getPoolReservesAndShares(poolId);
+                
+            reserves[0] = reserve0;
+            reserves[1] = reserve1;
+            totalShares = shares;
+            tokenId = fullRangePoolManager.getPoolTokenId(poolId);
+        }
+        
+        return (initialized, reserves, totalShares, tokenId);
+    }
+    
+    /**
+     * @notice Returns a user's balance of shares in a specific pool.
+     * @param poolId The pool ID to query.
+     * @param user The user address to check.
+     * @return shares The number of pool shares owned by the user.
+     */
+    function getUserShares(PoolId poolId, address user) public view returns (uint256) {
+        return fullRangePoolManager.getUserShares(poolId, user);
+    }
+
+    /**
+     * @notice Returns whether a pool is in emergency state.
+     * @param poolId The pool ID to query.
+     * @return True if the pool is in emergency state, false otherwise.
+     */
+    function isPoolInEmergencyState(PoolId poolId) external view returns (bool) {
+        return emergencyState[poolId];
+    }
+
+    /**
+     * @notice Fallback function used as a unified dispatcher for all hook callbacks.
+     * @dev Uses inline assembly to identify the function selector and dispatch to the appropriate logic.
+     *      Enforces that only the PoolManager can invoke hook functions. Simple hooks return immediately with constants,
+     *      while complex hooks delegate to internal handlers for decoding and processing.
+     *      
+     *      This unified handler approach reduces bytecode size compared to implementing each hook explicitly.
+     *      The dispatch table is structured by function selector, with each hook either:
+     *      1. Returning a constant value (for simple hooks) 
+     *      2. Delegating to an internal function (for complex hooks requiring business logic)
+     * 
+     *      SELECTOR REFERENCE TABLE:
+     *      --------------------------------------------------------------------------------------------------
+     *      | Selector    | Function                           | Type   | Description                        |
+     *      --------------------------------------------------------------------------------------------------
+     *      | 0x259982e5  | beforeAddLiquidity                 | simple | Pre-liquidity addition check      |
+     *      | 0x21d0ee70  | beforeRemoveLiquidity              | simple | Pre-liquidity removal check       |
+     *      | 0xb6a8b0fa  | beforeDonate                       | simple | Pre-donation check                |
+     *      | 0xe1b4af69  | afterDonate                        | simple | Post-donation processing          |
+     *      | 0x9f063efc  | afterAddLiquidity                  | simple | Post-liquidity addition handling  |
+     *      | 0x6c2bbe7e  | afterRemoveLiquidity               | simple | Post-liquidity removal handling   |
+     *      | 0x8f778db1  | beforeSwapReturnDelta              | simple | Pre-swap with delta option        |
+     *      | 0xf074b135  | afterSwapReturnDelta               | simple | Post-swap with delta option       |
+     *      | 0x7310a74e  | afterAddLiquidityReturnDelta       | simple | Post-add with delta option        |
+     *      | 0xaa1c88c0  | afterRemoveLiquidityReturnDelta    | simple | Post-remove with delta option     |
+     *      | 0xb47b2fb1  | afterSwap                          | simple | Post-swap processing              |
+     *      | 0xdc98354e  | beforeInitialize                   | complex| Pool initialization validation    |
+     *      | 0x6fe7e6eb  | afterInitialize                    | complex| Pool policy initialization        |
+     *      | 0x575e24b4  | beforeSwap                         | complex| Pre-swap validation/fee adjustment|
+     *      --------------------------------------------------------------------------------------------------
+     */
+    fallback() external {
+        // Inline assembly for efficient dispatch on function selector
+        address pm = address(poolManager);
+        assembly {
+            // Only allow the PoolManager contract to call hook functions
+            if iszero(eq(caller(), pm)) {
+                // Revert with AccessOnlyPoolManager(address caller)
+                mstore(0x00, 0x13bf46b400000000000000000000000000000000000000000000000000000000)  // Error selector for AccessOnlyPoolManager(address)
+                mstore(0x04, caller())
+                revert(0x00, 0x24)
+            }
+            
+            // Load the 4-byte function selector from calldata
+            let selector := shr(224, calldataload(0))
+            
+            // Dispatch based on selector value, organized by hook function
+            switch selector
+            
+            // --- SIMPLE HOOKS (no business logic, return constant values) ---
+            
+            // beforeAddLiquidity: Called before the pool adds liquidity
+            // Returns: bytes4 = beforeAddLiquidity.selector (no custom logic needed)
+            case 0x259982e5 { // beforeAddLiquidity(address,PoolKey,ModifyLiquidityParams,bytes) -> (bytes4)
+                mstore(0x00, 0x259982e5)                     // IHooks.beforeAddLiquidity.selector
+                return(0x00, 0x20)
+            }
+            
+            // beforeRemoveLiquidity: Called before the pool removes liquidity
+            // Returns: bytes4 = beforeRemoveLiquidity.selector (no custom logic needed)
+            case 0x21d0ee70 { // beforeRemoveLiquidity(address,PoolKey,ModifyLiquidityParams,bytes) -> (bytes4)
+                mstore(0x00, 0x21d0ee70)                     // IHooks.beforeRemoveLiquidity.selector
+                return(0x00, 0x20)
+            }
+            
+            // beforeDonate: Called before tokens are donated to the pool
+            // Returns: bytes4 = beforeDonate.selector (no custom logic needed)
+            case 0xb6a8b0fa { // beforeDonate(address,PoolKey,uint256,uint256,bytes) -> (bytes4)
+                mstore(0x00, 0xb6a8b0fa)                     // IHooks.beforeDonate.selector
+                return(0x00, 0x20)
+            }
+            
+            // afterDonate: Called after tokens are donated to the pool
+            // Returns: bytes4 = afterDonate.selector (no custom logic needed)
+            case 0xe1b4af69 { // afterDonate(address,PoolKey,uint256,uint256,bytes) -> (bytes4)
+                mstore(0x00, 0xe1b4af69)                     // IHooks.afterDonate.selector
+                return(0x00, 0x20)
+            }
+            
+            // afterAddLiquidity: Called after liquidity is added to the pool
+            // Returns: (bytes4 = afterAddLiquidity.selector, BalanceDelta = zero delta)
+            // Zero delta means we don't make any balance adjustments
+            case 0x9f063efc { // afterAddLiquidity(address,PoolKey,ModifyLiquidityParams,BalanceDelta,BalanceDelta,bytes) -> (bytes4, BalanceDelta)
+                mstore(0x00, 0x9f063efc)                     // IHooks.afterAddLiquidity.selector
+                mstore(0x20, 0)                             // BalanceDeltaLibrary.ZERO_DELTA (int256 zero)
+                return(0x00, 0x40)
+            }
+            
+            // afterRemoveLiquidity: Called after liquidity is removed from the pool
+            // Returns: (bytes4 = afterRemoveLiquidity.selector, BalanceDelta = zero delta)
+            // Zero delta means we don't make any balance adjustments
+            case 0x6c2bbe7e { // afterRemoveLiquidity(address,PoolKey,ModifyLiquidityParams,BalanceDelta,BalanceDelta,bytes) -> (bytes4, BalanceDelta)
+                mstore(0x00, 0x6c2bbe7e)                     // IHooks.afterRemoveLiquidity.selector
+                mstore(0x20, 0)                             // ZERO_DELTA
+                return(0x00, 0x40)
+            }
+            
+            // beforeSwapReturnDelta: Called before a swap with option to return delta
+            // Returns: (bytes4 = beforeSwapReturnDelta.selector, BeforeSwapDelta = zero delta)
+            // Zero delta means no swap delta modifications are made
+            case 0x8f778db1 { // beforeSwapReturnDelta(address,PoolKey,SwapParams,bytes) -> (bytes4, BeforeSwapDelta)
+                mstore(0x00, 0x8f778db1)                     // IHooks.beforeSwapReturnDelta.selector
+                mstore(0x20, 0)                             // BeforeSwapDeltaLibrary.ZERO_DELTA (int256 zero)
+                return(0x00, 0x40)
+            }
+            
+            // afterSwapReturnDelta: Called after a swap with option to return delta
+            // Returns: (bytes4 = afterSwapReturnDelta.selector, BalanceDelta = zero delta)
+            // Zero delta means no post-swap balance adjustments
+            case 0xf074b135 { // afterSwapReturnDelta(address,PoolKey,SwapParams,BalanceDelta,bytes) -> (bytes4, BalanceDelta)
+                mstore(0x00, 0xf074b135)                     // IHooks.afterSwapReturnDelta.selector
+                mstore(0x20, 0)                             // ZERO_DELTA
+                return(0x00, 0x40)
+            }
+            
+            // afterAddLiquidityReturnDelta: Called after liquidity addition with option to return delta
+            // Returns: (bytes4 = afterAddLiquidityReturnDelta.selector, BalanceDelta = zero delta)
+            // Zero delta means no post-liquidity-add balance adjustments
+            case 0x7310a74e { // afterAddLiquidityReturnDelta(address,PoolKey,ModifyLiquidityParams,BalanceDelta,BalanceDelta,bytes) -> (bytes4, BalanceDelta)
+                mstore(0x00, 0x7310a74e)                     // IHooks.afterAddLiquidityReturnDelta.selector
+                mstore(0x20, 0)                             // ZERO_DELTA
+                return(0x00, 0x40)
+            }
+            
+            // afterRemoveLiquidityReturnDelta: Called after liquidity removal with option to return delta
+            // Returns: (bytes4 = afterRemoveLiquidityReturnDelta.selector, BalanceDelta = zero delta)
+            // Zero delta means no post-liquidity-remove balance adjustments
+            case 0xaa1c88c0 { // afterRemoveLiquidityReturnDelta(address,PoolKey,ModifyLiquidityParams,BalanceDelta,BalanceDelta,bytes) -> (bytes4, BalanceDelta)
+                mstore(0x00, 0xaa1c88c0)                     // IHooks.afterRemoveLiquidityReturnDelta.selector
+                mstore(0x20, 0)                             // ZERO_DELTA
+                return(0x00, 0x40)
+            }
+            
+            // afterSwap: Called after a swap occurs
+            // Returns: (bytes4 = afterSwap.selector, int128 = 0)
+            // Zero int128 means we don't make any post-swap adjustments
+            case 0xb47b2fb1 { // afterSwap(address,PoolKey,SwapParams,BalanceDelta,bytes) -> (bytes4, int128)
+                mstore(0x00, 0xb47b2fb1)                     // IHooks.afterSwap.selector
+                mstore(0x20, 0)                             // int128 zero (as 256-bit, sign-extended)
+                return(0x00, 0x40)
+            }
+            
+            // --- COMPLEX HOOKS (require business logic, delegated to internal functions) ---
+            
+            // beforeInitialize: Called before a pool is initialized, needs policy validation
+            // Returns: bytes4 = beforeInitialize.selector
+            case 0xdc98354e { // beforeInitialize(address,PoolKey,uint160) -> (bytes4)
+                // Step 1: Decode parameters from calldata
+                let sender := shr(96, calldataload(4))                       // address sender (160-bit) from bytes 4-35
+                
+                // Step 2: Extract PoolKey and compute PoolId
+                // PoolKey occupies 5 slots (currency0, currency1, fee, tickSpacing, hooks) starting at byte 36
+                let keyPtr := mload(0x40)
+                calldatacopy(keyPtr, 36, 160)                                // copy PoolKey data to memory
+                let poolIdHash := keccak256(keyPtr, 160)                     // compute PoolId (keccak of PoolKey fields)
+                
+                // Step 3: Extract sqrtPriceX96
+                let sqrtPriceX96 := calldataload(196)                        // uint160 sqrtPriceX96 from bytes 196-227
+                
+                // Step 4: Call internal handler for beforeInitialize (policy validation)
+                // Note: We pass poolIdHash as PoolId (bytes32), which is ABI-compatible with PoolId type.
+                mstore(0x00, sender)
+                mstore(0x20, poolIdHash)
+                mstore(0x40, sqrtPriceX96)
+                
+                // Step 5: Prepare function signature for _beforeInitializeInternal
+                mstore(0x60, 0x50fc0c5d00000000000000000000000000000000000000000000000000000000) // function selector for _beforeInitializeInternal
+                
+                // Step 6: Call the internal function and handle result
+                let success := staticcall(gas(), address(), 0x00, 0x64, 0x00, 0x20)
+                
+                // Step 7: Process result or revert
+                if iszero(success) { 
+                    // Bubble up the revert reason if any
+                    returndatacopy(0, 0, returndatasize())
+                    revert(0, returndatasize()) 
+                }
+                return(0x00, 0x20)
+            }
+            
+            // afterInitialize: Called after a pool is initialized, handles policy initialization
+            // Returns: bytes4 = afterInitialize.selector
+            case 0x6fe7e6eb { // afterInitialize(address,PoolKey,uint160,int24) -> (bytes4)
+                // Step 1: Decode parameters from calldata
+                let sender := shr(96, calldataload(4))                       // address sender
+                
+                // Step 2: Extract PoolKey and compute PoolId
+                let keyPtr := mload(0x40)
+                calldatacopy(keyPtr, 36, 160)
+                let poolIdHash := keccak256(keyPtr, 160)
+                
+                // Step 3: Extract sqrtPriceX96 and tick
+                let sqrtPriceX96 := calldataload(196)                        // uint160 sqrtPriceX96
+                let tick := shr(232, calldataload(228))                      // int24 tick (sign-extended in 32 bytes, extract lower 24 bits)
+                
+                // Step 4: Call internal handler for afterInitialize (policy initialization)
+                mstore(0x00, sender)
+                mstore(0x20, poolIdHash)
+                mstore(0x40, sqrtPriceX96)
+                
+                // Step 5: Pack int24 tick into 32 bytes (preserve sign)
+                // calldataload already provided a 256-bit with tick in low bits and sign extension, so reuse directly:
+                mstore(0x60, calldataload(228))
+                
+                // Step 6: Prepare function signature for _afterInitializeInternal
+                mstore(0x80, 0x2653e09a00000000000000000000000000000000000000000000000000000000) // selector for _afterInitializeInternal
+                
+                // Step 7: Call the internal function and handle result
+                let success := call(gas(), address(), 0, 0x00, 0x84, 0x00, 0x20)
+                
+                // Step 8: Process result or revert
+                if iszero(success) { 
+                    // Bubble up the revert reason if any
+                    returndatacopy(0, 0, returndatasize())
+                    revert(0, returndatasize()) 
+                }
+                return(0x00, 0x20)
+            }
+            
+            // beforeSwap: Called before swap, may implement dynamic fee or other swap adjustments
+            // Returns: (bytes4, BeforeSwapDelta, uint24) - selector, swap delta, and optional new fee
+            case 0x575e24b4 { // beforeSwap(address,PoolKey,SwapParams,bytes) -> (bytes4, BeforeSwapDelta, uint24)
+                // Step 1: Decode parameters from calldata
+                let sender := shr(96, calldataload(4))                       // address sender
+                
+                // Step 2: Extract PoolKey and compute PoolId
+                let keyPtr := mload(0x40)
+                calldatacopy(keyPtr, 36, 160)
+                let poolIdHash := keccak256(keyPtr, 160)
+                
+                // Step 3: Extract SwapParams
+                // SwapParams (bool, int256, uint160) spans bytes 196-291 (3 words)
+                let zeroForOne := byte(0, calldataload(196))                 // bool zeroForOne (1 byte at byte 196)
+                let amountSpecified := calldataload(228)                     // int256 amountSpecified (bytes 228-259)
+                let sqrtPriceLimitX96 := calldataload(260)                   // uint160 sqrtPriceLimitX96 (bytes 260-291)
+                
+                // Step 4: Call internal handler for beforeSwap (could incorporate dynamic fee logic)
+                mstore(0x00, sender)
+                mstore(0x20, poolIdHash)
+                mstore(0x40, zeroForOne)
+                mstore(0x60, amountSpecified)
+                mstore(0x80, sqrtPriceLimitX96)
+                
+                // Step 5: Prepare selector for _beforeSwapInternal
+                mstore(0xA0, 0x5c3f959200000000000000000000000000000000000000000000000000000000) // selector for _beforeSwapInternal
+                
+                // Step 6: Call the internal function and handle result
+                let success := staticcall(gas(), address(), 0x00, 0xA4, 0x00, 0x60)
+                
+                // Step 7: Process result or revert
+                if iszero(success) { 
+                    // Bubble up the revert reason if any
+                    returndatacopy(0, 0, returndatasize())
+                    revert(0, returndatasize()) 
+                }
+                
+                // The internal function returns (bytes4, BeforeSwapDelta, uint24) packed in 96 bytes
+                return(0x00, 0x60)
+            }
+            
+            default {
+                // Revert with InvalidInput for any undefined selector
+                mstore(0x00, 0x16232f8000000000000000000000000000000000000000000000000000000000)  // Error selector for Errors.InvalidInput()
+                revert(0x00, 0x04)
+            }
+        }
+    }
+
+    // ---------------------------
+    // Internal Hook Handler Functions
+    // ---------------------------
+
+    /**
+     * @dev Internal handler for the beforeInitialize hook. Validates pool parameters via policy manager.
+     * @param sender The address that initiated the pool initialization.
+     * @param poolId The PoolId derived from the PoolKey.
+     * @param sqrtPriceX96 The initial sqrt price for the pool.
+     * @return bytes4 The selector (IHooks.beforeInitialize.selector) if validation passes.
+     */
+    function _beforeInitializeInternal(
+        address sender,
+        PoolId poolId,
+        uint160 sqrtPriceX96
+    ) internal view returns (bytes4) {
+        // Ensure the hook address in the PoolKey is this contract
+        if (address(PoolIdLibrary.key(poolId).hooks) != address(this)) {
+            revert Errors.HookInvalidAddress(address(PoolIdLibrary.key(poolId).hooks));
+        }
+        // Retrieve relevant policy contracts for validation
+        address poolCreationPolicyAddr = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.POOL_CREATION);
+        address vTierPolicyAddr = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.VTIER);
+        address tickScalingPolicyAddr = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.TICK_SCALING);
+        // Interface cast for policy checks
+        if (!IPoolPolicy(poolCreationPolicyAddr).canCreatePool(sender, PoolIdLibrary.key(poolId))) {
+            revert Errors.HookNotAuthorizedToCreatePool(sender);
+        }
+        if (!poolManager.isDynamicFee(PoolIdLibrary.key(poolId).fee)) {
+            revert Errors.FeeNotDynamic(PoolIdLibrary.key(poolId).fee);
+        }
+        if (!IPoolPolicy(tickScalingPolicyAddr).isTickSpacingSupported(PoolIdLibrary.key(poolId).tickSpacing)) {
+            revert Errors.PoolUnsupportedTickSpacing(PoolIdLibrary.key(poolId).tickSpacing);
+        }
+        if (!IPoolPolicy(vTierPolicyAddr).isValidVtier(PoolIdLibrary.key(poolId).fee, PoolIdLibrary.key(poolId).tickSpacing)) {
+            revert Errors.PoolInvalidFeeOrTickSpacing(PoolIdLibrary.key(poolId).fee, PoolIdLibrary.key(poolId).tickSpacing);
+        }
+        if (sqrtPriceX96 < TickMath.MIN_SQRT_PRICE || sqrtPriceX96 > TickMath.MAX_SQRT_PRICE) {
+            revert Errors.PoolTickOutOfRange(
+                TickMath.getTickAtSqrtRatio(sqrtPriceX96),
+                TickMath.MIN_TICK,
+                TickMath.MAX_TICK
+            );
+        }
+        return IHooks.beforeInitialize.selector;
+    }
+
+    /**
+     * @dev Internal handler for the afterInitialize hook. Executes pool policy initialization.
+     * @param sender The address that initiated the pool initialization.
+     * @param poolId The PoolId of the newly created pool.
+     * @param sqrtPriceX96 The initial sqrt price for the pool.
+     * @param tick The initial tick of the pool (returned from core initialize).
+     * @return bytes4 The selector (IHooks.afterInitialize.selector) after processing.
+     */
+    function _afterInitializeInternal(
+        address sender,
+        PoolId poolId,
+        uint160 sqrtPriceX96,
+        int24 tick
+    ) internal returns (bytes4) {
+        // Derive all policy implementations for the pool
+        address[] memory implementations = FullRangeUtils.getPoolPolicyImplementations(policyManager, poolId);
+        // Invoke pool creation handling in policy manager
+        policyManager.handlePoolInitialization(poolId, PoolIdLibrary.key(poolId), sqrtPriceX96, tick, address(this));
+        // Try to initialize all policies for the pool and emit events based on outcome
+        try policyManager.initializePolicies(poolId, policyManager.getSoloGovernance(), implementations) {
+            emit PolicyInitializationSucceeded(poolId);
+        } catch Error(string memory reason) {
+            emit PolicyInitializationFailed(poolId, reason);
+        } catch {
+            emit PolicyInitializationFailed(poolId, "Unknown error");
+        }
+        return IHooks.afterInitialize.selector;
+    }
+
+    /**
+     * @dev Internal handler for the beforeSwap hook. Currently returns no swap adjustment and default fee.
+     * @param sender The address that initiated the swap.
+     * @param poolId The PoolId of the pool where the swap occurs.
+     * @param zeroForOne Whether the swap is token0 -> token1 (true) or token1 -> token0 (false).
+     * @param amountSpecified The swap amount specification (negative for exact in, positive for exact out).
+     * @param sqrtPriceLimitX96 The swap price limit.
+     * @return selector The hook function selector (IHooks.beforeSwap.selector).
+     * @return swapDelta The BeforeSwapDelta (zero delta indicating no custom behavior).
+     * @return newFee The uint24 fee (zero indicates no fee change; actual fee remains as pool default).
+     */
+    function _beforeSwapInternal(
+        address sender,
+        PoolId poolId,
+        bool zeroForOne,
+        int256 amountSpecified,
+        uint160 sqrtPriceLimitX96
+    ) internal view returns (bytes4 selector, BeforeSwapDelta swapDelta, uint24 newFee) {
+        // (Optional) Dynamic fee logic could be integrated here using dynamicFeeManager.
+        // For now, no adjustments: return zero delta and no fee change.
+        selector = IHooks.beforeSwap.selector;
+        swapDelta = BeforeSwapDeltaLibrary.ZERO_DELTA;
+        newFee = 0;
+    }
+
+    // ---------------------------
+    // Pool Manager Unlock Callback
+    // ---------------------------
+
+    /**
+     * @notice Called by the PoolManager after a flash unlock to handle post-operation logic.
+     * @dev Only the PoolManager can call this. Decodes the callback data and delegates to the liquidity manager.
+     * @param data Encoded CallbackDataInternal specifying the context of the unlock (deposit/withdraw/swap).
+     * @return returnData The data returned from processing the unlock callback (e.g., balance deltas).
+     */
+    function unlockCallback(bytes calldata data) external override onlyPoolManager returns (bytes memory returnData) {
+        // Decode the internal callback data structure
+        CallbackDataInternal memory callbackData = abi.decode(data, (CallbackDataInternal));
+        // Retrieve the full PoolKey for the pool from the FullRangePoolManager
+        PoolKey memory key = fullRangePoolManager.getPoolKey(callbackData.poolId);
+        uint256 tokenId = fullRangePoolManager.getPoolTokenId(callbackData.poolId);
+        // Delegate processing to the FullRangeLiquidityManager
+        returnData = liquidityManager.processUnlockCallback(callbackData, key, tokenId);
+    }
+} 

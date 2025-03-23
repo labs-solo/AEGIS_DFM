@@ -1,16 +1,31 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {PositionManager} from "v4-periphery/src/PositionManager.sol";
+/*
+ * This file has been commented out as part of migrating to local Uniswap V4 testing.
+ * It is kept for reference but is no longer used in the project.
+ */
+
+/*
+import {Currency} from "v4-core/src/types/Currency.sol";
+
+// temporary permit2 import until we properly handle it via package (need matching versions of fork/package)
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
 
-/// @notice Shared constants used in scripts
-contract Constants {
-    address constant CREATE2_DEPLOYER = address(0x4e59b44847b379578588920cA78FbF26c0B4956C);
+/// @notice Common constants used across the base scripts
+abstract contract Constants {
+    // Copied from Uniswap's repo
+    uint160 public constant SQRT_PRICE_1_1 = 79228162514264337593543950336;
+    uint160 public constant SQRT_PRICE_1_X = 158456325028528675187087900672;
+    uint160 public constant SQRT_PRICE_10_1 = 250541448375047931186413801569;
+    uint160 public constant TICK_SPACING_60 = 60;
+    uint160 public constant TICK_SPACING_200 = 200;
+    uint160 public constant TICK_SPACING_2000 = 2000;
+    uint160 public constant POOL_SWAP_FEE_LOW = 3000;
+    uint160 public constant POOL_SWAP_FEE_MEDIUM = 10000;
+    uint160 public constant POOL_SWAP_FEE_HIGH = 100000;
 
-    /// @dev populated with default anvil addresses
-    IPoolManager constant POOLMANAGER = IPoolManager(address(0x5FbDB2315678afecb367f032d93F642f64180aa3));
-    PositionManager constant posm = PositionManager(payable(address(0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0)));
-    IAllowanceTransfer constant PERMIT2 = IAllowanceTransfer(address(0x000000000022D473030F116dDEE9F6B43aC78BA3));
+    // Permit2 address is always the same
+    address constant permit2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
 }
+*/
