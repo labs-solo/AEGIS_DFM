@@ -24,7 +24,7 @@ contract SimpleV4Test is LocalUniswapV4TestBase {
     function test_addLiquidity() public {
         // ======================= ARRANGE =======================
         // Set a small liquidity amount to avoid arithmetic overflow in token transfers
-        uint128 liquidityAmount = 1e12; 
+        uint128 liquidityAmount = 1e9;
         
         // Record Alice's initial token balances for later comparison
         console2.log("Alice token0 balance before:", token0.balanceOf(alice));
@@ -58,7 +58,7 @@ contract SimpleV4Test is LocalUniswapV4TestBase {
     function test_swap() public {
         // ======================= ARRANGE =======================
         // Set a small liquidity amount to avoid arithmetic overflow
-        uint128 liquidityAmount = 1e12;
+        uint128 liquidityAmount = 1e9;
         
         // Approve tokens for both liquidity provider (Alice) and swapper (Bob)
         vm.startPrank(alice);
@@ -83,7 +83,7 @@ contract SimpleV4Test is LocalUniswapV4TestBase {
         // ======================= ACT =======================
         // Perform a swap: Bob trades token0 for token1
         // Use a very small amount to avoid overflow issues
-        uint256 swapAmount = 1e10;
+        uint256 swapAmount = 1e8;
         swapExactInput(bob, true, swapAmount);
         
         // ======================= ASSERT =======================

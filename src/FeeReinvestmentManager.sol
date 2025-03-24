@@ -8,136 +8,137 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {FullRangeLiquidityManager} from "./FullRangeLiquidityManager.sol";
 import {IFullRangeLiquidityManager} from "./interfaces/IFullRangeLiquidityManager.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {BalanceDelta, toBalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {MathUtils} from "./libraries/MathUtils.sol";
 import {Errors} from "./errors/Errors.sol";
-import {Currency as UniswapCurrency} from "v4-core/src/types/Currency.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
+import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {IFullRange} from "./interfaces/IFullRange.sol";
 
 /**
  * @title FeeReinvestmentManager
- * @notice Manages fee claiming, reinvestment, and protocol-owned liquidity (POL)
+ * @notice Optimized implementation for managing fee claiming, reinvestment, and protocol-owned liquidity (POL)
+ * @dev Hybrid approach combining efficiency optimizations with flexibility preservation
  */
-contract FeeReinvestmentManager is IFeeReinvestmentManager {
-    // Main Uniswap V4 pool manager
+contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard {
+    using PoolIdLibrary for PoolKey;
+    
+    // ================ IMMUTABLE STATE ================
+    
+    /// @notice The Uniswap V4 pool manager
     IPoolManager public immutable poolManager;
     
-    // The full range contract address 
+    /// @notice The FullRange contract address
     address public immutable fullRange;
     
-    // Governance address for POL withdrawals
-    address public governanceTreasury;
+    // ================ CONFIGURATION ================
     
-    // Fee reinvestment threshold (in basis points, default 10 = 0.1%)
-    uint256 public feeReinvestmentThresholdBps = 10;
+    /// @notice Operation modes for fee reinvestment
+    enum ReinvestmentMode { ALWAYS, THRESHOLD_CHECK, NEVER }
     
-    // Fee claims and reinvestment tracking
-    mapping(PoolId => uint256) public uninvestedFee0;
-    mapping(PoolId => uint256) public uninvestedFee1;
-    
-    // Protocol-owned liquidity tracking
-    mapping(PoolId => uint256) public protocolOwnedLiquidity;
-    
-    // Pool reserves tracking
-    mapping(bytes32 => uint256) public token0Reserves;
-    mapping(bytes32 => uint256) public token1Reserves;
-    
-    // Pool to track total liquidity
-    mapping(PoolId => uint256) public totalLiquidity;
-    
-    // Circuit breaker state
-    bool public reinvestmentPaused;
-    mapping(PoolId => bool) public poolReinvestmentPaused;
-    
-    // Configuration for hook-triggered reinvestment
-    bool public reinvestOnHooks = true;
-    
-    // Tracks pending ETH payments from failed transfers
-    mapping(address => uint256) public pendingETHPayments;
-    
-    // Pending fees for each pool
-    mapping(PoolId => uint256) public pendingFees0;
-    mapping(PoolId => uint256) public pendingFees1;
-    
-    // Total fees reinvested for each pool
-    mapping(PoolId => uint256) public totalFees0Reinvested;
-    mapping(PoolId => uint256) public totalFees1Reinvested;
-    
-    /**
-     * @dev Enum representing different fee reinvestment modes.
-     */
-    enum ReinvestmentMode {
-        ALWAYS,           // Always reinvest
-        THRESHOLD_CHECK,  // Reinvest based on a threshold check
-        NEVER             // Never reinvest
-    }
-    
-    // Default reinvestment mode.
+    /// @notice Default reinvestment mode
     ReinvestmentMode public defaultReinvestmentMode = ReinvestmentMode.ALWAYS;
     
-    // External contract references
+    /// @notice Governance address for POL withdrawals
+    address public governanceTreasury;
+    
+    /// @notice Fee reinvestment threshold (in basis points, default 10 = 0.1%)
+    uint256 public feeReinvestmentThresholdBps = 10;
+    
+    /// @notice Minimum time between fee collections
+    uint256 public minimumFeeCollectionInterval = 1 hours;
+    
+    /// @notice Minimum time between reinvestments
+    uint256 public minimumReinvestmentInterval = 4 hours;
+    
+    /// @notice Global reinvestment pause switch
+    bool public reinvestmentPaused;
+    
+    /// @notice Fee distribution settings (in PPM, must sum to 1,000,000)
+    uint256 public polSharePpm = 100000;      // 10% default
+    uint256 public fullRangeSharePpm = 100000; // 10% default
+    uint256 public lpSharePpm = 800000;       // 80% default
+    
+    // ================ POOL STATE ================
+    
+    /// @notice Consolidated pool fee state structure
+    struct PoolFeeState {
+        uint256 pendingFee0;                 // Pending token0 fees
+        uint256 pendingFee1;                 // Pending token1 fees
+        uint256 cumulativeFeeMultiplier;     // Current fee multiplier (0 = default)
+        uint256 lastFeeCollectionTimestamp;  // Last time fees were collected
+        uint256 lastSuccessfulReinvestment;  // Last time reinvestment succeeded
+        bool reinvestmentPaused;             // Pool-specific pause flag
+    }
+    
+    // ================ STORAGE ================
+    
+    /// @notice Consolidated fee state for each pool
+    mapping(PoolId => PoolFeeState) public poolFeeStates;
+    
+    /// @notice Pending LP fees for token0
+    mapping(PoolId => uint256) public lpFeesPending0;
+    
+    /// @notice Pending LP fees for token1
+    mapping(PoolId => uint256) public lpFeesPending1;
+    
+    /// @notice Reference to the liquidity manager
     IFullRangeLiquidityManager public liquidityManager;
-    address public fullRangePoolManager;
     
-    // Events
-    event ReservesUpdated(PoolId indexed poolId, uint256 reserve0Added, uint256 reserve1Added);
-    event POLUpdated(PoolId indexed poolId, uint256 newPOL);
-    event POLWithdrawn(PoolId indexed poolId, uint256 sharesToWithdraw, uint256 amount0, uint256 amount1);
+    /// @notice Reference to the policy manager
+    IPoolPolicy public policyManager;
+    
+    // ================ CONSTANTS ================
+    
+    /// @notice Default multiplier value
+    uint256 private constant DEFAULT_MULTIPLIER = 1e18;
+    
+    /// @notice PPM denominator (100%)
+    uint256 private constant PPM_DENOMINATOR = 1000000;
+    
+    // ================ EVENTS ================
+    
+    /// @notice Emitted when fees are accumulated from pool
     event FeesAccumulated(PoolId indexed poolId, uint256 fee0, uint256 fee1);
-    event FeeReinvestmentThresholdUpdated(uint256 oldThreshold, uint256 newThreshold);
-    event ReinvestmentModeChanged(ReinvestmentMode oldMode, ReinvestmentMode newMode);
-    event ReinvestmentPaused(address indexed pauser);
-    event ReinvestmentResumed(address indexed resumer);
-    event PoolReinvestmentPaused(PoolId indexed poolId, address indexed pauser);
-    event PoolReinvestmentResumed(PoolId indexed poolId, address indexed resumer);
+    
+    /// @notice Emitted when a configuration value is updated
+    event ConfigUpdated(string indexed configName, bytes value);
+    
+    /// @notice Emitted when fee distribution settings are updated
+    event FeeDistributionUpdated(uint256 polShare, uint256 fullRangeShare, uint256 lpShare);
+    
+    /// @notice Emitted when the fee multiplier is updated
+    event FeeMultiplierUpdated(PoolId indexed poolId, uint256 oldMultiplier, uint256 newMultiplier);
+    
+    /// @notice Emitted when reinvestment is paused or resumed
+    event ReinvestmentStatusChanged(bool globalPaused);
+    
+    /// @notice Emitted when pool-specific reinvestment is paused or resumed
+    event PoolReinvestmentStatusChanged(PoolId indexed poolId, bool paused);
+    
+    /// @notice Emitted when reinvestment mode is changed
+    event ReinvestmentModeChanged(ReinvestmentMode mode);
+    
+    /// @notice Emitted when reinvestment thresholds are updated
+    event ReinvestmentThresholdUpdated(uint256 thresholdBps);
+    
+    /// @notice Emitted when LP fees are accumulated
+    event LPFeesAccumulated(PoolId indexed poolId, uint256 amount0, uint256 amount1);
+    
+    /// @notice Emitted when POL is accumulated
+    event POLAccrued(PoolId indexed poolId, uint256 amount0, uint256 amount1);
+    
+    /// @notice Emitted when reinvestment fails
     event ReinvestmentFailed(PoolId indexed poolId, string reason);
-    event ConfigUpdated(string indexed key, address indexed newValue);
-    event FeesReinvested(PoolId indexed poolId, uint256 amount0, uint256 amount1, uint256 shares);
+    
+    // ================ MODIFIERS ================
     
     /**
-     * @notice Constructor
-     * @param _poolManager The Uniswap V4 pool manager
-     * @param _fullRange The FullRange contract address
-     * @param _governance The governance address for POL withdrawals
-     */
-    constructor(IPoolManager _poolManager, address _fullRange, address _governance) {
-        poolManager = _poolManager;
-        fullRange = _fullRange;
-        governanceTreasury = _governance;
-    }
-    
-    /**
-     * @notice Set the liquidityManager address
-     * @param _liquidityManager The address of the FullRangeLiquidityManager
-     */
-    function setLiquidityManager(address _liquidityManager) external onlyGovernance {
-        if (_liquidityManager == address(0)) revert Errors.ValidationZeroAddress("liquidityManager");
-        liquidityManager = IFullRangeLiquidityManager(_liquidityManager);
-        emit ConfigUpdated("liquidityManager", _liquidityManager);
-    }
-    
-    /**
-     * @notice Set the fullRangePoolManager address
-     * @param _fullRangePoolManager The address of the FullRangePoolManager
-     */
-    function setFullRangePoolManager(address _fullRangePoolManager) external onlyGovernance {
-        if (_fullRangePoolManager == address(0)) revert Errors.ValidationZeroAddress("fullRangePoolManager");
-        fullRangePoolManager = _fullRangePoolManager;
-        emit ConfigUpdated("fullRangePoolManager", _fullRangePoolManager);
-    }
-    
-    /**
-     * @notice Modifier to ensure only the FullRange contract can call
-     */
-    modifier onlyFullRange() {
-        if (msg.sender != fullRange) revert Errors.AccessNotAuthorized(msg.sender);
-        _;
-    }
-    
-    /**
-     * @notice Modifier to ensure only governance can call
+     * @notice Ensures only governance can call a function
      */
     modifier onlyGovernance() {
         if (msg.sender != governanceTreasury) revert Errors.AccessOnlyGovernance(msg.sender);
@@ -145,430 +146,703 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager {
     }
     
     /**
-     * @notice Set the fee reinvestment threshold (in basis points)
+     * @notice Ensures only the FullRange contract can call a function
+     */
+    modifier onlyFullRange() {
+        if (msg.sender != fullRange) revert Errors.AccessNotAuthorized(msg.sender);
+        _;
+    }
+    
+    // ================ CONSTRUCTOR ================
+    
+    /**
+     * @notice Constructor initializes the contract with required dependencies
+     * @param _poolManager The Uniswap V4 pool manager
+     * @param _fullRange The FullRange contract address
+     * @param _governance The governance address
+     * @param _policyManager The policy manager contract
+     */
+    constructor(
+        IPoolManager _poolManager,
+        address _fullRange,
+        address _governance,
+        IPoolPolicy _policyManager
+    ) {
+        if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
+        if (_fullRange == address(0)) revert Errors.ZeroAddress();
+        if (_governance == address(0)) revert Errors.ZeroAddress();
+        if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
+        
+        poolManager = _poolManager;
+        fullRange = _fullRange;
+        governanceTreasury = _governance;
+        policyManager = _policyManager;
+    }
+    
+    // ================ CONFIGURATION FUNCTIONS ================
+    
+    /**
+     * @notice Sets the liquidity manager address
+     * @param _liquidityManager The address of the FullRangeLiquidityManager
+     */
+    function setLiquidityManager(address _liquidityManager) external onlyGovernance {
+        if (_liquidityManager == address(0)) revert Errors.ZeroAddress();
+        liquidityManager = IFullRangeLiquidityManager(_liquidityManager);
+        emit ConfigUpdated("liquidityManager", abi.encode(_liquidityManager));
+    }
+    
+    /**
+     * @notice Sets the governance treasury address
+     * @param _treasury New treasury address
+     */
+    function setGovernanceTreasury(address _treasury) external onlyGovernance {
+        if (_treasury == address(0)) revert Errors.ZeroAddress();
+        governanceTreasury = _treasury;
+        emit ConfigUpdated("governanceTreasury", abi.encode(_treasury));
+    }
+    
+    /**
+     * @notice Pause global fee reinvestment functionality
+     * @param paused True to pause, false to resume
+     */
+    function setReinvestmentPaused(bool paused) external onlyGovernance {
+        reinvestmentPaused = paused;
+        emit ReinvestmentStatusChanged(paused);
+    }
+    
+    /**
+     * @notice Pause fee reinvestment for a specific pool
+     * @param poolId The pool to pause reinvestment for
+     * @param paused True to pause, false to resume
+     */
+    function setPoolReinvestmentPaused(PoolId poolId, bool paused) external onlyGovernance {
+        poolFeeStates[poolId].reinvestmentPaused = paused;
+        emit PoolReinvestmentStatusChanged(poolId, paused);
+    }
+    
+    /**
+     * @notice Sets the fee reinvestment threshold
      * @param newThresholdBps New threshold value (10 = 0.1%)
      */
     function setFeeReinvestmentThreshold(uint256 newThresholdBps) external onlyGovernance {
         if (newThresholdBps > 1000) revert Errors.ParameterOutOfRange(newThresholdBps, 0, 1000);
-        
-        uint256 oldThreshold = feeReinvestmentThresholdBps;
         feeReinvestmentThresholdBps = newThresholdBps;
-        
-        emit FeeReinvestmentThresholdUpdated(oldThreshold, newThresholdBps);
+        emit ReinvestmentThresholdUpdated(newThresholdBps);
     }
     
     /**
-     * @notice Sets the default reinvestment mode.
-     * @param mode The new reinvestment mode to set
+     * @notice Sets the default reinvestment mode
+     * @param mode The new reinvestment mode
      */
     function setDefaultReinvestmentMode(ReinvestmentMode mode) external onlyGovernance {
-        ReinvestmentMode oldMode = defaultReinvestmentMode;
         defaultReinvestmentMode = mode;
-        emit ReinvestmentModeChanged(oldMode, mode);
+        emit ReinvestmentModeChanged(mode);
     }
     
     /**
-     * @notice Checks if a pool has pending fees above a threshold (internal implementation)
+     * @notice Sets fee distribution percentages
+     * @param _polSharePpm Protocol-owned liquidity share in PPM
+     * @param _fullRangeSharePpm Full range share in PPM
+     * @param _lpSharePpm LP share in PPM
      */
-    function _hasPendingFees(PoolId poolId, uint256 swapValue) internal view returns (bool) {
-        // In the v4-core update, poolInfo is no longer available directly
-        // We implement a simplified version that always returns false for now
-        // This can be enhanced later with actual pool data querying
+    function setFeeDistribution(
+        uint256 _polSharePpm,
+        uint256 _fullRangeSharePpm,
+        uint256 _lpSharePpm
+    ) external onlyGovernance {
+        if (_polSharePpm + _fullRangeSharePpm + _lpSharePpm != PPM_DENOMINATOR) {
+            revert Errors.AllocationSumError(_polSharePpm, _fullRangeSharePpm, _lpSharePpm, PPM_DENOMINATOR);
+        }
         
-        // The original implementation was:
-        // (bool hasAccruedFees, uint128 totalLiquidityValue, ) = poolManager.poolInfo(poolId);
-        // if (!hasAccruedFees) return false;
-        // if (totalLiquidityValue == 0) return true;
+        polSharePpm = _polSharePpm;
+        fullRangeSharePpm = _fullRangeSharePpm;
+        lpSharePpm = _lpSharePpm;
         
-        // For now, return false to avoid disrupting operations
-        return false;
+        emit FeeDistributionUpdated(_polSharePpm, _fullRangeSharePpm, _lpSharePpm);
     }
-
+    
     /**
-     * @notice Checks if a pool has pending fees above a threshold
+     * @notice Sets minimum time between fee collections
+     * @param newInterval New interval in seconds
+     */
+    function setMinimumFeeCollectionInterval(uint256 newInterval) external onlyGovernance {
+        if (newInterval < 300 || newInterval > 1 days) {
+            revert Errors.ParameterOutOfRange(newInterval, 300, 1 days);
+        }
+        minimumFeeCollectionInterval = newInterval;
+        emit ConfigUpdated("minimumFeeCollectionInterval", abi.encode(newInterval));
+    }
+    
+    /**
+     * @notice Sets minimum time between reinvestments
+     * @param newInterval New interval in seconds
+     */
+    function setMinimumReinvestmentInterval(uint256 newInterval) external onlyGovernance {
+        if (newInterval < 600 || newInterval > 1 days) {
+            revert Errors.ParameterOutOfRange(newInterval, 600, 1 days);
+        }
+        minimumReinvestmentInterval = newInterval;
+        emit ConfigUpdated("minimumReinvestmentInterval", abi.encode(newInterval));
+    }
+    
+    // ================ CORE FUNCTIONS ================
+    
+    /**
+     * @notice Processes reinvestment if needed based on current reinvestment mode
      * @param poolId The pool ID
-     * @param minFeeThreshold Minimum threshold to consider meaningful
-     * @return hasMeaningfulFees True if there are meaningful pending fees
+     * @param value Value to use for threshold calculation (e.g., swap amount)
+     * @return reinvested Whether fees were successfully reinvested
+     * @return autoCompounded Whether auto-compounding was performed
      */
-    function hasPendingFees(PoolId poolId, uint256 minFeeThreshold) public view returns (bool hasMeaningfulFees) {
-        // We just call our internal implementation for now
-        return _hasPendingFees(poolId, minFeeThreshold);
+    function processReinvestmentIfNeeded(
+        PoolId poolId,
+        uint256 value
+    ) external override returns (bool reinvested, bool autoCompounded) {
+        return _processReinvestment(poolId, OperationType.SWAP, value);
     }
     
     /**
-     * @notice Returns true if we should reinvest based on mode and conditions (internal implementation)
+     * @notice Processes reinvestment if needed based on operation type
+     * @param poolId The pool ID
+     * @param opType The operation type
+     * @return reinvested Whether fees were successfully reinvested
+     * @return autoCompounded Whether auto-compounding was performed
      */
-    function _shouldReinvest(PoolId poolId, uint256 swapValue) internal view returns (bool) {
+    function processReinvestmentIfNeeded(
+        PoolId poolId,
+        OperationType opType
+    ) external override returns (bool reinvested, bool autoCompounded) {
+        // Use a default value based on operation type
+        uint256 defaultValue = opType == OperationType.DEPOSIT ? 1000000 : 500000;
+        return _processReinvestment(poolId, opType, defaultValue);
+    }
+    
+    /**
+     * @notice Internal implementation of processReinvestmentIfNeeded
+     * @param poolId The pool ID
+     * @param opType The operation type
+     * @param value Value for threshold calculation
+     * @return reinvested Whether fees were successfully reinvested
+     * @return autoCompounded Whether auto-compounding was performed
+     */
+    function _processReinvestment(
+        PoolId poolId,
+        OperationType opType,
+        uint256 value
+    ) internal nonReentrant returns (bool reinvested, bool autoCompounded) {
+        // Circuit breaker check
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        if (reinvestmentPaused || feeState.reinvestmentPaused) {
+            return (false, false);
+        }
+        
+        // Check if reinvestment should be performed
+        if (!_shouldReinvest(poolId, opType, value)) {
+            return (false, false);
+        }
+        
+        // For deposits, apply auto-compounding
+        if (opType == OperationType.DEPOSIT) {
+            autoCompounded = _autoCompoundFees(poolId);
+        }
+        
+        // Execute reinvestment for POL portion
+        reinvested = _executeReinvestment(poolId);
+        
+        return (reinvested, autoCompounded);
+    }
+    
+    /**
+     * @notice Reinvests accumulated fees for a specific pool
+     * @param poolId The pool ID to reinvest fees for
+     * @return amount0 The amount of token0 fees reinvested
+     * @return amount1 The amount of token1 fees reinvested
+     */
+    function reinvestFees(PoolId poolId) external override returns (uint256 amount0, uint256 amount1) {
+        // Skip if reinvestment is paused
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        if (reinvestmentPaused || feeState.reinvestmentPaused) {
+            return (0, 0);
+        }
+        
+        // Collect any pending fees
+        collectFees(poolId);
+        
+        // Get pending fees
+        amount0 = feeState.pendingFee0;
+        amount1 = feeState.pendingFee1;
+        
+        if (amount0 == 0 && amount1 == 0) {
+            return (0, 0);
+        }
+        
+        // Apply auto-compounding first
+        _autoCompoundFees(poolId);
+        
+        // Then execute POL reinvestment
+        bool success = _executeReinvestment(poolId);
+        
+        // Return the fee amounts
+        return success ? (amount0, amount1) : (0, 0);
+    }
+    
+    /**
+     * @notice Collects accrued fees from the pool
+     * @param poolId The pool ID to collect fees for
+     * @return fee0 Amount of token0 fees collected
+     * @return fee1 Amount of token1 fees collected
+     */
+    function collectFees(PoolId poolId) public returns (uint256 fee0, uint256 fee1) {
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        
+        // Check if enough time has passed since last collection
+        if (block.timestamp < feeState.lastFeeCollectionTimestamp + minimumFeeCollectionInterval) {
+            return (0, 0);
+        }
+        
+        // Get pool key
+        PoolKey memory key = _getPoolKey(poolId);
+        if (key.tickSpacing == 0) {
+            // Pool key not found, pool may not exist
+            return (0, 0);
+        }
+        
+        // Track token balances before take to determine collected fees
+        uint256 token0BalanceBefore = 0;
+        uint256 token1BalanceBefore = 0;
+        address token0 = Currency.unwrap(key.currency0);
+        address token1 = Currency.unwrap(key.currency1);
+        
+        if (token0 != address(0)) {
+            token0BalanceBefore = ERC20(token0).balanceOf(address(this));
+        }
+        if (token1 != address(0)) {
+            token1BalanceBefore = ERC20(token1).balanceOf(address(this));
+        }
+        
+        // Execute take for token0 fees
+        bool takeSuccess = false;
+        try poolManager.take(key.currency0, address(this), 0) {
+            takeSuccess = true;
+        } catch {
+            // Take failed, fallback to try token1 only
+        }
+        
+        // Execute take for token1 fees if token0 succeeded
+        if (takeSuccess) {
+            try poolManager.take(key.currency1, address(this), 0) {
+                // Both takes succeeded
+            } catch {
+                // Token1 take failed, but we continue
+            }
+        }
+        
+        // Calculate the delta in balances to determine collected fees
+        uint256 token0BalanceAfter = token0 != address(0) ? ERC20(token0).balanceOf(address(this)) : 0;
+        uint256 token1BalanceAfter = token1 != address(0) ? ERC20(token1).balanceOf(address(this)) : 0;
+        
+        fee0 = token0BalanceAfter > token0BalanceBefore ? token0BalanceAfter - token0BalanceBefore : 0;
+        fee1 = token1BalanceAfter > token1BalanceBefore ? token1BalanceAfter - token1BalanceBefore : 0;
+        
+        if (fee0 > 0 || fee1 > 0) {
+            // Update pending fees
+            feeState.pendingFee0 += fee0;
+            feeState.pendingFee1 += fee1;
+            feeState.lastFeeCollectionTimestamp = block.timestamp;
+            
+            emit FeesAccumulated(poolId, fee0, fee1);
+        }
+        
+        return (fee0, fee1);
+    }
+    
+    /**
+     * @notice Determines if reinvestment should be performed
+     * @param poolId The pool ID
+     * @param opType The operation type
+     * @param value Value for threshold calculation
+     * @return shouldPerform Whether reinvestment should be performed
+     */
+    function _shouldReinvest(
+        PoolId poolId,
+        OperationType opType,
+        uint256 value
+    ) internal view returns (bool shouldPerform) {
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        
         // Quick return paths based on reinvestment mode
         if (defaultReinvestmentMode == ReinvestmentMode.NEVER) {
             return false;
         }
         
-        if (defaultReinvestmentMode == ReinvestmentMode.ALWAYS) {
-            return true;
+        // For deposits, always consider reinvestment
+        if (opType == OperationType.DEPOSIT) {
+            return block.timestamp >= feeState.lastSuccessfulReinvestment + minimumReinvestmentInterval;
         }
         
-        // THRESHOLD_CHECK mode - use enhanced hasPendingFees check
-        return _hasPendingFees(poolId, swapValue);
-    }
-
-    /**
-     * @notice Checks if reinvestment should be performed based on the current mode and conditions
-     * @param poolId The pool ID
-     * @param swapValue Used for threshold calculations
-     * @return shouldPerformReinvestment Whether reinvestment should be performed
-     */
-    function shouldReinvest(PoolId poolId, uint256 swapValue) public view returns (bool shouldPerformReinvestment) {
-        return _shouldReinvest(poolId, swapValue);
+        if (defaultReinvestmentMode == ReinvestmentMode.ALWAYS) {
+            return block.timestamp >= feeState.lastSuccessfulReinvestment + minimumReinvestmentInterval;
+        }
+        
+        // THRESHOLD_CHECK mode - implement proportional threshold check
+        uint256 pendingTotal = feeState.pendingFee0 + feeState.pendingFee1;
+        if (pendingTotal == 0) return false;
+        
+        // Get reserves for proportional threshold
+        (uint256 reserve0, uint256 reserve1) = _getReserves(poolId);
+        uint256 reserveTotal = reserve0 + reserve1;
+        
+        // If no reserves, use absolute threshold
+        if (reserveTotal == 0) {
+            return pendingTotal >= 1000;
+        }
+        
+        // Calculate threshold as percentage of reserves
+        uint256 thresholdValue = (reserveTotal * feeReinvestmentThresholdBps) / 10000;
+        
+        // Use minimum threshold for small pools
+        if (thresholdValue < 1000) thresholdValue = 1000;
+        
+        return pendingTotal >= thresholdValue;
     }
     
     /**
-     * @notice Processes reinvestment if needed based on current reinvestment mode
+     * @notice Auto-compounds fees by increasing the fee multiplier
      * @param poolId The pool ID
-     * @param swapValue Used for threshold calculations
-     * @return reinvested Whether fees were successfully reinvested
+     * @return compounded Whether auto-compounding was performed
      */
-    function processReinvestmentIfNeeded(PoolId poolId, uint256 swapValue) external returns (bool) {
-        // Skip if reinvestment is paused
-        if (reinvestmentPaused || poolReinvestmentPaused[poolId]) {
+    function _autoCompoundFees(PoolId poolId) internal returns (bool compounded) {
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        
+        // Get pending fees
+        uint256 fee0 = feeState.pendingFee0;
+        uint256 fee1 = feeState.pendingFee1;
+        
+        if (fee0 == 0 && fee1 == 0) {
             return false;
         }
         
-        // Check if reinvestment is needed according to policy
-        if (!_shouldReinvest(poolId, swapValue)) {
+        // Calculate fee distribution
+        uint256 fr0 = (fee0 * fullRangeSharePpm) / PPM_DENOMINATOR;
+        uint256 fr1 = (fee1 * fullRangeSharePpm) / PPM_DENOMINATOR;
+        uint256 pol0 = (fee0 * polSharePpm) / PPM_DENOMINATOR;
+        uint256 pol1 = (fee1 * polSharePpm) / PPM_DENOMINATOR;
+        uint256 lp0 = fee0 - fr0 - pol0;
+        uint256 lp1 = fee1 - fr1 - pol1;
+        
+        // Handle full range portion through multiplier
+        bool frCompounded = false;
+        if (fr0 > 0 || fr1 > 0) {
+            // Get pool reserves
+            (uint256 reserve0, uint256 reserve1) = _getReserves(poolId);
+            
+            // Skip if no reserves 
+            if (reserve0 > 0 && reserve1 > 0) {
+                // Calculate the multiplier increase
+                uint256 oldMultiplier = _getEffectiveMultiplier(feeState.cumulativeFeeMultiplier);
+                
+                // Calculate geometric means for fees and reserves
+                uint256 feeValue = MathUtils.calculateGeometricShares(fr0, fr1);
+                uint256 reserveValue = MathUtils.calculateGeometricShares(reserve0, reserve1);
+                
+                if (reserveValue > 0) {
+                    // Calculate increase factor proportional to reserve value
+                    uint256 increaseFactor = (feeValue * DEFAULT_MULTIPLIER) / reserveValue;
+                    
+                    // Update the multiplier if there's an increase
+                    if (increaseFactor > 0) {
+                        uint256 newMultiplier = oldMultiplier + increaseFactor;
+                        feeState.cumulativeFeeMultiplier = newMultiplier;
+                        
+                        emit FeeMultiplierUpdated(poolId, oldMultiplier, newMultiplier);
+                        
+                        // Mark the fees as "invested" through the multiplier
+                        feeState.pendingFee0 -= fr0;
+                        feeState.pendingFee1 -= fr1;
+                        
+                        frCompounded = true;
+                    }
+                }
+            }
+        }
+        
+        // Set aside POL fees for reinvestment
+        if (pol0 > 0 || pol1 > 0) {
+            // Keep in pending fees - they'll be used in executeReinvestment
+            emit POLAccrued(poolId, pol0, pol1);
+        }
+        
+        // Handle LP fees
+        if (lp0 > 0 || lp1 > 0) {
+            // Add to LP pending fees for claiming
+            lpFeesPending0[poolId] += lp0;
+            lpFeesPending1[poolId] += lp1;
+            
+            // Remove from pending fees
+            feeState.pendingFee0 -= lp0;
+            feeState.pendingFee1 -= lp1;
+            
+            emit LPFeesAccumulated(poolId, lp0, lp1);
+        }
+        
+        return frCompounded;
+    }
+    
+    /**
+     * @notice Execute POL reinvestment
+     * @param poolId The pool ID
+     * @return success Whether reinvestment was successful
+     */
+    function _executeReinvestment(PoolId poolId) internal returns (bool success) {
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        
+        // Calculate POL amounts (from pending fees)
+        uint256 fee0 = feeState.pendingFee0;
+        uint256 fee1 = feeState.pendingFee1;
+        
+        if (fee0 == 0 && fee1 == 0) {
             return false;
         }
         
-        // Execute the reinvestment using the existing function
-        (bool success, , ) = executeReinvestment(poolId, swapValue);
+        // Calculate POL amounts
+        uint256 pol0 = (fee0 * polSharePpm) / PPM_DENOMINATOR;
+        uint256 pol1 = (fee1 * polSharePpm) / PPM_DENOMINATOR;
+        
+        // Skip if no POL amounts
+        if (pol0 == 0 && pol1 == 0) {
+            return false;
+        }
+        
+        // Get pool reserves for optimal ratios
+        (uint256 reserve0, uint256 reserve1) = _getReserves(poolId);
+        
+        // Calculate optimal investment amounts
+        (uint256 optimal0, uint256 optimal1) = MathUtils.calculateReinvestableFees(
+            pol0, pol1, reserve0, reserve1
+        );
+        
+        // Ensure optimal amounts don't exceed available fees
+        if (optimal0 > pol0) optimal0 = pol0;
+        if (optimal1 > pol1) optimal1 = pol1;
+        
+        // Skip if no reinvestable amounts
+        if (optimal0 == 0 && optimal1 == 0) {
+            return false;
+        }
+        
+        // Execute reinvestment
+        success = _executePolReinvestment(poolId, optimal0, optimal1);
+        
+        if (success) {
+            // Update fee state
+            feeState.pendingFee0 = 0;
+            feeState.pendingFee1 = 0;
+            feeState.lastSuccessfulReinvestment = block.timestamp;
+            
+            // Emit event
+            emit FeesReinvested(poolId, fee0, fee1, optimal0, optimal1);
+        } else {
+            emit ReinvestmentFailed(poolId, "POL reinvestment execution failed");
+        }
         
         return success;
     }
     
     /**
-     * @notice Updates the pool's reserves to reflect reinvested fees
-     * @dev This function handles the bookkeeping of reinvested fees by:
-     *  1. Updating the token reserve amounts for the pool
-     *  2. Calculating additional liquidity using the geometric mean
-     *  3. Updating the total liquidity tracking
-     *
-     * We use the geometric mean (sqrt of the product) to represent liquidity
-     * because it's a fair measure of value that balances the contribution
-     * of both tokens, regardless of their relative prices. This approach:
-     *  - Ensures fair representation of pool growth
-     *  - Prevents manipulation via imbalanced fees
-     *  - Aligns with Uniswap's liquidity concentration model
-     * 
-     * @param poolId The ID of the pool
-     * @param amount0 Amount of token0 to add to reserves
-     * @param amount1 Amount of token1 to add to reserves
+     * @notice Execute POL reinvestment with token approvals
+     * @param poolId The pool ID
+     * @param amount0 Token0 amount to reinvest
+     * @param amount1 Token1 amount to reinvest
+     * @return success Whether reinvestment was successful
      */
-    function updateFullRangeReserves(
+    function _executePolReinvestment(
         PoolId poolId,
         uint256 amount0,
         uint256 amount1
-    ) internal {
-        bytes32 poolIdBytes = PoolId.unwrap(poolId);
+    ) internal returns (bool success) {
+        // Get tokens from pool key
+        PoolKey memory key = _getPoolKey(poolId);
+        address token0 = Currency.unwrap(key.currency0);
+        address token1 = Currency.unwrap(key.currency1);
         
-        // Step 1: Update the stored reserves for each token
-        token0Reserves[poolIdBytes] += amount0;
-        token1Reserves[poolIdBytes] += amount1;
-        
-        // Step 2: Calculate the additional liquidity using geometric mean
-        // Only if both amounts are positive (avoid unnecessary calculations)
-        if (amount0 > 0 && amount1 > 0) {
-            // Liquidity = sqrt(amount0 * amount1)
-            // This provides a balanced measure regardless of token prices
-            uint256 addedLiquidity = MathUtils.calculateGeometricShares(amount0, amount1);
-            
-            // Step 3: Update the total liquidity tracking
-            totalLiquidity[poolId] += addedLiquidity;
+        // Skip if liquidity manager not set
+        if (address(liquidityManager) == address(0)) {
+            return false;
         }
         
-        // Emit event with the updated reserve information
-        emit ReservesUpdated(poolId, amount0, amount1);
+        // Safe approve tokens
+        _safeApprove(token0, address(liquidityManager), amount0);
+        _safeApprove(token1, address(liquidityManager), amount1);
+        
+        try liquidityManager.reinvestFees(
+            poolId,
+            0, // No full-range component (handled by auto-compounding)
+            0,
+            amount0,
+            amount1
+        ) returns (uint256) {
+            success = true;
+        } catch {
+            success = false;
+            // Reset approvals
+            _safeApprove(token0, address(liquidityManager), 0);
+            _safeApprove(token1, address(liquidityManager), 0);
+        }
+        
+        return success;
     }
     
+    // ================ HELPER FUNCTIONS ================
+    
     /**
-     * @notice Calculates amounts of fees that can be reinvested while maintaining pool ratio
+     * @notice Get pool reserves with non-reverting call
      * @param poolId The pool ID
-     * @param fee0 The amount of token0 fees
-     * @param fee1 The amount of token1 fees
-     * @return investable0 Amount of token0 that can be reinvested
-     * @return investable1 Amount of token1 that can be reinvested
+     * @return reserve0 Token0 reserves
+     * @return reserve1 Token1 reserves
      */
-    function calculateReinvestableFees(
-        PoolId poolId,
-        uint256 fee0,
-        uint256 fee1
-    ) public view returns (uint256 investable0, uint256 investable1) {
-        bytes32 poolIdBytes = PoolId.unwrap(poolId);
-        
-        // Step 1: Get current reserves for both tokens
-        uint256 reserve0 = token0Reserves[poolIdBytes];
-        uint256 reserve1 = token1Reserves[poolIdBytes];
-        
-        // Use the enhanced MathUtils implementation with advanced options
-        return MathUtils.calculateReinvestableFees(
-            fee0,
-            fee1,
-            reserve0,
-            reserve1
-        );
-    }
-    
-    /**
-     * @notice Allows governance to withdraw excess POL above the minimum target
-     * @param poolId The ID of the pool
-     * @param key The pool key
-     * @param sharesToWithdraw Amount of shares to withdraw
-     * @param policy The pool policy contract
-     * @param dynamicFeePpm Current dynamic fee in PPM
-     */
-    function withdrawExcessPOL(
-        PoolId poolId,
-        PoolKey memory key,
-        uint256 sharesToWithdraw,
-        IPoolPolicy policy,
-        uint256 dynamicFeePpm
-    ) external onlyGovernance {
-        // Check minimum POL requirement
-        uint256 minPOL = policy.getMinimumPOLTarget(poolId, totalLiquidity[poolId], dynamicFeePpm);
-        if (protocolOwnedLiquidity[poolId] <= minPOL) revert Errors.InsufficientBalance(address(0), address(this), minPOL, protocolOwnedLiquidity[poolId]);
-        
-        uint256 excessPOL = protocolOwnedLiquidity[poolId] - minPOL;
-        if (sharesToWithdraw > excessPOL) revert Errors.InsufficientBalance(address(0), address(this), excessPOL, sharesToWithdraw);
-        
-        // Update POL tracking
-        protocolOwnedLiquidity[poolId] -= sharesToWithdraw;
-        
-        // Calculate proportion of reserves to withdraw
-        bytes32 poolIdBytes = PoolId.unwrap(poolId);
-        uint256 totalValue = totalLiquidity[poolId];
-        
-        uint256 amount0ToWithdraw = (token0Reserves[poolIdBytes] * sharesToWithdraw) / totalValue;
-        uint256 amount1ToWithdraw = (token1Reserves[poolIdBytes] * sharesToWithdraw) / totalValue;
-        
-        // Update reserves
-        token0Reserves[poolIdBytes] -= amount0ToWithdraw;
-        token1Reserves[poolIdBytes] -= amount1ToWithdraw;
-        totalLiquidity[poolId] -= sharesToWithdraw;
-        
-        // Withdraw from the pool using modifyLiquidity with negative delta
-        IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
-            tickLower: TickMath.MIN_TICK,
-            tickUpper: TickMath.MAX_TICK,
-            liquidityDelta: -int256(sharesToWithdraw),
-            salt: bytes32(0)
-        });
-        
-        // Call modifyLiquidity to withdraw
-        (BalanceDelta delta, ) = poolManager.modifyLiquidity(key, params, new bytes(0));
-        
-        // Transfer tokens to treasury
-        address token0 = UniswapCurrency.unwrap(key.currency0);
-        address token1 = UniswapCurrency.unwrap(key.currency1);
-        
-        // Safely convert the negative amounts to uint256
-        int128 delta0 = delta.amount0();
-        int128 delta1 = delta.amount1();
-        
-        uint256 amount0Out = delta0 < 0 ? uint256(uint128(-delta0)) : 0;
-        uint256 amount1Out = delta1 < 0 ? uint256(uint128(-delta1)) : 0;
-        
-        if (amount0Out > 0) {
-            SafeTransferLib.safeTransfer(ERC20(token0), governanceTreasury, amount0Out);
+    function _getReserves(PoolId poolId) internal view returns (uint256 reserve0, uint256 reserve1) {
+        // Try getting from IFullRange interface if available
+        try IFullRange(fullRange).getPoolInfo(poolId) returns (
+            bool isInitialized,
+            uint256[2] memory reserves,
+            uint128,
+            uint256
+        ) {
+            if (isInitialized) {
+                reserve0 = reserves[0];
+                reserve1 = reserves[1];
+            }
+        } catch {
+            // Fallback to liquidity manager if available
+            if (address(liquidityManager) != address(0)) {
+                try liquidityManager.poolInfo(poolId) returns (
+                    uint128, // totalShares
+                    uint256 r0, // reserve0
+                    uint256 r1  // reserve1
+                ) {
+                    reserve0 = r0;
+                    reserve1 = r1;
+                } catch {
+                    // Silent failure, return zeros
+                }
+            }
         }
-        
-        if (amount1Out > 0) {
-            SafeTransferLib.safeTransfer(ERC20(token1), governanceTreasury, amount1Out);
-        }
-        
-        emit POLWithdrawn(poolId, sharesToWithdraw, amount0Out, amount1Out);
     }
     
     /**
-     * @notice Sets a new governance treasury address
-     * @param _treasury New treasury address
-     */
-    function setGovernanceTreasury(address _treasury) external onlyGovernance {
-        if (_treasury == address(0)) revert Errors.ValidationZeroAddress("treasury");
-        governanceTreasury = _treasury;
-    }
-    
-    /**
-     * @notice Get the total reserves for a pool
-     * @param poolId The ID of the pool
-     * @return reserve0 Amount of token0 reserves
-     * @return reserve1 Amount of token1 reserves
-     */
-    function getReserves(PoolId poolId) external view returns (uint256 reserve0, uint256 reserve1) {
-        bytes32 poolIdBytes = PoolId.unwrap(poolId);
-        return (token0Reserves[poolIdBytes], token1Reserves[poolIdBytes]);
-    }
-
-    /**
-     * @notice Pause global fee reinvestment functionality
-     */
-    function pauseReinvestment() external onlyGovernance {
-        reinvestmentPaused = true;
-        emit ReinvestmentPaused(msg.sender);
-    }
-
-    /**
-     * @notice Resume global fee reinvestment functionality
-     */
-    function resumeReinvestment() external onlyGovernance {
-        reinvestmentPaused = false;
-        emit ReinvestmentResumed(msg.sender);
-    }
-
-    /**
-     * @notice Pause fee reinvestment for a specific pool
-     * @param poolId The pool to pause reinvestment for
-     */
-    function pausePoolReinvestment(PoolId poolId) external onlyGovernance {
-        poolReinvestmentPaused[poolId] = true;
-        emit PoolReinvestmentPaused(poolId, msg.sender);
-    }
-
-    /**
-     * @notice Resume fee reinvestment for a specific pool
-     * @param poolId The pool to resume reinvestment for
-     */
-    function resumePoolReinvestment(PoolId poolId) external onlyGovernance {
-        poolReinvestmentPaused[poolId] = false;
-        emit PoolReinvestmentResumed(poolId, msg.sender);
-    }
-
-    /**
-     * @notice Execute fee reinvestment (callable by external components)
+     * @notice Get pool key with non-reverting call
      * @param poolId The pool ID
-     * @param swapValue Swap value to use for threshold calculations
-     * @return success Whether reinvestment was successful
-     * @return amount0 Amount of token0 reinvested
-     * @return amount1 Amount of token1 reinvested
+     * @return key The pool key
      */
-    function executeReinvestment(
-        PoolId poolId, 
-        uint256 swapValue
-    ) 
-        internal 
-        returns (bool success, uint256 amount0, uint256 amount1) 
-    {
-        // Check circuit breaker state first
-        if (reinvestmentPaused) {
-            return (false, 0, 0);
-        }
-        
-        // Check if reinvestment needed
-        if (!_shouldReinvest(poolId, swapValue)) {
-            return (false, 0, 0);
-        }
-        
-        // Process reinvestment directly
-        // For now, we just return a placeholder success
-        success = false;
-        amount0 = 0;
-        amount1 = 0;
-        
-        if (!success) {
-            emit ReinvestmentFailed(poolId, "Reinvestment condition check failed");
-        }
-        
-        return (success, amount0, amount1);
-    }
-
-    /**
-     * @notice Reinvests accumulated fees for a specific pool 
-     * @param poolId The pool ID to reinvest fees for
-     * @return amount0 The amount of token0 fees reinvested
-     * @return amount1 The amount of token1 fees reinvested
-     */
-    function reinvestFees(PoolId poolId) external returns (uint256 amount0, uint256 amount1) {
-        // Skip if reinvestment is paused
-        if (reinvestmentPaused || poolReinvestmentPaused[poolId]) {
-            return (0, 0);
-        }
-        
-        // Use a default swap value for threshold calculations
-        uint256 defaultSwapValue = 1000000; // 1M units
-        
-        // Call existing function with the default swap value
-        bool success;
-        (success, amount0, amount1) = executeReinvestment(poolId, defaultSwapValue);
-        
-        // Return the reinvestment amounts
-        return success ? (amount0, amount1) : (0, 0);
-    }
-
-    /**
-     * @notice Attempts to reinvest fees after a user operation (deposit/withdraw)
-     * @dev This function is called from operations and silently returns if it fails,
-     *      to avoid disrupting the main transaction
-     * @param poolId The pool ID to reinvest fees for
-     * @param operationValue The value of the operation (for threshold calculation)
-     */
-    function attemptReinvestmentAfterOperation(PoolId poolId, uint256 operationValue) external {
-        // Early exit if paused or not needed - this check makes it very gas efficient
-        if (reinvestmentPaused || poolReinvestmentPaused[poolId] || !_shouldReinvest(poolId, operationValue)) {
-            return;
-        }
-        
-        // Process reinvestment - no need to return any values since this is a "best effort" function
-        bool success;
-        uint256 amount0;
-        uint256 amount1;
-        (success, amount0, amount1) = executeReinvestment(poolId, operationValue);
-        
-        // Emit event if successful
-        if (success) {
-            emit FeesReinvested(poolId, amount0, amount1, 0); // Share info not available at this level
+    function _getPoolKey(PoolId poolId) internal view returns (PoolKey memory key) {
+        // Try getting from fullRange interface
+        try IFullRange(fullRange).getPoolKey(poolId) returns (PoolKey memory poolKey) {
+            key = poolKey;
+        } catch {
+            // Fallback to liquidity manager if available
+            if (address(liquidityManager) != address(0)) {
+                try liquidityManager.poolKeys(poolId) returns (PoolKey memory poolKey) {
+                    key = poolKey;
+                } catch {
+                    // Silent failure, return empty key
+                }
+            }
         }
     }
-
+    
     /**
-     * @notice Handle any pending ETH from reinvestment operations
-     * @param user The user to send ETH to
-     * @param amount Amount of ETH to send
+     * @notice Get effective multiplier with default handling
+     * @param storedMultiplier The stored multiplier value
+     * @return effectiveMultiplier The effective multiplier to use
      */
-    function _sendETH(address user, uint256 amount) internal {
-        // Safe check for empty amounts
+    function _getEffectiveMultiplier(uint256 storedMultiplier) internal pure returns (uint256) {
+        return storedMultiplier == 0 ? DEFAULT_MULTIPLIER : storedMultiplier;
+    }
+    
+    /**
+     * @notice Safe token approval with redundant call elimination
+     * @param token The token to approve
+     * @param spender The address to approve
+     * @param amount The amount to approve
+     */
+    function _safeApprove(address token, address spender, uint256 amount) internal {
         if (amount == 0) return;
         
-        // Send ETH
-        (bool success, ) = user.call{value: amount}("");
-        
-        // Handle failure
-        if (!success) {
-            pendingETHPayments[user] += amount;
+        uint256 currentAllowance = ERC20(token).allowance(address(this), spender);
+        if (currentAllowance != amount) {
+            if (currentAllowance > 0) {
+                SafeTransferLib.safeApprove(ERC20(token), spender, 0);
+            }
+            SafeTransferLib.safeApprove(ERC20(token), spender, amount);
         }
     }
-
+    
+    // ================ VIEW FUNCTIONS ================
+    
     /**
-     * @notice Withdraw excess Protocol-Owned Liquidity
-     * @dev Executes withdraw from FullRange contract
+     * @notice Get the amount of pending fees for token0 for a pool
+     * @param poolId The pool ID
+     * @return The amount of pending token0 fees
      */
-    function _executeWithdraw(
-        PoolId poolId,
-        PoolKey memory key,
-        uint256 shares,
-        uint256 minAmount0,
-        uint256 minAmount1
-    ) internal returns (uint256, uint256) {
-        // Create withdrawal parameters
-        IFullRangeLiquidityManager.WithdrawParams memory params = IFullRangeLiquidityManager.WithdrawParams({
-            poolId: poolId,
-            shares: shares,
-            amount0Min: minAmount0,
-            amount1Min: minAmount1,
-            deadline: block.timestamp
-        });
-
-        // Execute withdrawal
-        (BalanceDelta delta, uint256 amount0Out, uint256 amount1Out) = liquidityManager.withdraw(params, address(this));
-        
-        // Return withdrawn amounts
-        return (amount0Out, amount1Out);
+    function pendingFees0(PoolId poolId) external view override returns (uint256) {
+        return poolFeeStates[poolId].pendingFee0;
+    }
+    
+    /**
+     * @notice Get the amount of pending fees for token1 for a pool
+     * @param poolId The pool ID
+     * @return The amount of pending token1 fees
+     */
+    function pendingFees1(PoolId poolId) external view override returns (uint256) {
+        return poolFeeStates[poolId].pendingFee1;
+    }
+    
+    /**
+     * @notice Get the cumulative fee multiplier for a pool
+     * @param poolId The pool ID
+     * @return The cumulative fee multiplier
+     */
+    function cumulativeFeeMultiplier(PoolId poolId) external view override returns (uint256) {
+        return _getEffectiveMultiplier(poolFeeStates[poolId].cumulativeFeeMultiplier);
+    }
+    
+    /**
+     * @notice Returns true if fees should be reinvested based on current settings
+     * @param poolId The pool ID
+     * @param value Value for threshold calculation
+     * @return shouldReinvest Whether fees should be reinvested
+     */
+    function shouldReinvest(PoolId poolId, uint256 value) external view returns (bool) {
+        return _shouldReinvest(poolId, OperationType.SWAP, value);
+    }
+    
+    /**
+     * @notice Gets LP pending fees for a specific pool
+     * @param poolId The pool ID
+     * @return pending0 Pending token0 LP fees
+     * @return pending1 Pending token1 LP fees
+     */
+    function getLPPendingFees(PoolId poolId) external view returns (uint256 pending0, uint256 pending1) {
+        return (lpFeesPending0[poolId], lpFeesPending1[poolId]);
+    }
+    
+    /**
+     * @notice Gets all fee-related information for a pool
+     * @param poolId The pool ID
+     * @return state The pool fee state
+     * @return lpFees0 Pending LP token0 fees
+     * @return lpFees1 Pending LP token1 fees
+     * @return isPaused Whether reinvestment is paused for this pool
+     */
+    function getPoolFeeInfo(PoolId poolId) external view returns (
+        PoolFeeState memory state,
+        uint256 lpFees0,
+        uint256 lpFees1,
+        bool isPaused
+    ) {
+        state = poolFeeStates[poolId];
+        lpFees0 = lpFeesPending0[poolId];
+        lpFees1 = lpFeesPending1[poolId];
+        isPaused = reinvestmentPaused || state.reinvestmentPaused;
     }
 } 

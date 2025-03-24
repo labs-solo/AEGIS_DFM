@@ -1,13 +1,13 @@
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: GPL-2.0-or-later
 pragma solidity 0.8.26;
 
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 
 /**
  * @title IFullRangeLiquidityManager
- * @notice Interface for FullRangeLiquidityManager contract
+ * @notice Interface for the FullRangeLiquidityManager contract
  */
 interface IFullRangeLiquidityManager {
     struct DepositParams {
@@ -33,14 +33,28 @@ interface IFullRangeLiquidityManager {
     event PoolTotalSharesUpdated(PoolId indexed poolId, uint128 oldShares, uint128 newShares);
 
     function deposit(
-        DepositParams calldata params,
+        PoolId poolId,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 amount0Min,
+        uint256 amount1Min,
         address recipient
-    ) external returns (BalanceDelta delta, uint256 sharesMinted);
+    ) external returns (
+        uint256 shares,
+        uint256 amount0,
+        uint256 amount1
+    );
 
     function withdraw(
-        WithdrawParams calldata params,
+        PoolId poolId,
+        uint256 sharesToBurn,
+        uint256 amount0Min,
+        uint256 amount1Min,
         address recipient
-    ) external returns (BalanceDelta delta, uint256 amount0Out, uint256 amount1Out);
+    ) external returns (
+        uint256 amount0,
+        uint256 amount1
+    );
     
     /**
      * @notice Adds user share accounting (no token transfers)
@@ -104,4 +118,41 @@ interface IFullRangeLiquidityManager {
         uint256 sharesToMint, 
         uint128 currentTotalShares
     ) external returns (uint128 newTotalShares);
+
+    /**
+     * @notice Reinvests fees into the pool for POL only
+     * @dev The full-range portion is handled through auto-compounding
+     * @param poolId The pool ID
+     * @param fullRangeAmount0 Amount of token0 for full-range (should be 0)
+     * @param fullRangeAmount1 Amount of token1 for full-range (should be 0)
+     * @param protocolAmount0 Amount of token0 for protocol-owned liquidity
+     * @param protocolAmount1 Amount of token1 for protocol-owned liquidity
+     * @return shares The number of POL shares minted
+     */
+    function reinvestFees(
+        PoolId poolId,
+        uint256 fullRangeAmount0,
+        uint256 fullRangeAmount1,
+        uint256 protocolAmount0,
+        uint256 protocolAmount1
+    ) external returns (uint256);
+
+    function getAccountPosition(PoolId poolId, address account) external view returns (bool initialized, uint256 shares);
+    
+    function getShareValue(PoolId poolId, uint256 shares) external view returns (uint256 amount0, uint256 amount1);
+
+    /**
+     * @notice Get pool information 
+     * @param poolId The pool ID
+     */
+    function poolInfo(PoolId poolId) external view returns (
+        uint128 totalShares,
+        uint256 reserve0,
+        uint256 reserve1
+    );
+
+    /**
+     * @notice Pool keys mapping
+     */
+    function poolKeys(PoolId poolId) external view returns (PoolKey memory);
 } 

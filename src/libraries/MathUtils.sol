@@ -6,7 +6,6 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {FixedPoint128} from "v4-core/src/libraries/FixedPoint128.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {LiquidityAmounts} from "v4-core/test/utils/LiquidityAmounts.sol";
 import {Errors} from "../errors/Errors.sol";
@@ -603,14 +602,7 @@ library MathUtils {
     }
 
     /**
-     * @notice Memory-optimized implementation for reinvestable fee calculation
-     * @dev Calculates maximum investable fees that maintain pool ratio
-     * @param fee0 Total token0 fee amount
-     * @param fee1 Total token1 fee amount
-     * @param reserve0 Current reserve of token0
-     * @param reserve1 Current reserve of token1
-     * @return investable0 Amount of token0 to invest
-     * @return investable1 Amount of token1 to invest
+     * @notice Optimized reinvestable fee calculation with default options
      */
     function calculateReinvestableFees(
         uint256 fee0,
@@ -618,32 +610,22 @@ library MathUtils {
         uint256 reserve0,
         uint256 reserve1
     ) internal pure returns (uint256 investable0, uint256 investable1) {
-        uint8 limitingToken;
-        (investable0, investable1, limitingToken) = calculateReinvestableFees(
-            fee0, fee1, reserve0, reserve1, 0x3 // Basic precision with minimum output guarantee
+        // Call the full version with default options (high precision + minimum output guarantee)
+        (investable0, investable1, ) = calculateReinvestableFees(
+            fee0,
+            fee1,
+            reserve0,
+            reserve1,
+            0x3 // 0x1 (high precision) | 0x2 (minimum output guarantee)
         );
-        return (investable0, investable1);
     }
 
     /**
-     * @notice ReinvestmentCalculation - Advanced fee reinvestment calculation with optimized ratio-based investment
-     * @dev Core implementation with extensive optimizations:
-     *      1. Memory-optimized calculations to reduce variable declarations
-     *      2. Fast-path exits for common cases
-     *      3. Uses FullMath for precise ratio calculations
-     *      4. Multiple optimization levels for gas/precision trade-offs
-     * 
-     * @param fee0 Amount of token0 fees available for reinvestment
-     * @param fee1 Amount of token1 fees available for reinvestment
-     * @param reserve0 Current reserve of token0
-     * @param reserve1 Current reserve of token1
+     * @notice Core implementation of reinvestable fee calculation with configurable options
      * @param options Configuration flags:
      *        - bit 0: Use high precision (more gas, better precision)
      *        - bit 1: Apply minimum output guarantee
      *        - bit 2: Apply additional safety checks
-     * @return investable0 Amount of token0 that can be reinvested
-     * @return investable1 Amount of token1 that can be reinvested
-     * @return limitingToken Which token is limiting the reinvestment (0 for token0, 1 for token1)
      */
     function calculateReinvestableFees(
         uint256 fee0,
@@ -656,23 +638,11 @@ library MathUtils {
         uint256 investable1,
         uint8 limitingToken
     ) {
-        // --- Fast path exits ---
-        
-        // No fees to reinvest
-        if (fee0 == 0 && fee1 == 0) {
-            return (0, 0, 0);
-        }
-        
-        // Empty pools return all fees (for initial liquidity)
-        if (reserve0 == 0 || reserve1 == 0) {
-            return (fee0, fee1, 0);
-        }
-        
-        // Single-token fees
+        // Fast path exits
+        if (fee0 == 0 && fee1 == 0) return (0, 0, 0);
+        if (reserve0 == 0 || reserve1 == 0) return (fee0, fee1, 0);
         if (fee0 == 0) return (0, fee1, 0);
         if (fee1 == 0) return (fee0, 0, 1);
-        
-        // --- Calculate target ratio ---
         
         // Extract options
         bool highPrecision = (options & 0x1) != 0;
@@ -682,56 +652,39 @@ library MathUtils {
         // Use optimal scaling factor based on precision mode
         uint256 scaleFactor = highPrecision ? PRECISION : PPM_SCALE;
         
-        // Calculate target ratio (reserve0 / reserve1) with precision scaling
+        // Calculate target ratio with safety checks
         uint256 targetRatio;
-        
-        // Handle potential overflow for large reserves
         if (extraSafetyChecks && reserve0 > type(uint256).max / scaleFactor) {
-            // Scale down reserves to prevent overflow
             targetRatio = (reserve0 / 1e9) * scaleFactor / (reserve1 / 1e9);
         } else {
             targetRatio = FullMath.mulDiv(reserve0, scaleFactor, reserve1);
         }
         
-        // --- Determine the limiting token ---
-        
-        // Calculate the fee ratio (fee0 / fee1) with precision scaling
+        // Calculate fee ratio with safety checks
         uint256 feeRatio;
         if (fee1 == 0) {
-            feeRatio = type(uint256).max; // Effectively infinity
+            feeRatio = type(uint256).max;
         } else if (extraSafetyChecks && fee0 > type(uint256).max / scaleFactor) {
-            // Scale down for extremely large fees
             feeRatio = (fee0 / 1e9) * scaleFactor / (fee1 / 1e9);
         } else {
             feeRatio = FullMath.mulDiv(fee0, scaleFactor, fee1);
         }
         
-        // Compare fee ratio to target ratio to determine limiting token
+        // Determine limiting token and calculate investable amounts
         if (feeRatio <= targetRatio) {
-            // Token0 is limiting (need to use all of fee0)
             limitingToken = 0;
             investable0 = fee0;
-            
-            // Calculate token1 amount based on target ratio
             investable1 = FullMath.mulDiv(fee0, scaleFactor, targetRatio);
-            
-            // Safety check to never exceed available token1
             if (investable1 > fee1) investable1 = fee1;
         } else {
-            // Token1 is limiting (need to use all of fee1)
             limitingToken = 1;
             investable1 = fee1;
-            
-            // Calculate token0 amount based on target ratio
             investable0 = FullMath.mulDiv(fee1, targetRatio, scaleFactor);
-            
-            // Safety check to never exceed available token0
             if (investable0 > fee0) investable0 = fee0;
         }
         
         // Apply minimum output guarantee if requested
         if (guaranteeMinOutput) {
-            // Ensure non-zero outputs for reasonable inputs
             if (investable0 == 0 && fee0 > 0 && investable1 > 0) investable0 = 1;
             if (investable1 == 0 && fee1 > 0 && investable0 > 0) investable1 = 1;
         }

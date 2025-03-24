@@ -12,6 +12,7 @@ import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {Errors} from "./errors/Errors.sol";
 import {FullRangeDynamicFeeManager} from "./FullRangeDynamicFeeManager.sol";
 import {FullRangeLiquidityManager} from "./FullRangeLiquidityManager.sol";
+import {IFeeReinvestmentManager} from "./interfaces/IFeeReinvestmentManager.sol";
 
 /**
  * @title HookHandler
@@ -61,6 +62,7 @@ contract HookHandler {
     event FeeUpdateFailed(PoolId indexed poolId);
     event OracleUpdateFailed(PoolId indexed poolId);
     event HookHandled(bytes4 indexed selector);
+    event ReinvestmentProcessed(PoolId indexed poolId);
     
     /**
      * @notice Constructor initializes contract dependencies and sets up the hook handler mapping
@@ -272,7 +274,24 @@ contract HookHandler {
     }
 
     /**
-     * @notice Handle afterSwap hook calls
+     * @notice Consolidated reinvestment processing
+     * @param poolId Pool ID to process reinvestment
+     * @param opType Operation type (SWAP, DEPOSIT, WITHDRAWAL)
+     */
+    function _processReinvestment(PoolId poolId, IFeeReinvestmentManager.OperationType opType) internal {
+        address policy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
+        if (policy != address(0)) {
+            // Non-reverting call pattern
+            try IFeeReinvestmentManager(policy).processReinvestmentIfNeeded(poolId, opType) {
+                // Success case handled silently
+            } catch {
+                // Error case handled silently to avoid disrupting main operations
+            }
+        }
+    }
+
+    /**
+     * @notice Handle afterSwap hook calls with integrated fee reinvestment
      */
     function handleAfterSwap(
         address sender,
@@ -280,7 +299,11 @@ contract HookHandler {
         IPoolManager.SwapParams calldata params,
         BalanceDelta delta,
         bytes calldata hookData
-    ) external pure returns (bytes4, int128) {
+    ) external returns (bytes4, int128) {
+        // Process reinvestment with swap context
+        _processReinvestment(key.toId(), IFeeReinvestmentManager.OperationType.SWAP);
+        
+        // Return hook selector
         return (AFTER_SWAP_SELECTOR, 0);
     }
 
@@ -292,10 +315,20 @@ contract HookHandler {
     }
 
     /**
-     * @notice Handles afterAddLiquidity hook calls
+     * @notice Handle afterAddLiquidity hook calls with integrated fee reinvestment
      */
-    function handleAfterAddLiquidity() external pure returns (bytes4, BalanceDelta) {
-        return (AFTER_ADD_LIQUIDITY_SELECTOR, BalanceDeltaLibrary.ZERO_DELTA);
+    function handleAfterAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external returns (bytes4, BalanceDelta) {
+        // Process reinvestment with deposit context
+        _processReinvestment(key.toId(), IFeeReinvestmentManager.OperationType.DEPOSIT);
+        
+        // Return hook selector
+        return (AFTER_ADD_LIQUIDITY_SELECTOR, BalanceDelta.wrap(0));
     }
 
     /**
@@ -306,10 +339,20 @@ contract HookHandler {
     }
 
     /**
-     * @notice Handles afterRemoveLiquidity hook calls
+     * @notice Handle afterRemoveLiquidity hook calls with integrated fee reinvestment
      */
-    function handleAfterRemoveLiquidity() external pure returns (bytes4, BalanceDelta) {
-        return (AFTER_REMOVE_LIQUIDITY_SELECTOR, BalanceDeltaLibrary.ZERO_DELTA);
+    function handleAfterRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external returns (bytes4, BalanceDelta) {
+        // Process reinvestment with withdrawal context
+        _processReinvestment(key.toId(), IFeeReinvestmentManager.OperationType.WITHDRAWAL);
+        
+        // Return hook selector
+        return (AFTER_REMOVE_LIQUIDITY_SELECTOR, BalanceDelta.wrap(0));
     }
 
     /**

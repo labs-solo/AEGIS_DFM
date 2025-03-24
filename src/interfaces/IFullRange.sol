@@ -117,10 +117,27 @@ interface IFullRange is IHooks {
     function claimPendingETH() external;
 
     /**
-     * @notice Claims and reinvests fees for a specific pool
-     * @param poolId The pool ID to reinvest fees for
-     * @return fee0 The amount of token0 fees claimed
-     * @return fee1 The amount of token1 fees claimed
+     * @notice Get the pool key for a pool ID
+     * @param poolId The pool ID to get the key for
+     * @return The pool key
      */
-    function claimAndReinvestFees(PoolId poolId) external returns (uint256 fee0, uint256 fee1);
+    function getPoolKey(PoolId poolId) external view returns (PoolKey memory);
+
+    /**
+     * @notice Get pool info
+     * @param poolId The pool ID to get info for
+     * @return isInitialized Whether the pool is initialized
+     * @return reserves Array of pool reserves [reserve0, reserve1]
+     * @return totalShares Total shares in the pool
+     * @return tokenId Token ID for the pool
+     */
+    function getPoolInfo(PoolId poolId) 
+        external 
+        view 
+        returns (
+            bool isInitialized,
+            uint256[2] memory reserves,
+            uint128 totalShares,
+            uint256 tokenId
+        );
 } 

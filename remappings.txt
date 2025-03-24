@@ -5,3 +5,5 @@ v4-core/=lib/v4-core/
 v4-periphery/=lib/v4-periphery/
 @uniswap/v4-core/=lib/v4-core/
 permit2/=lib/v4-periphery/lib/permit2/
+@openzeppelin/=lib/openzeppelin-contracts/
+@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/

@@ -262,8 +262,8 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         
         poolManager.unlock(abi.encode(cbData));
         
-        // Try to process fee reinvestment
-        _tryReinvestFees(params.poolId, amount0 + amount1);
+        // Process fees
+        _processFees(params.poolId, IFeeReinvestmentManager.OperationType.DEPOSIT, BalanceDeltaLibrary.ZERO_DELTA);
         
         emit Deposit(msg.sender, params.poolId, amount0, amount1, shares);
         return (shares, amount0, amount1);
@@ -337,6 +337,9 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         
         poolManager.unlock(abi.encode(cbData));
         
+        // Process fees
+        _processFees(params.poolId, IFeeReinvestmentManager.OperationType.WITHDRAWAL, BalanceDeltaLibrary.ZERO_DELTA);
+        
         // Transfer tokens to user
         PoolKey memory key = poolKeys[params.poolId];
         address token0 = UniswapCurrency.unwrap(key.currency0);
@@ -344,9 +347,6 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         
         if (amount0 > 0) _safeTransferToken(token0, msg.sender, amount0);
         if (amount1 > 0) _safeTransferToken(token1, msg.sender, amount1);
-        
-        // Try to process fee reinvestment
-        _tryReinvestFees(params.poolId, amount0 + amount1);
         
         emit Withdraw(msg.sender, params.poolId, amount0, amount1, params.sharesToBurn);
         return (amount0, amount1);
@@ -400,23 +400,17 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
     }
 
     /**
-     * @notice Try to reinvest fees for a pool
+     * @notice Consolidated fee processing function
+     * @param poolId The pool ID to process fees for
+     * @param opType The operation type triggering the fee processing
+     * @param feesAccrued Optional fees accrued during the operation
      */
-    function _tryReinvestFees(PoolId poolId, uint256 value) internal {
-        address reinvestPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
-        if (reinvestPolicy != address(0)) {
-            try IFeeReinvestmentManager(reinvestPolicy).processReinvestmentIfNeeded(poolId, value) returns (bool) {
-                // Successfully processed
-            } catch {
-                // Silently continue
-            }
-        }
-    }
-
-    /**
-     * @notice Process fees from BalanceDelta
-     */
-    function _processFees(PoolId poolId, BalanceDelta feesAccrued) internal {
+    function _processFees(
+        PoolId poolId,
+        IFeeReinvestmentManager.OperationType opType,
+        BalanceDelta feesAccrued
+    ) internal {
+        // Skip if no fees to process
         if (feesAccrued.amount0() <= 0 && feesAccrued.amount1() <= 0) return;
         
         uint256 fee0 = feesAccrued.amount0() > 0 ? uint256(uint128(feesAccrued.amount0())) : 0;
@@ -424,29 +418,14 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         
         address reinvestPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
         if (reinvestPolicy != address(0)) {
-            try IFeeReinvestmentManager(reinvestPolicy).processReinvestmentIfNeeded(poolId, fee0 + fee1) returns (bool success) {
-                if (success) {
+            try IFeeReinvestmentManager(reinvestPolicy).processReinvestmentIfNeeded(poolId, opType) returns (bool reinvested, bool autoCompounded) {
+                if (reinvested || autoCompounded) {
                     emit ReinvestmentSuccess(poolId, fee0, fee1);
                 }
             } catch {
                 emit ReinvestmentFailed(poolId, "Processing failed");
             }
         }
-    }
-
-    /**
-     * @notice Reinvest fees for a pool
-     */
-    function claimAndReinvestFees(PoolId poolId) external returns (uint256 fee0, uint256 fee1) {
-        if (!poolData[poolId].initialized) revert Errors.PoolNotInitialized(poolId);
-        
-        address reinvestPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
-        if (reinvestPolicy == address(0)) revert Errors.ValidationZeroAddress("reinvestPolicy");
-        
-        (fee0, fee1) = IFeeReinvestmentManager(reinvestPolicy).reinvestFees(poolId);
-        emit ReinvestmentSuccess(poolId, fee0, fee1);
-        
-        return (fee0, fee1);
     }
 
     /**

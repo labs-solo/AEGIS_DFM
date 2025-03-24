@@ -7,7 +7,7 @@ import {IPoolPolicy} from "./IPoolPolicy.sol";
 
 /**
  * @title IFeeReinvestmentManager
- * @notice Interface for the Fee Reinvestment Manager component
+ * @notice Interface for the optimized Fee Reinvestment Manager component
  */
 interface IFeeReinvestmentManager {
     /**
@@ -21,12 +21,13 @@ interface IFeeReinvestmentManager {
     event FeesReinvested(PoolId indexed poolId, uint256 fee0, uint256 fee1, uint256 investable0, uint256 investable1);
     
     /**
-     * @notice Checks if a pool has pending fees above a threshold
-     * @param poolId The pool ID
-     * @param minFeeThreshold Minimum threshold to consider meaningful
-     * @return hasMeaningfulFees True if there are meaningful pending fees
+     * @notice Operation types for different reinvestment contexts
      */
-    function hasPendingFees(PoolId poolId, uint256 minFeeThreshold) external view returns (bool hasMeaningfulFees);
+    enum OperationType { 
+        SWAP, 
+        DEPOSIT, 
+        WITHDRAWAL 
+    }
     
     /**
      * @notice Checks if reinvestment should be performed based on the current mode and conditions
@@ -39,10 +40,26 @@ interface IFeeReinvestmentManager {
     /**
      * @notice Processes reinvestment if needed based on current reinvestment mode
      * @param poolId The pool ID
-     * @param swapValue Used for threshold calculations
+     * @param value Value used for threshold calculations
      * @return reinvested Whether fees were successfully reinvested
+     * @return autoCompounded Whether auto-compounding was performed
      */
-    function processReinvestmentIfNeeded(PoolId poolId, uint256 swapValue) external returns (bool reinvested);
+    function processReinvestmentIfNeeded(
+        PoolId poolId,
+        uint256 value
+    ) external returns (bool reinvested, bool autoCompounded);
+    
+    /**
+     * @notice Processes reinvestment if needed based on operation type
+     * @param poolId The pool ID
+     * @param opType The operation type (SWAP, DEPOSIT, WITHDRAWAL)
+     * @return reinvested Whether fees were successfully reinvested
+     * @return autoCompounded Whether auto-compounding was performed
+     */
+    function processReinvestmentIfNeeded(
+        PoolId poolId,
+        OperationType opType
+    ) external returns (bool reinvested, bool autoCompounded);
     
     /**
      * @notice Reinvests accumulated fees for a specific pool
@@ -65,4 +82,11 @@ interface IFeeReinvestmentManager {
      * @return The amount of pending token1 fees
      */
     function pendingFees1(PoolId poolId) external view returns (uint256);
+    
+    /**
+     * @notice Get the cumulative fee multiplier for a pool
+     * @param poolId The pool ID
+     * @return The cumulative fee multiplier
+     */
+    function cumulativeFeeMultiplier(PoolId poolId) external view returns (uint256);
 } 
