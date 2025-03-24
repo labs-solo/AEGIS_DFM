@@ -357,6 +357,32 @@ contract FullRangeDynamicFeeManager is Owned {
     }
     
     /**
+     * @notice Initialize fee data for a newly created pool
+     * @param poolId The ID of the pool
+     */
+    function initializeFeeData(PoolId poolId) external onlyFullRange {
+        PoolState storage pool = poolStates[poolId];
+        
+        // Skip if already initialized
+        if (pool.lastUpdateTimestamp != 0) return;
+        
+        // Initialize with default dynamic fee
+        uint256 defaultFee = policy.getDefaultDynamicFee();
+        
+        pool.baseFeePpm = defaultFee;
+        pool.currentFeePpm = defaultFee;
+        pool.lastUpdateTimestamp = block.timestamp;
+        pool.inSurgeMode = false;
+        
+        emit DynamicFeeUpdated(
+            poolId, 
+            0, // old fee (zero for initialization)
+            defaultFee, 
+            false // no CAP event during initialization
+        );
+    }
+    
+    /**
      * @notice Initialize oracle data for a newly created pool
      * @param poolId The ID of the pool
      * @param initialTick The initial tick of the pool

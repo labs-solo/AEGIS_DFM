@@ -10,64 +10,120 @@ import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeS
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {Errors} from "./errors/Errors.sol";
+import {FullRangeDynamicFeeManager} from "./FullRangeDynamicFeeManager.sol";
+import {FullRangeLiquidityManager} from "./FullRangeLiquidityManager.sol";
 
 /**
  * @title HookHandler
- * @notice Unified handler for Uniswap V4 hooks with policy-based validation
- * @dev Combines functionality from DefaultHookHandler and EnhancedHookHandler
+ * @notice Unified handler for Uniswap V4 hooks with optimized dispatch mechanism
+ * @dev Uses a hybrid approach with a mapping for common hooks and if/else for complex initialization hooks
  */
 contract HookHandler {
+    using PoolIdLibrary for PoolKey;
+    
+    // =========================================================================
+    // Constants for hook selectors
+    // =========================================================================
+    // Using constants instead of hardcoded selectors improves readability
+    bytes4 internal constant BEFORE_INITIALIZE_SELECTOR = IHooks.beforeInitialize.selector;
+    bytes4 internal constant AFTER_INITIALIZE_SELECTOR = IHooks.afterInitialize.selector;
+    bytes4 internal constant BEFORE_ADD_LIQUIDITY_SELECTOR = IHooks.beforeAddLiquidity.selector;
+    bytes4 internal constant AFTER_ADD_LIQUIDITY_SELECTOR = IHooks.afterAddLiquidity.selector;
+    bytes4 internal constant BEFORE_REMOVE_LIQUIDITY_SELECTOR = IHooks.beforeRemoveLiquidity.selector;
+    bytes4 internal constant AFTER_REMOVE_LIQUIDITY_SELECTOR = IHooks.afterRemoveLiquidity.selector;
+    bytes4 internal constant BEFORE_SWAP_SELECTOR = IHooks.beforeSwap.selector;
+    bytes4 internal constant AFTER_SWAP_SELECTOR = IHooks.afterSwap.selector;
+    bytes4 internal constant BEFORE_DONATE_SELECTOR = IHooks.beforeDonate.selector;
+    bytes4 internal constant AFTER_DONATE_SELECTOR = IHooks.afterDonate.selector;
+
+    // Constants for handler function selectors
+    bytes4 internal constant DISPATCH_AND_EXECUTE_SELECTOR = this.dispatchAndExecute.selector;
+
+    // =========================================================================
+    // State variables
+    // =========================================================================
     // References to required contracts
     IPoolPolicy public immutable policyManager;
     IPoolManager public immutable poolManager;
     address public immutable fullRangeAddress;
+    FullRangeDynamicFeeManager public immutable dynamicFeeManager;
+    FullRangeLiquidityManager public immutable liquidityManager;
     
-    // Policy initialization events for better observability
-    event PolicyInitializationFailed(PoolId indexed poolId, string reason);
-    event PolicyInitializationSucceeded(PoolId indexed poolId);
+    // Mapping of hook selectors to handler function selectors
+    // Used for frequently called hooks (O(1) lookup)
+    mapping(bytes4 => bytes4) public hookHandlers;
+    
+    // =========================================================================
+    // Events
+    // =========================================================================
+    event PolicyInitializationFailed(PoolId indexed poolId, bytes reason);
+    event PoolInitialized(PoolId indexed poolId, PoolKey key, uint160 sqrtPrice, address sender);
+    event FeeUpdateFailed(PoolId indexed poolId);
+    event OracleUpdateFailed(PoolId indexed poolId);
+    event HookHandled(bytes4 indexed selector);
     
     /**
-     * @notice Constructor initializes contract dependencies with validation
+     * @notice Constructor initializes contract dependencies and sets up the hook handler mapping
      * @param _policyManager The policy manager contract
      * @param _poolManager The pool manager contract
      * @param _fullRangeAddress The address of the FullRange contract
-     * @dev Uses custom errors instead of require statements for gas efficiency
+     * @param _dynamicFeeManager The dynamic fee manager contract
+     * @param _liquidityManager The liquidity manager contract
      */
     constructor(
         IPoolPolicy _policyManager,
         IPoolManager _poolManager,
-        address _fullRangeAddress
+        address _fullRangeAddress,
+        FullRangeDynamicFeeManager _dynamicFeeManager,
+        FullRangeLiquidityManager _liquidityManager
     ) {
-        // Validate parameters using custom errors instead of require statements
+        // Validate parameters
         if (address(_policyManager) == address(0)) revert Errors.ValidationZeroAddress("policyManager");
         if (address(_poolManager) == address(0)) revert Errors.ValidationZeroAddress("poolManager");
         if (_fullRangeAddress == address(0)) revert Errors.ValidationZeroAddress("fullRange");
+        if (address(_dynamicFeeManager) == address(0)) revert Errors.ValidationZeroAddress("dynamicFeeManager");
+        if (address(_liquidityManager) == address(0)) revert Errors.ValidationZeroAddress("liquidityManager");
         
         policyManager = _policyManager;
         poolManager = _poolManager;
         fullRangeAddress = _fullRangeAddress;
+        dynamicFeeManager = _dynamicFeeManager;
+        liquidityManager = _liquidityManager;
+        
+        // Initialize the hook handler mapping for frequent hooks
+        // This provides O(1) lookups for common operations
+        hookHandlers[BEFORE_SWAP_SELECTOR] = this.handleBeforeSwap.selector;
+        hookHandlers[AFTER_SWAP_SELECTOR] = this.handleAfterSwap.selector;
+        hookHandlers[BEFORE_ADD_LIQUIDITY_SELECTOR] = this.handleBeforeAddLiquidity.selector;
+        hookHandlers[AFTER_ADD_LIQUIDITY_SELECTOR] = this.handleAfterAddLiquidity.selector;
+        hookHandlers[BEFORE_REMOVE_LIQUIDITY_SELECTOR] = this.handleBeforeRemoveLiquidity.selector;
+        hookHandlers[AFTER_REMOVE_LIQUIDITY_SELECTOR] = this.handleAfterRemoveLiquidity.selector;
+        hookHandlers[BEFORE_DONATE_SELECTOR] = this.handleBeforeDonate.selector;
+        hookHandlers[AFTER_DONATE_SELECTOR] = this.handleAfterDonate.selector;
+        
+        // Note: We intentionally don't map initialization hooks as they require special handling
+        // and more complex parameter decoding. They will be handled via if/else for clarity.
     }
     
     /**
-     * @notice Performs pool parameter validation for initialization
+     * @notice Validates pool parameters for initialization
      * @param sender The sender of the initialize call
      * @param key The pool key
      * @param sqrtPriceX96 The initial sqrt price
      * @return selector The hook selector to return
-     * @dev Validates all pool parameters before allowing initialization to proceed
      */
     function validatePoolParameters(
         address sender,
-        PoolKey calldata key,
+        PoolKey memory key,
         uint160 sqrtPriceX96
-    ) external view returns (bytes4 selector) {
+    ) public view returns (bytes4 selector) {
         // Check hook address
         if (address(key.hooks) != fullRangeAddress) {
             revert Errors.HookInvalidAddress(address(key.hooks));
         }
         
         // Get pool ID
-        PoolId poolId = PoolIdLibrary.toId(key);
+        PoolId poolId = key.toId();
         
         // Validate initial sqrt price is within valid range
         if (sqrtPriceX96 < TickMath.MIN_SQRT_PRICE || sqrtPriceX96 > TickMath.MAX_SQRT_PRICE) {
@@ -78,7 +134,26 @@ contract HookHandler {
             );
         }
         
-        return IHooks.beforeInitialize.selector;
+        // Validate pool parameters via policy
+        // Use direct call instead of try/catch
+        // This won't revert even if validation fails
+        (bool success, bytes memory returnData) = address(policyManager).staticcall(
+            abi.encodeWithSelector(
+                IPoolPolicy.isValidVtier.selector,
+                key.fee,
+                key.tickSpacing
+            )
+        );
+        
+        // If call succeeded and returned false, revert with invalid parameters
+        if (success && returnData.length >= 32) {
+            bool isValid = abi.decode(returnData, (bool));
+            if (!isValid) {
+                revert Errors.PoolInvalidFeeOrTickSpacing(key.fee, key.tickSpacing);
+            }
+        }
+        
+        return BEFORE_INITIALIZE_SELECTOR;
     }
     
     /**
@@ -88,172 +163,273 @@ contract HookHandler {
      * @param sqrtPriceX96 The initial sqrt price
      * @param tick The initial tick
      * @return selector The hook selector to return
-     * @dev Handles both policy initialization and registration with appropriate error handling
      */
     function processPoolInitialization(
+        address sender,
+        PoolKey memory key,
+        uint160 sqrtPriceX96,
+        int24 tick
+    ) public returns (bytes4 selector) {
+        // Get pool ID
+        PoolId poolId = key.toId();
+        
+        // Register pool with liquidity manager - no try/catch
+        (bool regSuccess,) = address(liquidityManager).call(
+            abi.encodeWithSelector(
+                FullRangeLiquidityManager.registerPool.selector,
+                poolId,
+                key,
+                sqrtPriceX96
+            )
+        );
+        
+        // Initialize fee manager - no try/catch
+        (bool feeSuccess,) = address(dynamicFeeManager).call(
+            abi.encodeWithSelector(
+                FullRangeDynamicFeeManager.initializeFeeData.selector,
+                poolId
+            )
+        );
+        
+        if (!feeSuccess) {
+            emit FeeUpdateFailed(poolId);
+        }
+        
+        // Initialize dynamic fee oracle data - no try/catch
+        (bool oracleSuccess,) = address(dynamicFeeManager).call(
+            abi.encodeWithSelector(
+                FullRangeDynamicFeeManager.initializeOracleData.selector,
+                poolId,
+                tick
+            )
+        );
+        
+        if (!oracleSuccess) {
+            emit OracleUpdateFailed(poolId);
+        }
+        
+        // Initialize policies - no try/catch
+        (bool policySuccess, bytes memory returnData) = address(policyManager).call(
+            abi.encodeWithSelector(
+                IPoolPolicy.handlePoolInitialization.selector,
+                poolId,
+                key,
+                sqrtPriceX96,
+                tick,
+                fullRangeAddress
+            )
+        );
+        
+        if (!policySuccess) {
+            emit PolicyInitializationFailed(poolId, returnData);
+        }
+        
+        emit PoolInitialized(poolId, key, sqrtPriceX96, sender);
+        
+        return AFTER_INITIALIZE_SELECTOR;
+    }
+
+    /**
+     * @notice Handler for beforeInitialize hook
+     */
+    function handleBeforeInitialize(
+        address sender,
+        PoolKey calldata key,
+        uint160 sqrtPriceX96
+    ) external view returns (bytes4) {
+        return validatePoolParameters(sender, key, sqrtPriceX96);
+    }
+
+    /**
+     * @notice Handler for afterInitialize hook
+     */
+    function handleAfterInitialize(
         address sender,
         PoolKey calldata key,
         uint160 sqrtPriceX96,
         int24 tick
-    ) external returns (bytes4 selector) {
-        // Get pool ID
-        PoolId poolId = PoolIdLibrary.toId(key);
-        
-        // Prepare policy implementations array
-        address[] memory implementations = _getPoolPolicyImplementations(poolId);
-        
-        // Initialize policies with proper error handling
-        _initializePolicies(poolId, implementations);
-        
-        // Notify the policy manager about the pool initialization
-        try policyManager.handlePoolInitialization(poolId, key, sqrtPriceX96, tick, fullRangeAddress) {
-            // Successfully handled pool initialization
-        } catch {
-            // Continue even if handler fails - this is non-critical
-        }
-        
-        return IHooks.afterInitialize.selector;
-    }
-    
-    /**
-     * @notice Gets all policy implementations for a pool
-     * @param poolId The pool ID
-     * @return implementations Array of policy implementations
-     * @dev Centralizes the logic for gathering all policy implementations by type
-     */
-    function _getPoolPolicyImplementations(PoolId poolId) internal view returns (address[] memory implementations) {
-        implementations = new address[](4);
-        
-        implementations[uint8(IPoolPolicy.PolicyType.FEE)] = policyManager.getPolicy(
-            poolId, IPoolPolicy.PolicyType.FEE
-        );
-        
-        implementations[uint8(IPoolPolicy.PolicyType.TICK_SCALING)] = policyManager.getPolicy(
-            poolId, IPoolPolicy.PolicyType.TICK_SCALING
-        );
-        
-        implementations[uint8(IPoolPolicy.PolicyType.VTIER)] = policyManager.getPolicy(
-            poolId, IPoolPolicy.PolicyType.VTIER
-        );
-        
-        implementations[uint8(IPoolPolicy.PolicyType.REINVESTMENT)] = policyManager.getPolicy(
-            poolId, IPoolPolicy.PolicyType.REINVESTMENT
-        );
-        
-        return implementations;
-    }
-    
-    /**
-     * @notice Initializes pool policies with proper error handling
-     * @param poolId The pool ID
-     * @param implementations Array of policy implementations
-     * @dev This function handles three error scenarios:
-     *      1. Successful initialization - emits success event
-     *      2. Revert with string reason - emits failure event with reason
-     *      3. Low-level revert - emits failure event with "Unknown error"
-     *      The function allows execution to continue even if policy initialization fails,
-     *      as this is considered a non-critical failure that should not block pool creation.
-     */
-    function _initializePolicies(PoolId poolId, address[] memory implementations) internal {
-        // Use the policy manager's initializePolicies method directly
-        try policyManager.initializePolicies(poolId, policyManager.getSoloGovernance(), implementations) {
-            emit PolicyInitializationSucceeded(poolId);
-        } catch Error(string memory reason) {
-            emit PolicyInitializationFailed(poolId, reason);
-        } catch (bytes memory /*lowLevelData*/) {
-            emit PolicyInitializationFailed(poolId, "Unknown error");
-        }
+    ) external returns (bytes4) {
+        return processPoolInitialization(sender, key, sqrtPriceX96, tick);
     }
 
     /**
-     * @notice Checks if a pool has all required policies set up
-     * @param poolId The pool ID to check
-     * @return isInitialized Whether all policies are properly set up
-     * @dev Helper view function for external contracts to verify policy setup
+     * @notice Handle beforeSwap hook calls
      */
-    function isPolicySetupComplete(PoolId poolId) external view returns (bool isInitialized) {
-        // Check if all required policies are set to non-zero addresses
-        for (uint8 i = 0; i < 4; i++) {
-            if (policyManager.getPolicy(poolId, IPoolPolicy.PolicyType(i)) == address(0)) {
-                return false;
-            }
-        }
-        return true;
-    }
-    
-    /**
-     * @notice Retrieves all policies for a given pool as a structured response
-     * @param poolId The pool ID
-     * @return policyAddresses Array of policy addresses in order of policy type enum
-     * @dev Useful for frontends and external contracts to inspect the current policy setup
-     */
-    function getPoolPolicies(PoolId poolId) external view returns (address[] memory policyAddresses) {
-        return _getPoolPolicyImplementations(poolId);
+    function handleBeforeSwap(
+        address sender, 
+        PoolKey calldata key, 
+        IPoolManager.SwapParams calldata params, 
+        bytes calldata hookData
+    ) external view returns (bytes4 selector, BeforeSwapDelta delta, uint24 dynamicFee) {
+        PoolId poolId = key.toId();
+        dynamicFee = uint24(dynamicFeeManager.getCurrentDynamicFee(poolId));
+        
+        return (
+            BEFORE_SWAP_SELECTOR,
+            BeforeSwapDeltaLibrary.ZERO_DELTA,
+            dynamicFee
+        );
     }
 
-    // Standard Hook Handlers with optimized implementations
-    
+    /**
+     * @notice Handle afterSwap hook calls
+     */
+    function handleAfterSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external pure returns (bytes4, int128) {
+        return (AFTER_SWAP_SELECTOR, 0);
+    }
+
     /**
      * @notice Handles beforeAddLiquidity hook calls
-     * @return The function selector
      */
     function handleBeforeAddLiquidity() external pure returns (bytes4) {
-        return IHooks.beforeAddLiquidity.selector;
+        return BEFORE_ADD_LIQUIDITY_SELECTOR;
     }
 
     /**
      * @notice Handles afterAddLiquidity hook calls
-     * @return The function selector and zero balance delta
      */
     function handleAfterAddLiquidity() external pure returns (bytes4, BalanceDelta) {
-        return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+        return (AFTER_ADD_LIQUIDITY_SELECTOR, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     /**
      * @notice Handles beforeRemoveLiquidity hook calls
-     * @return The function selector
      */
     function handleBeforeRemoveLiquidity() external pure returns (bytes4) {
-        return IHooks.beforeRemoveLiquidity.selector;
+        return BEFORE_REMOVE_LIQUIDITY_SELECTOR;
     }
 
     /**
      * @notice Handles afterRemoveLiquidity hook calls
-     * @return The function selector and zero balance delta
      */
     function handleAfterRemoveLiquidity() external pure returns (bytes4, BalanceDelta) {
-        return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
-    }
-
-    /**
-     * @notice Handles beforeSwap hook calls
-     * @return The function selector, zero swap delta, and zero fee
-     */
-    function handleBeforeSwap() external pure returns (bytes4, BeforeSwapDelta, uint24) {
-        return (IHooks.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
-    }
-
-    /**
-     * @notice Handles afterSwap hook calls
-     * @return The function selector and zero int128 value
-     */
-    function handleAfterSwap() external pure returns (bytes4, int128) {
-        return (IHooks.afterSwap.selector, 0);
+        return (AFTER_REMOVE_LIQUIDITY_SELECTOR, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     /**
      * @notice Handles beforeDonate hook calls
-     * @return The function selector
      */
     function handleBeforeDonate() external pure returns (bytes4) {
-        return IHooks.beforeDonate.selector;
+        return BEFORE_DONATE_SELECTOR;
     }
 
     /**
      * @notice Handles afterDonate hook calls
-     * @return The function selector
      */
     function handleAfterDonate() external pure returns (bytes4) {
-        return IHooks.afterDonate.selector;
+        return AFTER_DONATE_SELECTOR;
+    }
+
+    /**
+     * @notice Main dispatch function for hook calls - uses hybrid approach
+     * @dev Called via delegatecall from FullRange
+     * @param callData The raw calldata from PoolManager
+     * @return result The result to return to PoolManager
+     */
+    function dispatchAndExecute(bytes calldata callData) external returns (bytes memory result) {
+        // Extract function selector from calldata
+        // Memory layout:
+        // - First 4 bytes: function selector
+        // - Remaining bytes: encoded parameters
+        bytes4 selector;
+        assembly {
+            // Read the first 4 bytes of the calldata and shift right
+            // to get the selector in the correct format
+            selector := shr(224, calldataload(0))
+        }
+        
+        // OPTIMIZATION #1: First check mapping for common hooks
+        bytes4 handlerSelector = hookHandlers[selector];
+        if (handlerSelector != bytes4(0)) {
+            // Use efficient parameter passing with assembly for common hooks
+            // This avoids the gas cost of abi.decode for frequently called hooks
+            // Memory layout during the call:
+            // - First 4 bytes: handler selector
+            // - Remaining bytes: original parameters from the calldata
+            assembly {
+                // Create a new call using the handler selector + original params
+                let ptr := mload(0x40) // Free memory pointer
+                
+                // Copy the handler selector to memory
+                mstore(ptr, handlerSelector)
+                
+                // Copy all remaining calldata (parameters)
+                let size := sub(calldatasize(), 4)
+                calldatacopy(add(ptr, 4), 4, size)
+                
+                // Execute the call - note this is a regular call, not delegatecall
+                // since we're still inside the delegatecall context from FullRange
+                let success := call(
+                    gas(),
+                    address(),          // This contract (in delegatecall context)
+                    0,                  // No ETH
+                    ptr,                // Call data
+                    add(size, 4),       // Call data size
+                    0,                  // Output location (to be allocated)
+                    0                   // Output size (to be determined)
+                )
+                
+                // If call failed, revert with the error
+                if iszero(success) {
+                    returndatacopy(0, 0, returndatasize())
+                    revert(0, returndatasize())
+                }
+                
+                // Copy the return data to result
+                let returnSize := returndatasize()
+                returndatacopy(ptr, 0, returnSize)
+                
+                // Update the free memory pointer
+                mstore(0x40, add(ptr, returnSize))
+                
+                // Return the result
+                return(ptr, returnSize)
+            }
+        }
+        
+        // OPTIMIZATION #2: Special handling for initialization hooks
+        // These hooks are called rarely but require more complex handling
+        if (selector == BEFORE_INITIALIZE_SELECTOR) {
+            // Decode parameters
+            // Memory layout after decoding:
+            // - sender: address (20 bytes)
+            // - key: PoolKey struct (complex type)
+            // - sqrtPriceX96: uint160 (20 bytes)
+            (address sender, PoolKey memory key, uint160 sqrtPriceX96) = abi.decode(
+                callData[4:], 
+                (address, PoolKey, uint160)
+            );
+            
+            // Call handler
+            bytes4 resultSelector = validatePoolParameters(sender, key, sqrtPriceX96);
+            return abi.encode(resultSelector);
+        } 
+        else if (selector == AFTER_INITIALIZE_SELECTOR) {
+            // Decode parameters
+            // Memory layout after decoding:
+            // - sender: address (20 bytes)
+            // - key: PoolKey struct (complex type)
+            // - sqrtPriceX96: uint160 (20 bytes)
+            // - tick: int24 (3 bytes)
+            (address sender, PoolKey memory key, uint160 sqrtPriceX96, int24 tick) = abi.decode(
+                callData[4:], 
+                (address, PoolKey, uint160, int24)
+            );
+            
+            // Call handler
+            bytes4 resultSelector = processPoolInitialization(sender, key, sqrtPriceX96, tick);
+            return abi.encode(resultSelector);
+        }
+        
+        // OPTIMIZATION #3: Fallback for any unmapped hooks
+        // Simply return the selector for hooks without specific implementation
+        emit HookHandled(selector);
+        return abi.encode(selector);
     }
 } 

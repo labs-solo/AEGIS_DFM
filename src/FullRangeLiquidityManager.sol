@@ -199,10 +199,10 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @param key The pool key
      * @param sqrtPriceX96 The initial square root price
      */
-    function registerPool(PoolId poolId, PoolKey calldata key, uint160 sqrtPriceX96) external onlyFullRangeOrOwner {
+    function registerPool(PoolId poolId, PoolKey calldata key, uint160 sqrtPriceX96) external onlyFullRange {
         // Check if pool already registered
         if (poolKeys[poolId].tickSpacing != 0) {
-            revert Errors.PoolAlreadyExists(poolId);
+            return; // Silently return if already registered
         }
         
         // Store the pool key for later reference

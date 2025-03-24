@@ -59,6 +59,9 @@ library Errors {
     error ZeroPolicyManagerAddress();
     error ZeroPoolManagerAddress();
     error ZeroFullRangeAddress();
+    error HookHandlerCallFailed(bytes reason);
+    error HookDispatchFailed(bytes4 selector);
+    error DelegateCallFailed();
     
     // Pool errors
     error PoolNotInitialized(PoolId poolId);
