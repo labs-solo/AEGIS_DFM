@@ -15,7 +15,7 @@ import {MathUtils} from "./libraries/MathUtils.sol";
 import {Errors} from "./errors/Errors.sol";
 import {FullRangePositions} from "./token/FullRangePositions.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
-import {CurrencySettler} from "./libraries/CurrencySettler.sol";
+import {CurrencySettler} from "v4-core/test/utils/CurrencySettler.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
@@ -25,6 +25,7 @@ import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "./interfaces/IFullRangeLiquidityManager.sol";
+import {FullRangeUtils} from "./utils/FullRangeUtils.sol";
 
 /**
  * @title FullRangeLiquidityManager
