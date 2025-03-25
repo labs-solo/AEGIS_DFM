@@ -77,8 +77,8 @@ abstract contract LocalUniswapV4TestBase is Test {
     // Test constants
     uint256 public constant INITIAL_ETH_BALANCE = 1000 ether;
     uint256 public constant INITIAL_TOKEN_BALANCE = 1000000e18; // 1M tokens
-    uint24 public constant DEFAULT_FEE = 3000; // 0.3%
-    int24 public constant DEFAULT_TICK_SPACING = 60;
+    uint24 public constant DEFAULT_FEE = 0x800000; // Dynamic fee flag
+    int24 public constant DEFAULT_TICK_SPACING = 200; // Wide spacing for dynamic fee pools
     
     // Policy configuration constants
     uint256 public constant POL_SHARE_PPM = 250000; // 25%

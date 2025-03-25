@@ -35,7 +35,7 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
             currency1: Currency.wrap(address(token1)),
             fee: DEFAULT_FEE,
             tickSpacing: REGULAR_TICK_SPACING,
-            hooks: IHooks(address(0)) // No hooks
+            hooks: fullRange // Use the existing fullRange hook instead of address(0)
         });
         regularPoolId = regularPoolKey.toId();
         

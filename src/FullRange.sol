@@ -59,11 +59,11 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
 
     // Optimized storage layout - pack related data together
     struct PoolData {
-        bool initialized;      // Whether pool is initialized
-        bool emergencyState;   // Whether pool is in emergency
-        uint256 reserve0;      // Token0 reserves
-        uint256 reserve1;      // Token1 reserves
-        uint256 tokenId;       // Pool token ID
+        bool initialized;      // Whether pool is initialized (1 byte)
+        bool emergencyState;   // Whether pool is in emergency (1 byte)
+        uint128 reserve0;      // Token0 reserves (16 bytes)
+        uint128 reserve1;      // Token1 reserves (16 bytes)
+        uint256 tokenId;       // Pool token ID (32 bytes)
     }
     
     // Single mapping for pool data instead of multiple mappings
@@ -80,8 +80,8 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         uint8 callbackType;  // 1=deposit, 2=withdraw, 3=swap
         address sender;      // Original sender
         PoolId poolId;       // Pool ID
-        uint256 amount0;     // Amount of token0
-        uint256 amount1;     // Amount of token1
+        uint128 amount0;     // Amount of token0
+        uint128 amount1;     // Amount of token1
         uint256 shares;      // Shares amount
     }
     
@@ -240,8 +240,8 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         if (amount1 > 0) SafeTransferLib.safeTransferFrom(ERC20(token1), msg.sender, address(this), amount1);
         
         // Update reserves
-        data.reserve0 += amount0;
-        data.reserve1 += amount1;
+        data.reserve0 = uint128(data.reserve0 + amount0);
+        data.reserve1 = uint128(data.reserve1 + amount1);
         
         // Mint shares to user
         liquidityManager.addUserShares(params.poolId, msg.sender, shares);
@@ -255,8 +255,8 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
             callbackType: 1,  // deposit
             sender: msg.sender,
             poolId: params.poolId,
-            amount0: amount0,
-            amount1: amount1,
+            amount0: uint128(amount0),
+            amount1: uint128(amount1),
             shares: shares
         });
         
@@ -317,8 +317,8 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         }
         
         // Update reserves
-        data.reserve0 -= amount0;
-        data.reserve1 -= amount1;
+        data.reserve0 = uint128(data.reserve0 - amount0);
+        data.reserve1 = uint128(data.reserve1 - amount1);
         
         // Burn shares
         liquidityManager.removeUserShares(params.poolId, msg.sender, params.sharesToBurn);
@@ -331,8 +331,8 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
             callbackType: 2,  // withdraw
             sender: msg.sender,
             poolId: params.poolId,
-            amount0: amount0,
-            amount1: amount1,
+            amount0: uint128(amount0),
+            amount1: uint128(amount1),
             shares: params.sharesToBurn
         });
         

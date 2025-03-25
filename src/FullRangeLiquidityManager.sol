@@ -251,16 +251,16 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     /**
      * @notice Get pool information
      * @param poolId The pool ID
-     * @return totalShares The total shares of the pool
+     * @return shares The total shares of the pool
      * @return reserve0 The reserve of token0
      * @return reserve1 The reserve of token1
      */
     function poolInfo(PoolId poolId) external view returns (
-        uint128 totalShares,
+        uint128 shares,
         uint256 reserve0,
         uint256 reserve1
     ) {
-        PoolInfo memory info = pools[poolId];
+        PoolInfo storage info = pools[poolId];
         return (info.totalShares, info.reserve0, info.reserve1);
     }
     
