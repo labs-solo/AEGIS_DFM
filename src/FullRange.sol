@@ -23,7 +23,6 @@ import { IFeeReinvestmentManager } from "./interfaces/IFeeReinvestmentManager.so
 import { ReentrancyGuard } from "solmate/src/utils/ReentrancyGuard.sol";
 import { StateLibrary } from "v4-core/src/libraries/StateLibrary.sol";
 import { PoolTokenIdUtils } from "./utils/PoolTokenIdUtils.sol";
-import { HookHandler } from "./HookHandler.sol";
 
 /**
  * @title FullRange
@@ -47,15 +46,11 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
     bytes4 internal constant BEFORE_DONATE_SELECTOR = IHooks.beforeDonate.selector;
     bytes4 internal constant AFTER_DONATE_SELECTOR = IHooks.afterDonate.selector;
     
-    // Constants for frequently used function selectors
-    bytes4 internal constant DISPATCH_AND_EXECUTE_SELECTOR = HookHandler.dispatchAndExecute.selector;
-    
     // Immutable core contracts and managers
     IPoolManager public immutable poolManager;
     IPoolPolicy public immutable policyManager;
     FullRangeLiquidityManager public immutable liquidityManager;
     FullRangeDynamicFeeManager public immutable dynamicFeeManager;
-    HookHandler public immutable hookHandler;
 
     // Optimized storage layout - pack related data together
     struct PoolData {
@@ -95,7 +90,6 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
     event PolicyInitializationFailed(PoolId indexed poolId, string reason);
     event Deposit(address indexed sender, PoolId indexed poolId, uint256 amount0, uint256 amount1, uint256 shares);
     event Withdraw(address indexed sender, PoolId indexed poolId, uint256 amount0, uint256 amount1, uint256 shares);
-    event HookDelegateCallFailed(bytes reason);
     
     // Modifiers
     modifier onlyGovernance() {
@@ -137,15 +131,6 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         policyManager = _policyManager;
         liquidityManager = _liquidityManager;
         dynamicFeeManager = _dynamicFeeManager;
-        
-        // Initialize the HookHandler with all dependencies
-        hookHandler = new HookHandler(
-            _policyManager,
-            _manager,
-            address(this),
-            _dynamicFeeManager,
-            _liquidityManager
-        );
         
         validateHookAddress();
     }
@@ -728,57 +713,5 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         returns (bytes4)
     {
         return IHooks.afterDonate.selector;
-    }
-
-    /**
-     * @notice Fallback function to handle all hook callbacks via HookHandler
-     * @dev Uses delegatecall to maintain context while delegating implementation
-     */
-    fallback() external onlyPoolManager {
-        // Store the hookHandler address before entering assembly to avoid accessing immutable in assembly
-        address hookHandlerAddr = address(hookHandler);
-        
-        // Use assembly for the most gas-efficient delegatecall implementation
-        // Memory layout:
-        // 1. First 4 bytes: HookHandler.dispatchAndExecute selector
-        // 2. Next 32 bytes: Offset to the dynamic bytes parameter (always 32)
-        // 3. Next 32 bytes: Length of the original calldata
-        // 4. Following bytes: Original calldata (hook selector + parameters)
-        assembly {
-            // Copy calldata to memory
-            calldatacopy(0, 0, calldatasize())
-            
-            // Prepare call data for HookHandler.dispatchAndExecute
-            // First 4 bytes = selector for the function (0x4eb12a4b)
-            mstore(0, 0x4eb12a4b00000000000000000000000000000000000000000000000000000000)
-            
-            // Call data for dispatchAndExecute is the original calldata as a dynamic bytes parameter
-            mstore(4, 32)                    // Offset to the dynamic bytes parameter (always 32)
-            mstore(36, calldatasize())       // Length of the original calldata
-            calldatacopy(68, 0, calldatasize()) // The original calldata
-            
-            // Perform the delegatecall to the hookHandler
-            let success := delegatecall(
-                gas(),
-                hookHandlerAddr,             // hookHandler address from local variable 
-                0,                           // Memory offset of the call data
-                add(68, calldatasize()),     // Size of the call data (4 + 32 + 32 + calldatasize)
-                0,                           // Memory offset for the return data
-                0                            // Size of the return data buffer (0 to get it later)
-            )
-            
-            // Copy the return data to memory
-            returndatacopy(0, 0, returndatasize())
-            
-            switch success
-            case 0 {
-                // Revert with the received error message
-                revert(0, returndatasize())
-            }
-            default {
-                // Return the received data
-                return(0, returndatasize())
-            }
-        }
     }
 }
