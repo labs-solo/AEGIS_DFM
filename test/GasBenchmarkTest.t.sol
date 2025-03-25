@@ -9,6 +9,7 @@ import {DepositParams} from "../src/interfaces/IFullRange.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 /**
  * @title GasBenchmarkTest
@@ -24,6 +25,7 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
     // Constants for tick spacing
     int24 constant REGULAR_TICK_SPACING = 10;  // Tight spacing for regular pool
     int24 constant HOOK_TICK_SPACING = 200;    // Wide spacing for hook pool
+    uint24 constant REGULAR_POOL_FEE = 3000;   // 0.3% fee for regular pool
     
     function setUp() public override {
         // Call parent setUp to initialize the environment
@@ -33,9 +35,9 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
         regularPoolKey = PoolKey({
             currency0: Currency.wrap(address(token0)),
             currency1: Currency.wrap(address(token1)),
-            fee: DEFAULT_FEE,
+            fee: REGULAR_POOL_FEE,
             tickSpacing: REGULAR_TICK_SPACING,
-            hooks: fullRange // Use the existing fullRange hook instead of address(0)
+            hooks: IHooks(address(0)) // No hooks for regular pool
         });
         regularPoolId = regularPoolKey.toId();
         
@@ -328,8 +330,8 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
         token0.approve(address(swapRouter), type(uint256).max);
         token1.approve(address(swapRouter), type(uint256).max);
         
-        // Calculate target tick for small swap - halfway between current tick and lower bound
-        targetTick = currentTick - (currentTick - currentTickSpaceLowerBound) / 2;
+        // Set price limit using a fixed tick offset to ensure it's below the current price
+        targetTick = currentTick - 20; // Small offset for small swap
         uint160 smallSwapPriceLimit = TickMath.getSqrtPriceAtTick(targetTick);
         
         // Record starting tick and its tick space
@@ -384,8 +386,8 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
         // Test 2: Large swap in regular pool (crossing tick space boundary)
         vm.startPrank(bob);
         uint256 largeSwapAmount = 1e9;  // Larger amount to ensure crossing into next tick space
-        // Calculate target tick for large swap - two tick spaces down
-        targetTick = currentTickSpaceLowerBound - 2 * REGULAR_TICK_SPACING;
+        // Set price limit using a larger fixed tick offset
+        targetTick = currentTick - 100; // Larger offset for large swap
         uint160 largeSwapPriceLimit = TickMath.getSqrtPriceAtTick(targetTick);
         
         // Record starting tick and its tick space
