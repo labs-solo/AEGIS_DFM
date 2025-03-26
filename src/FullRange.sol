@@ -111,7 +111,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     
     modifier ensure(uint256 deadline) {
         if (deadline < block.timestamp) {
-            revert Errors.DeadlinePassed(deadline, block.timestamp);
+            revert Errors.DeadlinePassed(uint32(deadline), uint32(block.timestamp));
         }
         _;
     }

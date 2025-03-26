@@ -14,6 +14,7 @@ library Errors {
     error AccessOnlyPoolManager(address caller);
     error AccessNotAuthorized(address caller);
     error AccessOnlyHookHandler(address caller);
+    error AccessOnlyEmergencyAdmin(address caller);
     error Unauthorized();
     
     // Validation and input errors
@@ -28,6 +29,8 @@ library Errors {
     error ValidationInvalidTickSpacing(int24 tickSpacing);
     error ValidationInvalidTick(int24 tick);
     error ValidationInvalidSlippage(uint256 slippage);
+    error ParameterOutOfRange(uint256 value, uint256 min, uint256 max);
+    error DeadlinePassed(uint32 deadline, uint32 blockTime);
     error ArrayLengthMismatch();
     error InvalidCallbackSalt();
     error InvalidPolicyImplementationsLength(uint256 length);
@@ -50,6 +53,9 @@ library Errors {
     error InvalidRange();
     error InvalidSlippage();
     error InvalidLiquidity();
+    error InvalidInput();
+    error AmountTooLarge(uint256 amount, uint256 maximum);
+    error SlippageExceeded(uint256 required, uint256 actual);
     
     // System errors
     error ZeroAddress();
@@ -62,6 +68,8 @@ library Errors {
     error HookHandlerCallFailed(bytes reason);
     error HookDispatchFailed(bytes4 selector);
     error DelegateCallFailed();
+    error EthTransferFailed(address to, uint256 amount);
+    error NotImplemented();
     
     // Pool errors
     error PoolNotInitialized(PoolId poolId);
@@ -77,7 +85,7 @@ library Errors {
     error PoolInvalidFeeOrTickSpacing(uint24 fee, int24 tickSpacing);
     error PoolTickOutOfRange(int24 tick, int24 minTick, int24 maxTick);
     error PoolInEmergencyState(PoolId poolId);
-    error PoolNotFound(PoolId poolId);
+    error OnlyDynamicFeePoolAllowed();
     
     // Liquidity errors
     error InsufficientAmount(uint256 requested, uint256 available);
@@ -105,6 +113,7 @@ library Errors {
     error PolicyExpired();
     error PolicyNotActive();
     error PolicyNotImplemented();
+    error AllocationSumError(uint256 polShare, uint256 fullRangeShare, uint256 lpShare, uint256 expected);
     
     // Hook errors
     error HookNotFound();
@@ -117,6 +126,7 @@ library Errors {
     error HookExpired();
     error HookNotActive();
     error HookNotImplemented();
+    error HookInvalidAddress(address hook);
     
     // Token errors
     error TokenNotFound();
@@ -134,6 +144,9 @@ library Errors {
     error TokenEthNotAccepted();
     error TokenInsufficientEth(uint256 required, uint256 provided);
     error TokenEthTransferFailed(address to, uint256 amount);
+
+    // Oracle errors
+    error OracleOperationFailed(string operation, string reason);
 
     // Fee Reinvestment Manager Errors
     error FeeExtractionFailed(string reason);
