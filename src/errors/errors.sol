@@ -18,7 +18,7 @@ library Errors {
     error Unauthorized();
     
     // Validation and input errors
-    error ValidationDeadlinePassed(uint32 deadline, uint32 timestamp);
+    error ValidationDeadlinePassed(uint32 deadline, uint32 blockTime);
     error ValidationZeroAddress(string target);
     error ValidationInvalidInput(string reason);
     error ValidationZeroAmount(string parameter);
@@ -131,4 +131,16 @@ library Errors {
     error TokenEthNotAccepted();
     error TokenInsufficientEth(uint256 required, uint256 provided);
     error TokenEthTransferFailed(address to, uint256 amount);
+
+    // Fee Reinvestment Manager Errors
+    error FeeExtractionFailed(string reason);
+    error InvalidPolPercentage(uint256 provided, uint256 min, uint256 max);
+    error PoolSpecificPolPercentageNotAllowed();
+    error InvalidFeeDistribution(uint256 polShare, uint256 lpShare, uint256 expected);
+    error PoolReinvestmentBlocked(PoolId poolId);
+    error CollectionIntervalTooShort(uint256 provided, uint256 minimum);
+    error CollectionIntervalTooLong(uint256 provided, uint256 maximum);
+    error CalculationError(string reason);
+    error HookCallbackFailed(string reason);
+    error FeesNotAvailable();
 } 

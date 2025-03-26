@@ -223,7 +223,8 @@ abstract contract LocalUniswapV4TestBase is Test {
             Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | 
             Hooks.AFTER_REMOVE_LIQUIDITY_FLAG | 
             Hooks.BEFORE_SWAP_FLAG | 
-            Hooks.AFTER_SWAP_FLAG
+            Hooks.AFTER_SWAP_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
         );
 
         // Debug logs
@@ -237,9 +238,9 @@ abstract contract LocalUniswapV4TestBase is Test {
             address(dynamicFeeManager)
         );
         
-        // Mine for a hook address with the correct permission bits
+        // Mine for a hook address with the correct permission bits using the deployer address
         (address hookAddress, bytes32 salt) = HookMiner.find(
-            governance, // Using governance as the deployer instead of this contract
+            deployer, // Using deployer (instead of governance) as the deployer address
             flags,
             type(FullRange).creationCode,
             constructorArgs
@@ -248,42 +249,31 @@ abstract contract LocalUniswapV4TestBase is Test {
         console2.log("Mined hook address:", hookAddress);
         console2.log("Permission bits in address:", uint160(hookAddress) & Hooks.ALL_HOOK_MASK);
         
-        // Debug the governance and deployment information
-        console2.log("== Debug governance information ==");
+        // Debug governance information to help diagnose the issue
+        console2.log("== Debug deployment information ==");
         console2.log("This contract address:", address(this));
         console2.log("Current sender:", msg.sender);
-        console2.log("Policy manager address:", address(policyManager));
-        address currentGovernance = policyManager.getSoloGovernance();
-        console2.log("Current governance address:", currentGovernance);
+        console2.log("Deployer address:", deployer);
         
-        // Deploy from governance account
+        // Make sure we're using the deployer address for deployment
         vm.stopPrank();
-        vm.startPrank(governance); // Use governance account to deploy
+        vm.startPrank(deployer);
+        console2.log("Deploying hook from:", msg.sender);
         
-        // Deploy the hook with the mined salt
-        console2.log("Deploying hook from:", governance);
-        FullRange hook = new FullRange{salt: salt}(
+        // Deploy the hook using CREATE2 with the found salt
+        FullRange hookContract = new FullRange{salt: salt}(
             poolManager,
             IPoolPolicy(address(policyManager)),
             liquidityManager,
             dynamicFeeManager
         );
         
-        // Reset back to original sender
-        vm.stopPrank();
-        vm.startPrank(msg.sender);
+        // Ensure the deployed address matches the mined address
+        require(address(hookContract) == hookAddress, "Hook address mismatch");
         
-        // Verify the deployment
-        address actualAddress = address(hook);
-        console2.log("Actual deployed hook address:", actualAddress);
-        console2.log("Permission bits in deployed address:", uint160(actualAddress) & Hooks.ALL_HOOK_MASK);
-        console2.log("Salt used:", uint256(salt));
+        // Already pranking as deployer, no need to change
         
-        // Verify hook address
-        require(actualAddress == hookAddress, "Hook address mismatch");
-        require((uint160(actualAddress) & Hooks.ALL_HOOK_MASK) == flags, "Hook permission bits mismatch");
-        
-        return address(hook);
+        return hookAddress;
     }
 
     /**
