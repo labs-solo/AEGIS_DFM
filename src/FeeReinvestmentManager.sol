@@ -19,11 +19,23 @@ import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IFullRange} from "./interfaces/IFullRange.sol";
 import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
+import {TokenSafetyWrapper} from "./utils/TokenSafetyWrapper.sol";
 
 /**
  * @title FeeReinvestmentManager
  * @notice Streamlined implementation for managing fee extraction and protocol-owned liquidity (POL)
- * @dev Optimized approach focusing on POL fee extraction and reinvestment
+ * @dev This implementation uses a time-based, permissionless fee collection mechanism that prioritizes 
+ *      gas efficiency over immediate fee reinvestment. Fees remain in the pool until explicitly collected.
+ *      
+ * @dev DESIGN RATIONALE: 
+ *      1. Gas Efficiency: By collecting fees periodically rather than on every operation
+ *      2. Operational Simplicity: Time-based triggers are easier to audit and reason about
+ *      3. Permissionless Collection: Anyone can trigger fee collection after minimum interval
+ *      
+ * @dev TRADEOFFS:
+ *      - Fees are not immediately reinvested, creating an opportunity cost (delayed compounding)
+ *      - Relies on external triggers (withdrawals or manual collection) to process fees
+ *      - No risk of permanently missing fees as they remain in the pool until collected
  */
 contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUnlockCallback {
     using PoolIdLibrary for PoolKey;
@@ -59,6 +71,8 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         bool reinvestmentPaused;             // Pool-specific pause flag
         uint256 leftoverToken0;              // Leftover token0 from previous reinvestment
         uint256 leftoverToken1;              // Leftover token1 from previous reinvestment
+        uint256 pendingFee0;                 // Pending token0 fees for processing
+        uint256 pendingFee1;                 // Pending token1 fees for processing
     }
     
     /// @notice Callback data for extraction operations
@@ -78,6 +92,16 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     
     /// @notice Reference to the policy manager
     IPoolPolicy public policyManager;
+    
+    /// @notice Fee tracker structure for accumulated fees
+    struct FeeTracker {
+        uint256 lastProcessedTimestamp;
+        uint256 accumulatedFee0;
+        uint256 accumulatedFee1;
+    }
+    
+    /// @notice Tracking accumulated fees per pool
+    mapping(PoolId => FeeTracker) public feeTrackers;
     
     // ================ CONSTANTS ================
     
@@ -115,6 +139,22 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     
     /// @notice Emitted when leftover tokens are included in reinvestment
     event LeftoverTokensProcessed(PoolId indexed poolId, uint256 leftover0, uint256 leftover1);
+    
+    /// @notice Consolidated event for POL reinvestment
+    event POLReinvested(
+        PoolId indexed poolId,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 leftover0,
+        uint256 leftover1
+    );
+    
+    /// @notice Simple event for reinvestment failures
+    event POLReinvestmentFailed(
+        PoolId indexed poolId,
+        uint256 attempted0,
+        uint256 attempted1
+    );
     
     // ================ MODIFIERS ================
     
@@ -211,6 +251,14 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     
     /**
      * @notice Sets the collection interval for permissionless fee collection
+     * @dev This interval represents a direct tradeoff:
+     *      - SHORTER intervals: More frequent reinvestment but higher gas costs
+     *      - LONGER intervals: Lower gas costs but delayed reinvestment (opportunity cost)
+     *      
+     * @dev The interval doesn't affect fee accrual - fees continue to accumulate in the pool
+     *      regardless of collection frequency. It only affects when those fees can be
+     *      reinvested to generate additional returns.
+     *      
      * @param newIntervalSeconds The new interval in seconds
      */
     function setCollectionInterval(uint256 newIntervalSeconds) external onlyGovernance {
@@ -228,37 +276,134 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     // ================ CORE FUNCTIONS ================
     
     /**
-     * @notice Calculates the fee delta to extract for protocol purposes
+     * @notice Comprehensive fee extraction handler that encapsulates all logic
+     * @dev This function handles everything related to fee extraction to keep FullRange.sol lean:
+     *      1. Calculating how much to extract
+     *      2. Recording the extraction
+     *      3. Triggering processing if needed
+     *      4. Emitting events
+     * 
      * @param poolId The pool ID
-     * @param feesAccrued The total fees accrued
-     * @return extractDelta The balance delta representing the portion to extract
+     * @param key The pool key
+     * @param feesAccrued The total fees accrued during the operation
+     * @return extractDelta The balance delta representing fees to extract
      */
-    function calculateExtractDelta(
+    function handleFeeExtraction(
         PoolId poolId,
+        PoolKey calldata key,
         BalanceDelta feesAccrued
-    ) external view override returns (BalanceDelta extractDelta) {
+    ) external onlyFullRange returns (BalanceDelta extractDelta) {
         // Skip if no fees to extract or system paused
         if (reinvestmentPaused || poolFeeStates[poolId].reinvestmentPaused ||
             (feesAccrued.amount0() <= 0 && feesAccrued.amount1() <= 0)) {
             return BalanceDeltaLibrary.ZERO_DELTA;
         }
         
-        // Get POL share for this pool (either pool-specific or global)
+        // Check if sufficient time has passed since last extraction
+        FeeTracker storage tracker = feeTrackers[poolId];
+        if (block.timestamp < tracker.lastProcessedTimestamp + minimumCollectionInterval) {
+            // Too soon to extract again, return zero delta
+            return BalanceDeltaLibrary.ZERO_DELTA;
+        }
+        
+        // Calculate extraction amounts based on protocol fee percentage
         uint256 polSharePpm = getPolSharePpm(poolId);
         
-        // Calculate portions to extract for POL
         int256 fee0 = feesAccrued.amount0() > 0 ? int256(feesAccrued.amount0()) : int256(0);
         int256 fee1 = feesAccrued.amount1() > 0 ? int256(feesAccrued.amount1()) : int256(0);
         
-        // Use unchecked for gas optimization as these calculations cannot overflow
-        unchecked {
-            int256 extract0 = (fee0 * int256(polSharePpm)) / int256(PPM_DENOMINATOR);
-            int256 extract1 = (fee1 * int256(polSharePpm)) / int256(PPM_DENOMINATOR);
+        int256 extract0 = (fee0 * int256(polSharePpm)) / int256(PPM_DENOMINATOR);
+        int256 extract1 = (fee1 * int256(polSharePpm)) / int256(PPM_DENOMINATOR);
+        
+        // Create extraction delta
+        extractDelta = toBalanceDelta(int128(extract0), int128(extract1));
+        
+        // Only proceed if we're extracting something
+        if (extract0 > 0 || extract1 > 0) {
+            // Update tracker with the extraction details
+            tracker.lastProcessedTimestamp = block.timestamp;
+            tracker.accumulatedFee0 += uint256(extract0);
+            tracker.accumulatedFee1 += uint256(extract1);
             
-            return toBalanceDelta(int128(extract0), int128(extract1));
+            // Emit event for the extraction
+            emit FeesExtracted(
+                poolId, 
+                uint256(extract0), 
+                uint256(extract1), 
+                msg.sender
+            );
+            
+            // Queue the extracted fees for processing
+            queueExtractedFeesForProcessing(
+                poolId, 
+                uint256(extract0), 
+                uint256(extract1)
+            );
         }
+        
+        return extractDelta;
     }
-    
+
+    /**
+     * @notice Queues extracted fees for later processing
+     * @dev This avoids performing too much work in the liquidity removal transaction
+     *      by queueing the fees for processing in a separate transaction
+     * 
+     * @param poolId The pool ID
+     * @param fee0 Amount of token0 fees
+     * @param fee1 Amount of token1 fees
+     */
+    function queueExtractedFeesForProcessing(
+        PoolId poolId,
+        uint256 fee0,
+        uint256 fee1
+    ) internal {
+        if (fee0 == 0 && fee1 == 0) return;
+        
+        // Add to pending fees for this pool
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        feeState.pendingFee0 += fee0;
+        feeState.pendingFee1 += fee1;
+        
+        // Emit event for queued fees
+        emit FeesQueuedForProcessing(poolId, fee0, fee1);
+    }
+
+    /**
+     * @notice Permissionless function to process queued fees
+     * @dev Anyone can call this to process fees that have been extracted but not yet reinvested
+     * 
+     * @param poolId The pool ID
+     * @return reinvested Whether fees were successfully reinvested
+     */
+    function processQueuedFees(PoolId poolId) external nonReentrant returns (bool reinvested) {
+        // Check if there are any pending fees to process
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        uint256 fee0 = feeState.pendingFee0;
+        uint256 fee1 = feeState.pendingFee1;
+        
+        if (fee0 == 0 && fee1 == 0) {
+            return false; // Nothing to process
+        }
+        
+        // Reset pending fees before processing to prevent reentrancy issues
+        feeState.pendingFee0 = 0;
+        feeState.pendingFee1 = 0;
+        
+        // Process the fees
+        (uint256 pol0, uint256 pol1) = _processPOLPortion(poolId, fee0, fee1);
+        
+        // Return true if fees were processed
+        reinvested = (pol0 > 0 || pol1 > 0);
+        
+        if (reinvested) {
+            feeState.lastSuccessfulReinvestment = block.timestamp;
+            emit FeesReinvested(poolId, fee0, fee1, pol0, pol1);
+        }
+        
+        return reinvested;
+    }
+
     /**
      * @notice Internal function to check if reinvestment should be performed
      * @param poolId The pool ID
@@ -343,6 +488,15 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
 
     /**
      * @notice Internal implementation of fee reinvestment logic
+     * @dev This function implements the time-based fee collection strategy. By requiring a minimum
+     *      interval between collections, the system reduces gas costs at the expense of delayed
+     *      reinvestment. 
+     *      
+     * @dev The tradeoff is deliberate: 
+     *      - Lower gas costs and contract complexity
+     *      - Acceptable opportunity cost of delayed reinvestment
+     *      - No risk of permanent fee loss (fees remain in pool until collected)
+     *      
      * @param poolId The pool ID
      * @return reinvested Whether fees were successfully reinvested
      * @return autoCompounded Whether auto-compounding was performed
@@ -385,6 +539,14 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
 
     /**
      * @notice Permissionless function to collect and process accumulated fees
+     * @dev This function allows anyone to trigger fee collection after minimumCollectionInterval 
+     *      has passed since the last collection. This design ensures fees are eventually collected
+     *      even if no withdrawals occur for extended periods, preventing indefinite fee stranding.
+     *      
+     * @dev IMPORTANT: Fees are NOT lost if this function isn't called frequently - they remain 
+     *      in the pool and will be collected during the next valid collection event. The only 
+     *      cost is delayed reinvestment (opportunity cost of compounding).
+     *      
      * @param poolId The pool ID to collect fees for
      * @return extracted Whether fees were successfully extracted and processed
      */
@@ -468,8 +630,17 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     
     /**
      * @notice Unlock callback for fee extraction
+     * @dev Uses the "zero-take" technique to collect accrued fees from the pool. This approach
+     *      extracts available fees without specifying explicit amounts by measuring token balance
+     *      differences before and after the take operation.
+     *      
+     * @dev This method is gas-efficient and doesn't require tracking exact fee accruals, but
+     *      it assumes the contract's balance changes are solely due to fee collection. The
+     *      approach is safe because no fees are permanently lost - uncollected fees remain
+     *      in the pool until a future collection event.
+     *      
      * @param data The encoded callback data
-     * @return The result of the operation
+     * @return The result of the operation (success flag, extracted token amounts)
      */
     function unlockCallback(bytes calldata data) external onlyPoolManager returns (bytes memory) {
         // Decode callback data
@@ -529,15 +700,10 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         uint256 leftover1 = feeState.leftoverToken1;
         
         // Add any leftover amounts from previous reinvestment attempts
-        pol0 += leftover0;
-        pol1 += leftover1;
+        uint256 total0 = pol0 + leftover0;
+        uint256 total1 = pol1 + leftover1;
         
-        // Emit event if we're processing leftovers
-        if (leftover0 > 0 || leftover1 > 0) {
-            emit LeftoverTokensProcessed(poolId, leftover0, leftover1);
-        }
-        
-        if (pol0 == 0 && pol1 == 0) {
+        if (total0 == 0 && total1 == 0) {
             return (0, 0);
         }
         
@@ -546,36 +712,53 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         
         // Calculate optimal investment amounts
         (uint256 optimal0, uint256 optimal1) = MathUtils.calculateReinvestableFees(
-            pol0, pol1, reserve0, reserve1
+            total0, total1, reserve0, reserve1
         );
         
         // Ensure optimal amounts don't exceed available fees
-        if (optimal0 > pol0) optimal0 = pol0;
-        if (optimal1 > pol1) optimal1 = pol1;
+        if (optimal0 > total0) optimal0 = total0;
+        if (optimal1 > total1) optimal1 = total1;
         
         // Skip if no reinvestable amounts
         if (optimal0 == 0 && optimal1 == 0) {
             return (0, 0);
         }
         
-        // Execute reinvestment
+        // Store original leftover values
+        uint256 originalLeftover0 = feeState.leftoverToken0;
+        uint256 originalLeftover1 = feeState.leftoverToken1;
+        
+        // Clear leftovers - will be restored on failure
+        feeState.leftoverToken0 = 0;
+        feeState.leftoverToken1 = 0;
+        
+        // Execute reinvestment with external calls BEFORE state updates
         bool success = _executePolReinvestment(poolId, optimal0, optimal1);
         
         if (success) {
-            // Calculate and store the leftover amounts
-            feeState.leftoverToken0 = pol0 - optimal0;
-            feeState.leftoverToken1 = pol1 - optimal1;
+            // Calculate new leftovers after successful operation
+            uint256 newLeftover0 = total0 - optimal0;
+            uint256 newLeftover1 = total1 - optimal1;
             
-            // Emit event for POL accrual
-            emit POLAccrued(poolId, optimal0, optimal1);
-            emit FeesReinvested(poolId, pol0, pol1, optimal0, optimal1);
+            // Only store non-zero leftover amounts
+            if (newLeftover0 > 0) feeState.leftoverToken0 = newLeftover0;
+            if (newLeftover1 > 0) feeState.leftoverToken1 = newLeftover1;
+            
+            // Update last successful timestamp
+            feeState.lastSuccessfulReinvestment = block.timestamp;
+            
+            // Emit event for POL accrual - single event instead of multiple
+            emit POLReinvested(poolId, optimal0, optimal1, newLeftover0, newLeftover1);
+            
             return (optimal0, optimal1);
         } else {
-            // If reinvestment failed, store all amounts as leftovers
-            feeState.leftoverToken0 = pol0;
-            feeState.leftoverToken1 = pol1;
+            // On failure, restore the original leftovers plus current amounts
+            feeState.leftoverToken0 = originalLeftover0 + pol0;
+            feeState.leftoverToken1 = originalLeftover1 + pol1;
             
-            emit ReinvestmentFailed(poolId, "POL reinvestment execution failed");
+            // Emit single failure event
+            emit POLReinvestmentFailed(poolId, optimal0, optimal1);
+            
             return (0, 0);
         }
     }
@@ -602,9 +785,9 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
             return false;
         }
         
-        // Safe approve tokens
-        _safeApprove(token0, address(liquidityManager), amount0);
-        _safeApprove(token1, address(liquidityManager), amount1);
+        // Simplified approval logic - approve only what's needed
+        if (amount0 > 0) TokenSafetyWrapper.safeApprove(token0, address(liquidityManager), amount0);
+        if (amount1 > 0) TokenSafetyWrapper.safeApprove(token1, address(liquidityManager), amount1);
         
         try liquidityManager.reinvestFees(
             poolId,
@@ -617,8 +800,8 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         } catch {
             success = false;
             // Reset approvals
-            _safeApprove(token0, address(liquidityManager), 0);
-            _safeApprove(token1, address(liquidityManager), 0);
+            if (amount0 > 0) TokenSafetyWrapper.safeRevokeApproval(token0, address(liquidityManager));
+            if (amount1 > 0) TokenSafetyWrapper.safeRevokeApproval(token1, address(liquidityManager));
         }
         
         return success;
@@ -682,24 +865,6 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         }
     }
     
-    /**
-     * @notice Safe token approval with redundant call elimination
-     * @param token The token to approve
-     * @param spender The address to approve
-     * @param amount The amount to approve
-     */
-    function _safeApprove(address token, address spender, uint256 amount) internal {
-        if (amount == 0) return;
-        
-        uint256 currentAllowance = ERC20(token).allowance(address(this), spender);
-        if (currentAllowance != amount) {
-            if (currentAllowance > 0) {
-                SafeTransferLib.safeApprove(ERC20(token), spender, 0);
-            }
-            SafeTransferLib.safeApprove(ERC20(token), spender, amount);
-        }
-    }
-    
     // ================ VIEW FUNCTIONS ================
     
     /**
@@ -757,5 +922,71 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     function getLeftoverTokens(PoolId poolId) external view returns (uint256 leftover0, uint256 leftover1) {
         PoolFeeState storage feeState = poolFeeStates[poolId];
         return (feeState.leftoverToken0, feeState.leftoverToken1);
+    }
+
+    /**
+     * @notice Minimal state consistency check
+     * @dev Lightweight function for off-chain monitoring to detect issues
+     * @param poolId The pool ID to check
+     * @return isConsistent Whether state is consistent
+     * @return leftover0 Amount of token0 leftovers
+     * @return leftover1 Amount of token1 leftovers
+     */
+    function checkStateConsistency(PoolId poolId) external view returns (
+        bool isConsistent,
+        uint256 leftover0,
+        uint256 leftover1
+    ) {
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        
+        // Return leftover amounts
+        leftover0 = feeState.leftoverToken0;
+        leftover1 = feeState.leftoverToken1;
+        
+        // Skip detailed checks if no leftovers
+        if (leftover0 == 0 && leftover1 == 0) {
+            return (true, 0, 0);
+        }
+        
+        // Get token balances
+        PoolKey memory key = _getPoolKey(poolId);
+        address token0 = Currency.unwrap(key.currency0);
+        address token1 = Currency.unwrap(key.currency1);
+        
+        uint256 balance0 = token0 != address(0) ? TokenSafetyWrapper.safeBalanceOf(token0, address(this)) : 0;
+        uint256 balance1 = token1 != address(0) ? TokenSafetyWrapper.safeBalanceOf(token1, address(this)) : 0;
+        
+        // Check if contract has enough balance to cover leftovers
+        isConsistent = (balance0 >= leftover0) && (balance1 >= leftover1);
+        
+        return (isConsistent, leftover0, leftover1);
+    }
+
+    /**
+     * @notice View function to get pool operational status
+     * @dev Designed for off-chain monitoring services
+     * @param poolId The pool ID to check
+     * @return lastCollection Last collection timestamp
+     * @return lastSuccess Last successful reinvestment timestamp
+     * @return leftover0 Amount of token0 leftovers
+     * @return leftover1 Amount of token1 leftovers
+     * @return isPaused Whether reinvestment is paused for this pool
+     */
+    function getPoolOperationalStatus(PoolId poolId) external view returns (
+        uint256 lastCollection,
+        uint256 lastSuccess,
+        uint256 leftover0,
+        uint256 leftover1,
+        bool isPaused
+    ) {
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        
+        return (
+            feeState.lastFeeCollectionTimestamp,
+            feeState.lastSuccessfulReinvestment,
+            feeState.leftoverToken0,
+            feeState.leftoverToken1,
+            feeState.reinvestmentPaused || reinvestmentPaused
+        );
     }
 } 

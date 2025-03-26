@@ -138,6 +138,29 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     event MaxETHRetriesUpdated(uint8 oldValue, uint8 newValue);
     
     /**
+     * @notice Consolidated event for reinvestment operations
+     * @dev Reduces gas costs by combining multiple events
+     */
+    event ReinvestmentProcessed(
+        PoolId indexed poolId, 
+        uint256 amount0, 
+        uint256 amount1, 
+        uint256 shares,
+        uint128 oldTotalShares,
+        uint128 newTotalShares
+    );
+    
+    /**
+     * @notice Simplified event for pool state updates
+     * @dev Operation types: 1=deposit, 2=withdraw, 3=reinvest
+     */
+    event PoolStateUpdated(
+        PoolId indexed poolId,
+        uint128 totalShares,
+        uint8 operationType
+    );
+    
+    /**
      * @notice Constructor
      * @param _manager The Uniswap V4 pool manager
      * @param _owner The owner of the contract
@@ -928,13 +951,13 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
     
     /**
-     * @notice Atomic operation for processing withdrawal share accounting
-     * @dev Combines share burning and total share update in one call for atomicity
+     * @notice Process withdraw shares operation
+     * @dev This function is called by FullRange during withdrawals
      * @param poolId The pool ID
      * @param user The user address
-     * @param sharesToBurn Shares to burn
-     * @param currentTotalShares Current total shares (for validation)
-     * @return newTotalShares The new total shares amount
+     * @param sharesToBurn The number of shares to burn
+     * @param currentTotalShares The current total shares in the pool
+     * @return newTotalShares The new total shares
      */
     function processWithdrawShares(
         PoolId poolId, 
@@ -955,28 +978,28 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             revert Errors.ValidationInvalidInput("Total shares mismatch");
         }
         
-        // Burn shares
+        // First execute external call (tokens.burn) before state changes
         positions.burn(user, tokenId, sharesToBurn);
         
-        // Update total shares
+        // Then update contract state
         newTotalShares = currentTotalShares - uint128(sharesToBurn);
         pool.totalShares = newTotalShares;
         
-        // Emit events
+        // Simplified event emission
         emit UserSharesRemoved(poolId, user, sharesToBurn);
-        emit PoolTotalSharesUpdated(poolId, currentTotalShares, newTotalShares);
+        emit PoolStateUpdated(poolId, newTotalShares, 2); // 2 = withdraw
         
         return newTotalShares;
     }
     
     /**
-     * @notice Atomic operation for processing deposit share accounting
-     * @dev Combines share minting and total share update in one call for atomicity
+     * @notice Process deposit shares operation
+     * @dev This function is called by FullRange during deposits
      * @param poolId The pool ID
      * @param user The user address
-     * @param sharesToMint Shares to mint
-     * @param currentTotalShares Current total shares (for validation)
-     * @return newTotalShares The new total shares amount
+     * @param sharesToMint The number of shares to mint
+     * @param currentTotalShares The current total shares in the pool
+     * @return newTotalShares The new total shares
      */
     function processDepositShares(
         PoolId poolId, 
@@ -990,17 +1013,17 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             revert Errors.ValidationInvalidInput("Total shares mismatch");
         }
         
-        // Mint shares
+        // First perform external call (mint tokens)
         uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
         positions.mint(user, tokenId, sharesToMint);
         
-        // Update total shares
+        // Then update state
         newTotalShares = currentTotalShares + uint128(sharesToMint);
         pool.totalShares = newTotalShares;
         
-        // Emit events
+        // Simplified event emission
         emit UserSharesAdded(poolId, user, sharesToMint);
-        emit PoolTotalSharesUpdated(poolId, currentTotalShares, newTotalShares);
+        emit PoolStateUpdated(poolId, newTotalShares, 1); // 1 = deposit
         
         return newTotalShares;
     }
@@ -1015,14 +1038,14 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
 
     /**
-     * @notice Reinvests fees into the pool for POL only
-     * @dev The full-range portion is handled through auto-compounding
+     * @notice Reinvests collected fees into the pool
+     * @dev Following the checks-effects-interactions pattern to prevent reentrancy issues
      * @param poolId The pool ID
-     * @param fullRangeAmount0 Amount of token0 for full-range (should be 0)
-     * @param fullRangeAmount1 Amount of token1 for full-range (should be 0)
-     * @param polAmount0 Amount of token0 for protocol-owned liquidity
-     * @param polAmount1 Amount of token1 for protocol-owned liquidity
-     * @return shares The number of POL shares minted
+     * @param fullRangeAmount0 Amount of token0 for full-range position
+     * @param fullRangeAmount1 Amount of token1 for full-range position
+     * @param polAmount0 Amount of token0 for POL
+     * @param polAmount1 Amount of token1 for POL
+     * @return shares The number of shares minted
      */
     function reinvestFees(
         PoolId poolId,
@@ -1031,7 +1054,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint256 polAmount0,
         uint256 polAmount1
     ) external returns (uint256 shares) {
-        // Verify caller is the fee reinvestment manager
+        // Authorization checks
         address reinvestmentPolicy = IPoolPolicy(owner).getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
         if (msg.sender != reinvestmentPolicy) {
             revert Errors.AccessNotAuthorized(msg.sender);
@@ -1048,17 +1071,14 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             shares = 1; // Minimum 1 share
         }
         
-        // Update pool data atomically
+        // Get pool and key information
         PoolInfo storage pool = pools[poolId];
         PoolKey memory key = _poolKeys[poolId];
-        
-        // Update pool state in one storage operation
         uint128 oldTotalShares = pool.totalShares;
-        pool.reserve0 += polAmount0;
-        pool.reserve1 += polAmount1;
-        pool.totalShares = oldTotalShares + uint128(shares);
         
-        // Add POL to Uniswap pool
+        // *** CRITICAL CHANGE: Execute pool interactions BEFORE state changes ***
+        
+        // Add POL to Uniswap pool first
         IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
             tickLower: TickMath.MIN_TICK,
             tickUpper: TickMath.MAX_TICK,
@@ -1070,13 +1090,19 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         (BalanceDelta delta, ) = manager.modifyLiquidity(key, params, new bytes(0));
         _handleDelta(delta, Currency.unwrap(key.currency0), Currency.unwrap(key.currency1));
         
+        // Only update state AFTER successful external calls
+        pool.reserve0 += polAmount0;
+        pool.reserve1 += polAmount1;
+        pool.totalShares = oldTotalShares + uint128(shares);
+        
         // Mint shares to POL treasury
         uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
         address polTreasury = owner; // Use contract owner as POL treasury
         positions.mint(polTreasury, tokenId, shares);
         
-        // Emit event for fee reinvestment
-        emit TotalLiquidityUpdated(poolId, oldTotalShares, pool.totalShares);
+        // Single event for the operation - reduced from multiple events
+        emit ReinvestmentProcessed(poolId, polAmount0, polAmount1, shares, oldTotalShares, pool.totalShares);
+        emit PoolStateUpdated(poolId, pool.totalShares, 3); // 3 = reinvest
         
         return shares;
     }

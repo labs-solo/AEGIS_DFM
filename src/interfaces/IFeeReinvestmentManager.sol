@@ -31,6 +31,14 @@ interface IFeeReinvestmentManager {
     event FeesExtracted(PoolId indexed poolId, uint256 fee0, uint256 fee1, address indexed caller);
     
     /**
+     * @notice Emitted when fees are queued for processing
+     * @param poolId The pool ID
+     * @param fee0 Amount of token0 fees
+     * @param fee1 Amount of token1 fees
+     */
+    event FeesQueuedForProcessing(PoolId indexed poolId, uint256 fee0, uint256 fee1);
+    
+    /**
      * @notice Operation types for different reinvestment contexts
      */
     enum OperationType { 
@@ -40,15 +48,26 @@ interface IFeeReinvestmentManager {
     }
     
     /**
-     * @notice Calculates the fee delta to extract for protocol purposes
+     * @notice Comprehensive fee extraction handler for FullRange.sol
+     * @dev This function handles all fee extraction logic to keep FullRange.sol lean
+     * 
      * @param poolId The pool ID
-     * @param feesAccrued The total fees accrued
-     * @return The balance delta representing the portion to extract
+     * @param key The pool key
+     * @param feesAccrued The total fees accrued during the operation
+     * @return extractDelta The balance delta representing fees to extract
      */
-    function calculateExtractDelta(
+    function handleFeeExtraction(
         PoolId poolId,
+        PoolKey calldata key,
         BalanceDelta feesAccrued
-    ) external view returns (BalanceDelta);
+    ) external returns (BalanceDelta extractDelta);
+    
+    /**
+     * @notice Permissionless function to process queued fees
+     * @param poolId The pool ID
+     * @return reinvested Whether fees were successfully reinvested
+     */
+    function processQueuedFees(PoolId poolId) external returns (bool reinvested);
     
     /**
      * @notice Permissionless function to collect and process accumulated fees

@@ -720,6 +720,8 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
 
     /**
      * @notice Implementation for afterRemoveLiquidityReturnDelta hook
+     * @dev This hook delegates all fee calculation and tracking logic to the FeeReinvestmentManager
+     *     to keep the FullRange contract lean
      */
     function afterRemoveLiquidityReturnDelta(
         address sender,
@@ -731,26 +733,24 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     ) external returns (bytes4, BalanceDelta) {
         PoolId poolId = key.toId();
         
-        // Delegate extraction calculation to FeeReinvestmentManager
+        // Get the FeeReinvestmentManager
         address reinvestPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
         
+        // Delegate all extraction logic to the FeeReinvestmentManager
         if (reinvestPolicy != address(0)) {
-            try IFeeReinvestmentManager(reinvestPolicy).calculateExtractDelta(
-                poolId, feesAccrued
+            try IFeeReinvestmentManager(reinvestPolicy).handleFeeExtraction(
+                poolId, 
+                key,
+                feesAccrued
             ) returns (BalanceDelta extractDelta) {
-                // Only emit event if successful, no additional logic here
-                if (extractDelta.amount0() > 0 || extractDelta.amount1() > 0) {
-                    emit FeeExtractionProcessed(poolId, uint256(uint128(extractDelta.amount0())), uint256(uint128(extractDelta.amount1())));
-                }
+                // Return whatever delta the FeeReinvestmentManager suggests
                 return (IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector, extractDelta);
-            } catch (bytes memory reason) {
-                // If calculation fails, extract nothing
-                emit FeeExtractionFailed(poolId, string(reason));
-                return (IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+            } catch {
+                // If handler fails, extract nothing
             }
         }
         
-        // If no policy, don't extract anything
+        // Default to zero extraction
         return (IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 

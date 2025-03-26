@@ -289,14 +289,14 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     /**
      * @notice Sets the POL share percentage for a specific pool
      * @param poolId The pool ID
-     * @param polSharePpm The POL share in PPM (parts per million)
+     * @param newPolSharePpm The POL share in PPM (parts per million)
      */
-    function setPoolPOLShare(PoolId poolId, uint256 polSharePpm) external onlyOwner {
+    function setPoolPOLShare(PoolId poolId, uint256 newPolSharePpm) external onlyOwner {
         // Validate POL share is within valid range (0-100%)
-        if (polSharePpm > 1000000) revert Errors.ParameterOutOfRange(polSharePpm, 0, 1000000);
+        if (newPolSharePpm > 1000000) revert Errors.ParameterOutOfRange(newPolSharePpm, 0, 1000000);
         
-        poolPolSharePpm[poolId] = polSharePpm;
-        emit PoolPOLShareChanged(poolId, polSharePpm);
+        poolPolSharePpm[poolId] = newPolSharePpm;
+        emit PoolPOLShareChanged(poolId, newPolSharePpm);
     }
     
     /**
