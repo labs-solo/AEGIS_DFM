@@ -4,6 +4,7 @@ pragma solidity 0.8.26;
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IPoolPolicy} from "./IPoolPolicy.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 
 /**
  * @title IFeeReinvestmentManager
@@ -21,6 +22,15 @@ interface IFeeReinvestmentManager {
     event FeesReinvested(PoolId indexed poolId, uint256 fee0, uint256 fee1, uint256 investable0, uint256 investable1);
     
     /**
+     * @notice Emitted when fees are extracted
+     * @param poolId The pool ID
+     * @param fee0 Amount of token0 fees
+     * @param fee1 Amount of token1 fees
+     * @param caller Address that triggered the extraction
+     */
+    event FeesExtracted(PoolId indexed poolId, uint256 fee0, uint256 fee1, address indexed caller);
+    
+    /**
      * @notice Operation types for different reinvestment contexts
      */
     enum OperationType { 
@@ -28,6 +38,24 @@ interface IFeeReinvestmentManager {
         DEPOSIT, 
         WITHDRAWAL 
     }
+    
+    /**
+     * @notice Calculates the fee delta to extract for protocol purposes
+     * @param poolId The pool ID
+     * @param feesAccrued The total fees accrued
+     * @return The balance delta representing the portion to extract
+     */
+    function calculateExtractDelta(
+        PoolId poolId,
+        BalanceDelta feesAccrued
+    ) external view returns (BalanceDelta);
+    
+    /**
+     * @notice Permissionless function to collect and process accumulated fees
+     * @param poolId The pool ID to collect fees for
+     * @return extracted Whether fees were successfully extracted and processed
+     */
+    function collectAccumulatedFees(PoolId poolId) external returns (bool extracted);
     
     /**
      * @notice Checks if reinvestment should be performed based on the current mode and conditions
@@ -89,4 +117,19 @@ interface IFeeReinvestmentManager {
      * @return The cumulative fee multiplier
      */
     function cumulativeFeeMultiplier(PoolId poolId) external view returns (uint256);
+    
+    /**
+     * @notice Get the POL share percentage for a specific pool
+     * @param poolId The pool ID to get the POL share for
+     * @return The POL share in PPM (parts per million)
+     */
+    function getPolSharePpm(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Get information about leftover tokens from previous reinvestments
+     * @param poolId The pool ID
+     * @return leftover0 Leftover token0 amount
+     * @return leftover1 Leftover token1 amount
+     */
+    function getLeftoverTokens(PoolId poolId) external view returns (uint256 leftover0, uint256 leftover1);
 } 

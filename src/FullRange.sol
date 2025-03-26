@@ -23,13 +23,14 @@ import { IFeeReinvestmentManager } from "./interfaces/IFeeReinvestmentManager.so
 import { ReentrancyGuard } from "solmate/src/utils/ReentrancyGuard.sol";
 import { StateLibrary } from "v4-core/src/libraries/StateLibrary.sol";
 import { PoolTokenIdUtils } from "./utils/PoolTokenIdUtils.sol";
+import { IFullRangeHooks } from "./interfaces/IFullRangeHooks.sol";
 
 /**
  * @title FullRange
  * @notice Optimized Uniswap V4 Hook contract with minimized bytecode size
  * @dev Implements IFullRange and uses delegate calls to manager contracts for complex logic
  */
-contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
+contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGuard {
     using PoolIdLibrary for PoolKey;
     
     // =========================================================================
@@ -90,6 +91,8 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
     event PolicyInitializationFailed(PoolId indexed poolId, string reason);
     event Deposit(address indexed sender, PoolId indexed poolId, uint256 amount0, uint256 amount1, uint256 shares);
     event Withdraw(address indexed sender, PoolId indexed poolId, uint256 amount0, uint256 amount1, uint256 shares);
+    event FeeExtractionProcessed(PoolId indexed poolId, uint256 amount0, uint256 amount1);
+    event FeeExtractionFailed(PoolId indexed poolId, string reason);
     
     // Modifiers
     modifier onlyGovernance() {
@@ -158,7 +161,7 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
             beforeSwapReturnDelta: false,
             afterSwapReturnDelta: false,
             afterAddLiquidityReturnDelta: false,
-            afterRemoveLiquidityReturnDelta: false
+            afterRemoveLiquidityReturnDelta: true
         });
     }
 
@@ -713,5 +716,79 @@ contract FullRange is IFullRange, IUnlockCallback, ReentrancyGuard {
         returns (bytes4)
     {
         return IHooks.afterDonate.selector;
+    }
+
+    /**
+     * @notice Implementation for afterRemoveLiquidityReturnDelta hook
+     */
+    function afterRemoveLiquidityReturnDelta(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external returns (bytes4, BalanceDelta) {
+        PoolId poolId = key.toId();
+        
+        // Delegate extraction calculation to FeeReinvestmentManager
+        address reinvestPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
+        
+        if (reinvestPolicy != address(0)) {
+            try IFeeReinvestmentManager(reinvestPolicy).calculateExtractDelta(
+                poolId, feesAccrued
+            ) returns (BalanceDelta extractDelta) {
+                // Only emit event if successful, no additional logic here
+                if (extractDelta.amount0() > 0 || extractDelta.amount1() > 0) {
+                    emit FeeExtractionProcessed(poolId, uint256(uint128(extractDelta.amount0())), uint256(uint128(extractDelta.amount1())));
+                }
+                return (IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector, extractDelta);
+            } catch (bytes memory reason) {
+                // If calculation fails, extract nothing
+                emit FeeExtractionFailed(poolId, string(reason));
+                return (IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+            }
+        }
+        
+        // If no policy, don't extract anything
+        return (IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
+    /**
+     * @notice Implementation for beforeSwapReturnDelta hook
+     */
+    function beforeSwapReturnDelta(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        bytes calldata hookData
+    ) external returns (bytes4, BeforeSwapDelta) {
+        return (IFullRangeHooks.beforeSwapReturnDelta.selector, BeforeSwapDeltaLibrary.ZERO_DELTA);
+    }
+
+    /**
+     * @notice Implementation for afterSwapReturnDelta hook
+     */
+    function afterSwapReturnDelta(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external returns (bytes4, BalanceDelta) {
+        return (IFullRangeHooks.afterSwapReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
+    /**
+     * @notice Implementation for afterAddLiquidityReturnDelta hook
+     */
+    function afterAddLiquidityReturnDelta(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external returns (bytes4, BalanceDelta) {
+        return (IFullRangeHooks.afterAddLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 }

@@ -125,6 +125,26 @@ interface IPoolPolicy {
      * @param multiplier The new default multiplier value
      */
     function setDefaultPOLMultiplier(uint32 multiplier) external;
+    
+    /**
+     * @notice Sets the POL share percentage for a specific pool
+     * @param poolId The pool ID
+     * @param polSharePpm The POL share in PPM (parts per million)
+     */
+    function setPoolPOLShare(PoolId poolId, uint256 polSharePpm) external;
+    
+    /**
+     * @notice Enables or disables the use of pool-specific POL share percentages
+     * @param enabled Whether to enable pool-specific POL sharing
+     */
+    function setPoolSpecificPOLSharingEnabled(bool enabled) external;
+    
+    /**
+     * @notice Gets the POL share percentage for a specific pool
+     * @param poolId The pool ID to get the POL share for
+     * @return The POL share in PPM (parts per million)
+     */
+    function getPoolPOLShare(PoolId poolId) external view returns (uint256);
 
     /**
      * @notice Returns the tick scaling factor used to convert dynamic fee to max tick change

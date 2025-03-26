@@ -28,7 +28,7 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
     uint24 constant REGULAR_POOL_FEE = 3000;   // 0.3% fee for regular pool
     
     function setUp() public override {
-        // Call parent setUp to initialize the environment
+        // Call parent setUp to initialize the environment with the hook already deployed
         super.setUp();
         
         // Create a regular pool without hooks and tight tick spacing
@@ -42,14 +42,12 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
         regularPoolId = regularPoolKey.toId();
         
         // Initialize the regular pool at the center of a tick space
-        vm.startPrank(deployer);
-        // Calculate center of a tick space for initialization
         int24 regularTickSpaceCenter = ((0 / REGULAR_TICK_SPACING) * REGULAR_TICK_SPACING) + (REGULAR_TICK_SPACING / 2);
         uint160 centerSqrtPriceX96 = TickMath.getSqrtPriceAtTick(regularTickSpaceCenter);
+        
+        vm.startPrank(deployer);
         poolManager.initialize(regularPoolKey, centerSqrtPriceX96);
         vm.stopPrank();
-        
-        // Note: The hooked pool is already initialized in the parent setUp
     }
     
     function test_compareAddLiquidity() public {

@@ -1,9 +1,28 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import "./LocalUniswapV4TestBase.t.sol";
-import "forge-std/console2.sol";
-// Import the necessary structs from FullRange interfaces
+import {Test} from "forge-std/Test.sol";
+import {console2} from "forge-std/Console2.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {PoolManager} from "v4-core/src/PoolManager.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {HookMiner} from "../src/utils/HookMiner.sol";
+import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
+
+import {FullRange} from "../src/FullRange.sol";
+import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
+import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol";
+import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
+import {DefaultCAPEventDetector} from "../src/DefaultCAPEventDetector.sol";
+import {ICAPEventDetector} from "../src/interfaces/ICAPEventDetector.sol";
+import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {DepositParams, WithdrawParams} from "../src/interfaces/IFullRange.sol";
 
 /**
@@ -11,12 +30,163 @@ import {DepositParams, WithdrawParams} from "../src/interfaces/IFullRange.sol";
  * @notice A simple test suite that verifies basic Uniswap V4 operations with our hook
  * @dev This file MUST be compiled with Solidity 0.8.26 to ensure hook address validation works correctly
  */
-contract SimpleV4Test is LocalUniswapV4TestBase {
-    function setUp() public override {
-        console2.log("SimpleV4Test: Beginning setup");
+contract SimpleV4Test is Test {
+    using PoolIdLibrary for PoolKey;
+    using CurrencyLibrary for Currency;
+
+    PoolManager poolManager;
+    FullRange fullRange;
+    FullRangeLiquidityManager liquidityManager;
+    FullRangeDynamicFeeManager dynamicFeeManager;
+    PoolPolicyManager policyManager;
+    DefaultCAPEventDetector capEventDetector;
+    PoolSwapTest swapRouter;
+
+    // Test tokens
+    MockERC20 token0;
+    MockERC20 token1;
+    PoolKey poolKey;
+    PoolId poolId;
+
+    address payable alice = payable(address(0x1));
+    address payable bob = payable(address(0x2));
+    address payable charlie = payable(address(0x3));
+    address payable deployer = payable(address(0x4));
+    address payable governance = payable(address(0x5));
+
+    function setUp() public {
+        // Deploy PoolManager
+        poolManager = new PoolManager(address(this));
+
+        // Deploy test tokens
+        token0 = new MockERC20("Test Token 0", "TEST0", 18);
+        token1 = new MockERC20("Test Token 1", "TEST1", 18);
+
+        // Ensure token0 address is less than token1
+        if (address(token0) > address(token1)) {
+            (token0, token1) = (token1, token0);
+        }
+
+        // Deploy policy manager with configuration
+        uint24[] memory supportedTickSpacings = new uint24[](3);
+        supportedTickSpacings[0] = 10;
+        supportedTickSpacings[1] = 60;
+        supportedTickSpacings[2] = 200;
+
+        policyManager = new PoolPolicyManager(
+            governance,
+            500000, // POL_SHARE_PPM (50%)
+            300000, // FULLRANGE_SHARE_PPM (30%)
+            200000, // LP_SHARE_PPM (20%)
+            100,    // MIN_TRADING_FEE_PPM (0.01%)
+            1000,   // FEE_CLAIM_THRESHOLD_PPM (0.1%)
+            2,      // DEFAULT_POL_MULTIPLIER
+            3000,   // DEFAULT_DYNAMIC_FEE_PPM (0.3%)
+            10,     // TICK_SCALING_FACTOR
+            supportedTickSpacings
+        );
+
+        // Deploy CAP Event Detector
+        capEventDetector = new DefaultCAPEventDetector(poolManager, governance);
+
+        // Deploy Liquidity Manager
+        liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
+
+        // We need to create a temporary address for FullRange since the constructor requires a non-zero address
+        address tempFullRangeAddress = address(1);
         
-        // Call the parent setUp to initialize the environment
-        super.setUp();
+        // Deploy Dynamic Fee Manager with temporary FullRange address
+        dynamicFeeManager = new FullRangeDynamicFeeManager(
+            governance,
+            IPoolPolicy(address(policyManager)),
+            poolManager,
+            tempFullRangeAddress, // temporary address - will be updated after FullRange deployment
+            ICAPEventDetector(address(capEventDetector))
+        );
+
+        // Calculate required hook flags
+        uint160 flags = uint160(
+            Hooks.BEFORE_INITIALIZE_FLAG | 
+            Hooks.AFTER_INITIALIZE_FLAG | 
+            Hooks.BEFORE_ADD_LIQUIDITY_FLAG | 
+            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
+            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
+            Hooks.BEFORE_SWAP_FLAG | 
+            Hooks.AFTER_SWAP_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+        );
+
+        // Prepare constructor arguments
+        bytes memory constructorArgs = abi.encode(
+            address(poolManager),
+            IPoolPolicy(address(policyManager)),
+            address(liquidityManager),
+            address(dynamicFeeManager)
+        );
+
+        // Mine for a hook address with the correct permission bits
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            governance,
+            flags,
+            type(FullRange).creationCode,
+            constructorArgs
+        );
+
+        console2.log("Mined hook address:", hookAddress);
+        console2.log("Permission bits in address:", uint160(hookAddress) & Hooks.ALL_HOOK_MASK);
+
+        // Deploy from governance account
+        vm.startPrank(governance);
+
+        // Deploy the hook with the mined salt
+        fullRange = new FullRange{salt: salt}(
+            poolManager,
+            IPoolPolicy(address(policyManager)),
+            liquidityManager,
+            dynamicFeeManager
+        );
+
+        // Verify the deployment
+        require(address(fullRange) == hookAddress, "Hook address mismatch");
+        require((uint160(address(fullRange)) & Hooks.ALL_HOOK_MASK) == flags, "Hook permission bits mismatch");
+
+        // Update managers with correct FullRange address
+        liquidityManager.setFullRangeAddress(address(fullRange));
+        
+        // Redeploy the dynamic fee manager with the correct FullRange address
+        dynamicFeeManager = new FullRangeDynamicFeeManager(
+            governance,
+            IPoolPolicy(address(policyManager)),
+            poolManager,
+            address(fullRange),  // Now using the actual FullRange address
+            ICAPEventDetector(address(capEventDetector))
+        );
+
+        vm.stopPrank();
+
+        // Deploy swap router
+        swapRouter = new PoolSwapTest(IPoolManager(address(poolManager)));
+
+        // Initialize pool
+        poolKey = PoolKey({
+            currency0: Currency.wrap(address(token0)),
+            currency1: Currency.wrap(address(token1)),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(fullRange))
+        });
+
+        poolId = poolKey.toId();
+
+        // Initialize pool with sqrt price of 1
+        poolManager.initialize(poolKey, 79228162514264337593543950336);
+
+        // Mint test tokens to users
+        token0.mint(alice, 1e18);
+        token1.mint(alice, 1e18);
+        token0.mint(bob, 1e18);
+        token1.mint(bob, 1e18);
     }
     
     /**
@@ -83,7 +253,7 @@ contract SimpleV4Test is LocalUniswapV4TestBase {
      */
     function test_swap() public {
         // ======================= ARRANGE =======================
-        // First add liquidity to enable swapping - a pool needs liquidity to facilitate swaps
+        // First add liquidity to enable swapping
         uint128 liquidityAmount = 1e9;
         
         // Approve tokens for the FullRange hook and deposit
@@ -109,23 +279,34 @@ contract SimpleV4Test is LocalUniswapV4TestBase {
         vm.startPrank(bob);
         token0.approve(address(poolManager), type(uint256).max);
         token1.approve(address(poolManager), type(uint256).max);
-        // Also approve tokens to the swapRouter (PoolSwapTest) since it calls transferFrom directly
         token0.approve(address(swapRouter), type(uint256).max);
         token1.approve(address(swapRouter), type(uint256).max);
         vm.stopPrank();
         
-        // Record Bob's initial token balances before the swap
+        // Record Bob's initial token balances
         uint256 bobToken0Before = token0.balanceOf(bob);
         uint256 bobToken1Before = token1.balanceOf(bob);
         console2.log("Bob token0 balance before swap:", bobToken0Before);
         console2.log("Bob token1 balance before swap:", bobToken1Before);
         
         // ======================= ACT =======================
-        // Perform a swap: Bob trades token0 for token1
-        // Use a small amount to avoid overflow issues
+        // Perform swap: token0 -> token1
         uint256 swapAmount = 1e8;
         
-        swapExactInput(bob, true, swapAmount);
+        vm.startPrank(bob);
+        IPoolManager.SwapParams memory swapParams = IPoolManager.SwapParams({
+            zeroForOne: true,
+            amountSpecified: int256(swapAmount),
+            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+        });
+
+        PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({
+            takeClaims: false,
+            settleUsingBurn: false
+        });
+
+        swapRouter.swap(poolKey, swapParams, testSettings, "");
+        vm.stopPrank();
         
         // ======================= ASSERT =======================
         // Record Bob's token balances after the swap
@@ -134,12 +315,9 @@ contract SimpleV4Test is LocalUniswapV4TestBase {
         console2.log("Bob token0 balance after swap:", bobToken0After);
         console2.log("Bob token1 balance after swap:", bobToken1After);
         
-        // Verify the swap executed correctly:
-        // 1. Bob should have spent some amount of token0 (which includes the swap fee)
+        // Verify the swap executed correctly
         assertTrue(bobToken0Before > bobToken0After, "Bob should have spent some token0");
-        // 2. Bob should have received some amount of token1 in return
-        assertTrue(bobToken1After > bobToken1Before, "Bob should have received some token1 in exchange");
-        // 3. Verify Bob received exactly the specified amount of token1
+        assertTrue(bobToken1After > bobToken1Before, "Bob should have received some token1");
         assertEq(bobToken1After - bobToken1Before, swapAmount, "Bob should have received exactly the swap amount of token1");
     }
 } 
