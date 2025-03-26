@@ -284,13 +284,11 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
      *      4. Emitting events
      * 
      * @param poolId The pool ID
-     * @param key The pool key
      * @param feesAccrued The total fees accrued during the operation
      * @return extractDelta The balance delta representing fees to extract
      */
     function handleFeeExtraction(
         PoolId poolId,
-        PoolKey calldata key,
         BalanceDelta feesAccrued
     ) external onlyFullRange returns (BalanceDelta extractDelta) {
         // Skip if no fees to extract or system paused
@@ -309,8 +307,8 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         // Calculate extraction amounts based on protocol fee percentage
         uint256 polSharePpm = getPolSharePpm(poolId);
         
-        int256 fee0 = feesAccrued.amount0() > 0 ? int256(feesAccrued.amount0()) : int256(0);
-        int256 fee1 = feesAccrued.amount1() > 0 ? int256(feesAccrued.amount1()) : int256(0);
+        int256 fee0 = int256(feesAccrued.amount0());
+        int256 fee1 = int256(feesAccrued.amount1());
         
         int256 extract0 = (fee0 * int256(polSharePpm)) / int256(PPM_DENOMINATOR);
         int256 extract1 = (fee1 * int256(polSharePpm)) / int256(PPM_DENOMINATOR);
