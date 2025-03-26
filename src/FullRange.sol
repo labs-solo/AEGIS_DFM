@@ -188,71 +188,37 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
-     * @notice Deposit tokens into Uniswap V4 pool
+     * @notice Deposit into a Uniswap V4 pool
+     * @dev Delegates main logic to FullRangeLiquidityManager, handling only hook callbacks
      */
     function deposit(DepositParams calldata params) 
         external 
+        payable
         nonReentrant 
         ensure(params.deadline)
         returns (uint256 shares, uint256 amount0, uint256 amount1) 
     {
+        // Verify pool is initialized and not in emergency state
         PoolData storage data = poolData[params.poolId];
-        
-        // Basic validations
         if (!data.initialized) revert Errors.PoolNotInitialized(params.poolId);
         if (data.emergencyState) revert Errors.PoolInEmergencyState(params.poolId);
-        if (params.amount0Desired == 0 && params.amount1Desired == 0) revert Errors.ZeroAmount();
         
-        // Get pool information
+        // Retrieve pool key for native ETH validation
         PoolKey memory key = poolKeys[params.poolId];
-        (uint160 sqrtPriceX96, , , ) = StateLibrary.getSlot0(poolManager, params.poolId);
         
-        // Calculate deposit amounts and shares
-        (amount0, amount1, shares) = FullRangeUtils.computeDepositAmountsAndShares(
-            liquidityManager.totalShares(params.poolId),
+        // Validate native ETH usage using CurrencyLibrary abstraction
+        bool hasNative = key.currency0.isAddressZero() || key.currency1.isAddressZero();
+        if (msg.value > 0 && !hasNative) revert Errors.NonzeroNativeValue();
+        
+        // Delegate to liquidityManager with msg.value forwarded
+        (shares, amount0, amount1) = liquidityManager.deposit{value: msg.value}(
+            params.poolId,
             params.amount0Desired,
             params.amount1Desired,
-            data.reserve0,
-            data.reserve1,
-            sqrtPriceX96
+            params.amount0Min,
+            params.amount1Min,
+            msg.sender
         );
-        
-        // Check minimum shares
-        if (shares < params.minShares) revert Errors.SlippageExceeded(params.minShares, shares);
-        
-        // Pull tokens from user
-        address token0 = UniswapCurrency.unwrap(key.currency0);
-        address token1 = UniswapCurrency.unwrap(key.currency1);
-        
-        if (amount0 > 0) SafeTransferLib.safeTransferFrom(ERC20(token0), msg.sender, address(this), amount0);
-        if (amount1 > 0) SafeTransferLib.safeTransferFrom(ERC20(token1), msg.sender, address(this), amount1);
-        
-        // Update reserves
-        data.reserve0 = uint128(data.reserve0 + amount0);
-        data.reserve1 = uint128(data.reserve1 + amount1);
-        
-        // Mint shares to user
-        liquidityManager.addUserShares(params.poolId, msg.sender, shares);
-        
-        // Update total shares
-        uint128 totalShares = liquidityManager.totalShares(params.poolId);
-        liquidityManager.updateTotalShares(params.poolId, totalShares + uint128(shares));
-        
-        // Execute callback to approve tokens for the PoolManager and trigger liquidity addition
-        CallbackData memory cbData = CallbackData({
-            callbackType: 1,  // deposit
-            sender: msg.sender,
-            poolId: params.poolId,
-            amount0: uint128(amount0),
-            amount1: uint128(amount1),
-            shares: shares
-        });
-        
-        // Call unlock to approve tokens and handle the operation
-        BalanceDelta delta = abi.decode(poolManager.unlock(abi.encode(cbData)), (BalanceDelta));
-        
-        // Process fees
-        _processFees(params.poolId, IFeeReinvestmentManager.OperationType.DEPOSIT, delta);
         
         emit Deposit(msg.sender, params.poolId, amount0, amount1, shares);
         return (shares, amount0, amount1);
@@ -269,7 +235,8 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
-     * @notice Withdraw tokens from a Uniswap V4 pool
+     * @notice Withdraw from a Uniswap V4 pool
+     * @dev Delegates main logic to FullRangeLiquidityManager, handling only hook callbacks
      */
     function withdraw(WithdrawParams calldata params)
         external
@@ -277,66 +244,18 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         ensure(params.deadline)
         returns (uint256 amount0, uint256 amount1)
     {
+        // Verify pool is initialized
         PoolData storage data = poolData[params.poolId];
-        
-        // Basic validations
         if (!data.initialized) revert Errors.PoolNotInitialized(params.poolId);
-        if (params.sharesToBurn == 0) revert Errors.ZeroAmount();
         
-        // Check user has enough shares
-        uint256 userBalance = liquidityManager.getUserShares(params.poolId, msg.sender);
-        if (userBalance < params.sharesToBurn) revert Errors.InsufficientShares(params.sharesToBurn, userBalance);
-        
-        // Calculate withdraw amounts
-        uint128 totalShares = liquidityManager.totalShares(params.poolId);
-        (amount0, amount1) = FullRangeUtils.computeWithdrawAmounts(
-            totalShares,
+        // Delegate to liquidityManager
+        (amount0, amount1) = liquidityManager.withdraw(
+            params.poolId,
             params.sharesToBurn,
-            data.reserve0,
-            data.reserve1
+            params.minAmount0,
+            params.minAmount1,
+            msg.sender
         );
-        
-        // Check minimum amounts
-        if (amount0 < params.minAmount0 || amount1 < params.minAmount1) {
-            revert Errors.SlippageExceeded(
-                amount0 < params.minAmount0 ? params.minAmount0 : params.minAmount1,
-                amount0 < params.minAmount0 ? amount0 : amount1
-            );
-        }
-        
-        // Update reserves
-        data.reserve0 = uint128(data.reserve0 - amount0);
-        data.reserve1 = uint128(data.reserve1 - amount1);
-        
-        // Burn shares
-        liquidityManager.removeUserShares(params.poolId, msg.sender, params.sharesToBurn);
-        
-        // Update total shares
-        liquidityManager.updateTotalShares(params.poolId, totalShares - uint128(params.sharesToBurn));
-        
-        // Execute callback to handle liquidity removal
-        CallbackData memory cbData = CallbackData({
-            callbackType: 2,  // withdraw
-            sender: msg.sender,
-            poolId: params.poolId,
-            amount0: uint128(amount0),
-            amount1: uint128(amount1),
-            shares: params.sharesToBurn
-        });
-        
-        // Call unlock to handle liquidity removal
-        BalanceDelta delta = abi.decode(poolManager.unlock(abi.encode(cbData)), (BalanceDelta));
-        
-        // Process fees
-        _processFees(params.poolId, IFeeReinvestmentManager.OperationType.WITHDRAWAL, delta);
-        
-        // Transfer tokens back to the user
-        PoolKey memory key = poolKeys[params.poolId];
-        address token0 = UniswapCurrency.unwrap(key.currency0);
-        address token1 = UniswapCurrency.unwrap(key.currency1);
-        
-        if (amount0 > 0) SafeTransferLib.safeTransfer(ERC20(token0), msg.sender, amount0);
-        if (amount1 > 0) SafeTransferLib.safeTransfer(ERC20(token1), msg.sender, amount1);
         
         emit Withdraw(msg.sender, params.poolId, amount0, amount1, params.sharesToBurn);
         return (amount0, amount1);
@@ -354,13 +273,10 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
 
     /**
      * @notice Claim pending ETH payments
+     * @dev Simple wrapper around liquidityManager functionality
      */
     function claimPendingETH() external {
-        uint256 amount = pendingETHPayments[msg.sender];
-        if (amount == 0) revert Errors.ZeroAmount();
-        
-        pendingETHPayments[msg.sender] = 0;
-        _safeTransferETH(msg.sender, amount);
+        liquidityManager.claimETH();
     }
 
     /**
@@ -475,105 +391,49 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
 
     /**
      * @notice Unlock callback implementation
+     * @dev Delegates to liquidityManager for actual delta handling logic
      */
     function unlockCallback(bytes calldata data) external onlyPoolManager returns (bytes memory) {
-    // Decode the callback data
-    CallbackData memory cbData = abi.decode(data, (CallbackData));
-
-    if (cbData.callbackType == 1) {
-        // Deposit Process
+        // Decode callback data
+        CallbackData memory cbData = abi.decode(data, (CallbackData));
         PoolKey memory key = poolKeys[cbData.poolId];
         
-        // Unwrap the currency
-        address token0 = UniswapCurrency.unwrap(key.currency0);
-        address token1 = UniswapCurrency.unwrap(key.currency1);
-
-        // Create ModifyLiquidityParams for full range position
-        IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
-            tickLower: TickMath.minUsableTick(key.tickSpacing),
-            tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-            liquidityDelta: int256(uint256(cbData.shares)),
-            salt: bytes32(0)
-        });
-        
-        // Call modifyLiquidity directly during the callback
-        (BalanceDelta delta, ) = poolManager.modifyLiquidity(key, params, "");
-        
-        // Handle taking tokens for positive deltas first
-        if (delta.amount0() > 0) {
-            poolManager.take(key.currency0, address(this), uint256(uint128(delta.amount0())));
+        if (cbData.callbackType == 1) { // Deposit
+            // Create ModifyLiquidityParams for full range position
+            IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
+                tickLower: TickMath.minUsableTick(key.tickSpacing),
+                tickUpper: TickMath.maxUsableTick(key.tickSpacing),
+                liquidityDelta: int256(uint256(cbData.shares)),
+                salt: bytes32(0)
+            });
+            
+            // Call modifyLiquidity directly
+            (BalanceDelta delta, ) = poolManager.modifyLiquidity(key, params, "");
+            
+            // Delegate settlement to liquidityManager
+            liquidityManager.handlePoolDelta(key, delta);
+            
+            return abi.encode(delta);
+        } 
+        else if (cbData.callbackType == 2) { // Withdraw
+            // Create ModifyLiquidityParams with negative liquidity delta
+            IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
+                tickLower: TickMath.minUsableTick(key.tickSpacing),
+                tickUpper: TickMath.maxUsableTick(key.tickSpacing),
+                liquidityDelta: -int256(cbData.shares),
+                salt: bytes32(0)
+            });
+            
+            // Call modifyLiquidity directly
+            (BalanceDelta delta, ) = poolManager.modifyLiquidity(key, params, "");
+            
+            // Delegate settlement to liquidityManager
+            liquidityManager.handlePoolDelta(key, delta);
+            
+            return abi.encode(delta);
         }
         
-        if (delta.amount1() > 0) {
-            poolManager.take(key.currency1, address(this), uint256(uint128(delta.amount1())));
-        }
-        
-        // Handle negative deltas (we owe tokens to the pool)
-        // Using the correct settlement pattern: sync -> transfer -> settle
-        if (delta.amount0() < 0) {
-            uint256 absAmount0 = uint256(uint128(-delta.amount0()));
-            poolManager.sync(key.currency0);
-            SafeTransferLib.safeTransfer(ERC20(token0), address(poolManager), absAmount0);
-            poolManager.settle();
-        }
-        
-        if (delta.amount1() < 0) {
-            uint256 absAmount1 = uint256(uint128(-delta.amount1()));
-            poolManager.sync(key.currency1);
-            SafeTransferLib.safeTransfer(ERC20(token1), address(poolManager), absAmount1);
-            poolManager.settle();
-        }
-        
-        // Return the balance delta for accounting
-        return abi.encode(delta);
-        
-    } else if (cbData.callbackType == 2) {
-        // Withdraw Process
-        PoolKey memory key = poolKeys[cbData.poolId];
-        
-        // Create ModifyLiquidityParams for full range position with negative liquidity delta
-        IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
-            tickLower: TickMath.minUsableTick(key.tickSpacing),
-            tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-            liquidityDelta: -int256(uint256(cbData.shares)), 
-            salt: bytes32(0)
-        });
-        
-        // Call modifyLiquidity to remove the position from the pool
-        (BalanceDelta delta, ) = poolManager.modifyLiquidity(key, params, "");
-        
-        // Handle taking tokens for positive deltas first
-        if (delta.amount0() > 0) {
-            poolManager.take(key.currency0, address(this), uint256(uint128(delta.amount0())));
-        }
-        
-        if (delta.amount1() > 0) {
-            poolManager.take(key.currency1, address(this), uint256(uint128(delta.amount1())));
-        }
-        
-        // Handle negative deltas (we owe tokens to the pool)
-        // Using the correct settlement pattern: sync -> transfer -> settle
-        if (delta.amount0() < 0) {
-            address token0 = UniswapCurrency.unwrap(key.currency0);
-            uint256 absAmount0 = uint256(uint128(-delta.amount0()));
-            poolManager.sync(key.currency0);
-            SafeTransferLib.safeTransfer(ERC20(token0), address(poolManager), absAmount0);
-            poolManager.settle();
-        }
-        
-        if (delta.amount1() < 0) {
-            address token1 = UniswapCurrency.unwrap(key.currency1);
-            uint256 absAmount1 = uint256(uint128(-delta.amount1()));
-            poolManager.sync(key.currency1);
-            SafeTransferLib.safeTransfer(ERC20(token1), address(poolManager), absAmount1);
-            poolManager.settle();
-        }
-        
-        // Return the balance delta for accounting
-        return abi.encode(delta);
-    }
-    
-    return abi.encode("Unknown callback type");
+        return abi.encode("Unknown callback type");
     }
 
     /**

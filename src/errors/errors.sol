@@ -144,6 +144,12 @@ library Errors {
     error TokenEthNotAccepted();
     error TokenInsufficientEth(uint256 required, uint256 provided);
     error TokenEthTransferFailed(address to, uint256 amount);
+    
+    // Native ETH errors
+    error NonzeroNativeValue();
+    error InsufficientETH(uint256 required, uint256 provided);
+    error InsufficientContractBalance(uint256 required, uint256 available);
+    error ETHTransferFailed(address to, uint256 amount);
 
     // Oracle errors
     error OracleOperationFailed(string operation, string reason);

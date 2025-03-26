@@ -92,26 +92,6 @@ interface IFullRange is IHooks {
     function setPoolEmergencyState(PoolId poolId, bool isEmergency) external;
 
     /**
-     * @notice Deposits ETH and tokens into a Uniswap V4 pool via the FullRange hook
-     * @param params The deposit parameters
-     * @param poolKey The pool key for the deposit
-     */
-    function depositETH(DepositParams calldata params, PoolKey calldata poolKey)
-        external
-        payable;
-
-    /**
-     * @notice Withdraws liquidity with ETH handling from a Uniswap V4 pool
-     * @param params The withdrawal parameters
-     * @param poolKey The pool key for the withdrawal
-     * @return amount0Out Amount of token0 withdrawn.
-     * @return amount1Out Amount of token1 withdrawn.
-     */
-    function withdrawETH(WithdrawParams calldata params, PoolKey calldata poolKey)
-        external
-        returns (uint256 amount0Out, uint256 amount1Out);
-
-    /**
      * @notice Allows users to claim any pending ETH payments
      */
     function claimPendingETH() external;

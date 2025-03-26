@@ -32,6 +32,9 @@ interface IFullRangeLiquidityManager {
     event UserSharesRemoved(PoolId indexed poolId, address indexed user, uint256 shares);
     event PoolTotalSharesUpdated(PoolId indexed poolId, uint128 oldShares, uint128 newShares);
 
+    /**
+     * @notice Deposit tokens into a pool with native ETH support
+     */
     function deposit(
         PoolId poolId,
         uint256 amount0Desired,
@@ -39,7 +42,7 @@ interface IFullRangeLiquidityManager {
         uint256 amount0Min,
         uint256 amount1Min,
         address recipient
-    ) external returns (
+    ) external payable returns (
         uint256 shares,
         uint256 amount0,
         uint256 amount1
@@ -55,6 +58,18 @@ interface IFullRangeLiquidityManager {
         uint256 amount0,
         uint256 amount1
     );
+    
+    /**
+     * @notice Handles delta settlement from FullRange's unlockCallback
+     * @param key The pool key
+     * @param delta The balance delta to settle
+     */
+    function handlePoolDelta(PoolKey memory key, BalanceDelta delta) external;
+    
+    /**
+     * @notice Claim pending ETH payments
+     */
+    function claimETH() external;
     
     /**
      * @notice Adds user share accounting (no token transfers)
