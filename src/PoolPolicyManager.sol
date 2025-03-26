@@ -45,6 +45,12 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // Mapping of policy implementations by pool and type
     mapping(PoolId => mapping(PolicyType => address)) private _policies;
     
+    // Add a new mapping for pool-specific POL share percentages
+    mapping(PoolId => uint256) public poolPolSharePpm;
+    
+    // Add a flag to enable/disable pool-specific POL percentages
+    bool public allowPoolSpecificPolShare;
+    
     // Events
     event FeeConfigChanged(
         uint256 polSharePpm,
@@ -59,6 +65,8 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     event TickSpacingSupportChanged(uint24 tickSpacing, bool isSupported);
     event PolicySet(PoolId indexed poolId, PolicyType indexed policyType, address implementation);
     event PoolInitialized(PoolId indexed poolId, address hook, int24 initialTick);
+    event PoolPOLShareChanged(PoolId indexed poolId, uint256 polSharePpm);
+    event PoolSpecificPOLSharingEnabled(bool enabled);
     
     /**
      * @notice Constructor initializes the policy manager with default values
@@ -176,6 +184,15 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      * @inheritdoc IPoolPolicy
      */
     function getFeeAllocations(PoolId poolId) external view returns (uint256, uint256, uint256) {
+        // Check if pool has a specific POL share
+        uint256 poolSpecificPolShare = poolPolSharePpm[poolId];
+        
+        // If pool-specific POL share is enabled and set for this pool, use it
+        if (allowPoolSpecificPolShare && poolSpecificPolShare > 0) {
+            return (poolSpecificPolShare, 0, 1000000 - poolSpecificPolShare);
+        }
+        
+        // Otherwise use the global settings
         return (polSharePpm, fullRangeSharePpm, lpSharePpm);
     }
     
@@ -267,6 +284,45 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     function setDefaultDynamicFee(uint256 feePpm) external onlyOwner {
         if (feePpm < 1 || feePpm > 1000000) revert Errors.ParameterOutOfRange(feePpm, 1, 1000000);
         defaultDynamicFeePpm = feePpm;
+    }
+    
+    /**
+     * @notice Sets the POL share percentage for a specific pool
+     * @param poolId The pool ID
+     * @param polSharePpm The POL share in PPM (parts per million)
+     */
+    function setPoolPOLShare(PoolId poolId, uint256 polSharePpm) external onlyOwner {
+        // Validate POL share is within valid range (0-100%)
+        if (polSharePpm > 1000000) revert Errors.ParameterOutOfRange(polSharePpm, 0, 1000000);
+        
+        poolPolSharePpm[poolId] = polSharePpm;
+        emit PoolPOLShareChanged(poolId, polSharePpm);
+    }
+    
+    /**
+     * @notice Enables or disables the use of pool-specific POL share percentages
+     * @param enabled Whether to enable pool-specific POL sharing
+     */
+    function setPoolSpecificPOLSharingEnabled(bool enabled) external onlyOwner {
+        allowPoolSpecificPolShare = enabled;
+        emit PoolSpecificPOLSharingEnabled(enabled);
+    }
+    
+    /**
+     * @notice Gets the POL share percentage for a specific pool
+     * @param poolId The pool ID to get the POL share for
+     * @return The POL share in PPM (parts per million)
+     */
+    function getPoolPOLShare(PoolId poolId) external view returns (uint256) {
+        uint256 poolSpecificPolShare = poolPolSharePpm[poolId];
+        
+        // If pool-specific POL share is enabled and set for this pool, use it
+        if (allowPoolSpecificPolShare && poolSpecificPolShare > 0) {
+            return poolSpecificPolShare;
+        }
+        
+        // Otherwise use the global setting
+        return polSharePpm;
     }
     
     // === Tick Scaling Policy Functions ===
