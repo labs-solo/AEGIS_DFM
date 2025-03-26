@@ -282,7 +282,7 @@ contract HookHandler {
         address policy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
         if (policy != address(0)) {
             // Non-reverting call pattern
-            try IFeeReinvestmentManager(policy).processReinvestmentIfNeeded(poolId, opType) {
+            try IFeeReinvestmentManager(policy).collectFees(poolId, opType) {
                 // Success case handled silently
             } catch {
                 // Error case handled silently to avoid disrupting main operations

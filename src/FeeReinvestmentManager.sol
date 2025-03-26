@@ -474,27 +474,6 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     }
 
     /**
-     * @notice Internal implementation of fee reinvestment logic
-     * @param poolId The pool ID
-     * @return reinvested Whether fees were successfully reinvested
-     * @return autoCompounded Whether auto-compounding was performed
-     */
-    function _processReinvestmentIfNeeded(
-        PoolId poolId
-    ) internal returns (bool reinvested, bool autoCompounded) {
-        if (!_shouldReinvest(poolId)) {
-            return (false, false);
-        }
-
-        // Try to collect fees
-        bool success = _collectAccumulatedFees(poolId);
-        if (!success) {
-            return (false, false);
-        }
-        return (true, false);
-    }
-
-    /**
      * @notice Checks if reinvestment should be performed based on the current mode and conditions
      * @param poolId The pool ID
      * @return shouldPerformReinvestment Whether reinvestment should be performed
@@ -504,74 +483,43 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     }
 
     /**
-     * @notice Permissionless function to collect and process accumulated fees
-     * @dev This function allows anyone to trigger fee collection after minimumCollectionInterval 
-     *      has passed since the last collection. This design ensures fees are eventually collected
-     *      even if no withdrawals occur for extended periods, preventing indefinite fee stranding.
-     *      
-     * @dev IMPORTANT: Fees are NOT lost if this function isn't called frequently - they remain 
-     *      in the pool and will be collected during the next valid collection event. The only 
-     *      cost is delayed reinvestment (opportunity cost of compounding).
-     *      
+     * @notice Unified function to collect fees, reset leftovers, and return amounts
+     * @dev This replaces collectAccumulatedFees, processReinvestmentIfNeeded, and reinvestFees
+     * 
      * @param poolId The pool ID to collect fees for
-     * @return extracted Whether fees were successfully extracted and processed
+     * @param opType The operation type (for event emission)
+     * @return success Whether collection was successful
+     * @return amount0 Amount of token0 collected and reset from leftovers 
+     * @return amount1 Amount of token1 collected and reset from leftovers
      */
-    function collectAccumulatedFees(PoolId poolId) external nonReentrant returns (bool extracted) {
-        // Check if enough time has passed since last collection
-        PoolFeeState storage feeState = poolFeeStates[poolId];
-        uint256 collectionThreshold = minimumCollectionInterval;
-        if (block.timestamp < feeState.lastFeeCollectionTimestamp + collectionThreshold) {
-            revert Errors.ValidationDeadlinePassed(
-                uint32(feeState.lastFeeCollectionTimestamp + collectionThreshold), 
-                uint32(block.timestamp)
-            );
-        }
-
-        return _collectAccumulatedFees(poolId);
-    }
-
-    /**
-     * @notice Processes reinvestment if needed
-     * @dev Consolidated function that replaces both previously overloaded processReinvestmentIfNeeded functions
-     * @param poolId The pool ID
-     * @param opType The operation type (SWAP, DEPOSIT, WITHDRAWAL) - used for event logging only
-     * @return reinvested Whether fees were successfully reinvested
-     * @return autoCompounded Whether auto-compounding was performed
-     */
-    function processReinvestmentIfNeeded(
+    function collectFees(
         PoolId poolId,
         OperationType opType
-    ) external nonReentrant returns (bool reinvested, bool autoCompounded) {
-        return _processReinvestmentIfNeeded(poolId);
-    }
-
-    /**
-     * @notice Reinvests accumulated fees for a specific pool
-     * @param poolId The pool ID to reinvest fees for
-     * @return amount0 The amount of token0 fees collected 
-     * @return amount1 The amount of token1 fees collected
-     */
-    function reinvestFees(PoolId poolId) external returns (uint256 amount0, uint256 amount1) {
+    ) external nonReentrant returns (
+        bool success,
+        uint256 amount0,
+        uint256 amount1
+    ) {
+        // Check overall reinvestment conditions
         if (!_shouldReinvest(poolId)) {
-            return (0, 0);
+            return (false, 0, 0);
         }
         
-        // Try to collect fees first
-        bool success = _collectAccumulatedFees(poolId);
-        if (!success) {
-            return (0, 0);
+        // Try to collect fees
+        success = _collectAccumulatedFees(poolId);
+        
+        // Always handle leftover tokens when successful
+        if (success) {
+            PoolFeeState storage feeState = poolFeeStates[poolId];
+            amount0 = feeState.leftoverToken0;
+            amount1 = feeState.leftoverToken1;
+            
+            // Reset leftover amounts
+            feeState.leftoverToken0 = 0;
+            feeState.leftoverToken1 = 0;
         }
         
-        // Get current leftover amounts
-        PoolFeeState storage feeState = poolFeeStates[poolId];
-        amount0 = feeState.leftoverToken0;
-        amount1 = feeState.leftoverToken1;
-        
-        // Reset leftover amounts since we're reinvesting them
-        feeState.leftoverToken0 = 0;
-        feeState.leftoverToken1 = 0;
-        
-        return (amount0, amount1);
+        return (success, amount0, amount1);
     }
     
     /**
@@ -625,7 +573,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         // Return success and extracted amounts
         return abi.encode(true, extracted0, extracted1);
     }
-    
+
     /**
      * @notice Process the POL portion of fees
      * @param poolId The pool ID

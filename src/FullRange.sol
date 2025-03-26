@@ -408,8 +408,8 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         
         address reinvestPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
         if (reinvestPolicy != address(0)) {
-            try IFeeReinvestmentManager(reinvestPolicy).processReinvestmentIfNeeded(poolId, opType) returns (bool reinvested, bool autoCompounded) {
-                if (reinvested || autoCompounded) {
+            try IFeeReinvestmentManager(reinvestPolicy).collectFees(poolId, opType) returns (bool success, uint256 amount0, uint256 amount1) {
+                if (success) {
                     emit ReinvestmentSuccess(poolId, fee0, fee1);
                 }
             } catch {

@@ -42,6 +42,7 @@ interface IFeeReinvestmentManager {
      * @notice Operation types for different reinvestment contexts
      */
     enum OperationType { 
+        NONE,
         SWAP, 
         DEPOSIT, 
         WITHDRAWAL 
@@ -75,31 +76,23 @@ interface IFeeReinvestmentManager {
     function shouldReinvest(PoolId poolId) external view returns (bool shouldPerformReinvestment);
     
     /**
-     * @notice Permissionless function to collect and process accumulated fees
+     * @notice Unified function to collect fees, reset leftovers, and return amounts
+     * @dev This replaces collectAccumulatedFees, processReinvestmentIfNeeded, and reinvestFees
+     * 
      * @param poolId The pool ID to collect fees for
-     * @return extracted Whether fees were successfully extracted and processed
+     * @param opType The operation type (for event emission)
+     * @return success Whether collection was successful
+     * @return amount0 Amount of token0 collected and reset from leftovers
+     * @return amount1 Amount of token1 collected and reset from leftovers
      */
-    function collectAccumulatedFees(PoolId poolId) external returns (bool extracted);
-    
-    /**
-     * @notice Processes reinvestment if needed
-     * @param poolId The pool ID
-     * @param opType The operation type (SWAP, DEPOSIT, WITHDRAWAL) - used for event logging only
-     * @return reinvested Whether fees were successfully reinvested
-     * @return autoCompounded Whether auto-compounding was performed
-     */
-    function processReinvestmentIfNeeded(
+    function collectFees(
         PoolId poolId,
         OperationType opType
-    ) external returns (bool reinvested, bool autoCompounded);
-    
-    /**
-     * @notice Reinvests accumulated fees for a specific pool
-     * @param poolId The pool ID to reinvest fees for
-     * @return amount0 The amount of token0 fees collected
-     * @return amount1 The amount of token1 fees collected
-     */
-    function reinvestFees(PoolId poolId) external returns (uint256 amount0, uint256 amount1);
+    ) external returns (
+        bool success,
+        uint256 amount0,
+        uint256 amount1
+    );
     
     /**
      * @notice Get the amount of pending fees for token0 for a pool
