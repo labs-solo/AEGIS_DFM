@@ -70,6 +70,13 @@ interface IFeeReinvestmentManager {
     function processQueuedFees(PoolId poolId) external returns (bool reinvested);
     
     /**
+     * @notice Checks if reinvestment should be performed based on the current mode and conditions
+     * @param poolId The pool ID
+     * @return shouldPerformReinvestment Whether reinvestment should be performed
+     */
+    function shouldReinvest(PoolId poolId) external view returns (bool shouldPerformReinvestment);
+    
+    /**
      * @notice Permissionless function to collect and process accumulated fees
      * @param poolId The pool ID to collect fees for
      * @return extracted Whether fees were successfully extracted and processed
@@ -77,29 +84,9 @@ interface IFeeReinvestmentManager {
     function collectAccumulatedFees(PoolId poolId) external returns (bool extracted);
     
     /**
-     * @notice Checks if reinvestment should be performed based on the current mode and conditions
+     * @notice Processes reinvestment if needed
      * @param poolId The pool ID
-     * @param swapValue Used for threshold calculations
-     * @return shouldPerformReinvestment Whether reinvestment should be performed
-     */
-    function shouldReinvest(PoolId poolId, uint256 swapValue) external view returns (bool shouldPerformReinvestment);
-    
-    /**
-     * @notice Processes reinvestment if needed based on current reinvestment mode
-     * @param poolId The pool ID
-     * @param value Value used for threshold calculations
-     * @return reinvested Whether fees were successfully reinvested
-     * @return autoCompounded Whether auto-compounding was performed
-     */
-    function processReinvestmentIfNeeded(
-        PoolId poolId,
-        uint256 value
-    ) external returns (bool reinvested, bool autoCompounded);
-    
-    /**
-     * @notice Processes reinvestment if needed based on operation type
-     * @param poolId The pool ID
-     * @param opType The operation type (SWAP, DEPOSIT, WITHDRAWAL)
+     * @param opType The operation type (SWAP, DEPOSIT, WITHDRAWAL) - used for event logging only
      * @return reinvested Whether fees were successfully reinvested
      * @return autoCompounded Whether auto-compounding was performed
      */
@@ -111,8 +98,8 @@ interface IFeeReinvestmentManager {
     /**
      * @notice Reinvests accumulated fees for a specific pool
      * @param poolId The pool ID to reinvest fees for
-     * @return amount0 The amount of token0 fees reinvested
-     * @return amount1 The amount of token1 fees reinvested
+     * @return amount0 The amount of token0 fees collected
+     * @return amount1 The amount of token1 fees collected
      */
     function reinvestFees(PoolId poolId) external returns (uint256 amount0, uint256 amount1);
     

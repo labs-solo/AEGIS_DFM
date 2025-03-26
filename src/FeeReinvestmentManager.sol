@@ -530,10 +530,9 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     /**
      * @notice Checks if reinvestment should be performed based on the current mode and conditions
      * @param poolId The pool ID
-     * @param swapValue Used for threshold calculations
      * @return shouldPerformReinvestment Whether reinvestment should be performed
      */
-    function shouldReinvest(PoolId poolId, uint256 swapValue) external view returns (bool shouldPerformReinvestment) {
+    function shouldReinvest(PoolId poolId) external view returns (bool shouldPerformReinvestment) {
         return _shouldReinvest(poolId);
     }
 
@@ -565,23 +564,10 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     }
 
     /**
-     * @notice Processes reinvestment if needed based on value threshold
+     * @notice Processes reinvestment if needed
+     * @dev Consolidated function that replaces both previously overloaded processReinvestmentIfNeeded functions
      * @param poolId The pool ID
-     * @param value Used for threshold calculations
-     * @return reinvested Whether fees were successfully reinvested
-     * @return autoCompounded Whether auto-compounding was performed
-     */
-    function processReinvestmentIfNeeded(
-        PoolId poolId,
-        uint256 value
-    ) external nonReentrant returns (bool reinvested, bool autoCompounded) {
-        return _processReinvestmentIfNeeded(poolId);
-    }
-
-    /**
-     * @notice Processes reinvestment if needed based on operation type
-     * @param poolId The pool ID
-     * @param opType The operation type (SWAP, DEPOSIT, WITHDRAWAL)
+     * @param opType The operation type (SWAP, DEPOSIT, WITHDRAWAL) - used for event logging only
      * @return reinvested Whether fees were successfully reinvested
      * @return autoCompounded Whether auto-compounding was performed
      */
@@ -594,9 +580,13 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
 
     /**
      * @notice Reinvests accumulated fees for a specific pool
+     * @dev This function first collects fees using _collectAccumulatedFees, then 
+     *      calculates and returns the collected amounts without actually reinvesting.
+     *      The actual reinvestment is performed later by _processPOLPortion which
+     *      is called by the fee collection process.
      * @param poolId The pool ID to reinvest fees for
-     * @return amount0 The amount of token0 fees reinvested
-     * @return amount1 The amount of token1 fees reinvested
+     * @return amount0 The amount of token0 fees collected 
+     * @return amount1 The amount of token1 fees collected
      */
     function reinvestFees(PoolId poolId) external returns (uint256 amount0, uint256 amount1) {
         // Skip if reinvestment is paused
@@ -791,8 +781,6 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         
         try liquidityManager.reinvestFees(
             poolId,
-            0, // No full-range component (handled by auto-compounding)
-            0,
             amount0,
             amount1
         ) returns (uint256) {
