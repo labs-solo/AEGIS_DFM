@@ -73,6 +73,8 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         uint256 leftoverToken1;              // Leftover token1 from previous reinvestment
         uint256 pendingFee0;                 // Pending token0 fees for processing
         uint256 pendingFee1;                 // Pending token1 fees for processing
+        uint256 accumulatedFee0;             // Added from FeeTracker
+        uint256 accumulatedFee1;             // Added from FeeTracker
     }
     
     /// @notice Callback data for extraction operations
@@ -92,16 +94,6 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     
     /// @notice Reference to the policy manager
     IPoolPolicy public policyManager;
-    
-    /// @notice Fee tracker structure for accumulated fees
-    struct FeeTracker {
-        uint256 lastProcessedTimestamp;
-        uint256 accumulatedFee0;
-        uint256 accumulatedFee1;
-    }
-    
-    /// @notice Tracking accumulated fees per pool
-    mapping(PoolId => FeeTracker) public feeTrackers;
     
     // ================ CONSTANTS ================
     
@@ -298,8 +290,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         }
         
         // Check if sufficient time has passed since last extraction
-        FeeTracker storage tracker = feeTrackers[poolId];
-        if (block.timestamp < tracker.lastProcessedTimestamp + minimumCollectionInterval) {
+        if (block.timestamp < poolFeeStates[poolId].lastProcessedTimestamp + minimumCollectionInterval) {
             // Too soon to extract again, return zero delta
             return BalanceDeltaLibrary.ZERO_DELTA;
         }
@@ -319,9 +310,9 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         // Only proceed if we're extracting something
         if (extract0 > 0 || extract1 > 0) {
             // Update tracker with the extraction details
-            tracker.lastProcessedTimestamp = block.timestamp;
-            tracker.accumulatedFee0 += uint256(extract0);
-            tracker.accumulatedFee1 += uint256(extract1);
+            poolFeeStates[poolId].lastProcessedTimestamp = block.timestamp;
+            poolFeeStates[poolId].accumulatedFee0 += uint256(extract0);
+            poolFeeStates[poolId].accumulatedFee1 += uint256(extract1);
             
             // Emit event for the extraction
             emit FeesExtracted(
@@ -414,12 +405,10 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         }
         
         // Check if enough time has passed since last collection
-        PoolFeeState storage feeState = poolFeeStates[poolId];
-        if (block.timestamp < feeState.lastFeeCollectionTimestamp + minimumCollectionInterval) {
+        if (block.timestamp < poolFeeStates[poolId].lastFeeCollectionTimestamp + minimumCollectionInterval) {
             return false;
         }
         
-        // Default to true if all checks pass
         return true;
     }
 
@@ -486,15 +475,6 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
 
     /**
      * @notice Internal implementation of fee reinvestment logic
-     * @dev This function implements the time-based fee collection strategy. By requiring a minimum
-     *      interval between collections, the system reduces gas costs at the expense of delayed
-     *      reinvestment. 
-     *      
-     * @dev The tradeoff is deliberate: 
-     *      - Lower gas costs and contract complexity
-     *      - Acceptable opportunity cost of delayed reinvestment
-     *      - No risk of permanent fee loss (fees remain in pool until collected)
-     *      
      * @param poolId The pool ID
      * @return reinvested Whether fees were successfully reinvested
      * @return autoCompounded Whether auto-compounding was performed
@@ -502,21 +482,10 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     function _processReinvestmentIfNeeded(
         PoolId poolId
     ) internal returns (bool reinvested, bool autoCompounded) {
-        // Check if enough time has passed since last collection
-        PoolFeeState storage feeState = poolFeeStates[poolId];
-        uint256 collectionThreshold = minimumCollectionInterval;
-        if (block.timestamp < feeState.lastFeeCollectionTimestamp + collectionThreshold) {
-            revert Errors.ValidationDeadlinePassed(
-                uint32(feeState.lastFeeCollectionTimestamp + collectionThreshold), 
-                uint32(block.timestamp)
-            );
-        }
-
-        // Check if we should reinvest
         if (!_shouldReinvest(poolId)) {
             return (false, false);
         }
-        
+
         // Try to collect fees
         bool success = _collectAccumulatedFees(poolId);
         if (!success) {
@@ -578,24 +547,13 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
 
     /**
      * @notice Reinvests accumulated fees for a specific pool
-     * @dev This function first collects fees using _collectAccumulatedFees, then 
-     *      calculates and returns the collected amounts without actually reinvesting.
-     *      The actual reinvestment is performed later by _processPOLPortion which
-     *      is called by the fee collection process.
      * @param poolId The pool ID to reinvest fees for
      * @return amount0 The amount of token0 fees collected 
      * @return amount1 The amount of token1 fees collected
      */
     function reinvestFees(PoolId poolId) external returns (uint256 amount0, uint256 amount1) {
-        // Skip if reinvestment is paused
-        if (reinvestmentPaused || poolFeeStates[poolId].reinvestmentPaused) {
+        if (!_shouldReinvest(poolId)) {
             return (0, 0);
-        }
-        
-        // Get pool key
-        PoolKey memory key = _getPoolKey(poolId);
-        if (key.tickSpacing == 0) {
-            revert Errors.PoolNotInitialized(poolId);
         }
         
         // Try to collect fees first
@@ -867,36 +825,6 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         
         // Default to 10% if no policy manager or no pool-specific value
         return DEFAULT_POL_SHARE_PPM; 
-    }
-    
-    /**
-     * @notice Get the cumulative fee multiplier for a pool
-     * @param poolId The pool ID
-     * @return The cumulative fee multiplier
-     */
-    function cumulativeFeeMultiplier(PoolId poolId) external view override returns (uint256) {
-        // Fixed at 1e18 in the new model
-        return 1e18;
-    }
-    
-    /**
-     * @notice Get the amount of pending fees for token0 for a pool
-     * @param poolId The pool ID
-     * @return The amount of pending token0 fees
-     */
-    function pendingFees0(PoolId poolId) external view override returns (uint256) {
-        // This always returns 0 in the new model since we don't track pending fees
-        return 0;
-    }
-    
-    /**
-     * @notice Get the amount of pending fees for token1 for a pool
-     * @param poolId The pool ID
-     * @return The amount of pending token1 fees
-     */
-    function pendingFees1(PoolId poolId) external view override returns (uint256) {
-        // This always returns 0 in the new model since we don't track pending fees
-        return 0;
     }
     
     /**
