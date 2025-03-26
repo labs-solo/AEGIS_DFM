@@ -120,22 +120,17 @@ interface IFullRangeLiquidityManager {
     ) external returns (uint128 newTotalShares);
 
     /**
-     * @notice Reinvests fees into the pool for POL only
-     * @dev The full-range portion is handled through auto-compounding
+     * @notice Reinvests fees for protocol-owned liquidity
      * @param poolId The pool ID
-     * @param fullRangeAmount0 Amount of token0 for full-range (should be 0)
-     * @param fullRangeAmount1 Amount of token1 for full-range (should be 0)
-     * @param protocolAmount0 Amount of token0 for protocol-owned liquidity
-     * @param protocolAmount1 Amount of token1 for protocol-owned liquidity
+     * @param polAmount0 Amount of token0 for protocol-owned liquidity
+     * @param polAmount1 Amount of token1 for protocol-owned liquidity
      * @return shares The number of POL shares minted
      */
     function reinvestFees(
         PoolId poolId,
-        uint256 fullRangeAmount0,
-        uint256 fullRangeAmount1,
-        uint256 protocolAmount0,
-        uint256 protocolAmount1
-    ) external returns (uint256);
+        uint256 polAmount0,
+        uint256 polAmount1
+    ) external returns (uint256 shares);
 
     function getAccountPosition(PoolId poolId, address account) external view returns (bool initialized, uint256 shares);
     

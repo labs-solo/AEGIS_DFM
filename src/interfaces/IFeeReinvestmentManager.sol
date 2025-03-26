@@ -31,71 +31,68 @@ interface IFeeReinvestmentManager {
     event FeesExtracted(PoolId indexed poolId, uint256 fee0, uint256 fee1, address indexed caller);
     
     /**
+     * @notice Emitted when fees are queued for processing
+     * @param poolId The pool ID
+     * @param fee0 Amount of token0 fees
+     * @param fee1 Amount of token1 fees
+     */
+    event FeesQueuedForProcessing(PoolId indexed poolId, uint256 fee0, uint256 fee1);
+    
+    /**
      * @notice Operation types for different reinvestment contexts
      */
     enum OperationType { 
+        NONE,
         SWAP, 
         DEPOSIT, 
         WITHDRAWAL 
     }
     
     /**
-     * @notice Calculates the fee delta to extract for protocol purposes
+     * @notice Comprehensive fee extraction handler for FullRange.sol
+     * @dev This function handles all fee extraction logic to keep FullRange.sol lean
+     * 
      * @param poolId The pool ID
-     * @param feesAccrued The total fees accrued
-     * @return The balance delta representing the portion to extract
+     * @param feesAccrued The total fees accrued during the operation
+     * @return extractDelta The balance delta representing fees to extract
      */
-    function calculateExtractDelta(
+    function handleFeeExtraction(
         PoolId poolId,
         BalanceDelta feesAccrued
-    ) external view returns (BalanceDelta);
+    ) external returns (BalanceDelta extractDelta);
     
     /**
-     * @notice Permissionless function to collect and process accumulated fees
-     * @param poolId The pool ID to collect fees for
-     * @return extracted Whether fees were successfully extracted and processed
+     * @notice Permissionless function to process queued fees
+     * @param poolId The pool ID
+     * @return reinvested Whether fees were successfully reinvested
      */
-    function collectAccumulatedFees(PoolId poolId) external returns (bool extracted);
+    function processQueuedFees(PoolId poolId) external returns (bool reinvested);
     
     /**
      * @notice Checks if reinvestment should be performed based on the current mode and conditions
      * @param poolId The pool ID
-     * @param swapValue Used for threshold calculations
      * @return shouldPerformReinvestment Whether reinvestment should be performed
      */
-    function shouldReinvest(PoolId poolId, uint256 swapValue) external view returns (bool shouldPerformReinvestment);
+    function shouldReinvest(PoolId poolId) external view returns (bool shouldPerformReinvestment);
     
     /**
-     * @notice Processes reinvestment if needed based on current reinvestment mode
-     * @param poolId The pool ID
-     * @param value Value used for threshold calculations
-     * @return reinvested Whether fees were successfully reinvested
-     * @return autoCompounded Whether auto-compounding was performed
+     * @notice Unified function to collect fees, reset leftovers, and return amounts
+     * @dev This replaces collectAccumulatedFees, processReinvestmentIfNeeded, and reinvestFees
+     * 
+     * @param poolId The pool ID to collect fees for
+     * @param opType The operation type (for event emission)
+     * @return success Whether collection was successful
+     * @return amount0 Amount of token0 collected and reset from leftovers
+     * @return amount1 Amount of token1 collected and reset from leftovers
      */
-    function processReinvestmentIfNeeded(
-        PoolId poolId,
-        uint256 value
-    ) external returns (bool reinvested, bool autoCompounded);
-    
-    /**
-     * @notice Processes reinvestment if needed based on operation type
-     * @param poolId The pool ID
-     * @param opType The operation type (SWAP, DEPOSIT, WITHDRAWAL)
-     * @return reinvested Whether fees were successfully reinvested
-     * @return autoCompounded Whether auto-compounding was performed
-     */
-    function processReinvestmentIfNeeded(
+    function collectFees(
         PoolId poolId,
         OperationType opType
-    ) external returns (bool reinvested, bool autoCompounded);
-    
-    /**
-     * @notice Reinvests accumulated fees for a specific pool
-     * @param poolId The pool ID to reinvest fees for
-     * @return amount0 The amount of token0 fees reinvested
-     * @return amount1 The amount of token1 fees reinvested
-     */
-    function reinvestFees(PoolId poolId) external returns (uint256 amount0, uint256 amount1);
+    ) external returns (
+        bool success,
+        uint256 amount0,
+        uint256 amount1
+    );
     
     /**
      * @notice Get the amount of pending fees for token0 for a pool
