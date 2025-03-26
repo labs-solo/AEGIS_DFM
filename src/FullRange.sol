@@ -740,7 +740,6 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         if (reinvestPolicy != address(0)) {
             try IFeeReinvestmentManager(reinvestPolicy).handleFeeExtraction(
                 poolId, 
-                key,
                 feesAccrued
             ) returns (BalanceDelta extractDelta) {
                 // Return whatever delta the FeeReinvestmentManager suggests

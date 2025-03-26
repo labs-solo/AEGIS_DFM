@@ -52,13 +52,11 @@ interface IFeeReinvestmentManager {
      * @dev This function handles all fee extraction logic to keep FullRange.sol lean
      * 
      * @param poolId The pool ID
-     * @param key The pool key
      * @param feesAccrued The total fees accrued during the operation
      * @return extractDelta The balance delta representing fees to extract
      */
     function handleFeeExtraction(
         PoolId poolId,
-        PoolKey calldata key,
         BalanceDelta feesAccrued
     ) external returns (BalanceDelta extractDelta);
     

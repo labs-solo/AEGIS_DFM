@@ -282,7 +282,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     function handleFeeExtraction(
         PoolId poolId,
         BalanceDelta feesAccrued
-    ) external onlyFullRange returns (BalanceDelta extractDelta) {
+    ) external override onlyFullRange returns (BalanceDelta extractDelta) {
         // Skip if no fees to extract or system paused
         if (reinvestmentPaused || poolFeeStates[poolId].reinvestmentPaused ||
             (feesAccrued.amount0() <= 0 && feesAccrued.amount1() <= 0)) {
@@ -290,7 +290,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         }
         
         // Check if sufficient time has passed since last extraction
-        if (block.timestamp < poolFeeStates[poolId].lastProcessedTimestamp + minimumCollectionInterval) {
+        if (block.timestamp < poolFeeStates[poolId].lastFeeCollectionTimestamp + minimumCollectionInterval) {
             // Too soon to extract again, return zero delta
             return BalanceDeltaLibrary.ZERO_DELTA;
         }
@@ -309,8 +309,8 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         
         // Only proceed if we're extracting something
         if (extract0 > 0 || extract1 > 0) {
-            // Update tracker with the extraction details
-            poolFeeStates[poolId].lastProcessedTimestamp = block.timestamp;
+            // Update state with the extraction details
+            poolFeeStates[poolId].lastFeeCollectionTimestamp = block.timestamp;
             poolFeeStates[poolId].accumulatedFee0 += uint256(extract0);
             poolFeeStates[poolId].accumulatedFee1 += uint256(extract1);
             
@@ -902,5 +902,41 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
             feeState.leftoverToken1,
             feeState.reinvestmentPaused || reinvestmentPaused
         );
+    }
+
+    /**
+     * @notice Get the cumulative fee multiplier for a pool
+     * @param poolId The pool ID
+     * @return The cumulative fee multiplier
+     */
+    function cumulativeFeeMultiplier(PoolId poolId) external view override returns (uint256) {
+        // Return accumulated fees relative to initial state
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        if (feeState.accumulatedFee0 == 0 && feeState.accumulatedFee1 == 0) {
+            return 1e18; // No fees accumulated yet
+        }
+        return 1e18 + ((feeState.accumulatedFee0 + feeState.accumulatedFee1) * 1e18) / PPM_DENOMINATOR;
+    }
+    
+    /**
+     * @notice Get the amount of pending fees for token0 for a pool
+     * @param poolId The pool ID
+     * @return The amount of pending token0 fees
+     */
+    function pendingFees0(PoolId poolId) external view override returns (uint256) {
+        // Return both queued and leftover fees
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        return feeState.pendingFee0 + feeState.leftoverToken0;
+    }
+    
+    /**
+     * @notice Get the amount of pending fees for token1 for a pool
+     * @param poolId The pool ID
+     * @return The amount of pending token1 fees
+     */
+    function pendingFees1(PoolId poolId) external view override returns (uint256) {
+        // Return both queued and leftover fees
+        PoolFeeState storage feeState = poolFeeStates[poolId];
+        return feeState.pendingFee1 + feeState.leftoverToken1;
     }
 } 
