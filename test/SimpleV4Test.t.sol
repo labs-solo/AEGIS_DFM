@@ -195,8 +195,8 @@ contract SimpleV4Test is Test {
      */
     function test_addLiquidity() public {
         // ======================= ARRANGE =======================
-        // Set a small liquidity amount to avoid arithmetic overflow in token transfers
-        uint128 liquidityAmount = 1e9;
+        // Set a small liquidity amount that's less than Alice's token balance (she has 1e18)
+        uint128 liquidityAmount = 1e17;
         
         // Record Alice's initial token balances for later comparison
         uint256 aliceToken0Before = token0.balanceOf(alice);
@@ -204,10 +204,10 @@ contract SimpleV4Test is Test {
         console2.log("Alice token0 balance before:", aliceToken0Before);
         console2.log("Alice token1 balance before:", aliceToken1Before);
         
-        // Approve tokens for the FullRange hook to transfer
+        // Approve tokens for the LiquidityManager to transfer
         vm.startPrank(alice);
-        token0.approve(address(fullRange), type(uint256).max);
-        token1.approve(address(fullRange), type(uint256).max);
+        token0.approve(address(liquidityManager), type(uint256).max);
+        token1.approve(address(liquidityManager), type(uint256).max);
         
         // ======================= ACT =======================
         // Use the proper deposit flow to add liquidity
@@ -215,7 +215,8 @@ contract SimpleV4Test is Test {
             poolId: poolId,
             amount0Desired: liquidityAmount,
             amount1Desired: liquidityAmount,
-            minShares: 0,  // No slippage protection for this test
+            amount0Min: 0,  // No slippage protection for this test
+            amount1Min: 0,  // No slippage protection for this test
             deadline: block.timestamp + 1 hours
         });
         
@@ -253,20 +254,21 @@ contract SimpleV4Test is Test {
      */
     function test_swap() public {
         // ======================= ARRANGE =======================
-        // First add liquidity to enable swapping
-        uint128 liquidityAmount = 1e9;
+        // First add liquidity to enable swapping - use amount less than Alice's balance (1e18)
+        uint128 liquidityAmount = 1e17;
         
-        // Approve tokens for the FullRange hook and deposit
+        // Approve tokens for the LiquidityManager and deposit
         vm.startPrank(alice);
-        token0.approve(address(fullRange), type(uint256).max);
-        token1.approve(address(fullRange), type(uint256).max);
+        token0.approve(address(liquidityManager), type(uint256).max);
+        token1.approve(address(liquidityManager), type(uint256).max);
         
         // Use proper deposit flow
         DepositParams memory params = DepositParams({
             poolId: poolId,
             amount0Desired: liquidityAmount,
             amount1Desired: liquidityAmount,
-            minShares: 0,  // No slippage protection for this test
+            amount0Min: 0,  // No slippage protection for this test
+            amount1Min: 0,  // No slippage protection for this test
             deadline: block.timestamp + 1 hours
         });
         
@@ -290,8 +292,8 @@ contract SimpleV4Test is Test {
         console2.log("Bob token1 balance before swap:", bobToken1Before);
         
         // ======================= ACT =======================
-        // Perform swap: token0 -> token1
-        uint256 swapAmount = 1e8;
+        // Perform swap: token0 -> token1 - amount smaller than available liquidity
+        uint256 swapAmount = 1e16;
         
         vm.startPrank(bob);
         IPoolManager.SwapParams memory swapParams = IPoolManager.SwapParams({

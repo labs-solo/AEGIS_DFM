@@ -48,7 +48,7 @@ library Errors {
     error InvalidShare();
     error InvalidPercentage();
     error InvalidFee();
-    error InvalidPrice();
+    error InvalidPrice(uint160 sqrtPriceX96);
     error InvalidTick();
     error InvalidRange();
     error InvalidSlippage();
@@ -165,4 +165,13 @@ library Errors {
     error CalculationError(string reason);
     error HookCallbackFailed(string reason);
     error FeesNotAvailable();
+
+    /// @notice Error thrown when the extraction amount exceeds the fee amount
+    error ExtractionAmountExceedsFees();
+    
+    /// @notice Error thrown when the cache is stale
+    error CacheStale(uint32 lastUpdate, uint32 currentTime, uint32 maxAge);
+
+    /// @notice Error thrown when direct pool data reading fails
+    error FailedToReadPoolData(PoolId poolId);
 } 

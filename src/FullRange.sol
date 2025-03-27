@@ -24,6 +24,8 @@ import { ReentrancyGuard } from "solmate/src/utils/ReentrancyGuard.sol";
 import { StateLibrary } from "v4-core/src/libraries/StateLibrary.sol";
 import { PoolTokenIdUtils } from "./utils/PoolTokenIdUtils.sol";
 import { IFullRangeHooks } from "./interfaces/IFullRangeHooks.sol";
+import { Currency } from "v4-core/src/types/Currency.sol";
+import { IERC20Minimal } from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 
 /**
  * @title FullRange
@@ -57,9 +59,8 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     struct PoolData {
         bool initialized;      // Whether pool is initialized (1 byte)
         bool emergencyState;   // Whether pool is in emergency (1 byte)
-        uint128 reserve0;      // Token0 reserves (16 bytes)
-        uint128 reserve1;      // Token1 reserves (16 bytes)
         uint256 tokenId;       // Pool token ID (32 bytes)
+        // No reserves - they'll be calculated on demand
     }
     
     // Single mapping for pool data instead of multiple mappings
@@ -73,12 +74,12 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     
     // Internal callback data structure - minimized to save gas
     struct CallbackData {
-        uint8 callbackType;  // 1=deposit, 2=withdraw, 3=swap
-        address sender;      // Original sender
-        PoolId poolId;       // Pool ID
-        uint128 amount0;     // Amount of token0
-        uint128 amount1;     // Amount of token1
-        uint256 shares;      // Shares amount
+        PoolId poolId;           // Pool ID
+        uint8 callbackType;      // 1=deposit, 2=withdraw
+        uint128 shares;          // Shares amount
+        uint256 amount0;         // Amount of token0
+        uint256 amount1;         // Amount of token1
+        address recipient;       // Recipient of liquidity
     }
     
     // Events
@@ -193,24 +194,25 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      */
     function deposit(DepositParams calldata params) 
         external 
-        payable
+        payable 
         nonReentrant 
         ensure(params.deadline)
-        returns (uint256 shares, uint256 amount0, uint256 amount1) 
+        returns (uint256 shares, uint256 amount0, uint256 amount1)
     {
-        // Verify pool is initialized and not in emergency state
         PoolData storage data = poolData[params.poolId];
+        
+        // Validation
         if (!data.initialized) revert Errors.PoolNotInitialized(params.poolId);
         if (data.emergencyState) revert Errors.PoolInEmergencyState(params.poolId);
         
-        // Retrieve pool key for native ETH validation
+        // Get pool key to check for native ETH
         PoolKey memory key = poolKeys[params.poolId];
         
-        // Validate native ETH usage using CurrencyLibrary abstraction
+        // Validate native ETH usage
         bool hasNative = key.currency0.isAddressZero() || key.currency1.isAddressZero();
         if (msg.value > 0 && !hasNative) revert Errors.NonzeroNativeValue();
         
-        // Delegate to liquidityManager with msg.value forwarded
+        // Delegate to liquidity manager
         (shares, amount0, amount1) = liquidityManager.deposit{value: msg.value}(
             params.poolId,
             params.amount0Desired,
@@ -225,18 +227,8 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
-     * @notice Deposit ETH and tokens into a Uniswap V4 pool
-     */
-    function depositETH(DepositParams calldata params, PoolKey calldata poolKey)
-        external
-        payable
-    {
-        revert Errors.NotImplemented();
-    }
-
-    /**
-     * @notice Withdraw from a Uniswap V4 pool
-     * @dev Delegates main logic to FullRangeLiquidityManager, handling only hook callbacks
+     * @notice Withdraw liquidity from a pool
+     * @dev Delegates to liquidity manager for withdrawals
      */
     function withdraw(WithdrawParams calldata params)
         external
@@ -244,31 +236,21 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         ensure(params.deadline)
         returns (uint256 amount0, uint256 amount1)
     {
-        // Verify pool is initialized
+        // Validation
         PoolData storage data = poolData[params.poolId];
         if (!data.initialized) revert Errors.PoolNotInitialized(params.poolId);
         
-        // Delegate to liquidityManager
+        // Delegate to liquidity manager
         (amount0, amount1) = liquidityManager.withdraw(
             params.poolId,
             params.sharesToBurn,
-            params.minAmount0,
-            params.minAmount1,
+            params.amount0Min,
+            params.amount1Min,
             msg.sender
         );
         
         emit Withdraw(msg.sender, params.poolId, amount0, amount1, params.sharesToBurn);
         return (amount0, amount1);
-    }
-
-    /**
-     * @notice Withdraw with ETH handling
-     */
-    function withdrawETH(WithdrawParams calldata params, PoolKey calldata poolKey)
-        external
-        returns (uint256 amount0Out, uint256 amount1Out)
-    {
-        revert Errors.NotImplemented();
     }
 
     /**
@@ -285,6 +267,12 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     function _safeTransferETH(address recipient, uint256 amount) internal {
         if (amount == 0) return;
         
+        // Use balanceOfSelf from CurrencyLibrary for balance check
+        uint256 balance = Currency.wrap(address(0)).balanceOfSelf();
+        if (amount > balance) {
+            revert Errors.InsufficientContractBalance(amount, balance);
+        }
+        
         (bool success, ) = recipient.call{value: amount, gas: 50000}("");
         if (!success) {
             pendingETHPayments[recipient] += amount;
@@ -298,7 +286,8 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     function _safeTransferToken(address token, address to, uint256 amount) internal {
         if (amount == 0) return;
         
-        if (token == address(0)) {
+        Currency currency = Currency.wrap(token);
+        if (currency.isAddressZero()) {
             _safeTransferETH(to, amount);
         } else {
             SafeTransferLib.safeTransfer(ERC20(token), to, amount);
@@ -335,7 +324,12 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
-     * @notice Get pool info
+     * @notice Get pool information
+     * @param poolId The pool ID
+     * @return isInitialized Whether the pool is initialized
+     * @return reserves Array of pool reserves [reserve0, reserve1]
+     * @return totalShares Total shares in the pool
+     * @return tokenId Pool token ID
      */
     function getPoolInfo(PoolId poolId) 
         external 
@@ -351,13 +345,15 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         isInitialized = data.initialized;
         
         if (isInitialized) {
-            reserves[0] = data.reserve0;
-            reserves[1] = data.reserve1;
-            totalShares = liquidityManager.totalShares(poolId);
+            // Get reserves from liquidity manager
+            (reserves[0], reserves[1]) = liquidityManager.getPoolReserves(poolId);
+            
+            // Get total shares from liquidity manager
+            (totalShares, , ) = liquidityManager.poolInfo(poolId);
+            
+            // Get token ID from stored data
             tokenId = data.tokenId;
         }
-        
-        return (isInitialized, reserves, totalShares, tokenId);
     }
 
     /**
@@ -385,21 +381,21 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      * @notice Get pool reserves and shares
      */
     function getPoolReservesAndShares(PoolId poolId) public view returns (uint256 reserve0, uint256 reserve1, uint128 totalShares) {
-        PoolData storage data = poolData[poolId];
-        return (data.reserve0, data.reserve1, liquidityManager.totalShares(poolId));
+        // Get reserves directly from the liquidity manager instead of storing them
+        (reserve0, reserve1) = liquidityManager.getPoolReserves(poolId);
+        totalShares = liquidityManager.totalShares(poolId);
     }
 
     /**
-     * @notice Unlock callback implementation
-     * @dev Delegates to liquidityManager for actual delta handling logic
+     * @notice Callback function for Uniswap V4 unlock pattern
+     * @dev Called by the pool manager during deposit/withdraw operations
      */
     function unlockCallback(bytes calldata data) external onlyPoolManager returns (bytes memory) {
-        // Decode callback data
         CallbackData memory cbData = abi.decode(data, (CallbackData));
         PoolKey memory key = poolKeys[cbData.poolId];
-        
-        if (cbData.callbackType == 1) { // Deposit
-            // Create ModifyLiquidityParams for full range position
+
+        if (cbData.callbackType == 1) {
+            // DEPOSIT
             IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
                 tickLower: TickMath.minUsableTick(key.tickSpacing),
                 tickUpper: TickMath.maxUsableTick(key.tickSpacing),
@@ -407,27 +403,20 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
                 salt: bytes32(0)
             });
             
-            // Call modifyLiquidity directly
             (BalanceDelta delta, ) = poolManager.modifyLiquidity(key, params, "");
-            
-            // Delegate settlement to liquidityManager
             liquidityManager.handlePoolDelta(key, delta);
             
             return abi.encode(delta);
-        } 
-        else if (cbData.callbackType == 2) { // Withdraw
-            // Create ModifyLiquidityParams with negative liquidity delta
+        } else if (cbData.callbackType == 2) {
+            // WITHDRAW
             IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
                 tickLower: TickMath.minUsableTick(key.tickSpacing),
                 tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-                liquidityDelta: -int256(cbData.shares),
+                liquidityDelta: -int256(uint256(cbData.shares)),
                 salt: bytes32(0)
             });
             
-            // Call modifyLiquidity directly
             (BalanceDelta delta, ) = poolManager.modifyLiquidity(key, params, "");
-            
-            // Delegate settlement to liquidityManager
             liquidityManager.handlePoolDelta(key, delta);
             
             return abi.encode(delta);
@@ -448,31 +437,47 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
-     * @notice Implementation for afterInitialize hook
+     * @notice After initialize hook implementation
+     * @dev Sets up the pool data and initializes the liquidity manager
      */
-    function afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
-        external
-        override
-        returns (bytes4)
-    {
+    function afterInitialize(
+        address sender, 
+        PoolKey calldata key, 
+        uint160 sqrtPriceX96, 
+        int24 tick
+    ) external override returns (bytes4) {
         PoolId poolId = key.toId();
         
-        // Store pool key and initialize pool data
+        // Validation: check for duplicate initialization
+        if (poolData[poolId].initialized) {
+            revert Errors.PoolAlreadyInitialized(poolId);
+        }
+        
+        // Validation: check for valid price
+        if (sqrtPriceX96 == 0) {
+            revert Errors.InvalidPrice(sqrtPriceX96);
+        }
+        
+        // Store minimal pool data
         poolData[poolId] = PoolData({
             initialized: true,
             emergencyState: false,
-            reserve0: 0,
-            reserve1: 0,
             tokenId: PoolTokenIdUtils.toTokenId(poolId)
         });
         
         poolKeys[poolId] = key;
         
+        // Register pool with liquidity manager
+        liquidityManager.registerPool(poolId, key, sqrtPriceX96);
+        
         // Initialize any policies if required
-        try policyManager.handlePoolInitialization(poolId, key, sqrtPriceX96, tick, address(this)) {
-            // Successfully initialized policies
-        } catch (bytes memory reason) {
-            emit PolicyInitializationFailed(poolId, string(reason));
+        if (address(policyManager) != address(0)) {
+            try policyManager.handlePoolInitialization(poolId, key, sqrtPriceX96, tick, address(this)) {
+                // Policy initialization successful
+            } catch (bytes memory reason) {
+                // Policy initialization failed but we continue with pool creation
+                emit PolicyInitializationFailed(poolId, string(reason));
+            }
         }
         
         return IHooks.afterInitialize.selector;
@@ -503,6 +508,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         override
         returns (bytes4, int128)
     {
+        // Reserves are now calculated on demand, no need to update storage
         return (IHooks.afterSwap.selector, 0);
     }
 
@@ -528,6 +534,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         BalanceDelta feesAccrued,
         bytes calldata hookData
     ) external override returns (bytes4, BalanceDelta) {
+        // Reserves are calculated on demand, no need to update storage
         return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
@@ -553,6 +560,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         BalanceDelta feesAccrued,
         bytes calldata hookData
     ) external override returns (bytes4, BalanceDelta) {
+        // Reserves are now calculated on demand, no need to update storage
         return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
@@ -590,26 +598,16 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) external returns (bytes4, BalanceDelta) {
+    ) external override returns (bytes4, BalanceDelta) {
+        // Track fees reinvestment
         PoolId poolId = key.toId();
-        
-        // Get the FeeReinvestmentManager
-        address reinvestPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
-        
-        // Delegate all extraction logic to the FeeReinvestmentManager
-        if (reinvestPolicy != address(0)) {
-            try IFeeReinvestmentManager(reinvestPolicy).handleFeeExtraction(
-                poolId, 
-                feesAccrued
-            ) returns (BalanceDelta extractDelta) {
-                // Return whatever delta the FeeReinvestmentManager suggests
-                return (IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector, extractDelta);
-            } catch {
-                // If handler fails, extract nothing
+        if (poolData[poolId].initialized) {
+            // Process fees if any
+            if (feesAccrued.amount0() != 0 || feesAccrued.amount1() != 0) {
+                _processFees(poolId, IFeeReinvestmentManager.OperationType.WITHDRAWAL, feesAccrued);
             }
         }
         
-        // Default to zero extraction
         return (IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
@@ -639,15 +637,20 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
-     * @notice Implementation for afterAddLiquidityReturnDelta hook
+     * @notice Implementation of afterAddLiquidityReturnDelta hook
      */
-    function afterAddLiquidityReturnDelta(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
-        BalanceDelta delta,
-        bytes calldata hookData
-    ) external returns (bytes4, BalanceDelta) {
+    function afterAddLiquidityReturnDelta(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, BalanceDelta delta, bytes calldata hookData)
+        external
+        override
+        returns (bytes4, BalanceDelta)
+    {
+        // If this is a self-call from unlockCallback, process fees if needed
+        PoolId poolId = key.toId();
+        if (poolData[poolId].initialized) {
+            // Process fees if any
+            _processFees(poolId, IFeeReinvestmentManager.OperationType.DEPOSIT, BalanceDeltaLibrary.ZERO_DELTA);
+        }
+        
         return (IFullRangeHooks.afterAddLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 }

@@ -165,4 +165,19 @@ interface IFullRangeLiquidityManager {
      * @notice Pool keys mapping
      */
     function poolKeys(PoolId poolId) external view returns (PoolKey memory);
+
+    /**
+     * @notice Gets the current reserves for a pool
+     * @param poolId The pool ID
+     * @return reserve0 The amount of token0 in the pool
+     * @return reserve1 The amount of token1 in the pool
+     */
+    function getPoolReserves(PoolId poolId) external view returns (uint256 reserve0, uint256 reserve1);
+
+    /**
+     * @notice Updates the position cache for a pool
+     * @param poolId The pool ID
+     * @return success Whether the update was successful
+     */
+    function updatePositionCache(PoolId poolId) external returns (bool success);
 } 

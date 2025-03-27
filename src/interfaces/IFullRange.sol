@@ -18,14 +18,16 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
  * @param poolId The identifier of the pool to deposit into
  * @param amount0Desired The desired amount of token0 to deposit
  * @param amount1Desired The desired amount of token1 to deposit
- * @param minShares The minimum number of shares to receive (slippage protection)
+ * @param amount0Min The minimum amount of token0 to deposit (slippage protection)
+ * @param amount1Min The minimum amount of token1 to deposit (slippage protection)
  * @param deadline The deadline by which the transaction must be executed
  */
 struct DepositParams {
     PoolId poolId;
     uint256 amount0Desired;
     uint256 amount1Desired;
-    uint256 minShares;
+    uint256 amount0Min;
+    uint256 amount1Min;
     uint256 deadline;
 }
 
@@ -33,15 +35,15 @@ struct DepositParams {
  * @notice Parameters for withdrawing liquidity from a pool
  * @param poolId The identifier of the pool to withdraw from
  * @param sharesToBurn The amount of LP shares to burn
- * @param minAmount0 The minimum amount of token0 to receive (slippage protection)
- * @param minAmount1 The minimum amount of token1 to receive (slippage protection)
+ * @param amount0Min The minimum amount of token0 to receive (slippage protection)
+ * @param amount1Min The minimum amount of token1 to receive (slippage protection)
  * @param deadline The deadline by which the transaction must be executed
  */
 struct WithdrawParams {
     PoolId poolId;
     uint256 sharesToBurn;
-    uint256 minAmount0;
-    uint256 minAmount1;
+    uint256 amount0Min;
+    uint256 amount1Min;
     uint256 deadline;
 }
 

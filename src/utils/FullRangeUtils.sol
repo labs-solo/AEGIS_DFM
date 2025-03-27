@@ -94,4 +94,58 @@ library FullRangeUtils {
         implementations[5] = address(0);
         return implementations;
     }
+
+    /**
+     * @notice Safely calls a function without using try/catch
+     * @dev Returns whether the call was successful and the return data
+     * @param target The target address to call
+     * @param data The function call data
+     * @return success Whether the call was successful
+     * @return returnData The return data from the call
+     */
+    function trySafeFunctionCall(
+        address target,
+        bytes memory data
+    ) internal returns (bool success, bytes memory returnData) {
+        if (target == address(0)) {
+            return (false, bytes("Target address is zero"));
+        }
+        
+        // Call the target with the data
+        (success, returnData) = target.call(data);
+        
+        // If the call failed but returned data, extract the revert reason
+        if (!success && returnData.length > 0) {
+            // Look for revert reason
+            // solhint-disable-next-line no-inline-assembly
+            assembly {
+                // Skip the first 4 bytes which is the function selector
+                let returnDataSize := mload(returnData)
+                if gt(returnDataSize, 0) {
+                    // Retrieve revert reason
+                    if eq(mload(add(returnData, 0x20)), 0x08c379a000000000000000000000000000000000000000000000000000000000) {
+                        // If it's a standard error, try to extract the message
+                        let message := mload(add(returnData, 0x04))
+                        let length := mload(add(returnData, 0x24))
+                        
+                        if length {
+                            // Store the message in returnData
+                            mstore(returnData, length)
+                            let pos := add(returnData, 0x20)
+                            let src := add(add(returnData, 0x44), 0)
+                            let dest := pos
+                            // Copy the message
+                            for { let i := 0 } lt(i, length) { i := add(i, 0x20) } {
+                                mstore(add(dest, i), mload(add(src, i)))
+                            }
+                            // Update the size of returnData
+                            mstore(returnData, add(0x20, length))
+                        }
+                    }
+                }
+            }
+        }
+        
+        return (success, returnData);
+    }
 } 

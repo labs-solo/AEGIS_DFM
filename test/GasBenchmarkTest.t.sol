@@ -88,8 +88,8 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
         
         // Measure approval gas costs
         gasStartApproval = gasleft();
-        token0.approve(address(fullRange), type(uint256).max);
-        token1.approve(address(fullRange), type(uint256).max);
+        token0.approve(address(liquidityManager), type(uint256).max);
+        token1.approve(address(liquidityManager), type(uint256).max);
         uint256 hookedApprovalGas = gasStartApproval - gasleft();
         console2.log("Hooked pool approval gas (first-time):", hookedApprovalGas);
         
@@ -99,7 +99,8 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
             poolId: poolId,
             amount0Desired: liquidityAmount,
             amount1Desired: liquidityAmount,
-            minShares: 0,
+            amount0Min: 0,
+            amount1Min: 0,
             deadline: block.timestamp + 1 hours
         });
         fullRange.deposit(params);
@@ -108,10 +109,13 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
         vm.stopPrank();
         
         // Calculate and log first-time operation differences
-        console2.log("Hook add liquidity overhead (first-time):", hookedAddLiqFirstGas - regularAddLiqFirstGas);
+        console2.log("Hook add liquidity overhead (first-time):", hookedAddLiqFirstGas > regularAddLiqFirstGas ? 
+            hookedAddLiqFirstGas - regularAddLiqFirstGas : 0);
         console2.log("Total gas (regular, first-time):", approvalGas + regularAddLiqFirstGas);
         console2.log("Total gas (hooked, first-time):", hookedApprovalGas + hookedAddLiqFirstGas);
-        console2.log("Total overhead (first-time):", (hookedApprovalGas + hookedAddLiqFirstGas) - (approvalGas + regularAddLiqFirstGas));
+        console2.log("Total overhead (first-time):", 
+            (hookedApprovalGas + hookedAddLiqFirstGas) > (approvalGas + regularAddLiqFirstGas) ? 
+            (hookedApprovalGas + hookedAddLiqFirstGas) - (approvalGas + regularAddLiqFirstGas) : 0);
         
         // Now test subsequent operations with warmed storage
         console2.log("\n----- PHASE 2: Subsequent operations (warm storage) -----");
@@ -128,7 +132,7 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
         token1.approve(address(lpRouter), type(uint256).max);
         uint256 approvalGasWarm = gasStartApproval - gasleft();
         console2.log("Regular pool approval gas (subsequent):", approvalGasWarm);
-        console2.log("Approval gas reduction:", approvalGas - approvalGasWarm);
+        console2.log("Approval gas reduction:", approvalGas > approvalGasWarm ? approvalGas - approvalGasWarm : 0);
         
         // Subsequent liquidity addition should be cheaper
         gasStartRegular = gasleft();
@@ -144,7 +148,8 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
         );
         uint256 regularAddLiqSubsequentGas = gasStartRegular - gasleft();
         console2.log("Regular pool add liquidity gas (subsequent):", regularAddLiqSubsequentGas);
-        console2.log("Gas reduction from first-time:", regularAddLiqFirstGas - regularAddLiqSubsequentGas);
+        console2.log("Gas reduction from first-time:", regularAddLiqFirstGas > regularAddLiqSubsequentGas ? 
+            regularAddLiqFirstGas - regularAddLiqSubsequentGas : 0);
         vm.stopPrank();
         
         // Hooked pool subsequent addition
@@ -152,11 +157,12 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
         
         // Approval costs should be lower (warmed storage)
         gasStartApproval = gasleft();
-        token0.approve(address(fullRange), type(uint256).max);
-        token1.approve(address(fullRange), type(uint256).max);
+        token0.approve(address(liquidityManager), type(uint256).max);
+        token1.approve(address(liquidityManager), type(uint256).max);
         uint256 hookedApprovalGasWarm = gasStartApproval - gasleft();
         console2.log("Hooked pool approval gas (subsequent):", hookedApprovalGasWarm);
-        console2.log("Approval gas reduction:", hookedApprovalGas - hookedApprovalGasWarm);
+        console2.log("Approval gas reduction:", hookedApprovalGas > hookedApprovalGasWarm ? 
+            hookedApprovalGas - hookedApprovalGasWarm : 0);
         
         // Subsequent liquidity addition should be cheaper
         gasStartHooked = gasleft();
@@ -164,20 +170,25 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
             poolId: poolId,
             amount0Desired: liquidityAmount,
             amount1Desired: liquidityAmount,
-            minShares: 0,
+            amount0Min: 0,
+            amount1Min: 0,
             deadline: block.timestamp + 1 hours
         });
         fullRange.deposit(params);
         uint256 hookedAddLiqSubsequentGas = gasStartHooked - gasleft();
         console2.log("Hooked pool add liquidity gas (subsequent):", hookedAddLiqSubsequentGas);
-        console2.log("Gas reduction from first-time:", hookedAddLiqFirstGas - hookedAddLiqSubsequentGas);
+        console2.log("Gas reduction from first-time:", hookedAddLiqFirstGas > hookedAddLiqSubsequentGas ? 
+            hookedAddLiqFirstGas - hookedAddLiqSubsequentGas : 0);
         vm.stopPrank();
         
         // Calculate and log subsequent operation differences
-        console2.log("Hook add liquidity overhead (subsequent):", hookedAddLiqSubsequentGas - regularAddLiqSubsequentGas);
+        console2.log("Hook add liquidity overhead (subsequent):", hookedAddLiqSubsequentGas > regularAddLiqSubsequentGas ? 
+            hookedAddLiqSubsequentGas - regularAddLiqSubsequentGas : 0);
         console2.log("Total gas (regular, subsequent):", approvalGasWarm + regularAddLiqSubsequentGas);
         console2.log("Total gas (hooked, subsequent):", hookedApprovalGasWarm + hookedAddLiqSubsequentGas);
-        console2.log("Total overhead (subsequent):", (hookedApprovalGasWarm + hookedAddLiqSubsequentGas) - (approvalGasWarm + regularAddLiqSubsequentGas));
+        console2.log("Total overhead (subsequent):", 
+            (hookedApprovalGasWarm + hookedAddLiqSubsequentGas) > (approvalGasWarm + regularAddLiqSubsequentGas) ? 
+            (hookedApprovalGasWarm + hookedAddLiqSubsequentGas) - (approvalGasWarm + regularAddLiqSubsequentGas) : 0);
         
         // Test with different amounts to verify amount size is not the factor
         console2.log("\n----- PHASE 3: Different amounts (with warm storage) -----");
@@ -205,7 +216,8 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
             poolId: poolId,
             amount0Desired: mediumAmount,
             amount1Desired: mediumAmount,
-            minShares: 0,
+            amount0Min: 0,
+            amount1Min: 0,
             deadline: block.timestamp + 1 hours
         });
         fullRange.deposit(params);
@@ -235,7 +247,8 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
             poolId: poolId,
             amount0Desired: largeAmount,
             amount1Desired: largeAmount,
-            minShares: 0,
+            amount0Min: 0,
+            amount1Min: 0,
             deadline: block.timestamp + 1 hours
         });
         fullRange.deposit(params);
@@ -304,13 +317,14 @@ contract GasBenchmarkTest is LocalUniswapV4TestBase {
         
         // Add liquidity to hooked pool
         vm.startPrank(alice);
-        token0.approve(address(fullRange), type(uint256).max);
-        token1.approve(address(fullRange), type(uint256).max);
+        token0.approve(address(liquidityManager), type(uint256).max);
+        token1.approve(address(liquidityManager), type(uint256).max);
         DepositParams memory params = DepositParams({
             poolId: poolId,
             amount0Desired: liquidityAmount,
             amount1Desired: liquidityAmount,
-            minShares: 0,
+            amount0Min: 0,
+            amount1Min: 0,
             deadline: block.timestamp + 1 hours
         });
         fullRange.deposit(params);
