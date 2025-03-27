@@ -293,15 +293,9 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         }
         
         // Check if pool exists by querying key from liquidityManager
-        PoolKey memory key;
-        try liquidityManager.poolKeys(poolId) returns (PoolKey memory _key) {
-            key = _key;
-            if (key.tickSpacing == 0) {
-                // Pool doesn't exist or isn't initialized
-                return BalanceDeltaLibrary.ZERO_DELTA;
-            }
-        } catch {
-            // Pool doesn't exist or query failed
+        PoolKey memory key = liquidityManager.poolKeys(poolId);
+        if (key.tickSpacing == 0) {
+            // Pool doesn't exist or isn't initialized
             return BalanceDeltaLibrary.ZERO_DELTA;
         }
         
@@ -780,19 +774,20 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
      * @return key The pool key
      */
     function _getPoolKey(PoolId poolId) internal view returns (PoolKey memory key) {
-        // Try getting from fullRange interface
-        try IFullRange(fullRange).getPoolKey(poolId) returns (PoolKey memory poolKey) {
-            key = poolKey;
-        } catch {
-            // Fallback to liquidity manager if available
-            if (address(liquidityManager) != address(0)) {
-                try liquidityManager.poolKeys(poolId) returns (PoolKey memory poolKey) {
-                    key = poolKey;
-                } catch {
-                    // Silent failure, return empty key
-                }
+        // First try getting from fullRange interface
+        if (address(fullRange) != address(0)) {
+            key = IFullRange(fullRange).getPoolKey(poolId);
+            if (key.tickSpacing != 0) {
+                return key;
             }
         }
+        
+        // Fallback to liquidity manager if available
+        if (address(liquidityManager) != address(0)) {
+            key = liquidityManager.poolKeys(poolId);
+        }
+        
+        return key;
     }
     
     // ================ VIEW FUNCTIONS ================
