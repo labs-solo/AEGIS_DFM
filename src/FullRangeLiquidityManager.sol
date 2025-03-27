@@ -884,20 +884,29 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Subsequent deposits - match the current reserve ratio
         if (reserve0 > 0 && reserve1 > 0) {
             // Calculate shares based on the minimum of the two ratios
+            // Multiply before division to prevent precision loss
             uint256 share0 = (amount0Desired * totalSharesAmount) / reserve0;
             uint256 share1 = (amount1Desired * totalSharesAmount) / reserve1;
             
             if (share0 <= share1) {
                 // Token0 is the limiting factor
                 newShares = share0;
+                // Use the calculated share ratio for consistent amounts
                 actual0 = amount0Desired;
-                actual1 = (actual0 * reserve1) / reserve0;
+                // Multiply before dividing to prevent overflow/underflow
+                actual1 = (amount0Desired * reserve1) / reserve0;
             } else {
                 // Token1 is the limiting factor
                 newShares = share1;
+                // Use the calculated share ratio for consistent amounts
                 actual1 = amount1Desired;
-                actual0 = (actual1 * reserve0) / reserve1;
+                // Multiply before dividing to prevent overflow/underflow
+                actual0 = (amount1Desired * reserve0) / reserve1;
             }
+            
+            // Ensure actual amounts don't exceed the inputs, which could happen due to precision
+            if (actual0 > amount0Desired) actual0 = amount0Desired;
+            if (actual1 > amount1Desired) actual1 = amount1Desired;
         } else if (reserve0 > 0) {
             // Only token0 has reserves
             newShares = (amount0Desired * totalSharesAmount) / reserve0;
@@ -1296,7 +1305,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
                 tickLower: TickMath.minUsableTick(key.tickSpacing),
                 tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-                liquidityDelta: int256(uint256(cbData.shares)),
+                liquidityDelta: int256(uint256(cbData.amount0)),
                 salt: bytes32(0)
             });
             
