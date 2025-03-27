@@ -5,123 +5,173 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
 
 /**
  * @title Errors
- * @notice Defines custom error types for the FullRange system to save gas on revert messages.
- * @dev Each error is declared with an identifier and parameter types (if any). Using revert with custom errors is cheaper than revert with string messages.
+ * @notice Collection of all custom errors used in the protocol
  */
 library Errors {
     // Access control errors
-    error AccessNotAuthorized(address caller);
-    error AccessOnlyEmergencyAdmin(address caller);
-    error AccessOnlyOwner(address caller);
+    error AccessDenied();
     error AccessOnlyGovernance(address caller);
     error AccessOnlyPoolManager(address caller);
+    error AccessNotAuthorized(address caller);
+    error AccessOnlyHookHandler(address caller);
+    error AccessOnlyEmergencyAdmin(address caller);
     error Unauthorized();
     
     // Validation and input errors
-    error ValidationDeadlinePassed(uint32 deadline, uint32 timestamp);
+    error ValidationDeadlinePassed(uint32 deadline, uint32 blockTime);
     error ValidationZeroAddress(string target);
     error ValidationInvalidInput(string reason);
     error ValidationZeroAmount(string parameter);
-    error ZeroAddress();
+    error ValidationInvalidLength(string parameter);
+    error ValidationInvalidAddress(address target);
+    error ValidationInvalidRange(string parameter);
+    error ValidationInvalidFee(uint24 fee);
+    error ValidationInvalidTickSpacing(int24 tickSpacing);
+    error ValidationInvalidTick(int24 tick);
+    error ValidationInvalidSlippage(uint256 slippage);
     error ParameterOutOfRange(uint256 value, uint256 min, uint256 max);
-    error DeadlinePassed(uint256 deadline, uint256 timestamp);
-    error ZeroAmount();
-    error Reentrancy();
-    error NotImplemented();
-    error InvalidInput();
+    error DeadlinePassed(uint32 deadline, uint32 blockTime);
     error ArrayLengthMismatch();
     error InvalidCallbackSalt();
     error InvalidPolicyImplementationsLength(uint256 length);
+    error NotInitialized();
+    error ReinvestmentDisabled();
     
     // Math errors
     error DivisionByZero();
-    error Overflow(uint256 value, uint256 max);
-    error Underflow(uint256 value, uint256 min);
-    error NegativeValue(int256 value);
-    error IntegerConversionError(uint256 value, uint256 maxAllowed);
-    error AmountTooLarge(uint256 provided, uint256 maximum);
-    error AmountTooSmall(uint256 provided, uint256 minimum);
-    error LiquidityCalculationFailed();
-    error PriceCalculationFailed(int24 tick, uint160 sqrtPriceX96);
-    error FeeCalculationFailed();
+    error Overflow();
+    error Underflow();
+    error InvalidCalculation();
+    error InvalidConversion();
+    error InvalidRatio();
+    error InvalidAmount();
+    error InvalidShare();
+    error InvalidPercentage();
+    error InvalidFee();
+    error InvalidPrice(uint160 sqrtPriceX96);
+    error InvalidTick();
+    error InvalidRange();
+    error InvalidSlippage();
+    error InvalidLiquidity();
+    error InvalidInput();
+    error AmountTooLarge(uint256 amount, uint256 maximum);
+    error SlippageExceeded(uint256 required, uint256 actual);
     
-    // Hook-specific errors
-    error HookInvalidAddress(address hook);
-    error HookNotAuthorizedToCreatePool(address sender);
-    error HookCallFailed();
-    error AddressMismatch(address provided, address expected);
-    error NotCalledByPoolManager(address caller);
-    error InvalidHookAddress(address hook);
-    error NotAuthorizedToCreatePool(address caller);
-    error HookInitializationFailed(address hook);
+    // System errors
+    error ZeroAddress();
+    error ZeroAmount();
+    error ZeroLiquidity();
+    error ZeroShares();
     error ZeroPolicyManagerAddress();
     error ZeroPoolManagerAddress();
     error ZeroFullRangeAddress();
+    error HookHandlerCallFailed(bytes reason);
+    error HookDispatchFailed(bytes4 selector);
+    error DelegateCallFailed();
+    error EthTransferFailed(address to, uint256 amount);
+    error NotImplemented();
     
     // Pool errors
     error PoolNotInitialized(PoolId poolId);
-    error PoolAlreadyExists(PoolId poolId);
-    error PoolInvalidParameters(PoolId poolId);
-    error TickOutOfRange(int24 tick, int24 minTick, int24 maxTick);
-    error UnsupportedTickSpacing(int24 spacing);
-    error InvalidFeeOrTickSpacing(uint24 fee, int24 spacing);
-    error PoolUnauthorized(PoolId poolId);
-    error PoolOperationFailed(PoolId poolId);
-    error FeeNotDynamic(uint24 fee);
+    error PoolAlreadyInitialized(PoolId poolId);
+    error PoolNotFound(PoolId poolId);
+    error PoolPaused(PoolId poolId);
+    error PoolLocked(PoolId poolId);
+    error PoolInvalidState(PoolId poolId);
+    error PoolInvalidOperation(PoolId poolId);
+    error PoolInvalidParameter(PoolId poolId);
+    error PoolUnsupportedFee(uint24 fee);
     error PoolUnsupportedTickSpacing(int24 tickSpacing);
     error PoolInvalidFeeOrTickSpacing(uint24 fee, int24 tickSpacing);
     error PoolTickOutOfRange(int24 tick, int24 minTick, int24 maxTick);
+    error PoolInEmergencyState(PoolId poolId);
+    error OnlyDynamicFeePoolAllowed();
     
     // Liquidity errors
     error InsufficientAmount(uint256 requested, uint256 available);
-    error SlippageExceeded(uint256 expected, uint256 actual);
-    error ZeroShares(address owner);
-    error NoTokensToWithdraw();
-    error SharesTransferFailed(address from, address to, uint256 amount);
+    error InsufficientLiquidity(uint256 requested, uint256 available);
     error InsufficientShares(uint256 requested, uint256 available);
-    error InvalidDepositAmounts(uint256 token0Amount, uint256 token1Amount);
-    error ExceedsMaxReserve(uint256 requested, uint256 maximum);
-    error FeeClaimFailed();
-    
-    // Fee errors
-    error AllocationInvalid(uint256 total);
-    error ReinvestmentFailed(PoolId poolId);
-    error NotDynamicFee(uint24 fee);
-    error OnlyDynamicFee(uint24 fee);
-    error FeeOutOfRange(uint24 provided, uint24 minimum, uint24 maximum);
-    error InvalidAdjustmentParameters(uint256 increasePct, uint256 decreasePct);
-    error AdjustmentFailed(uint8 adjustmentType, int256 deviation);
-    error AllocationSumError(uint256 polShare, uint256 fullRangeShare, uint256 lpShare, uint256 total);
-    
-    // Oracle errors
-    error CardinalityCannotBeZero();
-    error TargetPredatesOldestObservation(uint32 oldestTimestamp, uint32 targetTimestamp);
-    error PositionsMustBeFullRange();
-    error OnlyDynamicFeePoolAllowed();
-    error InvalidObservation(uint16 index);
-    error OracleInitializationFailed();
-    error OracleOperationFailed(string operation, string reason);
+    error InsufficientBalance(uint256 requested, uint256 available);
+    error InsufficientAllowance(uint256 requested, uint256 available);
+    error LiquidityOverflow();
+    error LiquidityUnderflow();
+    error LiquidityLocked();
+    error LiquidityRangeTooWide();
+    error LiquidityRangeTooNarrow();
+    error LiquidityAlreadyExists();
+    error LiquidityDoesNotExist();
+    error LiquidityNotAvailable();
     
     // Policy errors
-    error PolicyNotApproved(address implementation);
-    error PolicyFrozen(PoolId poolId);
-    error InvalidImplementation(address implementation);
-    error ChangeNotQueued(bytes32 changeId);
-    error TimelockNotExpired(uint256 timestamp, uint256 required);
-    error PoolAlreadyInitialized(PoolId poolId);
-    error InterfaceNotSupported(bytes4 interfaceId);
-    error InvalidTimelockDelay(uint256 provided, uint256 minimum, uint256 maximum);
+    error PolicyNotFound();
+    error PolicyAlreadyExists();
+    error PolicyInvalidState();
+    error PolicyInvalidParameter();
+    error PolicyInvalidOperation();
+    error PolicyUnauthorized();
+    error PolicyLocked();
+    error PolicyExpired();
+    error PolicyNotActive();
+    error PolicyNotImplemented();
+    error AllocationSumError(uint256 polShare, uint256 fullRangeShare, uint256 lpShare, uint256 expected);
     
-    // Token and ETH transfer errors
-    error TransferFailed(address token, address from, address to, uint256 amount);
-    error InsufficientBalance(address token, address account, uint256 required, uint256 available);
-    error InsufficientAllowance(address token, address owner, address spender, uint256 required, uint256 available);
-    error EthTransferFailed(address recipient, uint256 amount);
-    error EthNotAccepted();
-    error InsufficientEth(uint256 required, uint256 available);
-    error ApprovalFailed(address token, address owner, address spender, uint256 amount);
-    error TokenOperationFailed(address token);
+    // Hook errors
+    error HookNotFound();
+    error HookAlreadyExists();
+    error HookInvalidState();
+    error HookInvalidParameter();
+    error HookInvalidOperation();
+    error HookUnauthorized();
+    error HookLocked();
+    error HookExpired();
+    error HookNotActive();
+    error HookNotImplemented();
+    error HookInvalidAddress(address hook);
+    
+    // Token errors
+    error TokenNotFound();
+    error TokenAlreadyExists();
+    error TokenInvalidState();
+    error TokenInvalidParameter();
+    error TokenInvalidOperation();
+    error TokenUnauthorized();
+    error TokenLocked();
+    error TokenExpired();
+    error TokenNotActive();
+    error TokenNotImplemented();
+    error TokenTransferFailed();
+    error TokenApprovalFailed();
     error TokenEthNotAccepted();
     error TokenInsufficientEth(uint256 required, uint256 provided);
     error TokenEthTransferFailed(address to, uint256 amount);
+    
+    // Native ETH errors
+    error NonzeroNativeValue();
+    error InsufficientETH(uint256 required, uint256 provided);
+    error InsufficientContractBalance(uint256 required, uint256 available);
+    error ETHTransferFailed(address to, uint256 amount);
+
+    // Oracle errors
+    error OracleOperationFailed(string operation, string reason);
+
+    // Fee Reinvestment Manager Errors
+    error FeeExtractionFailed(string reason);
+    error InvalidPolPercentage(uint256 provided, uint256 min, uint256 max);
+    error PoolSpecificPolPercentageNotAllowed();
+    error InvalidFeeDistribution(uint256 polShare, uint256 lpShare, uint256 expected);
+    error PoolReinvestmentBlocked(PoolId poolId);
+    error CollectionIntervalTooShort(uint256 provided, uint256 minimum);
+    error CollectionIntervalTooLong(uint256 provided, uint256 maximum);
+    error CalculationError(string reason);
+    error HookCallbackFailed(string reason);
+    error FeesNotAvailable();
+
+    /// @notice Error thrown when the extraction amount exceeds the fee amount
+    error ExtractionAmountExceedsFees();
+    
+    /// @notice Error thrown when the cache is stale
+    error CacheStale(uint32 lastUpdate, uint32 currentTime, uint32 maxAge);
+
+    /// @notice Error thrown when direct pool data reading fails
+    error FailedToReadPoolData(PoolId poolId);
 } 

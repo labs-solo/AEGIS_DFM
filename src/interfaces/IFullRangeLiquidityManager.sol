@@ -32,6 +32,9 @@ interface IFullRangeLiquidityManager {
     event UserSharesRemoved(PoolId indexed poolId, address indexed user, uint256 shares);
     event PoolTotalSharesUpdated(PoolId indexed poolId, uint128 oldShares, uint128 newShares);
 
+    /**
+     * @notice Deposit tokens into a pool with native ETH support
+     */
     function deposit(
         PoolId poolId,
         uint256 amount0Desired,
@@ -39,7 +42,7 @@ interface IFullRangeLiquidityManager {
         uint256 amount0Min,
         uint256 amount1Min,
         address recipient
-    ) external returns (
+    ) external payable returns (
         uint256 shares,
         uint256 amount0,
         uint256 amount1
@@ -55,6 +58,18 @@ interface IFullRangeLiquidityManager {
         uint256 amount0,
         uint256 amount1
     );
+    
+    /**
+     * @notice Handles delta settlement from FullRange's unlockCallback
+     * @param key The pool key
+     * @param delta The balance delta to settle
+     */
+    function handlePoolDelta(PoolKey memory key, BalanceDelta delta) external;
+    
+    /**
+     * @notice Claim pending ETH payments
+     */
+    function claimETH() external;
     
     /**
      * @notice Adds user share accounting (no token transfers)
@@ -150,4 +165,19 @@ interface IFullRangeLiquidityManager {
      * @notice Pool keys mapping
      */
     function poolKeys(PoolId poolId) external view returns (PoolKey memory);
+
+    /**
+     * @notice Gets the current reserves for a pool
+     * @param poolId The pool ID
+     * @return reserve0 The amount of token0 in the pool
+     * @return reserve1 The amount of token1 in the pool
+     */
+    function getPoolReserves(PoolId poolId) external view returns (uint256 reserve0, uint256 reserve1);
+
+    /**
+     * @notice Updates the position cache for a pool
+     * @param poolId The pool ID
+     * @return success Whether the update was successful
+     */
+    function updatePositionCache(PoolId poolId) external returns (bool success);
 } 

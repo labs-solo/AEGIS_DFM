@@ -18,14 +18,16 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
  * @param poolId The identifier of the pool to deposit into
  * @param amount0Desired The desired amount of token0 to deposit
  * @param amount1Desired The desired amount of token1 to deposit
- * @param minShares The minimum number of shares to receive (slippage protection)
+ * @param amount0Min The minimum amount of token0 to deposit (slippage protection)
+ * @param amount1Min The minimum amount of token1 to deposit (slippage protection)
  * @param deadline The deadline by which the transaction must be executed
  */
 struct DepositParams {
     PoolId poolId;
     uint256 amount0Desired;
     uint256 amount1Desired;
-    uint256 minShares;
+    uint256 amount0Min;
+    uint256 amount1Min;
     uint256 deadline;
 }
 
@@ -33,15 +35,15 @@ struct DepositParams {
  * @notice Parameters for withdrawing liquidity from a pool
  * @param poolId The identifier of the pool to withdraw from
  * @param sharesToBurn The amount of LP shares to burn
- * @param minAmount0 The minimum amount of token0 to receive (slippage protection)
- * @param minAmount1 The minimum amount of token1 to receive (slippage protection)
+ * @param amount0Min The minimum amount of token0 to receive (slippage protection)
+ * @param amount1Min The minimum amount of token1 to receive (slippage protection)
  * @param deadline The deadline by which the transaction must be executed
  */
 struct WithdrawParams {
     PoolId poolId;
     uint256 sharesToBurn;
-    uint256 minAmount0;
-    uint256 minAmount1;
+    uint256 amount0Min;
+    uint256 amount1Min;
     uint256 deadline;
 }
 
@@ -90,26 +92,6 @@ interface IFullRange is IHooks {
      * @param isEmergency Whether to enable or disable emergency state
      */
     function setPoolEmergencyState(PoolId poolId, bool isEmergency) external;
-
-    /**
-     * @notice Deposits ETH and tokens into a Uniswap V4 pool via the FullRange hook
-     * @param params The deposit parameters
-     * @param poolKey The pool key for the deposit
-     */
-    function depositETH(DepositParams calldata params, PoolKey calldata poolKey)
-        external
-        payable;
-
-    /**
-     * @notice Withdraws liquidity with ETH handling from a Uniswap V4 pool
-     * @param params The withdrawal parameters
-     * @param poolKey The pool key for the withdrawal
-     * @return amount0Out Amount of token0 withdrawn.
-     * @return amount1Out Amount of token1 withdrawn.
-     */
-    function withdrawETH(WithdrawParams calldata params, PoolKey calldata poolKey)
-        external
-        returns (uint256 amount0Out, uint256 amount1Out);
 
     /**
      * @notice Allows users to claim any pending ETH payments

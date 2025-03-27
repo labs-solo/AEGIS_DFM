@@ -7,3 +7,4 @@ v4-periphery/=lib/v4-periphery/
 permit2/=lib/v4-periphery/lib/permit2/
 @openzeppelin/=lib/openzeppelin-contracts/
 @openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/
+uniswap-hooks/=lib/uniswap-hooks/

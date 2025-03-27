@@ -148,6 +148,9 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         uint256 attempted1
     );
     
+    /// @notice Emitted when cache update fails
+    event CacheUpdateFailed(PoolId indexed poolId);
+    
     // ================ MODIFIERS ================
     
     /**
@@ -268,12 +271,8 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     // ================ CORE FUNCTIONS ================
     
     /**
-     * @notice Comprehensive fee extraction handler that encapsulates all logic
-     * @dev This function handles everything related to fee extraction to keep FullRange.sol lean:
-     *      1. Calculating how much to extract
-     *      2. Recording the extraction
-     *      3. Triggering processing if needed
-     *      4. Emitting events
+     * @notice Comprehensive fee extraction handler for FullRange.sol
+     * @dev This function handles all fee extraction logic to keep FullRange.sol lean
      * 
      * @param poolId The pool ID
      * @param feesAccrued The total fees accrued during the operation
@@ -283,6 +282,23 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         PoolId poolId,
         BalanceDelta feesAccrued
     ) external override onlyFullRange returns (BalanceDelta extractDelta) {
+        // Enhanced validations
+        if (address(liquidityManager) == address(0)) {
+            revert Errors.ZeroAddress();
+        }
+        
+        // Skip if no fees accrued
+        if (feesAccrued.amount0() == 0 && feesAccrued.amount1() == 0) {
+            return BalanceDeltaLibrary.ZERO_DELTA;
+        }
+        
+        // Check if pool exists by querying key from liquidityManager
+        PoolKey memory key = liquidityManager.poolKeys(poolId);
+        if (key.tickSpacing == 0) {
+            // Pool doesn't exist or isn't initialized
+            return BalanceDeltaLibrary.ZERO_DELTA;
+        }
+        
         // Skip if no fees to extract or system paused
         if (reinvestmentPaused || poolFeeStates[poolId].reinvestmentPaused ||
             (feesAccrued.amount0() <= 0 && feesAccrued.amount1() <= 0)) {
@@ -303,6 +319,11 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         
         int256 extract0 = (fee0 * int256(polSharePpm)) / int256(PPM_DENOMINATOR);
         int256 extract1 = (fee1 * int256(polSharePpm)) / int256(PPM_DENOMINATOR);
+        
+        // Validate calculated values for sanity check
+        if (extract0 > fee0 || extract1 > fee1) {
+            revert Errors.ExtractionAmountExceedsFees();
+        }
         
         // Create extraction delta
         extractDelta = toBalanceDelta(int128(extract0), int128(extract1));
@@ -328,6 +349,17 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
                 uint256(extract0), 
                 uint256(extract1)
             );
+            
+            // After successful fee extraction, update position cache
+            try liquidityManager.updatePositionCache(poolId) returns (bool success) {
+                // Cache update attempt completed
+                if (!success) {
+                    emit CacheUpdateFailed(poolId);
+                }
+            } catch {
+                // Cache update failed but continue with extraction
+                emit CacheUpdateFailed(poolId);
+            }
         }
         
         return extractDelta;
@@ -742,19 +774,20 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
      * @return key The pool key
      */
     function _getPoolKey(PoolId poolId) internal view returns (PoolKey memory key) {
-        // Try getting from fullRange interface
-        try IFullRange(fullRange).getPoolKey(poolId) returns (PoolKey memory poolKey) {
-            key = poolKey;
-        } catch {
-            // Fallback to liquidity manager if available
-            if (address(liquidityManager) != address(0)) {
-                try liquidityManager.poolKeys(poolId) returns (PoolKey memory poolKey) {
-                    key = poolKey;
-                } catch {
-                    // Silent failure, return empty key
-                }
+        // First try getting from fullRange interface
+        if (address(fullRange) != address(0)) {
+            key = IFullRange(fullRange).getPoolKey(poolId);
+            if (key.tickSpacing != 0) {
+                return key;
             }
         }
+        
+        // Fallback to liquidity manager if available
+        if (address(liquidityManager) != address(0)) {
+            key = liquidityManager.poolKeys(poolId);
+        }
+        
+        return key;
     }
     
     // ================ VIEW FUNCTIONS ================
