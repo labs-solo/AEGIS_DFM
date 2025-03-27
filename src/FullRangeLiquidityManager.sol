@@ -1007,11 +1007,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         Currency currency = Currency.wrap(token);
         if (currency.isAddressZero()) {
             // Handle ETH
-            // Validate amount before transfer
-            if (amount > address(this).balance) {
-                revert Errors.InsufficientContractBalance(amount, address(this).balance);
-            }
-            
             // Transfer ETH with gas limit for safety
             (bool success, ) = to.call{value: amount, gas: ethTransferGasLimit}("");
             if (!success) {

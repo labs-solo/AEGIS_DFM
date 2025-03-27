@@ -267,12 +267,6 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     function _safeTransferETH(address recipient, uint256 amount) internal {
         if (amount == 0) return;
         
-        // Use balanceOfSelf from CurrencyLibrary for balance check
-        uint256 balance = Currency.wrap(address(0)).balanceOfSelf();
-        if (amount > balance) {
-            revert Errors.InsufficientContractBalance(amount, balance);
-        }
-        
         (bool success, ) = recipient.call{value: amount, gas: 50000}("");
         if (!success) {
             pendingETHPayments[recipient] += amount;

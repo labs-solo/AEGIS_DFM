@@ -52,11 +52,6 @@ library CurrencySettlerExtension {
         if (amount == 0) return;
         
         if (currency.isAddressZero()) {
-            // For native ETH
-            if (address(this).balance < amount) {
-                revert Errors.InsufficientContractBalance(amount, address(this).balance);
-            }
-            
             // Use Uniswap's standard CurrencySettler with native ETH
             CurrencySettler.settle(currency, manager, address(this), amount, false);
         } else {
