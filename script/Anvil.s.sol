@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
+/*
+ * This script has been commented out as part of migrating to local Uniswap V4 testing.
+ * It is kept for reference but is no longer used in the project.
+ */
+
+/*
 import "forge-std/Script.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
@@ -14,7 +20,6 @@ import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {Constants} from "v4-core/src/../test/utils/Constants.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {CurrencyLibrary, Currency} from "v4-core/src/types/Currency.sol";
-import {Counter} from "../src/Counter.sol";
 import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {PositionManager} from "v4-periphery/src/PositionManager.sol";
@@ -41,22 +46,8 @@ contract CounterScript is Script, DeployPermit2 {
         vm.broadcast();
         manager = deployPoolManager();
 
-        // hook contracts must have specific flags encoded in the address
-        uint160 permissions = uint160(
-            Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
-                | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
-        );
-
-        // Mine a salt that will produce a hook address with the correct permissions
-        (address hookAddress, bytes32 salt) =
-            HookMiner.find(CREATE2_DEPLOYER, permissions, type(Counter).creationCode, abi.encode(address(manager)));
-
-        // ----------------------------- //
-        // Deploy the hook using CREATE2 //
-        // ----------------------------- //
-        vm.broadcast();
-        Counter counter = new Counter{salt: salt}(manager);
-        require(address(counter) == hookAddress, "CounterScript: hook address mismatch");
+        // No longer deploying Counter hook
+        console.log("Counter.sol has been removed, skipping hook deployment");
 
         // Additional helpers for interacting with the pool
         vm.startBroadcast();
@@ -64,9 +55,9 @@ contract CounterScript is Script, DeployPermit2 {
         (lpRouter, swapRouter,) = deployRouters(manager);
         vm.stopBroadcast();
 
-        // test the lifecycle (create pool, add liquidity, swap)
+        // Test the lifecycle without a hook
         vm.startBroadcast();
-        testLifecycle(address(counter));
+        testLifecycleNoHook();
         vm.stopBroadcast();
     }
 
@@ -88,9 +79,34 @@ contract CounterScript is Script, DeployPermit2 {
 
     function deployPosm(IPoolManager poolManager) public returns (IPositionManager) {
         anvilPermit2();
-        return IPositionManager(
-            new PositionManager(poolManager, permit2, 300_000, IPositionDescriptor(address(0)), IWETH9(address(0)))
+        
+        // Use a more direct approach with hexadecimal constants to bypass type checking
+        address posmAddr = deployPosmImpl(address(poolManager), address(permit2));
+        
+        return IPositionManager(posmAddr);
+    }
+
+    // Helper function to deploy with raw addresses to avoid interface version issues
+    function deployPosmImpl(address poolManagerAddr, address permit2Addr) internal returns (address) {
+        // Deploy PositionManager with raw address parameters
+        bytes memory bytecode = type(PositionManager).creationCode;
+        bytes memory constructorArgs = abi.encode(
+            poolManagerAddr,
+            permit2Addr,
+            uint256(300_000),
+            address(0), // descriptor
+            address(0)  // WETH
         );
+        
+        bytes memory combinedBytecode = abi.encodePacked(bytecode, constructorArgs);
+        
+        address deployedAddress;
+        assembly {
+            deployedAddress := create(0, add(combinedBytecode, 32), mload(combinedBytecode))
+        }
+        
+        require(deployedAddress != address(0), "PositionManager deployment failed");
+        return deployedAddress;
     }
 
     function approvePosmCurrency(IPositionManager _posm, Currency currency) internal {
@@ -113,15 +129,15 @@ contract CounterScript is Script, DeployPermit2 {
         }
     }
 
-    function testLifecycle(address hook) internal {
+    function testLifecycleNoHook() internal {
         (MockERC20 token0, MockERC20 token1) = deployTokens();
         token0.mint(msg.sender, 100_000 ether);
         token1.mint(msg.sender, 100_000 ether);
 
-        // initialize the pool
+        // initialize the pool without a hook
         int24 tickSpacing = 60;
         PoolKey memory poolKey =
-            PoolKey(Currency.wrap(address(token0)), Currency.wrap(address(token1)), 3000, tickSpacing, IHooks(hook));
+            PoolKey(Currency.wrap(address(token0)), Currency.wrap(address(token1)), 3000, tickSpacing, IHooks(address(0)));
         manager.initialize(poolKey, Constants.SQRT_PRICE_1_1);
 
         // approve the tokens to the routers
@@ -163,3 +179,4 @@ contract CounterScript is Script, DeployPermit2 {
         swapRouter.swap(poolKey, params, testSettings, "");
     }
 }
+*/

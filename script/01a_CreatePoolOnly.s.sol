@@ -1,5 +1,12 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.19;
+
+/*
+ * This file has been commented out as part of migrating to local Uniswap V4 testing.
+ * It is kept for reference but is no longer used in the project.
+ */
+
+/*
 
 import "forge-std/Script.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -49,3 +56,4 @@ contract CreatePoolOnly is Script, Constants, Config {
         IPoolManager(POOLMANAGER).initialize(pool, startingPrice);
     }
 }
+*/

@@ -1,0 +1,1052 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.26;
+
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
+import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
+import {FixedPoint128} from "v4-core/src/libraries/FixedPoint128.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {LiquidityAmounts} from "v4-core/test/utils/LiquidityAmounts.sol";
+import {Errors} from "../errors/Errors.sol";
+
+/**
+ * @title MathUtils
+ * @notice Consolidated mathematical utilities for the protocol
+ * @dev Version 1.0.0 - Optimized implementation with gas efficiency improvements
+ */
+library MathUtils {
+    /** 
+     * @dev Constants 
+     */
+    uint256 internal constant PRECISION = 1e18;
+    uint256 internal constant PPM_SCALE = 1e6; // 100% in PPM
+    uint256 internal constant PPM_DENOMINATOR = 1e6; 
+    uint256 internal constant ONE_HUNDRED_PERCENT = 1e6; // 100% in PPM
+    uint256 internal constant MINIMUM_LIQUIDITY = 1000;
+    
+    /**
+     * @notice Clamps a tick value to the valid Uniswap tick range
+     * @param tick The tick to clamp
+     * @return The clamped tick value
+     */
+    function clampTick(int24 tick) internal pure returns (int24) {
+        unchecked {
+            return tick < TickMath.MIN_TICK 
+                ? TickMath.MIN_TICK 
+                : (tick > TickMath.MAX_TICK ? TickMath.MAX_TICK : tick);
+        }
+    }
+    
+    /**
+     * @notice Calculate square root using the Babylonian method with optimizations
+     * @dev Uses unchecked blocks where operations cannot overflow
+     * @param x The value to calculate the square root of
+     * @return y The square root of x
+     */
+    function sqrt(uint256 x) internal pure returns (uint256 y) {
+        if (x == 0) return 0;
+        
+        // Initial estimate
+        y = x;
+        uint256 z = (x + 1) / 2;
+        
+        // Use unchecked for gas optimization since this loop
+        // cannot overflow and is bounded
+        unchecked {
+            while (z < y) {
+                y = z;
+                z = (x / z + z) / 2;
+            }
+        }
+    }
+    
+    /**
+     * @notice Optimized implementation of absolute difference between two int24 values
+     * @dev Uses inline assembly for maximum gas efficiency
+     * @param a First value
+     * @param b Second value
+     * @return diff The absolute difference
+     */
+    function absDiff(int24 a, int24 b) internal pure returns (uint24 diff) {
+        assembly {
+            // Calculate difference (a - b)
+            let x := sub(a, b)
+            
+            // Get sign bit by shifting right by 31 positions
+            let sign := shr(31, x)
+            
+            // If sign bit is 1 (negative), negate x
+            // Otherwise keep x as is
+            diff := xor(x, mul(sign, not(0)))
+            
+            // If sign bit is 1, add 1 to complete two's complement negation
+            diff := add(diff, sign)
+        }
+    }
+    
+    /**
+     * @notice Calculates geometric mean (sqrt(a * b)) with overflow protection
+     * @dev Uses unchecked blocks for gas optimization
+     * @param a First value
+     * @param b Second value
+     * @return The geometric mean of a and b
+     */
+    function calculateGeometricMean(uint256 a, uint256 b) internal pure returns (uint256) {
+        if (a == 0 || b == 0) return 0;
+        
+        // Handle potential overflow
+        uint256 product;
+        unchecked {
+            if (a > type(uint256).max / b) {
+                product = (a / 1e9) * (b / 1e9);
+                return sqrt(product) * 1e9;
+            } else {
+                product = a * b;
+                return sqrt(product);
+            }
+        }
+    }
+    
+    /**
+     * @notice Calculate minimum of two values
+     * @dev Simple helper function to find minimum
+     * @param a First value
+     * @param b Second value
+     * @return The minimum of a and b
+     */
+    function min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
+    }
+    
+    /**
+     * @notice Calculate maximum of two values
+     * @dev Simple helper function to find maximum
+     * @param a First value
+     * @param b Second value
+     * @return The maximum of a and b
+     */
+    function max(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a > b ? a : b;
+    }
+    
+    /**
+     * @notice Calculates shares based on geometric mean with option for locking shares
+     * @dev Core implementation of share calculation based on geometric mean
+     * @param amount0 The amount of token0
+     * @param amount1 The amount of token1
+     * @param withMinimumLiquidity Whether to lock minimum liquidity
+     * @return shares The calculated shares
+     * @return lockedShares The amount of shares permanently locked
+     */
+    function calculateGeometricShares(
+        uint256 amount0, 
+        uint256 amount1,
+        bool withMinimumLiquidity
+    ) internal pure returns (uint256 shares, uint256 lockedShares) {
+        if (amount0 == 0 || amount1 == 0) return (0, 0);
+        
+        uint256 totalShares = calculateGeometricMean(amount0, amount1);
+        
+        if (withMinimumLiquidity && totalShares > MINIMUM_LIQUIDITY) {
+            unchecked {
+                shares = totalShares - MINIMUM_LIQUIDITY;
+                lockedShares = MINIMUM_LIQUIDITY;
+            }
+        } else if (withMinimumLiquidity) {
+            // Special case for small amounts
+            unchecked {
+                lockedShares = totalShares / 10;
+                shares = totalShares - lockedShares;
+            }
+        } else {
+            shares = totalShares;
+            lockedShares = 0;
+        }
+    }
+    
+    /**
+     * @notice Simplified function for geometric shares calculation
+     * @dev Default implementation of geometric shares without minimum liquidity
+     * @param amount0 The amount of token0
+     * @param amount1 The amount of token1
+     * @return The calculated shares using geometric mean
+     */
+    function calculateGeometricShares(
+        uint256 amount0, 
+        uint256 amount1
+    ) internal pure returns (uint256) {
+        (uint256 shares, ) = calculateGeometricShares(amount0, amount1, false);
+        return shares;
+    }
+    
+    /**
+     * @notice Calculates initial shares for first deposit
+     * @dev Wrapper for geometric shares with minimum liquidity
+     * @param amount0 The amount of token0
+     * @param amount1 The amount of token1
+     * @return shares The calculated shares
+     * @return lockedShares The amount of shares permanently locked
+     */
+    function calculateInitialShares(
+        uint256 amount0, 
+        uint256 amount1
+    ) internal pure returns (uint256 shares, uint256 lockedShares) {
+        return calculateGeometricShares(amount0, amount1, true);
+    }
+    
+    /**
+     * @notice Calculates proportional shares for subsequent deposits
+     * @dev Handles both standard and high-precision calculations
+     * @param amount0 The amount of token0
+     * @param amount1 The amount of token1
+     * @param totalShares The current total shares
+     * @param reserve0 The current reserve of token0
+     * @param reserve1 The current reserve of token1
+     * @param highPrecision Whether to use high-precision calculations
+     * @return shares The calculated shares
+     */
+    function calculateProportionalShares(
+        uint256 amount0,
+        uint256 amount1,
+        uint256 totalShares,
+        uint256 reserve0,
+        uint256 reserve1,
+        bool highPrecision
+    ) internal pure returns (uint256 shares) {
+        if (reserve0 == 0 || reserve1 == 0 || totalShares == 0) 
+            return 0;
+        
+        uint256 liquidityFromToken0;
+        uint256 liquidityFromToken1;
+        
+        if (highPrecision) {
+            uint256 scaleFactor = PRECISION;
+            unchecked {
+                liquidityFromToken0 = FullMath.mulDiv(amount0, totalShares * scaleFactor, reserve0);
+                liquidityFromToken1 = FullMath.mulDiv(amount1, totalShares * scaleFactor, reserve1);
+                
+                liquidityFromToken0 = liquidityFromToken0 / scaleFactor;
+                liquidityFromToken1 = liquidityFromToken1 / scaleFactor;
+            }
+        } else {
+            // Basic calculation with overflow protection
+            if (amount0 > 0) {
+                if (amount0 > type(uint256).max / totalShares) {
+                    liquidityFromToken0 = FullMath.mulDiv(amount0, totalShares, reserve0);
+                } else {
+                    unchecked {
+                        liquidityFromToken0 = (amount0 * totalShares) / reserve0;
+                    }
+                }
+            }
+            
+            if (amount1 > 0) {
+                if (amount1 > type(uint256).max / totalShares) {
+                    liquidityFromToken1 = FullMath.mulDiv(amount1, totalShares, reserve1);
+                } else {
+                    unchecked {
+                        liquidityFromToken1 = (amount1 * totalShares) / reserve1;
+                    }
+                }
+            }
+        }
+        
+        // Take the minimum to maintain price invariant
+        shares = min(liquidityFromToken0, liquidityFromToken1);
+    }
+    
+    /**
+     * @notice Calculates shares for pods based on amount, total shares, and value
+     * @dev Used for calculating pod shares
+     * @param amount The amount to calculate shares for
+     * @param totalShares The current total shares
+     * @param totalValue The current total value
+     * @return The calculated shares
+     */
+    function calculatePodShares(
+        uint256 amount, 
+        uint256 totalShares, 
+        uint256 totalValue
+    ) internal pure returns (uint256) {
+        if (totalValue == 0) {
+            if (totalShares == 0) {
+                return amount; // Initial deposit
+            }
+            revert Errors.ValidationZeroAmount("totalValue");
+        }
+        
+        return FullMath.mulDiv(amount, totalShares, totalValue);
+    }
+    
+    /**
+     * @notice Unified compute deposit function with optional precision flag
+     * @dev Consolidated function for deposit calculations
+     * @param totalShares The existing total shares
+     * @param amount0Desired The user's desired token0 input
+     * @param amount1Desired The user's desired token1 input
+     * @param reserve0 Current reserve of token0
+     * @param reserve1 Current reserve of token1
+     * @param highPrecision Whether to use high-precision calculations
+     * @return actual0 The final token0 used
+     * @return actual1 The final token1 used
+     * @return sharesMinted The minted shares
+     * @return lockedShares Shares permanently locked
+     */
+    function computeDepositAmounts(
+        uint128 totalShares,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 reserve0,
+        uint256 reserve1,
+        bool highPrecision
+    ) internal pure returns (
+        uint256 actual0, 
+        uint256 actual1, 
+        uint256 sharesMinted, 
+        uint256 lockedShares
+    ) {
+        // Validate inputs
+        if (amount0Desired == 0 && amount1Desired == 0) revert Errors.ValidationZeroAmount("tokens");
+        
+        // First deposit
+        if (totalShares == 0) {
+            // First deposit requires both tokens
+            if (amount0Desired == 0 || amount1Desired == 0) revert Errors.ValidationZeroAmount("token");
+            
+            // Check for maximum token amounts
+            if (amount0Desired > type(uint128).max || amount1Desired > type(uint128).max) {
+                revert Errors.AmountTooLarge(
+                    amount0Desired > amount1Desired ? amount0Desired : amount1Desired, 
+                    type(uint128).max
+                );
+            }
+            
+            actual0 = amount0Desired;
+            actual1 = amount1Desired;
+            (sharesMinted, lockedShares) = calculateInitialShares(actual0, actual1);
+            return (actual0, actual1, sharesMinted, lockedShares);
+        }
+        
+        // Subsequent deposits
+        lockedShares = 0;
+        
+        // Validate reserves for subsequent deposits
+        if (reserve0 == 0 || reserve1 == 0) revert Errors.InvalidInput();
+        
+        sharesMinted = calculateProportionalShares(
+            amount0Desired, 
+            amount1Desired,
+            totalShares,
+            reserve0,
+            reserve1,
+            highPrecision
+        );
+        
+        // Calculate token amounts based on shares
+        if (sharesMinted > 0) {
+            if (highPrecision) {
+                uint256 scaleFactor = PRECISION;
+                actual0 = FullMath.mulDiv(sharesMinted, reserve0, totalShares);
+                actual1 = FullMath.mulDiv(sharesMinted, reserve1, totalShares);
+            } else {
+                unchecked {
+                    actual0 = (sharesMinted * reserve0) / totalShares;
+                    actual1 = (sharesMinted * reserve1) / totalShares;
+                }
+            }
+            
+            // Handle rounding
+            if (actual0 == 0 && amount0Desired > 0) actual0 = 1;
+            if (actual1 == 0 && amount1Desired > 0) actual1 = 1;
+        }
+    }
+    
+    /**
+     * @notice Compute deposit amounts for standard precision
+     * @dev Backward compatibility wrapper for computeDepositAmounts
+     * @param totalShares The existing total shares
+     * @param amount0Desired The user's desired token0 input
+     * @param amount1Desired The user's desired token1 input
+     * @param reserve0 Current reserve of token0
+     * @param reserve1 Current reserve of token1
+     * @return actual0 The final token0 used
+     * @return actual1 The final token1 used
+     * @return sharesMinted The minted shares
+     * @return lockedShares Shares permanently locked
+     */
+    function computeDepositAmountsAndShares(
+        uint128 totalShares,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 reserve0,
+        uint256 reserve1
+    ) internal pure returns (
+        uint256 actual0, 
+        uint256 actual1, 
+        uint256 sharesMinted, 
+        uint256 lockedShares
+    ) {
+        return computeDepositAmounts(
+            totalShares, 
+            amount0Desired, 
+            amount1Desired, 
+            reserve0, 
+            reserve1, 
+            false
+        );
+    }
+    
+    /**
+     * @notice Compute deposit amounts with high precision
+     * @dev Backward compatibility wrapper for computeDepositAmounts
+     * @param totalShares The existing total shares
+     * @param amount0Desired The user's desired token0 input
+     * @param amount1Desired The user's desired token1 input
+     * @param reserve0 Current reserve of token0
+     * @param reserve1 Current reserve of token1
+     * @return actual0 The final token0 used
+     * @return actual1 The final token1 used
+     * @return sharesMinted The minted shares
+     * @return lockedShares Shares permanently locked
+     */
+    function computeDepositAmountsAndSharesWithPrecision(
+        uint128 totalShares,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 reserve0,
+        uint256 reserve1
+    ) internal pure returns (
+        uint256 actual0, 
+        uint256 actual1, 
+        uint256 sharesMinted, 
+        uint256 lockedShares
+    ) {
+        return computeDepositAmounts(
+            totalShares, 
+            amount0Desired, 
+            amount1Desired, 
+            reserve0, 
+            reserve1, 
+            true
+        );
+    }
+    
+    /**
+     * @notice Calculate withdrawal amounts based on shares to burn
+     * @dev Handles both standard and high-precision calculations
+     * @param totalShares The current total shares
+     * @param sharesToBurn The shares to burn
+     * @param reserve0 The current reserve of token0
+     * @param reserve1 The current reserve of token1
+     * @param highPrecision Whether to use high-precision calculations
+     * @return amount0Out The amount of token0 to withdraw
+     * @return amount1Out The amount of token1 to withdraw
+     */
+    function computeWithdrawAmounts(
+        uint128 totalShares,
+        uint256 sharesToBurn,
+        uint256 reserve0,
+        uint256 reserve1,
+        bool highPrecision
+    ) internal pure returns (uint256 amount0Out, uint256 amount1Out) {
+        if (totalShares == 0 || sharesToBurn == 0) 
+            return (0, 0);
+        
+        // Ensure sharesToBurn doesn't exceed totalShares
+        if (sharesToBurn > totalShares) 
+            sharesToBurn = totalShares;
+        
+        uint256 scaleFactor = highPrecision ? PRECISION : 1;
+        
+        // Calculate output amounts with improved precision
+        amount0Out = FullMath.mulDiv(reserve0, sharesToBurn, totalShares);
+        amount1Out = FullMath.mulDiv(reserve1, sharesToBurn, totalShares);
+        
+        // Handle rounding
+        if (amount0Out == 0 && reserve0 > 0 && sharesToBurn > 0) amount0Out = 1;
+        if (amount1Out == 0 && reserve1 > 0 && sharesToBurn > 0) amount1Out = 1;
+    }
+    
+    /**
+     * @notice Calculate withdrawal amounts with standard precision
+     * @dev Backward compatibility wrapper for computeWithdrawAmounts
+     * @param totalShares The current total shares
+     * @param sharesToBurn The shares to burn
+     * @param reserve0 The current reserve of token0
+     * @param reserve1 The current reserve of token1
+     * @return amount0Out The amount of token0 to withdraw
+     * @return amount1Out The amount of token1 to withdraw
+     */
+    function computeWithdrawAmounts(
+        uint128 totalShares,
+        uint256 sharesToBurn,
+        uint256 reserve0,
+        uint256 reserve1
+    ) internal pure returns (uint256 amount0Out, uint256 amount1Out) {
+        return computeWithdrawAmounts(totalShares, sharesToBurn, reserve0, reserve1, false);
+    }
+    
+    /**
+     * @notice Calculate fee with custom scaling factor
+     * @dev Base implementation for fee calculations
+     * @param amount The amount to calculate fee for
+     * @param feeRate The fee rate
+     * @param scale The scale factor
+     * @return The calculated fee
+     */
+    function calculateFeeWithScale(
+        uint256 amount, 
+        uint256 feeRate, 
+        uint256 scale
+    ) internal pure returns (uint256) {
+        if (amount == 0 || feeRate == 0) 
+            return 0;
+        
+        unchecked {
+            return FullMath.mulDiv(amount, feeRate, scale);
+        }
+    }
+    
+    /**
+     * @notice Calculate fee with standard scale (1e18)
+     * @dev Wrapper for calculateFeeWithScale with PRECISION scale
+     * @param amount The amount to calculate fee for
+     * @param feeRate The fee rate
+     * @return The calculated fee
+     */
+    function calculateFee(uint256 amount, uint256 feeRate) internal pure returns (uint256) {
+        return calculateFeeWithScale(amount, feeRate, PRECISION);
+    }
+    
+    /**
+     * @notice Calculate fee in PPM (parts per million)
+     * @dev Wrapper for calculateFeeWithScale with PPM scale
+     * @param amount The amount to calculate fee for
+     * @param feePpm The fee rate in PPM
+     * @return The calculated fee
+     */
+    function calculateFeePpm(uint256 amount, uint256 feePpm) internal pure returns (uint256) {
+        return calculateFeeWithScale(amount, feePpm, PPM_SCALE);
+    }
+    
+    /**
+     * @notice Calculate surge fee based on base fee and multiplier
+     * @dev Specialized fee calculation for surge pricing
+     * @param baseFee The base fee
+     * @param multiplier The surge multiplier
+     * @return The calculated surge fee
+     */
+    function calculateSurgeFee(uint256 baseFee, uint256 multiplier) internal pure returns (uint256) {
+        // Surge fee calculation cannot overflow as both values are bounded
+        unchecked {
+            return (baseFee * multiplier) / PPM_SCALE;
+        }
+    }
+    
+    /**
+     * @notice Calculate surge fee with efficient multiplication
+     * @dev Applies surge multiplier to base fee with optional linear decay
+     * @param baseFeePpm Base fee in parts per million
+     * @param surgeMultiplierPpm Surge multiplier in parts per million (1e6 = 1x)
+     * @param decayFactor Decay factor (0 = fully decayed, PRECISION = no decay)
+     * @return surgeFee The calculated surge fee
+     */
+    function calculateSurgeFee(
+        uint256 baseFeePpm,
+        uint256 surgeMultiplierPpm,
+        uint256 decayFactor
+    ) internal pure returns (uint256 surgeFee) {
+        // Quick return for no surge case
+        if (surgeMultiplierPpm <= PPM_SCALE || decayFactor == 0) {
+            return baseFeePpm;
+        }
+        
+        // Calculate surge amount (amount above base fee)
+        uint256 surgeAmount = FullMath.mulDiv(
+            baseFeePpm,
+            surgeMultiplierPpm - PPM_SCALE,
+            PPM_SCALE
+        );
+        
+        // Apply decay factor
+        if (decayFactor < PRECISION) {
+            surgeAmount = FullMath.mulDiv(surgeAmount, decayFactor, PRECISION);
+        }
+        
+        // Return base fee plus (potentially decayed) surge amount
+        return baseFeePpm + surgeAmount;
+    }
+
+    /**
+     * @notice Calculate linear decay factor based on elapsed time
+     * @param secondsElapsed Time elapsed since surge activation
+     * @param totalDuration Total duration of surge effect
+     * @return decayFactor The calculated decay factor (PRECISION = no decay, 0 = full decay)
+     */
+    function calculateDecayFactor(
+        uint256 secondsElapsed,
+        uint256 totalDuration
+    ) internal pure returns (uint256 decayFactor) {
+        // Return 0 if beyond duration (fully decayed)
+        if (secondsElapsed >= totalDuration) {
+            return 0;
+        }
+        
+        // Calculate linear decay: 1 - (elapsed/total)
+        return PRECISION - FullMath.mulDiv(
+            secondsElapsed,
+            PRECISION,
+            totalDuration
+        );
+    }
+
+    /**
+     * @notice Optimized reinvestable fee calculation with default options
+     */
+    function calculateReinvestableFees(
+        uint256 fee0,
+        uint256 fee1,
+        uint256 reserve0,
+        uint256 reserve1
+    ) internal pure returns (uint256 investable0, uint256 investable1) {
+        // Call the full version with default options (high precision + minimum output guarantee)
+        (investable0, investable1, ) = calculateReinvestableFees(
+            fee0,
+            fee1,
+            reserve0,
+            reserve1,
+            0x3 // 0x1 (high precision) | 0x2 (minimum output guarantee)
+        );
+    }
+
+    /**
+     * @notice Core implementation of reinvestable fee calculation with configurable options
+     * @param options Configuration flags:
+     *        - bit 0: Use high precision (more gas, better precision)
+     *        - bit 1: Apply minimum output guarantee
+     *        - bit 2: Apply additional safety checks
+     */
+    function calculateReinvestableFees(
+        uint256 fee0,
+        uint256 fee1,
+        uint256 reserve0,
+        uint256 reserve1,
+        uint8 options
+    ) internal pure returns (
+        uint256 investable0,
+        uint256 investable1,
+        uint8 limitingToken
+    ) {
+        // Fast path exits
+        if (fee0 == 0 && fee1 == 0) return (0, 0, 0);
+        if (reserve0 == 0 || reserve1 == 0) return (fee0, fee1, 0);
+        if (fee0 == 0) return (0, fee1, 0);
+        if (fee1 == 0) return (fee0, 0, 1);
+        
+        // Extract options
+        bool highPrecision = (options & 0x1) != 0;
+        bool guaranteeMinOutput = (options & 0x2) != 0;
+        bool extraSafetyChecks = (options & 0x4) != 0;
+        
+        // Use optimal scaling factor based on precision mode
+        uint256 scaleFactor = highPrecision ? PRECISION : PPM_SCALE;
+        
+        // Calculate target ratio with safety checks
+        uint256 targetRatio;
+        if (extraSafetyChecks && reserve0 > type(uint256).max / scaleFactor) {
+            targetRatio = (reserve0 / 1e9) * scaleFactor / (reserve1 / 1e9);
+        } else {
+            targetRatio = FullMath.mulDiv(reserve0, scaleFactor, reserve1);
+        }
+        
+        // Calculate fee ratio with safety checks
+        uint256 feeRatio;
+        if (fee1 == 0) {
+            feeRatio = type(uint256).max;
+        } else if (extraSafetyChecks && fee0 > type(uint256).max / scaleFactor) {
+            feeRatio = (fee0 / 1e9) * scaleFactor / (fee1 / 1e9);
+        } else {
+            feeRatio = FullMath.mulDiv(fee0, scaleFactor, fee1);
+        }
+        
+        // Determine limiting token and calculate investable amounts
+        if (feeRatio <= targetRatio) {
+            limitingToken = 0;
+            investable0 = fee0;
+            investable1 = FullMath.mulDiv(fee0, scaleFactor, targetRatio);
+            if (investable1 > fee1) investable1 = fee1;
+        } else {
+            limitingToken = 1;
+            investable1 = fee1;
+            investable0 = FullMath.mulDiv(fee1, targetRatio, scaleFactor);
+            if (investable0 > fee0) investable0 = fee0;
+        }
+        
+        // Apply minimum output guarantee if requested
+        if (guaranteeMinOutput) {
+            if (investable0 == 0 && fee0 > 0 && investable1 > 0) investable0 = 1;
+            if (investable1 == 0 && fee1 > 0 && investable0 > 0) investable1 = 1;
+        }
+        
+        return (investable0, investable1, limitingToken);
+    }
+
+    /**
+     * @notice Fee bounds for enforcing min/max limits
+     */
+    struct FeeBounds {
+        uint256 minFeePpm;        // Minimum fee (PPM)
+        uint256 maxFeePpm;        // Maximum fee (PPM)
+    }
+
+    /**
+     * @notice Types of fee adjustments for better context
+     */
+    enum FeeAdjustmentType {
+        NO_CHANGE,
+        SIGNIFICANT_INCREASE,
+        MODERATE_INCREASE,
+        GRADUAL_DECREASE,
+        MINIMUM_ENFORCED,
+        MAXIMUM_ENFORCED
+    }
+
+    /**
+     * @notice Calculate dynamic fee based on market conditions
+     * @dev Core implementation with support for CAP events and graduated fee changes
+     * 
+     * @param currentFeePpm Current fee in parts per million (PPM)
+     * @param capEventOccurred Whether a CAP event has been detected
+     * @param eventDeviation Deviation from target event rate (can be negative)
+     * @param targetEventRate Target event rate for comparison
+     * @param maxIncreasePct Maximum percentage increase (e.g., 10 = 10%)
+     * @param maxDecreasePct Maximum percentage decrease
+     * @param bounds Fee bounds structure with min/max limits
+     * @return newFeePpm The calculated fee in parts per million
+     * @return surgeEnabled Whether surge pricing should be enabled
+     * @return adjustmentType Reason code for the fee change
+     */
+    function calculateDynamicFee(
+        uint256 currentFeePpm,
+        bool capEventOccurred,
+        int256 eventDeviation,
+        uint256 targetEventRate,
+        uint16 maxIncreasePct,
+        uint16 maxDecreasePct,
+        FeeBounds memory bounds
+    ) internal pure returns (
+        uint256 newFeePpm,
+        bool surgeEnabled,
+        FeeAdjustmentType adjustmentType
+    ) {
+        // Calculate maximum adjustment amounts
+        uint256 maxIncrease = (currentFeePpm * maxIncreasePct) / 100;
+        uint256 maxDecrease = (currentFeePpm * maxDecreasePct) / 100;
+        
+        // Ensure minimum adjustments (avoid zero adjustments)
+        if (maxIncrease == 0) maxIncrease = 1;
+        if (maxDecrease == 0) maxDecrease = 1;
+        
+        // Start with current fee
+        newFeePpm = currentFeePpm;
+        adjustmentType = FeeAdjustmentType.NO_CHANGE;
+        
+        // Calculate deviation significance threshold
+        int256 significantDeviation = int256(targetEventRate) / 10;
+        
+        // Handle CAP event case
+        if (capEventOccurred) {
+            surgeEnabled = true;
+            
+            if (eventDeviation > significantDeviation) {
+                // Significant positive deviation - apply full increase
+                newFeePpm = currentFeePpm + maxIncrease;
+                adjustmentType = FeeAdjustmentType.SIGNIFICANT_INCREASE;
+            } 
+            else if (eventDeviation > 0) {
+                // Moderate positive deviation - apply partial increase (1/3 of max)
+                newFeePpm = currentFeePpm + (maxIncrease / 3);
+                adjustmentType = FeeAdjustmentType.MODERATE_INCREASE;
+            }
+            // If CAP event but no positive deviation, maintain current fee
+        } 
+        else {
+            // No CAP event - apply fee decrease
+            surgeEnabled = false;
+            
+            if (currentFeePpm > maxDecrease) {
+                newFeePpm = currentFeePpm - maxDecrease;
+            } else {
+                newFeePpm = bounds.minFeePpm;
+            }
+            
+            adjustmentType = FeeAdjustmentType.GRADUAL_DECREASE;
+        }
+        
+        // Enforce fee bounds
+        if (newFeePpm < bounds.minFeePpm) {
+            newFeePpm = bounds.minFeePpm;
+            adjustmentType = FeeAdjustmentType.MINIMUM_ENFORCED;
+        } 
+        else if (newFeePpm > bounds.maxFeePpm) {
+            newFeePpm = bounds.maxFeePpm;
+            adjustmentType = FeeAdjustmentType.MAXIMUM_ENFORCED;
+        }
+        
+        return (newFeePpm, surgeEnabled, adjustmentType);
+    }
+
+    /**
+     * @notice Simplified interface for backward compatibility
+     * @param currentFeePpm Current fee in PPM
+     * @param capEventOccurred Whether a CAP event occurred
+     * @param eventDeviation Deviation from target rate
+     * @param targetEventRate Target event rate
+     * @param maxIncreasePct Maximum increase percentage
+     * @param maxDecreasePct Maximum decrease percentage
+     * @param minFeePpm Minimum fee bound
+     * @param maxFeePpm Maximum fee bound
+     * @return newFee The calculated new fee
+     * @return surgeEnabled Whether surge mode is activated
+     */
+    function calculateDynamicFee(
+        uint256 currentFeePpm,
+        bool capEventOccurred,
+        int256 eventDeviation,
+        uint256 targetEventRate,
+        uint16 maxIncreasePct,
+        uint16 maxDecreasePct,
+        uint256 minFeePpm,
+        uint256 maxFeePpm
+    ) internal pure returns (uint256 newFee, bool surgeEnabled) {
+        // Create bounds structure
+        FeeBounds memory bounds = FeeBounds({
+            minFeePpm: minFeePpm,
+            maxFeePpm: maxFeePpm
+        });
+        
+        // Call main implementation
+        FeeAdjustmentType adjustmentType;
+        (newFee, surgeEnabled, adjustmentType) = calculateDynamicFee(
+            currentFeePpm,
+            capEventOccurred,
+            eventDeviation,
+            targetEventRate,
+            maxIncreasePct,
+            maxDecreasePct,
+            bounds
+        );
+        
+        return (newFee, surgeEnabled);
+    }
+    
+    /**
+     * @notice Calculate minimum POL target based on dynamic fee
+     * @dev Uses the formula: minPOL = (dynamicFeePpm * polMultiplier * totalLiquidity) / 1e6
+     * @param totalLiquidity Current total pool liquidity
+     * @param dynamicFeePpm Current dynamic fee in PPM
+     * @param polMultiplier POL multiplier factor
+     * @return polTarget Minimum required protocol-owned liquidity amount
+     */
+    function calculateMinimumPOLTarget(
+        uint256 totalLiquidity, 
+        uint256 dynamicFeePpm,
+        uint256 polMultiplier
+    ) internal pure returns (uint256 polTarget) {
+        return FullMath.mulDiv(dynamicFeePpm * polMultiplier, totalLiquidity, PPM_SCALE);
+    }
+    
+    /**
+     * @notice Calculate minimum POL target with default multiplier
+     * @dev Backward compatibility wrapper
+     * @param totalLiquidity Current total pool liquidity
+     * @param dynamicFeePpm Current dynamic fee in PPM
+     * @return Minimum required protocol-owned liquidity amount
+     */
+    function calculateMinimumPOLTarget(
+        uint256 totalLiquidity, 
+        uint256 dynamicFeePpm
+    ) internal pure returns (uint256) {
+        // Higher dynamic fees require more POL
+        uint256 polPercentage = 5 + (dynamicFeePpm / 10000); // Base 5% + scaling
+        if (polPercentage > 25) polPercentage = 25; // Cap at 25%
+        
+        return (totalLiquidity * polPercentage) / 100;
+    }
+    
+    /**
+     * @notice Calculate extra liquidity for a pool
+     * @dev Used for liquidity calculations
+     * @param amount0 Amount of token0
+     * @param amount1 Amount of token1
+     * @param poolIdBytes Pool ID
+     * @return The calculated extra liquidity
+     */
+    function calculateExtraLiquidity(
+        uint256 amount0,
+        uint256 amount1,
+        bytes32 poolIdBytes
+    ) internal pure returns (uint256) {
+        return calculateGeometricMean(amount0, amount1);
+    }
+    
+    /**
+     * @notice Distribute fees according to policy shares
+     * @dev Handles fee distribution with improved rounding error handling
+     * @param amount0 Amount of token0 fees
+     * @param amount1 Amount of token1 fees
+     * @param polSharePpm Protocol-owned liquidity share in PPM
+     * @param fullRangeSharePpm Full range share in PPM
+     * @param lpSharePpm LP share in PPM
+     * @return pol0 Protocol-owned liquidity token0 share
+     * @return pol1 Protocol-owned liquidity token1 share
+     * @return fullRange0 Full range token0 share
+     * @return fullRange1 Full range token1 share
+     * @return lp0 LP token0 share
+     * @return lp1 LP token1 share
+     */
+    function distributeFees(
+        uint256 amount0,
+        uint256 amount1,
+        uint256 polSharePpm,
+        uint256 fullRangeSharePpm,
+        uint256 lpSharePpm
+    ) internal pure returns (
+        uint256 pol0,
+        uint256 pol1,
+        uint256 fullRange0,
+        uint256 fullRange1,
+        uint256 lp0,
+        uint256 lp1
+    ) {
+        // Validate shares sum to 100%
+        uint256 totalShares = polSharePpm + fullRangeSharePpm + lpSharePpm;
+        if (totalShares != PPM_SCALE) {
+            revert Errors.InvalidInput();
+        }
+        
+        // Calculate shares with improved precision
+        pol0 = calculateFeePpm(amount0, polSharePpm);
+        pol1 = calculateFeePpm(amount1, polSharePpm);
+        
+        fullRange0 = calculateFeePpm(amount0, fullRangeSharePpm);
+        fullRange1 = calculateFeePpm(amount1, fullRangeSharePpm);
+        
+        lp0 = calculateFeePpm(amount0, lpSharePpm);
+        lp1 = calculateFeePpm(amount1, lpSharePpm);
+        
+        // Handle rounding errors
+        uint256 totalAllocated0 = pol0 + fullRange0 + lp0;
+        uint256 totalAllocated1 = pol1 + fullRange1 + lp1;
+        
+        // Ensure no tokens are lost to rounding
+        if (totalAllocated0 < amount0) {
+            // Assign unallocated tokens to LP share
+            lp0 += amount0 - totalAllocated0;
+        }
+        
+        if (totalAllocated1 < amount1) {
+            // Assign unallocated tokens to LP share
+            lp1 += amount1 - totalAllocated1;
+        }
+    }
+    
+    /**
+     * @notice Calculate the percentage price change in parts per million (PPM)
+     * @dev Used for volatility calculations in CAP event detection
+     * @param oldPrice The original price
+     * @param newPrice The new price
+     * @return volatilityPpm The price change percentage in PPM
+     */
+    function calculatePriceChangePpm(uint256 oldPrice, uint256 newPrice) 
+        internal
+        pure 
+        returns (uint256 volatilityPpm)
+    {
+        if (oldPrice == 0) return 0;
+        
+        // Calculate price change as percentage
+        uint256 priceDiffAbs;
+        if (newPrice > oldPrice) {
+            priceDiffAbs = newPrice - oldPrice;
+        } else {
+            priceDiffAbs = oldPrice - newPrice;
+        }
+        
+        // Volatility as percentage of older price (in PPM)
+        volatilityPpm = FullMath.mulDiv(priceDiffAbs, PPM_SCALE, oldPrice);
+        
+        return volatilityPpm;
+    }
+    
+    /**
+     * @notice Calculate fee adjustment based on percentage
+     * @dev Used for dynamic fee adjustments in fee managers
+     * @param baseFee The current base fee
+     * @param adjustmentPercent The adjustment percentage (e.g., 10 = 10%)
+     * @param isIncrease Whether this is an increase (true) or decrease (false)
+     * @return adjustment The calculated fee adjustment
+     */
+    function calculateFeeAdjustment(
+        uint256 baseFee,
+        uint256 adjustmentPercent,
+        bool isIncrease
+    )
+        internal
+        pure
+        returns (uint256 adjustment)
+    {
+        // Calculate adjustment as percentage of base fee
+        unchecked {
+            adjustment = (baseFee * adjustmentPercent) / 100;
+        }
+        
+        return adjustment;
+    }
+    
+    /**
+     * @notice Clamp a value between min and max
+     * @param value The value to clamp
+     * @param minValue The minimum value
+     * @param maxValue The maximum value
+     * @return The clamped value
+     */
+    function clamp(uint256 value, uint256 minValue, uint256 maxValue)
+        internal
+        pure
+        returns (uint256)
+    {
+        return value < minValue ? minValue : (value > maxValue ? maxValue : value);
+    }
+    
+    /**
+     * @notice Get the library version information
+     * @dev Used for tracking the library version
+     * @return major Major version component
+     * @return minor Minor version component
+     * @return patch Patch version component
+     */
+    function getVersion() internal pure returns (uint8 major, uint8 minor, uint8 patch) {
+        return (1, 0, 0);
+    }
+
+    /**
+     * @notice Calculate withdrawal amounts with high precision based on shares to burn
+     * @dev Wrapper for computeWithdrawAmounts with high precision flag enabled
+     * @param totalShares Total shares in the pool
+     * @param sharesToBurn Shares to burn for withdrawal
+     * @param reserve0 Token0 reserves in the pool
+     * @param reserve1 Token1 reserves in the pool
+     * @return amount0Out Amount of token0 to withdraw
+     * @return amount1Out Amount of token1 to withdraw
+     */
+    function computeWithdrawAmountsWithPrecision(
+        uint128 totalShares,
+        uint256 sharesToBurn,
+        uint256 reserve0,
+        uint256 reserve1
+    ) internal pure returns (uint256 amount0Out, uint256 amount1Out) {
+        return computeWithdrawAmounts(totalShares, sharesToBurn, reserve0, reserve1, true);
+    }
+} 

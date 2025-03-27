@@ -1,11 +1,19 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.26;
+
+/*
+ * This test file has been moved to old-tests and commented out.
+ * It is kept for reference but is no longer used in the project.
+ * The new testing approach uses LocalUniswapV4TestBase.t.sol for local deployments.
+ */
+
+/*
 
 import "forge-std/Test.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
@@ -31,7 +39,7 @@ contract CounterTest is Test, Fixtures {
         deployFreshManagerAndRouters();
         deployMintAndApprove2Currencies();
 
-        deployAndApprovePosm(manager);
+        deployAndApprovePosm(IPoolManager(address(manager)));
 
         // Create the pool
         key = PoolKey(currency0, currency1, 3000, 60, IHooks(address(0)));
@@ -264,3 +272,4 @@ contract CounterTest is Test, Fixtures {
         assertEq(uint128(delta.amount1()), feeRevenue1 - 1 wei);
     }
 }
+*/

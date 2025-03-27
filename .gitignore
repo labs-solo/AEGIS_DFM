@@ -8,11 +8,11 @@ out/
 /broadcast/*/5/
 /broadcast/**/dry-run/
 
-# Docs
-docs/
-
 # Dotenv file
 .env
 
 # Node modules
 node_modules/
+
+# Scripts with sensitive API keys
+script/run_with_alchemy.sh

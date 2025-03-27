@@ -1,0 +1,125 @@
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.26;
+
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+
+/**
+ * @title IFullRange
+ * @notice Interface for the FullRange Uniswap V4 hook.
+ * @dev Defines core data structures and functions for interacting with FullRange liquidity positions.
+ */
+
+/**
+ * @notice Parameters for depositing liquidity into a pool
+ * @param poolId The identifier of the pool to deposit into
+ * @param amount0Desired The desired amount of token0 to deposit
+ * @param amount1Desired The desired amount of token1 to deposit
+ * @param amount0Min The minimum amount of token0 to deposit (slippage protection)
+ * @param amount1Min The minimum amount of token1 to deposit (slippage protection)
+ * @param deadline The deadline by which the transaction must be executed
+ */
+struct DepositParams {
+    PoolId poolId;
+    uint256 amount0Desired;
+    uint256 amount1Desired;
+    uint256 amount0Min;
+    uint256 amount1Min;
+    uint256 deadline;
+}
+
+/**
+ * @notice Parameters for withdrawing liquidity from a pool
+ * @param poolId The identifier of the pool to withdraw from
+ * @param sharesToBurn The amount of LP shares to burn
+ * @param amount0Min The minimum amount of token0 to receive (slippage protection)
+ * @param amount1Min The minimum amount of token1 to receive (slippage protection)
+ * @param deadline The deadline by which the transaction must be executed
+ */
+struct WithdrawParams {
+    PoolId poolId;
+    uint256 sharesToBurn;
+    uint256 amount0Min;
+    uint256 amount1Min;
+    uint256 deadline;
+}
+
+/**
+ * @notice Data for hook callbacks
+ * @param sender The original sender of the transaction
+ * @param key The pool key for the operation
+ * @param params The liquidity modification parameters
+ * @param isHookOp Whether this is a hook operation
+ */
+struct CallbackData {
+    address sender;
+    PoolKey key;
+    ModifyLiquidityParams params;
+    bool isHookOp;
+}
+
+/**
+ * @notice Parameters for modifying liquidity
+ * @param tickLower The lower tick of the position
+ * @param tickUpper The upper tick of the position
+ * @param liquidityDelta The change in liquidity
+ * @param salt A unique salt for the operation
+ */
+struct ModifyLiquidityParams {
+    int24 tickLower;
+    int24 tickUpper;
+    int256 liquidityDelta;
+    bytes32 salt;
+}
+
+/**
+ * @notice Interface for the FullRange system
+ * @dev Provides functions for depositing/withdrawing liquidity and managing the hook
+ */
+interface IFullRange is IHooks {
+    /**
+     * @notice Returns the address of this hook for use in pool initialization
+     * @return The address of this contract
+     */
+    function getHookAddress() external view returns (address);
+
+    /**
+     * @notice Sets the emergency state for a specific pool
+     * @param poolId The pool ID to modify
+     * @param isEmergency Whether to enable or disable emergency state
+     */
+    function setPoolEmergencyState(PoolId poolId, bool isEmergency) external;
+
+    /**
+     * @notice Allows users to claim any pending ETH payments
+     */
+    function claimPendingETH() external;
+
+    /**
+     * @notice Get the pool key for a pool ID
+     * @param poolId The pool ID to get the key for
+     * @return The pool key
+     */
+    function getPoolKey(PoolId poolId) external view returns (PoolKey memory);
+
+    /**
+     * @notice Get pool info
+     * @param poolId The pool ID to get info for
+     * @return isInitialized Whether the pool is initialized
+     * @return reserves Array of pool reserves [reserve0, reserve1]
+     * @return totalShares Total shares in the pool
+     * @return tokenId Token ID for the pool
+     */
+    function getPoolInfo(PoolId poolId) 
+        external 
+        view 
+        returns (
+            bool isInitialized,
+            uint256[2] memory reserves,
+            uint128 totalShares,
+            uint256 tokenId
+        );
+} 

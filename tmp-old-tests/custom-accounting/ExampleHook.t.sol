@@ -1,5 +1,13 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.20;
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity 0.8.26;
+
+/*
+ * This test file has been moved to old-tests and commented out.
+ * It is kept for reference but is no longer used in the project.
+ * The new testing approach uses LocalUniswapV4TestBase.t.sol for local deployments.
+ */
+
+/*
 
 import {Test} from "forge-std/Test.sol";
 import {Deployers} from "v4-core/test/utils/Deployers.sol";
@@ -153,3 +161,4 @@ contract ExampleHookTest is Test, Deployers {
         }
     }
 }
+*/

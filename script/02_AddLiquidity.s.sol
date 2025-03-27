@@ -1,5 +1,12 @@
-// SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.19;
+
+/*
+ * This file has been commented out as part of migrating to local Uniswap V4 testing.
+ * It is kept for reference but is no longer used in the project.
+ */
+
+/*
 
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
@@ -86,3 +93,4 @@ contract AddLiquidityScript is Script, Constants, Config {
         }
     }
 }
+*/

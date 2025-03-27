@@ -6,6 +6,37 @@ ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
 solc_version = "0.8.26"
 evm_version = "cancun"
+viaIR = true
+dotenv = true  # Enable .env file loading
+exclude_paths = ["test/old-tests"]
 
+# Sepolia configuration for integration testing
+[profile.sepolia]
+src = "src"
+out = "out"
+libs = ["lib"]
+ffi = true
+fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
+solc_version = "0.8.26"
+evm_version = "cancun"
+viaIR = true
+# Sepolia settings
+eth_rpc_url = "${SEPOLIA_RPC_URL}"
+chain_id = 11155111
+
+# Unichain Sepolia configuration for E2E testing
+[profile.unichain-sepolia]
+src = "src"
+out = "out"
+libs = ["lib"]
+ffi = true
+fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
+solc_version = "0.8.26"
+evm_version = "cancun"
+viaIR = true
+dotenv = true
+# Unichain Sepolia settings
+eth_rpc_url = "${UNICHAIN_SEPOLIA_RPC_URL}"
+chain_id = 1301
 
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config

@@ -1,5 +1,12 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.19;
+
+/*
+ * This file has been commented out as part of migrating to local Uniswap V4 testing.
+ * It is kept for reference but is no longer used in the project.
+ */
+
+/*
 
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
@@ -15,3 +22,4 @@ contract Config {
     Currency constant currency0 = Currency.wrap(address(token0));
     Currency constant currency1 = Currency.wrap(address(token1));
 }
+*/

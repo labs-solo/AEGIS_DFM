@@ -1,100 +1,214 @@
-# v4-template
-### **A template for writing Uniswap v4 Hooks 🦄**
+# FullRange: Full Range Liquidity Manager for Uniswap V4
 
-[`Use this Template`](https://github.com/uniswapfoundation/v4-template/generate)
+FullRange is a comprehensive, optimized system for providing and managing full-range (min tick to max tick) liquidity in Uniswap V4. It enables capital-efficient liquidity provision with advanced fee management, CAP event detection, and protocol-owned liquidity (POL) features.
 
-1. The example hook [Counter.sol](src/Counter.sol) demonstrates the `beforeSwap()` and `afterSwap()` hooks
-2. The test template [Counter.t.sol](test/Counter.t.sol) preconfigures the v4 pool manager, test tokens, and test liquidity.
+## Overview
 
-<details>
-<summary>Updating to v4-template:latest</summary>
+FullRange reimagines full-range liquidity provision for Uniswap V4's hook-based architecture. The system allows users to deposit tokens into a pool spanning the entire tick range, receiving share tokens that represent proportional ownership of the pooled liquidity. The protocol implements dynamic fee adjustment based on price volatility, automatic fee reinvestment, and sophisticated risk management features.
 
-This template is actively maintained -- you can update the v4 dependencies, scripts, and helpers: 
+## Key Features
+
+- **Full-Range Liquidity**: Position tokens spanning from MIN_TICK to MAX_TICK
+- **Dynamic Fee Adjustment**: Automated fee adjustments based on market volatility
+- **CAP Event Detection**: Identifies Capitalizable Adverse Price (CAP) events for risk management
+- **Protocol-Owned Liquidity**: Supports protocol-owned liquidity with dedicated reinvestment
+- **Multiple Fee Tiers**: Customizable fee distribution between LPs and protocol
+- **Native ETH Support**: Seamless handling of ETH and ERC20 tokens
+- **Gas Optimized**: Efficient implementation with minimal bytecode footprint
+- **Emergency Controls**: Robust safety mechanisms for risk mitigation
+
+## Architecture
+
+FullRange follows a modular architecture with specialized components:
+
+### Core Components
+
+- **FullRange.sol**: Main hook contract implementing the Uniswap V4 Hook interface
+- **FullRangeLiquidityManager.sol**: Manages deposits, withdrawals, and liquidity accounting
+- **FullRangeDynamicFeeManager.sol**: Handles dynamic fee adjustments based on volatility
+- **DefaultCAPEventDetector.sol**: Detects significant price volatility events
+- **FeeReinvestmentManager.sol**: Handles fee collection and reinvestment strategies
+- **PoolPolicyManager.sol**: Manages protocol policies and configurations
+
+### Supporting Components
+
+- **TruncGeoOracleMulti.sol**: Price oracle with truncated geometric mean calculations
+- **TruncatedOracle.sol**: Library for oracle data storage and manipulation
+- **MathUtils.sol**: Mathematical utilities for liquidity calculations
+- **FullRangePositions.sol**: ERC6909Claims token implementation for position accounting
+- **SettlementUtils.sol**: Utilities for Uniswap V4 settlement operations
+- **FullRangeUtils.sol**: Helper functions for the FullRange contract
+
+## Dynamic Fee System
+
+FullRange implements a two-tiered fee adjustment mechanism:
+
+1. **Base Fee Adjustments**: Gradual fee changes based on long-term market conditions
+2. **Surge Fees**: Immediate fee multipliers activated during periods of extreme volatility
+
+### CAP Event Detection
+
+CAP (Capitalizable Adverse Price) events are detected when:
+
+- Price changes exceed a predefined volatility threshold
+- Rapid tick movements are observed in a short time period
+- Oracle price deviations from exponential moving averages are significant
+
+When a CAP event is detected, the protocol can:
+- Activate surge pricing (higher fees)
+- Adjust risk parameters across the protocol
+- Signal volatility to integrated systems
+
+## Usage
+
+### Depositing Liquidity
+
+```solidity
+// Deposit tokens to receive position shares
+function deposit(
+    PoolId poolId,
+    uint256 amount0Desired,
+    uint256 amount1Desired,
+    uint256 amount0Min,
+    uint256 amount1Min,
+    address recipient
+) external payable returns (uint256 shares, uint256 amount0, uint256 amount1);
+```
+
+### Withdrawing Liquidity
+
+```solidity
+// Burn position shares to withdraw underlying tokens
+function withdraw(
+    PoolId poolId,
+    uint256 sharesToBurn,
+    uint256 amount0Min,
+    uint256 amount1Min,
+    address recipient
+) external returns (uint256 amount0, uint256 amount1);
+```
+
+### Creating a New Pool
+
+Pools are created using Uniswap V4's standard pool initialization flow. The FullRange hook will be activated during pool creation.
+
+## Getting Started
+
+### Prerequisites
+
+- Foundry (Forge, Anvil, and Cast)
+- Access to Uniswap V4 contracts
+- Solidity compiler 0.8.26
+
+### Installation
+
+1. Clone the repository:
 ```bash
-git remote add template https://github.com/uniswapfoundation/v4-template
-git fetch template
-git merge template/main <BRANCH> --allow-unrelated-histories
+git clone https://github.com/yourusername/fullrange.git
+cd fullrange
 ```
 
-</details>
-
----
-
-### Check Forge Installation
-*Ensure that you have correctly installed Foundry (Forge) Stable. You can update Foundry by running:*
-
-```
-foundryup
-```
-
-> *v4-template* appears to be _incompatible_ with Foundry Nightly. See [foundry announcements](https://book.getfoundry.sh/announcements) to revert back to the stable build
-
-
-
-## Set up
-
-*requires [foundry](https://book.getfoundry.sh)*
-
-```
+2. Install dependencies:
+```bash
 forge install
-forge test
 ```
 
-### Local Development (Anvil)
-
-Other than writing unit tests (recommended!), you can only deploy & test hooks on [anvil](https://book.getfoundry.sh/anvil/)
-
+3. Compile contracts:
 ```bash
-# start anvil, a local EVM chain
-anvil
-
-# in a new terminal
-forge script script/Anvil.s.sol \
-    --rpc-url http://localhost:8545 \
-    --private-key 0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 \
-    --broadcast
+forge build --use solc:0.8.26
 ```
 
-See [script/](script/) for hook deployment, pool creation, liquidity provision, and swapping.
+### Testing
 
----
+Run the test suite using Forge:
+```bash
+forge test --use solc:0.8.26
+```
 
-<details>
-<summary><h2>Troubleshooting</h2></summary>
+For advanced testing with gas reporting:
+```bash
+forge test --gas-report -vvv --use solc:0.8.26
+```
 
+Use Anvil for local development:
+```bash
+anvil
+```
 
+### Deployment
 
-### *Permission Denied*
+1. Deploy the core contracts:
+```bash
+forge script script/Deploy.s.sol:DeployScript --rpc-url [your-rpc-url] --broadcast --verify --use solc:0.8.26
+```
 
-When installing dependencies with `forge install`, Github may throw a `Permission Denied` error
+2. Initialize the system:
+```bash
+forge script script/Initialize.s.sol:InitializeScript --rpc-url [your-rpc-url] --broadcast --use solc:0.8.26
+```
 
-Typically caused by missing Github SSH keys, and can be resolved by following the steps [here](https://docs.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh) 
+## Fee Structure
 
-Or [adding the keys to your ssh-agent](https://docs.github.com/en/authentication/connecting-to-github-with-ssh/generating-a-new-ssh-key-and-adding-it-to-the-ssh-agent#adding-your-ssh-key-to-the-ssh-agent), if you have already uploaded SSH keys
+The protocol distributes fees between two primary components:
 
-### Hook deployment failures
+1. **LP Share**: Fees directed to liquidity providers
+2. **Protocol-Owned Liquidity (POL) Share**: Fees collected for protocol operations and reinvestment
 
-Hook deployment failures are caused by incorrect flags or incorrect salt mining
+The default distribution is:
+- LP Share: 90% (900,000 PPM)
+- POL Share: 10% (100,000 PPM)
 
-1. Verify the flags are in agreement:
-    * `getHookCalls()` returns the correct flags
-    * `flags` provided to `HookMiner.find(...)`
-2. Verify salt mining is correct:
-    * In **forge test**: the *deployer* for: `new Hook{salt: salt}(...)` and `HookMiner.find(deployer, ...)` are the same. This will be `address(this)`. If using `vm.prank`, the deployer will be the pranking address
-    * In **forge script**: the deployer must be the CREATE2 Proxy: `0x4e59b44847b379578588920cA78FbF26c0B4956C`
-        * If anvil does not have the CREATE2 deployer, your foundry may be out of date. You can update it with `foundryup`
+This distribution ensures that liquidity providers receive the majority of the trading fees while still allowing the protocol to accumulate its own liquidity position over time. The POL share is reinvested back into the pool, helping to grow protocol-owned liquidity and create a sustainable source of revenue.
 
-</details>
+These values can be adjusted through governance for individual pools or globally across the protocol.
 
----
+## Native ETH Handling
 
-Additional resources:
+The protocol supports native ETH through two mechanisms:
 
-[Uniswap v4 docs](https://docs.uniswap.org/contracts/v4/overview)
+1. Direct handling of ETH via Uniswap V4's Currency type system
+2. Support for WETH in pools that require wrapped ETH
 
-[v4-periphery](https://github.com/uniswap/v4-periphery) contains advanced hook implementations that serve as a great reference
+The system features built-in ETH safety mechanisms to prevent loss of funds during transfers.
 
-[v4-core](https://github.com/uniswap/v4-core)
+## Oracle Implementation
 
-[v4-by-example](https://v4-by-example.org)
+The protocol implements a geometric mean oracle with the following features:
+
+- Truncated price movement to prevent manipulation
+- Historical observation storage for accurate pricing data
+- Customizable thresholds for CAP event detection
+- Tick movement capping based on fee levels
+
+## Security Features
+
+- **Emergency Mode**: Allows forced withdrawals during critical situations
+- **Access Controls**: Segregated permission system for various operations
+- **Rate Limiting**: Prevents excessive operations during volatile periods
+- **Slippage Protection**: Customizable slippage parameters for user operations
+- **Oracle Guards**: Price movement caps to prevent manipulation
+
+## Protocol-Owned Liquidity (POL)
+
+The protocol maintains its own liquidity position in each pool to:
+
+1. Generate sustainable protocol revenue
+2. Improve pool stability and depth
+3. Establish minimum liquidity thresholds
+
+POL is managed through dedicated reinvestment mechanisms with governance controls.
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the Business Source License 1.1 - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Uniswap V4 Core Team for the foundational architecture
+- OpenZeppelin for security patterns and implementations
+- Solmate for efficient implementation references
 
