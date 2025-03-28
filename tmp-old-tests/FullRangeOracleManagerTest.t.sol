@@ -42,6 +42,7 @@ contract MockTruncGeoOracleMulti is ITruncGeoOracleMulti {
     int24 internal _lastKeyTickSpacing;
     address internal _lastKeyCurrency0;
     address internal _lastKeyCurrency1;
+    mapping(bytes32 => int24) public maxAbsTickMove;
 
     // Accessors
     function called() external view returns (bool) {
@@ -75,6 +76,43 @@ contract MockTruncGeoOracleMulti is ITruncGeoOracleMulti {
         _lastKeyTickSpacing = key.tickSpacing;
         _lastKeyCurrency0 = Currency.unwrap(key.currency0);
         _lastKeyCurrency1 = Currency.unwrap(key.currency1);
+    }
+
+    function enableOracleForPool(PoolKey calldata key, int24 initialMaxAbsTickMove) external {
+        PoolId poolId = key.toId();
+        bytes32 id = PoolId.unwrap(poolId);
+        maxAbsTickMove[id] = initialMaxAbsTickMove;
+    }
+
+    function shouldUpdateOracle(PoolId poolId) external view returns (bool) {
+        return true; // Always update in mock for testing
+    }
+
+    function getLastObservation(PoolId poolId) external view returns (
+        uint32 timestamp,
+        int24 tick,
+        int48 tickCumulative,
+        uint144 secondsPerLiquidityCumulativeX128
+    ) {
+        return (uint32(block.timestamp), 0, 0, 0);
+    }
+
+    function updateMaxAbsTickMoveForPool(bytes32 poolId, int24 newMove) external {
+        maxAbsTickMove[poolId] = newMove;
+    }
+
+    function observe(PoolKey calldata key, uint32[] calldata secondsAgos)
+        external view returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s)
+    {
+        tickCumulatives = new int48[](secondsAgos.length);
+        secondsPerLiquidityCumulativeX128s = new uint144[](secondsAgos.length);
+        return (tickCumulatives, secondsPerLiquidityCumulativeX128s);
+    }
+
+    function increaseCardinalityNext(PoolKey calldata key, uint16 cardinalityNext)
+        external returns (uint16 cardinalityNextOld, uint16 cardinalityNextNew)
+    {
+        return (0, cardinalityNext);
     }
 }
 

@@ -16,5 +16,5 @@ interface ICAPEventDetector {
      * @param poolId The ID of the pool to check
      * @return Whether a CAP event has been detected
      */
-    function detectCAPEvent(PoolId poolId) external view returns (bool);
+    function detectCAPEvent(PoolId poolId) external returns (bool);
 } 

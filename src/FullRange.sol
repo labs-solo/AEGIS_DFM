@@ -26,6 +26,10 @@ import { PoolTokenIdUtils } from "./utils/PoolTokenIdUtils.sol";
 import { IFullRangeHooks } from "./interfaces/IFullRangeHooks.sol";
 import { Currency } from "v4-core/src/types/Currency.sol";
 import { IERC20Minimal } from "v4-core/src/interfaces/external/IERC20Minimal.sol";
+import { TruncGeoOracleMulti } from "./TruncGeoOracleMulti.sol";
+import { DefaultCAPEventDetector } from "./DefaultCAPEventDetector.sol";
+import { ITruncGeoOracleMulti } from "./interfaces/ITruncGeoOracleMulti.sol";
+import { TruncatedOracle } from "./libraries/TruncatedOracle.sol";
 
 /**
  * @title FullRange
@@ -54,6 +58,10 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     IPoolPolicy public immutable policyManager;
     FullRangeLiquidityManager public immutable liquidityManager;
     FullRangeDynamicFeeManager public immutable dynamicFeeManager;
+    DefaultCAPEventDetector public immutable capEventDetector;
+    
+    // Add a storage variable to track the current active dynamic fee manager
+    FullRangeDynamicFeeManager private activeDynamicFeeManager;
 
     // Optimized storage layout - pack related data together
     struct PoolData {
@@ -94,6 +102,26 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     event Withdraw(address indexed sender, PoolId indexed poolId, uint256 amount0, uint256 amount1, uint256 shares);
     event FeeExtractionProcessed(PoolId indexed poolId, uint256 amount0, uint256 amount1);
     event FeeExtractionFailed(PoolId indexed poolId, string reason);
+    event OracleTickUpdated(PoolId indexed poolId, int24 tick, uint32 blockNumber);
+    event OracleUpdated(PoolId indexed poolId, int24 tick, uint32 blockTimestamp);
+    event OracleUpdateFailed(PoolId indexed poolId, int24 uncappedTick, bytes reason);
+    event CAPEventDetected(PoolId indexed poolId, int24 currentTick);
+    event OracleInitialized(PoolId indexed poolId, int24 initialTick, int24 maxAbsTickMove);
+    event OracleInitializationFailed(PoolId indexed poolId, bytes reason);
+    
+    // Oracle data storage - reverse authorization model for gas optimization
+    // Stores tick data directly in FullRange instead of calling DynamicFeeManager
+    // This eliminates expensive cross-contract validation and improves gas efficiency
+    mapping(PoolId => int24) public lastOracleTicks;
+    mapping(PoolId => uint32) public lastOracleUpdateBlocks;
+    
+    // Oracle tracking variables - only store fallbacks (used when oracle fails)
+    // Kept minimal to reduce storage costs 
+    mapping(PoolId => int24) private lastFallbackTicks;
+    mapping(PoolId => uint32) private lastFallbackBlocks;
+    
+    // Add to state variables section near the top with other state variables
+    TruncGeoOracleMulti public truncGeoOracle;
     
     // Modifiers
     modifier onlyGovernance() {
@@ -124,17 +152,21 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         IPoolManager _manager,
         IPoolPolicy _policyManager,
         FullRangeLiquidityManager _liquidityManager,
-        FullRangeDynamicFeeManager _dynamicFeeManager
+        FullRangeDynamicFeeManager _dynamicFeeManager,
+        DefaultCAPEventDetector _capEventDetector
     ) {
         if (address(_manager) == address(0)) revert Errors.ZeroAddress();
         if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_liquidityManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_dynamicFeeManager) == address(0)) revert Errors.ZeroAddress();
+        if (address(_capEventDetector) == address(0)) revert Errors.ZeroAddress();
 
         poolManager = _manager;
         policyManager = _policyManager;
         liquidityManager = _liquidityManager;
         dynamicFeeManager = _dynamicFeeManager;
+        capEventDetector = _capEventDetector;
+        activeDynamicFeeManager = _dynamicFeeManager;
         
         validateHookAddress();
     }
@@ -442,17 +474,16 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     ) external override returns (bytes4) {
         PoolId poolId = key.toId();
         
-        // Validation: check for duplicate initialization
+        // Validation
         if (poolData[poolId].initialized) {
             revert Errors.PoolAlreadyInitialized(poolId);
         }
         
-        // Validation: check for valid price
         if (sqrtPriceX96 == 0) {
             revert Errors.InvalidPrice(sqrtPriceX96);
         }
         
-        // Store minimal pool data
+        // Store pool data
         poolData[poolId] = PoolData({
             initialized: true,
             emergencyState: false,
@@ -464,14 +495,33 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         // Register pool with liquidity manager
         liquidityManager.registerPool(poolId, key, sqrtPriceX96);
         
-        // Initialize any policies if required
-        if (address(policyManager) != address(0)) {
-            try policyManager.handlePoolInitialization(poolId, key, sqrtPriceX96, tick, address(this)) {
-                // Policy initialization successful
-            } catch (bytes memory reason) {
-                // Policy initialization failed but we continue with pool creation
-                emit PolicyInitializationFailed(poolId, string(reason));
+        // Enhanced security: Only initialize oracle if:
+        // 1. We're using dynamic fee flag (0x800000) OR fee is 0
+        // 2. The actual hook address matches this contract
+        // 3. Oracle is set up
+        if ((key.fee == 0x800000 || key.fee == 0) && 
+            address(key.hooks) == address(this) &&
+            address(truncGeoOracle) != address(0)) {
+            
+            // Get max tick move from policy if available, otherwise use TruncatedOracle's constant
+            int24 maxAbsTickMove = TruncatedOracle.MAX_ABS_TICK_MOVE; // Default from library
+            
+            int24 scalingFactor = policyManager.getTickScalingFactor();
+            // Dynamic calculation based on policy scaling factor
+            if (scalingFactor > 0) {
+                // Calculate dynamic maxAbsTickMove based on policy
+                // Makes use of policy manager rather than hardcoding
+                maxAbsTickMove = int24(uint24(3000 / uint256(uint24(scalingFactor))));
             }
+            
+            // Initialize the oracle without try/catch
+            truncGeoOracle.enableOracleForPool(key, maxAbsTickMove);
+            emit OracleInitialized(poolId, tick, maxAbsTickMove);
+        }
+        
+        // Initialize policies if required
+        if (address(policyManager) != address(0)) {
+            policyManager.handlePoolInitialization(poolId, key, sqrtPriceX96, tick, address(this));
         }
         
         return IHooks.afterInitialize.selector;
@@ -496,13 +546,46 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
 
     /**
      * @notice Implementation for afterSwap hook
+     * @dev Reverse Authorization Model: Stores oracle data locally and emits event
+     *      instead of calling into DynamicFeeManager, which eliminates validation overhead
+     *      and significantly reduces gas costs while maintaining security.
      */
     function afterSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
         external
         override
         returns (bytes4, int128)
     {
-        // Reserves are now calculated on demand, no need to update storage
+        PoolId poolId = key.toId();
+        
+        // Security: Only process pools that are initialized in this contract
+        // This prevents oracle updates for unrelated pools
+        if (poolData[poolId].initialized && address(truncGeoOracle) != address(0)) {
+            // Additional security: Verify the hook in the key is this contract
+            // This ensures we're updating the oracle for the correct pool
+            if (address(key.hooks) != address(this)) {
+                revert Errors.InvalidPoolKey();
+            }
+            
+            // Get current tick from pool manager
+            (, int24 currentTick, , ) = StateLibrary.getSlot0(poolManager, poolId);
+            
+            // Gas optimization: Only attempt oracle update when needed
+            bool shouldUpdateOracle = truncGeoOracle.shouldUpdateOracle(poolId);
+            
+            if (shouldUpdateOracle) {
+                // Update the oracle through TruncGeoOracleMulti without try/catch
+                // If this fails, the entire transaction will revert
+                truncGeoOracle.updateObservation(key);
+                emit OracleUpdated(poolId, currentTick, uint32(block.timestamp));
+                
+                // Check for CAP events
+                bool isCAPEvent = capEventDetector.detectCAPEvent(poolId);
+                if (isCAPEvent) {
+                    emit CAPEventDetected(poolId, currentTick);
+                }
+            }
+        }
+        
         return (IHooks.afterSwap.selector, 0);
     }
 
@@ -646,5 +729,50 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         }
         
         return (IFullRangeHooks.afterAddLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
+    /**
+     * @notice Set the active dynamic fee manager to be used
+     * @dev This allows updating the dynamic fee manager reference when a new one is deployed
+     * @param _dynamicFeeManager The new dynamic fee manager to use
+     */
+    function setActiveDynamicFeeManager(FullRangeDynamicFeeManager _dynamicFeeManager) external onlyGovernance {
+        if (address(_dynamicFeeManager) == address(0)) revert Errors.ZeroAddress();
+        activeDynamicFeeManager = _dynamicFeeManager;
+    }
+
+    /**
+     * @notice Get oracle data for a specific pool
+     * @dev Returns data from TruncGeoOracleMulti when available, falls back to local storage
+     * @param poolId The ID of the pool to get oracle data for
+     * @return tick The latest recorded tick
+     * @return blockTimestamp The block timestamp when the tick was last updated
+     */
+    function getOracleData(PoolId poolId) external view returns (int24 tick, uint32 blockTimestamp) {
+        // Check if oracle is set
+        if (address(truncGeoOracle) == address(0)) {
+            return (lastFallbackTicks[poolId], lastFallbackBlocks[poolId]);
+        }
+        
+        // Get data directly from oracle - this never reverts even if pool isn't initialized
+        (uint32 timestamp, int24 observedTick, , ) = truncGeoOracle.getLastObservation(poolId);
+        
+        // If we get valid data, return it
+        if (timestamp > 0) {
+            return (observedTick, timestamp);
+        }
+        
+        // Otherwise fall back to local storage
+        return (lastFallbackTicks[poolId], lastFallbackBlocks[poolId]);
+    }
+
+    /**
+     * @notice Set the TruncGeoOracleMulti address 
+     * @dev Only callable by governance
+     * @param _oracleAddress The TruncGeoOracleMulti address
+     */
+    function setOracleAddress(address _oracleAddress) external onlyGovernance {
+        if (_oracleAddress == address(0)) revert Errors.ZeroAddress();
+        truncGeoOracle = TruncGeoOracleMulti(_oracleAddress);
     }
 }

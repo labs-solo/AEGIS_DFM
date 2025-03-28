@@ -13,6 +13,10 @@ import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
  * @title DefaultCAPEventDetector
  * @notice Default implementation for detecting price volatility (CAP) events
  * @dev Monitors significant price movements to identify unusual volatility
+ *
+ * CAP (Capitalizable Adverse Price) events are detected by monitoring price
+ * movements that exceed configurable thresholds. These events can trigger
+ * protocol-wide safety measures like dynamic fee adjustments.
  */
 contract DefaultCAPEventDetector is ICAPEventDetector, Owned {
     // Reference to pool manager
@@ -26,7 +30,7 @@ contract DefaultCAPEventDetector is ICAPEventDetector, Owned {
     
     // Historical price observations for volatility detection
     struct PriceObservation {
-        uint256 timestamp;
+        uint32 timestamp;
         uint160 sqrtPriceX96;
     }
     
@@ -116,13 +120,13 @@ contract DefaultCAPEventDetector is ICAPEventDetector, Owned {
                 observations[i] = observations[i + 1];
             }
             observations[MAX_OBSERVATIONS - 1] = PriceObservation({
-                timestamp: block.timestamp,
+                timestamp: uint32(block.timestamp),
                 sqrtPriceX96: sqrtPriceX96
             });
         } else {
             // Add to array
             observations.push(PriceObservation({
-                timestamp: block.timestamp,
+                timestamp: uint32(block.timestamp),
                 sqrtPriceX96: sqrtPriceX96
             }));
         }
@@ -132,8 +136,13 @@ contract DefaultCAPEventDetector is ICAPEventDetector, Owned {
     
     /**
      * @inheritdoc ICAPEventDetector
+     * @dev Detects CAP events by comparing price changes against thresholds
+     *      A CAP event is triggered when:
+     *      1. Price change since last observation exceeds volatility threshold
+     *      2. Longer-term price change (across multiple observations) exceeds 
+     *         a higher threshold
      */
-    function detectCAPEvent(PoolId poolId) external view override returns (bool) {
+    function detectCAPEvent(PoolId poolId) external returns (bool) {
         PriceObservation[] storage observations = priceObservations[poolId];
         
         // Need at least 2 observations to detect volatility
@@ -158,6 +167,7 @@ contract DefaultCAPEventDetector is ICAPEventDetector, Owned {
         
         // Check if volatility exceeds threshold
         if (volatilityBps >= threshold) {
+            emit CAPEventDetected(poolId, volatilityBps);
             return true;
         }
         
@@ -171,6 +181,7 @@ contract DefaultCAPEventDetector is ICAPEventDetector, Owned {
             
             // Higher threshold for longer term movement (2x the normal threshold)
             if (volatilityBps >= threshold * 2) {
+                emit CAPEventDetected(poolId, volatilityBps);
                 return true;
             }
         }
@@ -184,16 +195,19 @@ contract DefaultCAPEventDetector is ICAPEventDetector, Owned {
      * @param newSqrtPriceX96 The later sqrt price
      * @return The price change in basis points (e.g., 500 = 5%)
      */
-    function calculatePriceChangeBps(uint160 oldSqrtPriceX96, uint160 newSqrtPriceX96) public pure returns (uint256) {
-        // Convert sqrt prices to regular prices (proportional to price, exact conversion not needed)
-        uint256 oldPrice = uint256(oldSqrtPriceX96) * uint256(oldSqrtPriceX96);
-        uint256 newPrice = uint256(newSqrtPriceX96) * uint256(newSqrtPriceX96);
-        
-        // Calculate change percentage
-        if (newPrice > oldPrice) {
-            return ((newPrice - oldPrice) * 10000) / oldPrice;
+    function calculatePriceChangeBps(uint160 oldSqrtPriceX96, uint160 newSqrtPriceX96) 
+        public pure returns (uint256) 
+    {
+        // Compare sqrt prices directly to avoid overflow when squaring
+        if (newSqrtPriceX96 > oldSqrtPriceX96) {
+            // Calculate percentage increase: (new - old) * 10000 / old
+            return ((uint256(newSqrtPriceX96) - uint256(oldSqrtPriceX96)) * 10000) / uint256(oldSqrtPriceX96);
+        } else if (newSqrtPriceX96 < oldSqrtPriceX96) {
+            // Calculate percentage decrease: (old - new) * 10000 / old
+            return ((uint256(oldSqrtPriceX96) - uint256(newSqrtPriceX96)) * 10000) / uint256(oldSqrtPriceX96);
         } else {
-            return ((oldPrice - newPrice) * 10000) / oldPrice;
+            // No change
+            return 0;
         }
     }
     

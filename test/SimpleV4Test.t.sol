@@ -122,7 +122,8 @@ contract SimpleV4Test is Test {
             address(poolManager),
             IPoolPolicy(address(policyManager)),
             address(liquidityManager),
-            address(dynamicFeeManager)
+            address(dynamicFeeManager),
+            address(capEventDetector)
         );
 
         // Mine for a hook address with the correct permission bits
@@ -144,7 +145,8 @@ contract SimpleV4Test is Test {
             poolManager,
             IPoolPolicy(address(policyManager)),
             liquidityManager,
-            dynamicFeeManager
+            dynamicFeeManager,
+            capEventDetector
         );
 
         // Verify the deployment
@@ -162,6 +164,9 @@ contract SimpleV4Test is Test {
             address(fullRange),  // Now using the actual FullRange address
             ICAPEventDetector(address(capEventDetector))
         );
+        
+        // Update the fullRange to use the new dynamicFeeManager
+        fullRange.setActiveDynamicFeeManager(dynamicFeeManager);
 
         vm.stopPrank();
 

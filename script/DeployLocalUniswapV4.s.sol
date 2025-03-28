@@ -63,9 +63,9 @@ contract DeployLocalUniswapV4 is Script {
         console2.log("Deploying PolicyManager...");
         policyManager = new PoolPolicyManager(
             GOVERNANCE,      // owner
-            500000,          // polSharePpm (50%)
-            300000,          // fullRangeSharePpm (30%)
-            200000,          // lpSharePpm (20%)
+            100000,          // polSharePpm (10%)
+            0,          // fullRangeSharePpm (0%)
+            900000,          // lpSharePpm (80%)
             100,             // minimumTradingFeePpm (0.01%)
             10000,           // feeClaimThresholdPpm (1%)
             1000,            // defaultPolMultiplier (1000)
@@ -115,7 +115,8 @@ contract DeployLocalUniswapV4 is Script {
             IPoolManager(address(poolManager)),
             IPoolPolicy(address(policyManager)),
             liquidityManager,
-            dynamicFeeManager
+            dynamicFeeManager,
+            capEventDetector
         );
         console2.log("FullRange hook deployed at:", address(fullRange));
         

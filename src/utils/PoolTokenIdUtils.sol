@@ -14,7 +14,7 @@ library PoolTokenIdUtils {
      * @return TokenId for ERC6909
      */
     function toTokenId(PoolId poolId) internal pure returns (uint256) {
-        return uint256(PoolId.unwrap(poolId));
+        return uint256(PoolId.unwrap(poolId)) & 0x00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
     }
     
     /**

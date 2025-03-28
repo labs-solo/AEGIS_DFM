@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {ICAPEventDetector} from "./ICAPEventDetector.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
 /**
  * @title IFullRangeDynamicFeeManager
@@ -57,17 +58,26 @@ interface IFullRangeDynamicFeeManager {
     /**
      * @notice Updates the dynamic fee if needed based on time interval and CAP events
      * @param poolId The pool ID to update fee for
+     * @param key The pool key for the pool
      * @return baseFee The current base fee in PPM
      * @return surgeFeeValue The current surge fee in PPM
      * @return wasUpdated Whether fee was updated in this call
      */
     function updateDynamicFeeIfNeeded(
-        PoolId poolId
+        PoolId poolId,
+        PoolKey calldata key
     ) external returns (
         uint256 baseFee,
         uint256 surgeFeeValue,
         bool wasUpdated
     );
+    
+    /**
+     * @notice External function to trigger fee updates with rate limiting
+     * @param poolId The pool ID to update fees for
+     * @param key The pool key for the pool
+     */
+    function triggerFeeUpdate(PoolId poolId, PoolKey calldata key) external;
     
     /**
      * @notice Handle fee update and related event emissions

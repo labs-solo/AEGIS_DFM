@@ -36,6 +36,9 @@ library Errors {
     error InvalidPolicyImplementationsLength(uint256 length);
     error NotInitialized();
     error ReinvestmentDisabled();
+    error RateLimited();
+    error InvalidPoolKey();
+    error InvalidPoolId();
     
     // Math errors
     error DivisionByZero();
