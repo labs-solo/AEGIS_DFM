@@ -53,9 +53,6 @@ library TruncatedOracle {
         unchecked {
             uint32 delta = blockTimestamp - last.blockTimestamp;
 
-            // Enforce global tick boundaries using MathUtils for consistency
-            tick = MathUtils.clampTick(tick);
-            
             // Calculate absolute tick movement using optimized implementation
             uint24 tickMove = MathUtils.absDiff(tick, last.prevTick);
             
