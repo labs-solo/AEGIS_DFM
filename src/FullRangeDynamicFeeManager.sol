@@ -176,13 +176,6 @@ contract FullRangeDynamicFeeManager is Owned {
         
         int24 lastTick = pool.lastOracleTick;
         
-        // Validate tick is within global bounds
-        if (tick < TickMath.MIN_TICK) {
-            tick = TickMath.MIN_TICK;
-        } else if (tick > TickMath.MAX_TICK) {
-            tick = TickMath.MAX_TICK;
-        }
-        
         // Default to not capped
         tickCapped = false;
         
@@ -223,28 +216,6 @@ contract FullRangeDynamicFeeManager is Owned {
     }
     
     /**
-     * @notice Update oracle data for a pool
-     * @dev Legacy interface preserved for backward compatibility
-     *      Now redirects to the more gas-efficient pull-based approach
-     * @param poolId The pool ID to update
-     * @param tick The current tick value
-     */
-    function updateOracle(PoolId poolId, int24 tick) external {
-        // Fast path: direct call from the FullRange contract
-        if (msg.sender == fullRangeAddress) {
-            // Process directly when called by FullRange - old code path
-            PoolState storage pool = poolStates[poolId];
-            pool.lastOracleTick = tick;
-            pool.lastOracleUpdateBlock = uint32(block.number);
-            return;
-        }
-        
-        // For other callers, we don't update anything - the data should be
-        // pulled from FullRange using the reverse authorization model
-        revert Errors.AccessNotAuthorized(msg.sender);
-    }
-    
-    /**
      * @notice External function to trigger fee updates with rate limiting
      * @param poolId The pool ID to update fees for
      * @param key The pool key for the pool
@@ -272,7 +243,7 @@ contract FullRangeDynamicFeeManager is Owned {
         if (keyIdBytes != poolIdBytes) revert Errors.InvalidPoolKey();
         
         // Update fees
-        this.updateDynamicFeeIfNeeded(poolId, key);
+        updateDynamicFeeIfNeeded(poolId, key);
         
         // Record the update time
         pool.lastFeeUpdate = uint48(block.timestamp);
@@ -303,7 +274,7 @@ contract FullRangeDynamicFeeManager is Owned {
     function updateDynamicFeeIfNeeded(
         PoolId poolId,
         PoolKey calldata key
-    ) external returns (
+    ) public returns (
         uint256 baseFee,
         uint256 surgeFeeValue,
         bool wasUpdated
@@ -410,13 +381,6 @@ contract FullRangeDynamicFeeManager is Owned {
         
         // Get current tick from pool manager
         (uint160 sqrtPriceX96, int24 currentTick, , ) = StateLibrary.getSlot0(poolManager, poolId);
-        
-        // Validate currentTick is within global bounds
-        if (currentTick < TickMath.MIN_TICK) {
-            currentTick = TickMath.MIN_TICK;
-        } else if (currentTick > TickMath.MAX_TICK) {
-            currentTick = TickMath.MAX_TICK;
-        }
         
         // Default to not capped
         tickCapped = false;
