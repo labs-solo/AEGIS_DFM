@@ -2,7 +2,6 @@
 pragma solidity 0.8.26;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {ICAPEventDetector} from "./ICAPEventDetector.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
 /**
@@ -109,10 +108,8 @@ interface IFullRangeDynamicFeeManager {
      * @return True if a CAP event is active, false otherwise
      */
     function isCAPEventActive(PoolId poolId) external view returns (bool);
-    
-    /**
-     * @notice Gets the CAP event detector
-     * @return The CAP event detector address
-     */
-    function getCAPEventDetector() external view returns (ICAPEventDetector);
+
+    function isPoolInCapEvent(PoolId poolId) external view returns (bool);
+
+    function getCurrentDynamicFee(PoolId poolId) external view returns (uint256);
 } 

@@ -85,47 +85,45 @@ contract SimpleV4Test is Test {
             supportedTickSpacings
         );
 
-        // Create a placeholder address for FullRange since we need it for the managers
-        address fullRangePlaceholder = address(0x9999);
-        
-        // Deploy Liquidity Manager 
+        // Deploy Liquidity Manager
         liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
-        
+
         // Deploy FullRange hook using our improved method
-        address payable hookAddr = payable(_deployFullRange());
+        fullRange = _deployFullRange();
         
-        fullRange = FullRange(hookAddr);
-        
-        // Deploy Dynamic Fee Manager with actual FullRange address
+        // Deploy Dynamic Fee Manager AFTER FullRange, passing its address
         dynamicFeeManager = new FullRangeDynamicFeeManager(
             governance,
             IPoolPolicy(address(policyManager)),
             poolManager,
-            address(fullRange)
+            address(fullRange) // Pass the actual FullRange address now
         );
         
-        // Update managers with correct FullRange address
+        // Update managers with correct FullRange address & set DFM in FullRange
         vm.stopPrank();
         vm.startPrank(governance);
         liquidityManager.setFullRangeAddress(address(fullRange));
+        // Call the new setter in FullRange
+        fullRange.setDynamicFeeManager(dynamicFeeManager);
         vm.stopPrank();
         vm.startPrank(deployer);
 
         // Deploy swap router
         swapRouter = new PoolSwapTest(IPoolManager(address(poolManager)));
 
-        // Initialize pool
+        // Initialize pool key with the deployed hook address
         poolKey = PoolKey({
             currency0: Currency.wrap(address(token0)),
             currency1: Currency.wrap(address(token1)),
             fee: 3000,
             tickSpacing: 60,
-            hooks: IHooks(address(fullRange))
+            hooks: IHooks(address(fullRange)) // Use the deployed instance address
         });
 
         poolId = poolKey.toId();
 
         // Initialize pool with sqrt price of 1
+        // This should now succeed as the hook is deployed and configured
         poolManager.initialize(poolKey, 79228162514264337593543950336);
 
         // Mint test tokens to users
@@ -269,7 +267,7 @@ contract SimpleV4Test is Test {
         assertEq(bobToken1After - bobToken1Before, swapAmount, "Bob should have received exactly the swap amount of token1");
     }
 
-    function _deployFullRange() internal virtual returns (address) {
+    function _deployFullRange() internal virtual returns (FullRange) {
         // Calculate required hook flags
         uint160 flags = uint160(
             Hooks.BEFORE_INITIALIZE_FLAG | 
@@ -283,26 +281,40 @@ contract SimpleV4Test is Test {
             Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
         );
 
-        // Prepare constructor arguments
+        // Prepare constructor arguments for FullRange (WITHOUT dynamicFeeManager)
         bytes memory constructorArgs = abi.encode(
             address(poolManager),
             IPoolPolicy(address(policyManager)),
-            address(liquidityManager),
-            address(0), // placeholder for dynamicFeeManager
-            address(0)  // no CAP event detector needed
+            address(liquidityManager)
+            // Removed placeholderManager
         );
 
-        // Mine for a hook address with the correct permission bits
+        // Mine for a hook address and salt using the CORRECT creation code + args
         (address hookAddress, bytes32 salt) = HookMiner.find(
-            governance,
+            address(this), // Deployer in test context is `this` contract
             flags,
-            type(FullRange).creationCode,
-            constructorArgs
+            // Use creation code without dynamicFeeManager arg
+            abi.encodePacked(type(FullRange).creationCode, constructorArgs),
+            bytes("") // Constructor args already packed into creation code for find
         );
 
-        console2.log("Mined hook address:", hookAddress);
-        console2.log("Permission bits in address:", uint160(hookAddress) & Hooks.ALL_HOOK_MASK);
+        console2.log("Calculated hook address:", hookAddress);
+        console2.logBytes32(salt);
+        console2.log("Permission bits required:", flags);
 
-        return hookAddress;
+        // Deploy the hook using the mined salt and CORRECT constructor args
+        FullRange fullRangeInstance = new FullRange{salt: salt}(
+            poolManager, 
+            IPoolPolicy(address(policyManager)), 
+            liquidityManager
+        );
+
+        // Verify the deployed address matches the calculated address
+        require(address(fullRangeInstance) == hookAddress, "HookMiner address mismatch");
+        console2.log("Deployed hook address:", address(fullRangeInstance));
+        console2.log("Permission bits in deployed address:", uint160(address(fullRangeInstance)) & Hooks.ALL_HOOK_MASK);
+
+        // Return the deployed instance
+        return fullRangeInstance;
     }
 } 

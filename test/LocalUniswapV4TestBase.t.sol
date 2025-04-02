@@ -33,6 +33,10 @@ import {Owned} from "solmate/src/auth/Owned.sol";
 // Token mocks
 import "../src/token/MockERC20.sol";
 
+// New imports
+import { TruncatedOracle } from "../src/libraries/TruncatedOracle.sol";
+import { TruncGeoOracleMulti } from "../src/TruncGeoOracleMulti.sol";
+
 /**
  * @title LocalUniswapV4TestBase
  * @notice Base test contract that sets up a complete local Uniswap V4 environment with the FullRange hook
@@ -54,6 +58,7 @@ abstract contract LocalUniswapV4TestBase is Test {
     FullRangeLiquidityManager public liquidityManager;
     FullRangeDynamicFeeManager public dynamicFeeManager;
     FullRange public fullRange;
+    TruncGeoOracleMulti public truncGeoOracle;
     
     // Test contract references - these are adapter contracts for interacting with the PoolManager
     PoolModifyLiquidityTest public lpRouter;
@@ -106,11 +111,11 @@ abstract contract LocalUniswapV4TestBase is Test {
         
         // Deploy the local Uniswap V4 environment
         vm.startPrank(deployer);
+        console2.log("[SETUP] Deploying PoolManager...");
+        poolManager = new PoolManager(address(deployer)); 
+        console2.log("[SETUP] PoolManager Deployed.");
         
-        // Step 1: Deploy PoolManager
-        poolManager = new PoolManager(address(deployer)); // deployer as initial owner
-        
-        // Step 2: Deploy Policy Manager with proper configuration
+        console2.log("[SETUP] Deploying PolicyManager...");
         uint24[] memory supportedTickSpacings = new uint24[](3);
         supportedTickSpacings[0] = 10;
         supportedTickSpacings[1] = 60;
@@ -128,42 +133,50 @@ abstract contract LocalUniswapV4TestBase is Test {
             TICK_SCALING_FACTOR,
             supportedTickSpacings
         );
+        console2.log("[SETUP] PolicyManager Deployed.");
         
-        // Step 3: Deploy pool creation policy
-        DefaultPoolCreationPolicy defaultPolicy = new DefaultPoolCreationPolicy(governance);
-        
-        // Create a placeholder address for FullRange since we need it for the managers
-        address fullRangePlaceholder = address(0x9999);
-        
-        // Step 4: Deploy Liquidity Manager 
+        console2.log("[SETUP] Deploying LiquidityManager...");
         liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
+        console2.log("[SETUP] LiquidityManager Deployed.");
+
+        console2.log("[SETUP] Deploying TruncGeoOracleMulti...");
+        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance);
+        console2.log("[SETUP] TruncGeoOracleMulti Deployed.");
         
-        // Step 5: Deploy FullRange hook using our improved method
-        address payable hookAddr = payable(_deployFullRange());
+        vm.stopPrank();
+        vm.startPrank(governance);
+        console2.log("[SETUP] Deploying FullRange...");
+        fullRange = _deployFullRange();
+        console2.log("[SETUP] FullRange Deployed at:", address(fullRange));
         
-        fullRange = FullRange(hookAddr);
-        
-        // Step 6: Deploy Dynamic Fee Manager with actual FullRange address
+        console2.log("[SETUP] Deploying DynamicFeeManager...");
         dynamicFeeManager = new FullRangeDynamicFeeManager(
             governance,
             IPoolPolicy(address(policyManager)),
             poolManager,
             address(fullRange)
         );
+        console2.log("[SETUP] DynamicFeeManager Deployed.");
         
-        // Step 7: Update managers with correct FullRange address
-        vm.stopPrank();
-        vm.startPrank(governance);
+        console2.log("[SETUP] Setting LM.FullRangeAddress...");
         liquidityManager.setFullRangeAddress(address(fullRange));
+        console2.log("[SETUP] Setting FR.DynamicFeeManager...");
+        fullRange.setDynamicFeeManager(dynamicFeeManager);
+        console2.log("[SETUP] Setting FR.OracleAddress...");
+        fullRange.setOracleAddress(address(truncGeoOracle));
+        console2.log("[SETUP] Setting Oracle.FullRangeHook...");
+        truncGeoOracle.setFullRangeHook(address(fullRange));
+        console2.log("[SETUP] Setters Called.");
         vm.stopPrank();
-        vm.startPrank(deployer);
         
-        // Step 8: Deploy test routers
+        vm.startPrank(deployer);
+        console2.log("[SETUP] Deploying Routers...");
         lpRouter = new PoolModifyLiquidityTest(IPoolManager(address(poolManager)));
         swapRouter = new PoolSwapTest(IPoolManager(address(poolManager)));
         donateRouter = new PoolDonateTest(IPoolManager(address(poolManager)));
+        console2.log("[SETUP] Routers Deployed.");
         
-        // Step 9: Create test tokens
+        console2.log("[SETUP] Creating Tokens...");
         token0 = new MockERC20("Token0", "TKN0", 18);
         token1 = new MockERC20("Token1", "TKN1", 18);
         token2 = new MockERC20("Token2", "TKN2", 18);
@@ -173,7 +186,7 @@ abstract contract LocalUniswapV4TestBase is Test {
             (token0, token1) = (token1, token0);
         }
         
-        // Mint tokens to test accounts
+        // Mint tokens to test accounts (As deployer)
         token0.mint(alice, INITIAL_TOKEN_BALANCE);
         token0.mint(bob, INITIAL_TOKEN_BALANCE);
         token0.mint(charlie, INITIAL_TOKEN_BALANCE);
@@ -185,8 +198,9 @@ abstract contract LocalUniswapV4TestBase is Test {
         token2.mint(alice, INITIAL_TOKEN_BALANCE);
         token2.mint(bob, INITIAL_TOKEN_BALANCE);
         token2.mint(charlie, INITIAL_TOKEN_BALANCE);
-        
-        // Step 10: Create default pool
+        console2.log("[SETUP] Tokens Created.");
+
+        console2.log("[SETUP] Initializing Pool...");
         poolKey = PoolKey({
             currency0: Currency.wrap(address(token0)),
             currency1: Currency.wrap(address(token1)),
@@ -194,12 +208,12 @@ abstract contract LocalUniswapV4TestBase is Test {
             tickSpacing: DEFAULT_TICK_SPACING,
             hooks: IHooks(address(fullRange))
         });
-        
-        // Initialize the pool with 1:1 price
-        poolManager.initialize(poolKey, uint160(1 << 96)); // sqrt price = 1.0
+        poolManager.initialize(poolKey, uint160(1 << 96));
         poolId = poolKey.toId();
+        console2.log("[SETUP] Pool Initialized.");
         
         vm.stopPrank();
+        console2.log("[SETUP] Completed.");
     }
 
     /**
@@ -207,65 +221,49 @@ abstract contract LocalUniswapV4TestBase is Test {
      * @dev Uses CREATE2 with address mining to ensure the hook address has the correct permission bits
      * @return hookAddress The deployed FullRange hook address with correct permissions
      */
-    function _deployFullRange() internal virtual returns (address) {
+    function _deployFullRange() internal virtual returns (FullRange) {
         // Calculate required hook flags
         uint160 flags = uint160(
-            Hooks.BEFORE_INITIALIZE_FLAG | 
-            Hooks.AFTER_INITIALIZE_FLAG | 
-            Hooks.BEFORE_ADD_LIQUIDITY_FLAG | 
+            Hooks.BEFORE_INITIALIZE_FLAG |
+            Hooks.AFTER_INITIALIZE_FLAG |
+            Hooks.BEFORE_ADD_LIQUIDITY_FLAG |
             Hooks.AFTER_ADD_LIQUIDITY_FLAG |
             Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
             Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
-            Hooks.BEFORE_SWAP_FLAG | 
+            Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
             Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
         );
 
-        // Prepare constructor arguments
+        // Prepare constructor arguments (3 args)
         bytes memory constructorArgs = abi.encode(
             address(poolManager),
             IPoolPolicy(address(policyManager)),
-            address(liquidityManager),
-            address(0), // placeholder for dynamicFeeManager
-            address(0)  // no CAP event detector needed
+            address(liquidityManager)
         );
 
-        // Mine for a hook address with the correct permission bits
+        // Find salt using the correct deployer (governance, as per the setUp prank)
         (address hookAddress, bytes32 salt) = HookMiner.find(
-            governance,
+            governance, // Use the actual deployer address (governance)
             flags,
-            type(FullRange).creationCode,
-            constructorArgs
+            abi.encodePacked(type(FullRange).creationCode, constructorArgs),
+            bytes("")
         );
 
-        console2.log("Mined hook address:", hookAddress);
-        console2.log("Permission bits in address:", uint160(hookAddress) & Hooks.ALL_HOOK_MASK);
+        console2.log("[BaseTest] Calculated Hook Addr:", hookAddress);
+        console2.logBytes32(salt);
 
-        // Make sure we're pranking deployer before stopping
-        vm.stopPrank();
-
-        // Deploy from governance account - using a fresh prank without any existing prank active
-        vm.startPrank(governance);
-
-        // Deploy the hook with the mined salt
+        // Deploy using new 3-arg constructor
         FullRange hookContract = new FullRange{salt: salt}(
             poolManager,
             IPoolPolicy(address(policyManager)),
-            liquidityManager,
-            dynamicFeeManager,
-            address(0)
+            liquidityManager
         );
 
-        // Verify the deployment matches the expected address
-        require(address(hookContract) == hookAddress, "Hook address mismatch");
-        require((uint160(address(hookContract)) & Hooks.ALL_HOOK_MASK) == flags, "Hook permission bits mismatch");
+        require(address(hookContract) == hookAddress, "BaseTest: Hook address mismatch");
+        console2.log("[BaseTest] Deployed Hook Addr:", address(hookContract));
 
-        vm.stopPrank();
-        
-        // Resume deployer prank for the remaining setup
-        vm.startPrank(deployer);
-        
-        return address(hookContract);
+        return hookContract;
     }
 
     /**

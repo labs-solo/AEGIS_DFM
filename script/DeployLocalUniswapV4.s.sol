@@ -20,8 +20,6 @@ import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
 import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {DefaultCAPEventDetector} from "../src/DefaultCAPEventDetector.sol";
-import {ICAPEventDetector} from "../src/interfaces/ICAPEventDetector.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 
 /**
@@ -52,7 +50,11 @@ contract DeployLocalUniswapV4 is Script {
     address public constant GOVERNANCE = address(0x5); // Governance address
 
     function run() external {
-        vm.startBroadcast();
+        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
+        address deployerAddress = vm.addr(deployerPrivateKey);
+        address governance = deployerAddress; // Use deployer as governance for local test
+
+        vm.startBroadcast(deployerPrivateKey);
         
         // Step 1: Deploy PoolManager
         console2.log("Deploying PoolManager...");
@@ -62,10 +64,10 @@ contract DeployLocalUniswapV4 is Script {
         // Step 2: Deploy Policy Manager
         console2.log("Deploying PolicyManager...");
         policyManager = new PoolPolicyManager(
-            GOVERNANCE,      // owner
+            governance,      // owner
             100000,          // polSharePpm (10%)
-            0,          // fullRangeSharePpm (0%)
-            900000,          // lpSharePpm (80%)
+            0,               // fullRangeSharePpm (0%)
+            900000,          // lpSharePpm (90% - corrected from 80)
             100,             // minimumTradingFeePpm (0.01%)
             10000,           // feeClaimThresholdPpm (1%)
             1000,            // defaultPolMultiplier (1000)
@@ -74,48 +76,38 @@ contract DeployLocalUniswapV4 is Script {
             new uint24[](0)  // supportedTickSpacings (empty for now)
         );
         console2.log("PolicyManager deployed at:", address(policyManager));
-        
-        // Initialize with default policy - commenting out as this method doesn't exist
-        DefaultPoolCreationPolicy defaultPolicy = new DefaultPoolCreationPolicy(GOVERNANCE);
-        // policyManager.setPoolCreationPolicy(address(defaultPolicy));
-        
+                
         // Step 3: Deploy FullRange components
         console2.log("Deploying FullRange components...");
         
-        // Deploy Liquidity Manager with properly cast interface
-        liquidityManager = new FullRangeLiquidityManager(IPoolManager(address(poolManager)), GOVERNANCE);
+        // Deploy Liquidity Manager
+        liquidityManager = new FullRangeLiquidityManager(IPoolManager(address(poolManager)), governance);
         console2.log("LiquidityManager deployed at:", address(liquidityManager));
         
-        // Step 4: Mine hook address with correct callback permissions
-        console2.log("Mining hook address with correct callback permissions...");
-        
-        // For testing, we'll skip the hook mining since it's causing issues
-        bytes32 salt = bytes32(uint256(0x1));
-        
-        // Deploy FullRange first
+        // Deploy FullRange (using new 3-arg constructor)
         console2.log("Deploying FullRange hook...");
         fullRange = new FullRange(
             IPoolManager(address(poolManager)),
             IPoolPolicy(address(policyManager)),
-            liquidityManager,
-            address(0), // placeholder for dynamicFeeManager
-            address(0)  // no CAP event detector needed
+            liquidityManager
         );
         console2.log("FullRange hook deployed at:", address(fullRange));
         
-        // Now deploy DynamicFeeManager with the actual FullRange address
+        // Deploy DynamicFeeManager AFTER FullRange
         dynamicFeeManager = new FullRangeDynamicFeeManager(
-            GOVERNANCE,
+            governance,
             IPoolPolicy(address(policyManager)),
             IPoolManager(address(poolManager)),
-            address(fullRange)
+            address(fullRange) // Pass actual FullRange address
         );
         console2.log("DynamicFeeManager deployed at:", address(dynamicFeeManager));
         
-        // Record the hook deployment for verification
-        console2.log("Hook deployed successfully.");
-        
-        // Step 6: Deploy test routers
+        // Step 4: Configure deployed contracts
+        console2.log("Configuring contracts...");
+        liquidityManager.setFullRangeAddress(address(fullRange));
+        fullRange.setDynamicFeeManager(dynamicFeeManager); // Set DFM on FullRange
+
+        // Step 5: Deploy test routers
         console2.log("Deploying test routers...");
         lpRouter = new PoolModifyLiquidityTest(IPoolManager(address(poolManager)));
         swapRouter = new PoolSwapTest(IPoolManager(address(poolManager)));

@@ -27,8 +27,8 @@ import { IFullRangeHooks } from "./interfaces/IFullRangeHooks.sol";
 import { Currency } from "v4-core/src/types/Currency.sol";
 import { IERC20Minimal } from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import { TruncGeoOracleMulti } from "./TruncGeoOracleMulti.sol";
-import { DefaultCAPEventDetector } from "./DefaultCAPEventDetector.sol";
-import { ITruncGeoOracleMulti } from "./interfaces/ITruncGeoOracleMulti.sol";
+import { IFullRangeDynamicFeeManager } from "./interfaces/IFullRangeDynamicFeeManager.sol";
+import { IFullRangeLiquidityManager } from "./interfaces/IFullRangeLiquidityManager.sol";
 import { TruncatedOracle } from "./libraries/TruncatedOracle.sol";
 
 /**
@@ -57,7 +57,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     IPoolManager public immutable poolManager;
     IPoolPolicy public immutable policyManager;
     FullRangeLiquidityManager public immutable liquidityManager;
-    FullRangeDynamicFeeManager public immutable dynamicFeeManager;
+    FullRangeDynamicFeeManager public dynamicFeeManager;
     
     // Add a storage variable to track the current active dynamic fee manager
     FullRangeDynamicFeeManager private activeDynamicFeeManager;
@@ -150,19 +150,15 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     constructor(
         IPoolManager _manager,
         IPoolPolicy _policyManager,
-        FullRangeLiquidityManager _liquidityManager,
-        FullRangeDynamicFeeManager _dynamicFeeManager
+        FullRangeLiquidityManager _liquidityManager
     ) {
         if (address(_manager) == address(0)) revert Errors.ZeroAddress();
         if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_liquidityManager) == address(0)) revert Errors.ZeroAddress();
-        if (address(_dynamicFeeManager) == address(0)) revert Errors.ZeroAddress();
 
         poolManager = _manager;
         policyManager = _policyManager;
         liquidityManager = _liquidityManager;
-        dynamicFeeManager = _dynamicFeeManager;
-        activeDynamicFeeManager = _dynamicFeeManager;
         
         validateHookAddress();
     }
@@ -532,6 +528,11 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
+        // Ensure dynamic fee manager has been set
+        if (address(dynamicFeeManager) == address(0)) {
+            revert Errors.NotInitialized("DynamicFeeManager");
+        }
+        
         // Return dynamic fee and no delta
         return (
             IHooks.beforeSwap.selector,
@@ -553,6 +554,12 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     {
         PoolId poolId = key.toId();
         
+        // Ensure dynamic fee manager is set before proceeding if oracle depends on it
+        // (Assuming truncGeoOracle might implicitly depend on dynamic fee setup)
+        if (address(dynamicFeeManager) == address(0)) {
+             revert Errors.NotInitialized("DynamicFeeManager");
+        }
+
         // Security: Only process pools that are initialized in this contract
         // This prevents oracle updates for unrelated pools
         if (poolData[poolId].initialized && address(truncGeoOracle) != address(0)) {
@@ -722,16 +729,6 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
-     * @notice Set the active dynamic fee manager to be used
-     * @dev This allows updating the dynamic fee manager reference when a new one is deployed
-     * @param _dynamicFeeManager The new dynamic fee manager to use
-     */
-    function setActiveDynamicFeeManager(FullRangeDynamicFeeManager _dynamicFeeManager) external onlyGovernance {
-        if (address(_dynamicFeeManager) == address(0)) revert Errors.ZeroAddress();
-        activeDynamicFeeManager = _dynamicFeeManager;
-    }
-
-    /**
      * @notice Get oracle data for a specific pool
      * @dev Returns data from TruncGeoOracleMulti when available, falls back to local storage
      * @param poolId The ID of the pool to get oracle data for
@@ -764,5 +761,20 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     function setOracleAddress(address _oracleAddress) external onlyGovernance {
         if (_oracleAddress == address(0)) revert Errors.ZeroAddress();
         truncGeoOracle = TruncGeoOracleMulti(_oracleAddress);
+    }
+
+    // NEW FUNCTION: Setter for Dynamic Fee Manager
+    /**
+     * @notice Sets the dynamic fee manager address after deployment.
+     * @dev Breaks circular dependency during initialization. Can only be called by governance.
+     * @param _dynamicFeeManager The address of the deployed dynamic fee manager.
+     */
+    function setDynamicFeeManager(FullRangeDynamicFeeManager _dynamicFeeManager) external onlyGovernance {
+        // Prevent setting if already initialized
+        if (address(dynamicFeeManager) != address(0)) revert Errors.AlreadyInitialized("DynamicFeeManager");
+        if (address(_dynamicFeeManager) == address(0)) revert Errors.ZeroAddress();
+        
+        dynamicFeeManager = _dynamicFeeManager;
+        activeDynamicFeeManager = _dynamicFeeManager; // Set active manager as well
     }
 }

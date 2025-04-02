@@ -76,19 +76,14 @@ contract FullRangeDynamicFeeManager is Owned {
     
     // Events
     event DynamicFeeUpdated(PoolId indexed poolId, uint256 oldFeePpm, uint256 newFeePpm, bool capEventOccurred);
-    event SurgePriceMultiplierUpdated(uint256 oldMultiplier, uint256 newMultiplier);
-    event SurgeTriggerLevelUpdated(uint256 oldLevel, uint256 newLevel);
-    event SurgeDecayTimeUpdated(uint256 oldTime, uint256 newTime);
-    event SurgeModeChanged(PoolId indexed poolId, bool surgeEnabled);
     event SurgeFeeUpdated(PoolId indexed poolId, uint256 surgeFee, bool capEventOccurred);
-    event SurgeDurationUpdated(uint256 oldDuration, uint256 newDuration);
     event FeeAdjustmentApplied(PoolId indexed poolId, uint256 oldFee, uint256 newFee, uint8 adjustmentType);
     
     // Oracle events
     event OracleUpdated(PoolId indexed poolId, int24 oldTick, int24 newTick, bool tickCapped);
     event TickChangeCapped(PoolId indexed poolId, int24 actualChange, int24 cappedChange);
     event CapEventStateChanged(PoolId indexed poolId, bool isInCapEvent);
-    event ThresholdsUpdated(uint32 blockUpdateThreshold, int24 tickDiffThreshold);
+    event ThresholdsUpdated(uint32 blockUpdateThreshold, int24 tickThreshold);
     
     /**
      * @notice Access control modifier for FullRange contract
@@ -630,41 +625,30 @@ contract FullRangeDynamicFeeManager is Owned {
     }
     
     /**
-     * @notice Sets the surge price multiplier
-     * @param newMultiplier The new multiplier in PPM (1000000 = 100%)
-     */
-    function setSurgePriceMultiplier(uint256 newMultiplier) external onlyOwner {
-        if (newMultiplier < 1000000 || newMultiplier > 5000000) {
-            revert Errors.ParameterOutOfRange(newMultiplier, 1000000, 5000000);
-        }
-        
-        uint256 oldMultiplier = surgePriceMultiplier;
-        surgePriceMultiplier = newMultiplier;
-        
-        emit SurgePriceMultiplierUpdated(oldMultiplier, newMultiplier);
-    }
-    
-    /**
-     * @notice Sets the surge duration in seconds
-     * @param newDuration The new duration in seconds
-     */
-    function setSurgeDuration(uint256 newDuration) external onlyOwner {
-        if (newDuration < 300 || newDuration > 604800) { // 5 min to 7 days
-            revert Errors.ParameterOutOfRange(newDuration, 300, 604800);
-        }
-        
-        uint256 oldDuration = surgeDuration;
-        surgeDuration = newDuration;
-        
-        emit SurgeDurationUpdated(oldDuration, newDuration);
-    }
-    
-    /**
      * @notice Checks if a pool is currently in a CAP event state.
      * @param poolId The ID of the pool.
      * @return True if the pool is in a CAP event state, false otherwise.
      */
     function isPoolInCapEvent(PoolId poolId) external view returns (bool) {
         return poolStates[poolId].isInCapEvent;
+    }
+
+    /**
+     * @notice Checks if a pool's tick movement is currently capped.
+     * @param poolId The ID of the pool.
+     * @return True if the tick movement is capped, false otherwise.
+     */
+    function isTickCapped(PoolId poolId) external view returns (bool) {
+        PoolState storage pool = poolStates[poolId];
+        
+        // Get current tick from pool manager
+        (,int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+        
+        // Calculate max allowed tick change based on dynamic fee and scaling factor
+        int24 tickScalingFactor = policy.getTickScalingFactor();
+        int24 maxTickChange = _calculateMaxTickChange(pool.baseFeePpm, tickScalingFactor);
+        
+        // Check if tick change exceeds the maximum allowed
+        return MathUtils.absDiff(currentTick, pool.lastOracleTick) > uint24(maxTickChange);
     }
 }

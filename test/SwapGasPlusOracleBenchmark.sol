@@ -1261,7 +1261,7 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
      * @notice Checks if CAP detector has detected an event
      */
     function checkCAPWasTriggered() private returns (bool) {
-        return dynamicFeeManager.isTickCapped(poolId);
+        return dynamicFeeManager.isPoolInCapEvent(poolId);
     }
     
     /**
@@ -1371,8 +1371,8 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
                     tickMove = 80;
                 }
             } else {
-                uint256 seed = uint256(keccak256(abi.encodePacked(i, "cap", block.timestamp)));
-                int24 randomComponent = int24(int256(seed % 8)) - 4;
+                uint256 capSeed = uint256(keccak256(abi.encodePacked(i, "cap", block.timestamp)));
+                int24 randomComponent = int24(int256(capSeed % 8)) - 4;
                 tickMove = randomComponent;
             }
             

@@ -37,7 +37,7 @@ contract TruncGeoOracleMulti {
     IPoolManager public immutable poolManager;
     
     // The authorized FullRange hook address - critical for secure mutual authentication
-    address public immutable fullRangeHook;
+    address public fullRangeHook;
 
     // Number of historic observations to keep (roughly 24h at 1h sample rate)
     uint32 internal constant SAMPLE_CAPACITY = 24;
@@ -60,43 +60,53 @@ contract TruncGeoOracleMulti {
     event MaxTickMoveUpdated(bytes32 indexed poolId, int24 oldMove, int24 newMove);
     event CardinalityIncreased(bytes32 indexed poolId, uint16 oldCardinality, uint16 newCardinality);
 
+    address public governance; // Need governance address for setter
+
     /**
-     * @notice Constructor - establishes the trusted contract relationship
+     * @notice Constructor - MODIFIED: Removed _fullRangeHook
      * @param _poolManager The Uniswap V4 Pool Manager
-     * @param _fullRangeHook The authorized FullRange hook address
-     * @dev The trusted FullRange address is set at deployment and cannot be changed,
-     *      creating an immutable security relationship between the contracts.
-     *      This prevents later manipulation of the authentication system.
+     * @param _governance The initial governance address for setting the hook
      */
-    constructor(IPoolManager _poolManager, address _fullRangeHook) {
+    constructor(IPoolManager _poolManager, address _governance) {
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
-        if (_fullRangeHook == address(0)) revert Errors.ZeroAddress();
+        if (_governance == address(0)) revert Errors.ZeroAddress();
         
         poolManager = _poolManager;
-        fullRangeHook = _fullRangeHook;
+        governance = _governance;
+        // fullRangeHook = _fullRangeHook; // REMOVED
+    }
+
+    // NEW FUNCTION: Setter for FullRange hook address
+    /**
+     * @notice Sets the trusted FullRange hook address after deployment.
+     * @param _hook The address of the FullRange hook contract.
+     */
+    function setFullRangeHook(address _hook) external {
+        // Only allow governance to set this once
+        if (msg.sender != governance) revert Errors.AccessOnlyGovernance(msg.sender);
+        if (fullRangeHook != address(0)) revert Errors.AlreadyInitialized("FullRangeHook");
+        if (_hook == address(0)) revert Errors.ZeroAddress();
+        fullRangeHook = _hook;
+    }
+    
+    modifier onlyFullRangeHook() {
+        // ADDED Check: Ensure hook address is set before checking msg.sender
+        if (fullRangeHook == address(0)) {
+            revert Errors.NotInitialized("FullRangeHook");
+        }
+        if (msg.sender != fullRangeHook) {
+            revert Errors.AccessNotAuthorized(msg.sender);
+        }
+        _;
     }
 
     /**
      * @notice Enables oracle functionality for a pool.
-     * @param key The pool key.
-     * @param initialMaxAbsTickMove The initial maximum tick movement.
-     * @dev Must be called once per pool. Enforces full-range requirements.
-     * 
-     * @dev SECURITY: This function is protected by the mutual authentication system.
-     *      Only the authorized FullRange hook can enable oracle functionality for a pool.
-     *      This prevents malicious contracts from initializing the oracle with invalid parameters.
-     *      The function performs multiple validations:
-     *      1. Caller authentication check
-     *      2. Validates the pool isn't already enabled
-     *      3. Ensures the pool uses either dynamic fee or zero fee
-     *      Together, these protections create defense in depth against manipulation.
+     * MODIFIED: Uses modifier, added check
      */
-    function enableOracleForPool(PoolKey calldata key, int24 initialMaxAbsTickMove) external {
-        // Security: Only allow initialization from the FullRange hook contract
-        // This is the first part of the mutual authentication system
-        if (msg.sender != fullRangeHook) {
-            revert Errors.AccessNotAuthorized(msg.sender);
-        }
+    function enableOracleForPool(PoolKey calldata key, int24 initialMaxAbsTickMove) external onlyFullRangeHook {
+        // Check moved to modifier
+        // if (msg.sender != fullRangeHook) { ... }
         
         PoolId pid = key.toId();
         bytes32 id = PoolId.unwrap(pid);
@@ -119,23 +129,12 @@ contract TruncGeoOracleMulti {
 
     /**
      * @notice Updates oracle observations for a pool.
-     * @param key The pool key.
-     * @dev Called by the hook (FullRange.sol) during its callbacks.
-     * 
-     * @dev SECURITY: This function enforces multiple security checks:
-     *      1. Caller must be the trusted FullRange hook (mutual authentication)
-     *      2. Verifies the pool exists in PoolManager
-     *      3. Confirms the pool is enabled in the oracle system
-     *      4. Applies tick capping via the TruncatedOracle library
-     *      This prevents price manipulation attacks targeting the oracle.
+     * MODIFIED: Uses modifier, added check
      */
-    function updateObservation(PoolKey calldata key) external {
-        // Security: Only allow updates from the authorized FullRange hook
-        // This is critical to prevent manipulation by untrusted contracts
-        if (msg.sender != fullRangeHook) {
-            revert Errors.AccessNotAuthorized(msg.sender);
-        }
-        
+    function updateObservation(PoolKey calldata key) external onlyFullRangeHook {
+        // Check moved to modifier
+        // if (msg.sender != fullRangeHook) { ... }
+
         PoolId pid = key.toId();
         bytes32 id = PoolId.unwrap(pid);
         
