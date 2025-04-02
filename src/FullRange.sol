@@ -58,7 +58,6 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     IPoolPolicy public immutable policyManager;
     FullRangeLiquidityManager public immutable liquidityManager;
     FullRangeDynamicFeeManager public immutable dynamicFeeManager;
-    DefaultCAPEventDetector public immutable capEventDetector;
     
     // Add a storage variable to track the current active dynamic fee manager
     FullRangeDynamicFeeManager private activeDynamicFeeManager;
@@ -152,20 +151,17 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         IPoolManager _manager,
         IPoolPolicy _policyManager,
         FullRangeLiquidityManager _liquidityManager,
-        FullRangeDynamicFeeManager _dynamicFeeManager,
-        DefaultCAPEventDetector _capEventDetector
+        FullRangeDynamicFeeManager _dynamicFeeManager
     ) {
         if (address(_manager) == address(0)) revert Errors.ZeroAddress();
         if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_liquidityManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_dynamicFeeManager) == address(0)) revert Errors.ZeroAddress();
-        if (address(_capEventDetector) == address(0)) revert Errors.ZeroAddress();
 
         poolManager = _manager;
         policyManager = _policyManager;
         liquidityManager = _liquidityManager;
         dynamicFeeManager = _dynamicFeeManager;
-        capEventDetector = _capEventDetector;
         activeDynamicFeeManager = _dynamicFeeManager;
         
         validateHookAddress();
@@ -577,12 +573,6 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
                 // If this fails, the entire transaction will revert
                 truncGeoOracle.updateObservation(key);
                 emit OracleUpdated(poolId, currentTick, uint32(block.timestamp));
-                
-                // Check for CAP events
-                bool isCAPEvent = capEventDetector.detectCAPEvent(poolId);
-                if (isCAPEvent) {
-                    emit CAPEventDetected(poolId, currentTick);
-                }
             }
         }
         

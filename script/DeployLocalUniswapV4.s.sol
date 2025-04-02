@@ -82,13 +82,6 @@ contract DeployLocalUniswapV4 is Script {
         // Step 3: Deploy FullRange components
         console2.log("Deploying FullRange components...");
         
-        // First create a DefaultCAPEventDetector
-        DefaultCAPEventDetector capEventDetector = new DefaultCAPEventDetector(
-            IPoolManager(address(poolManager)),
-            GOVERNANCE
-        );
-        console2.log("CAPEventDetector deployed at:", address(capEventDetector));
-        
         // Deploy Liquidity Manager with properly cast interface
         liquidityManager = new FullRangeLiquidityManager(IPoolManager(address(poolManager)), GOVERNANCE);
         console2.log("LiquidityManager deployed at:", address(liquidityManager));
@@ -99,26 +92,25 @@ contract DeployLocalUniswapV4 is Script {
         // For testing, we'll skip the hook mining since it's causing issues
         bytes32 salt = bytes32(uint256(0x1));
         
-        // Deploy DynamicFeeManager first with the actual hook address placeholders
-        dynamicFeeManager = new FullRangeDynamicFeeManager(
-            GOVERNANCE,
-            IPoolPolicy(address(policyManager)),
-            IPoolManager(address(poolManager)),
-            address(1), // temp placeholder address
-            ICAPEventDetector(address(capEventDetector))
-        );
-        console2.log("DynamicFeeManager deployed at:", address(dynamicFeeManager));
-        
-        // Now deploy the FullRange hook directly
+        // Deploy FullRange first
         console2.log("Deploying FullRange hook...");
         fullRange = new FullRange(
             IPoolManager(address(poolManager)),
             IPoolPolicy(address(policyManager)),
             liquidityManager,
-            dynamicFeeManager,
-            capEventDetector
+            address(0), // placeholder for dynamicFeeManager
+            address(0)  // no CAP event detector needed
         );
         console2.log("FullRange hook deployed at:", address(fullRange));
+        
+        // Now deploy DynamicFeeManager with the actual FullRange address
+        dynamicFeeManager = new FullRangeDynamicFeeManager(
+            GOVERNANCE,
+            IPoolPolicy(address(policyManager)),
+            IPoolManager(address(poolManager)),
+            address(fullRange)
+        );
+        console2.log("DynamicFeeManager deployed at:", address(dynamicFeeManager));
         
         // Record the hook deployment for verification
         console2.log("Hook deployed successfully.");

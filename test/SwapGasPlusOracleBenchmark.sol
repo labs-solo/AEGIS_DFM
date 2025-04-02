@@ -9,12 +9,15 @@ import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {ICAPEventDetector} from "../src/interfaces/ICAPEventDetector.sol";
 import {LiquidityAmounts} from "v4-core/test/utils/LiquidityAmounts.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {BalanceDelta} from "../lib/v4-core/src/types/BalanceDelta.sol";
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {Strings} from "v4-core/lib/openzeppelin-contracts/contracts/utils/Strings.sol";
+import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol";
+import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
+import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
+import {HookMiner} from "../src/utils/HookMiner.sol";
 
 /**
  * @title SwapGasPlusOracleBenchmark
@@ -1258,7 +1261,7 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
      * @notice Checks if CAP detector has detected an event
      */
     function checkCAPWasTriggered() private returns (bool) {
-        return ICAPEventDetector(address(capEventDetector)).detectCAPEvent(poolId);
+        return dynamicFeeManager.isTickCapped(poolId);
     }
     
     /**

@@ -20,8 +20,8 @@ import {FullRange} from "../src/FullRange.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
-import {DefaultCAPEventDetector} from "../src/DefaultCAPEventDetector.sol";
-import {ICAPEventDetector} from "../src/interfaces/ICAPEventDetector.sol";
+import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
+import {Owned} from "solmate/src/auth/Owned.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {DepositParams, WithdrawParams} from "../src/interfaces/IFullRange.sol";
 
@@ -39,7 +39,6 @@ contract SimpleV4Test is Test {
     FullRangeLiquidityManager liquidityManager;
     FullRangeDynamicFeeManager dynamicFeeManager;
     PoolPolicyManager policyManager;
-    DefaultCAPEventDetector capEventDetector;
     PoolSwapTest swapRouter;
 
     // Test tokens
@@ -86,89 +85,31 @@ contract SimpleV4Test is Test {
             supportedTickSpacings
         );
 
-        // Deploy CAP Event Detector
-        capEventDetector = new DefaultCAPEventDetector(poolManager, governance);
-
-        // Deploy Liquidity Manager
+        // Create a placeholder address for FullRange since we need it for the managers
+        address fullRangePlaceholder = address(0x9999);
+        
+        // Deploy Liquidity Manager 
         liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
-
-        // We need to create a temporary address for FullRange since the constructor requires a non-zero address
-        address tempFullRangeAddress = address(1);
         
-        // Deploy Dynamic Fee Manager with temporary FullRange address
+        // Deploy FullRange hook using our improved method
+        address payable hookAddr = payable(_deployFullRange());
+        
+        fullRange = FullRange(hookAddr);
+        
+        // Deploy Dynamic Fee Manager with actual FullRange address
         dynamicFeeManager = new FullRangeDynamicFeeManager(
             governance,
             IPoolPolicy(address(policyManager)),
             poolManager,
-            tempFullRangeAddress, // temporary address - will be updated after FullRange deployment
-            ICAPEventDetector(address(capEventDetector))
+            address(fullRange)
         );
-
-        // Calculate required hook flags
-        uint160 flags = uint160(
-            Hooks.BEFORE_INITIALIZE_FLAG | 
-            Hooks.AFTER_INITIALIZE_FLAG | 
-            Hooks.BEFORE_ADD_LIQUIDITY_FLAG | 
-            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
-            Hooks.BEFORE_SWAP_FLAG | 
-            Hooks.AFTER_SWAP_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
-        );
-
-        // Prepare constructor arguments
-        bytes memory constructorArgs = abi.encode(
-            address(poolManager),
-            IPoolPolicy(address(policyManager)),
-            address(liquidityManager),
-            address(dynamicFeeManager),
-            address(capEventDetector)
-        );
-
-        // Mine for a hook address with the correct permission bits
-        (address hookAddress, bytes32 salt) = HookMiner.find(
-            governance,
-            flags,
-            type(FullRange).creationCode,
-            constructorArgs
-        );
-
-        console2.log("Mined hook address:", hookAddress);
-        console2.log("Permission bits in address:", uint160(hookAddress) & Hooks.ALL_HOOK_MASK);
-
-        // Deploy from governance account
-        vm.startPrank(governance);
-
-        // Deploy the hook with the mined salt
-        fullRange = new FullRange{salt: salt}(
-            poolManager,
-            IPoolPolicy(address(policyManager)),
-            liquidityManager,
-            dynamicFeeManager,
-            capEventDetector
-        );
-
-        // Verify the deployment
-        require(address(fullRange) == hookAddress, "Hook address mismatch");
-        require((uint160(address(fullRange)) & Hooks.ALL_HOOK_MASK) == flags, "Hook permission bits mismatch");
-
+        
         // Update managers with correct FullRange address
-        liquidityManager.setFullRangeAddress(address(fullRange));
-        
-        // Redeploy the dynamic fee manager with the correct FullRange address
-        dynamicFeeManager = new FullRangeDynamicFeeManager(
-            governance,
-            IPoolPolicy(address(policyManager)),
-            poolManager,
-            address(fullRange),  // Now using the actual FullRange address
-            ICAPEventDetector(address(capEventDetector))
-        );
-        
-        // Update the fullRange to use the new dynamicFeeManager
-        fullRange.setActiveDynamicFeeManager(dynamicFeeManager);
-
         vm.stopPrank();
+        vm.startPrank(governance);
+        liquidityManager.setFullRangeAddress(address(fullRange));
+        vm.stopPrank();
+        vm.startPrank(deployer);
 
         // Deploy swap router
         swapRouter = new PoolSwapTest(IPoolManager(address(poolManager)));
@@ -326,5 +267,42 @@ contract SimpleV4Test is Test {
         assertTrue(bobToken0Before > bobToken0After, "Bob should have spent some token0");
         assertTrue(bobToken1After > bobToken1Before, "Bob should have received some token1");
         assertEq(bobToken1After - bobToken1Before, swapAmount, "Bob should have received exactly the swap amount of token1");
+    }
+
+    function _deployFullRange() internal virtual returns (address) {
+        // Calculate required hook flags
+        uint160 flags = uint160(
+            Hooks.BEFORE_INITIALIZE_FLAG | 
+            Hooks.AFTER_INITIALIZE_FLAG | 
+            Hooks.BEFORE_ADD_LIQUIDITY_FLAG | 
+            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
+            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
+            Hooks.BEFORE_SWAP_FLAG | 
+            Hooks.AFTER_SWAP_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+        );
+
+        // Prepare constructor arguments
+        bytes memory constructorArgs = abi.encode(
+            address(poolManager),
+            IPoolPolicy(address(policyManager)),
+            address(liquidityManager),
+            address(0), // placeholder for dynamicFeeManager
+            address(0)  // no CAP event detector needed
+        );
+
+        // Mine for a hook address with the correct permission bits
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            governance,
+            flags,
+            type(FullRange).creationCode,
+            constructorArgs
+        );
+
+        console2.log("Mined hook address:", hookAddress);
+        console2.log("Permission bits in address:", uint160(hookAddress) & Hooks.ALL_HOOK_MASK);
+
+        return hookAddress;
     }
 } 

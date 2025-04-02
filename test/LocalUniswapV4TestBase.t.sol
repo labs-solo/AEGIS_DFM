@@ -27,8 +27,6 @@ import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
-import {DefaultCAPEventDetector} from "../src/DefaultCAPEventDetector.sol";
-import {ICAPEventDetector} from "../src/interfaces/ICAPEventDetector.sol";
 import {HookMiner} from "../src/utils/HookMiner.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 
@@ -55,7 +53,6 @@ abstract contract LocalUniswapV4TestBase is Test {
     PoolPolicyManager public policyManager;
     FullRangeLiquidityManager public liquidityManager;
     FullRangeDynamicFeeManager public dynamicFeeManager;
-    DefaultCAPEventDetector public capEventDetector;
     FullRange public fullRange;
     
     // Test contract references - these are adapter contracts for interacting with the PoolManager
@@ -138,39 +135,35 @@ abstract contract LocalUniswapV4TestBase is Test {
         // Create a placeholder address for FullRange since we need it for the managers
         address fullRangePlaceholder = address(0x9999);
         
-        // Step 4: Deploy CAP Event Detector
-        capEventDetector = new DefaultCAPEventDetector(poolManager, governance);
-        
-        // Step 5: Deploy Liquidity Manager 
+        // Step 4: Deploy Liquidity Manager 
         liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
         
-        // Step 6: Deploy Dynamic Fee Manager - need to use fullRangePlaceholder initially
-        dynamicFeeManager = new FullRangeDynamicFeeManager(
-            governance,
-            IPoolPolicy(address(policyManager)),
-            poolManager,
-            fullRangePlaceholder,
-            ICAPEventDetector(address(capEventDetector))
-        );
-        
-        // Step 7: Deploy FullRange hook using our improved method
+        // Step 5: Deploy FullRange hook using our improved method
         address payable hookAddr = payable(_deployFullRange());
         
         fullRange = FullRange(hookAddr);
         
-        // Step 8: Update managers with correct FullRange address
+        // Step 6: Deploy Dynamic Fee Manager with actual FullRange address
+        dynamicFeeManager = new FullRangeDynamicFeeManager(
+            governance,
+            IPoolPolicy(address(policyManager)),
+            poolManager,
+            address(fullRange)
+        );
+        
+        // Step 7: Update managers with correct FullRange address
         vm.stopPrank();
         vm.startPrank(governance);
         liquidityManager.setFullRangeAddress(address(fullRange));
         vm.stopPrank();
         vm.startPrank(deployer);
         
-        // Step 9: Deploy test routers
+        // Step 8: Deploy test routers
         lpRouter = new PoolModifyLiquidityTest(IPoolManager(address(poolManager)));
         swapRouter = new PoolSwapTest(IPoolManager(address(poolManager)));
         donateRouter = new PoolDonateTest(IPoolManager(address(poolManager)));
         
-        // Step 10: Create test tokens
+        // Step 9: Create test tokens
         token0 = new MockERC20("Token0", "TKN0", 18);
         token1 = new MockERC20("Token1", "TKN1", 18);
         token2 = new MockERC20("Token2", "TKN2", 18);
@@ -193,7 +186,7 @@ abstract contract LocalUniswapV4TestBase is Test {
         token2.mint(bob, INITIAL_TOKEN_BALANCE);
         token2.mint(charlie, INITIAL_TOKEN_BALANCE);
         
-        // Step 11: Create default pool
+        // Step 10: Create default pool
         poolKey = PoolKey({
             currency0: Currency.wrap(address(token0)),
             currency1: Currency.wrap(address(token1)),
@@ -233,8 +226,8 @@ abstract contract LocalUniswapV4TestBase is Test {
             address(poolManager),
             IPoolPolicy(address(policyManager)),
             address(liquidityManager),
-            address(dynamicFeeManager),
-            address(capEventDetector)
+            address(0), // placeholder for dynamicFeeManager
+            address(0)  // no CAP event detector needed
         );
 
         // Mine for a hook address with the correct permission bits
@@ -260,7 +253,7 @@ abstract contract LocalUniswapV4TestBase is Test {
             IPoolPolicy(address(policyManager)),
             liquidityManager,
             dynamicFeeManager,
-            capEventDetector
+            address(0)
         );
 
         // Verify the deployment matches the expected address
