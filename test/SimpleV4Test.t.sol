@@ -20,8 +20,8 @@ import {FullRange} from "../src/FullRange.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
-import {DefaultCAPEventDetector} from "../src/DefaultCAPEventDetector.sol";
-import {ICAPEventDetector} from "../src/interfaces/ICAPEventDetector.sol";
+import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
+import {Owned} from "solmate/src/auth/Owned.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {DepositParams, WithdrawParams} from "../src/interfaces/IFullRange.sol";
 
@@ -39,7 +39,6 @@ contract SimpleV4Test is Test {
     FullRangeLiquidityManager liquidityManager;
     FullRangeDynamicFeeManager dynamicFeeManager;
     PoolPolicyManager policyManager;
-    DefaultCAPEventDetector capEventDetector;
     PoolSwapTest swapRouter;
 
     // Test tokens
@@ -86,100 +85,45 @@ contract SimpleV4Test is Test {
             supportedTickSpacings
         );
 
-        // Deploy CAP Event Detector
-        capEventDetector = new DefaultCAPEventDetector(poolManager, governance);
-
         // Deploy Liquidity Manager
         liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
 
-        // We need to create a temporary address for FullRange since the constructor requires a non-zero address
-        address tempFullRangeAddress = address(1);
+        // Deploy FullRange hook using our improved method
+        fullRange = _deployFullRange();
         
-        // Deploy Dynamic Fee Manager with temporary FullRange address
+        // Deploy Dynamic Fee Manager AFTER FullRange, passing its address
         dynamicFeeManager = new FullRangeDynamicFeeManager(
             governance,
             IPoolPolicy(address(policyManager)),
             poolManager,
-            tempFullRangeAddress, // temporary address - will be updated after FullRange deployment
-            ICAPEventDetector(address(capEventDetector))
+            address(fullRange) // Pass the actual FullRange address now
         );
-
-        // Calculate required hook flags
-        uint160 flags = uint160(
-            Hooks.BEFORE_INITIALIZE_FLAG | 
-            Hooks.AFTER_INITIALIZE_FLAG | 
-            Hooks.BEFORE_ADD_LIQUIDITY_FLAG | 
-            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
-            Hooks.BEFORE_SWAP_FLAG | 
-            Hooks.AFTER_SWAP_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
-        );
-
-        // Prepare constructor arguments
-        bytes memory constructorArgs = abi.encode(
-            address(poolManager),
-            IPoolPolicy(address(policyManager)),
-            address(liquidityManager),
-            address(dynamicFeeManager)
-        );
-
-        // Mine for a hook address with the correct permission bits
-        (address hookAddress, bytes32 salt) = HookMiner.find(
-            governance,
-            flags,
-            type(FullRange).creationCode,
-            constructorArgs
-        );
-
-        console2.log("Mined hook address:", hookAddress);
-        console2.log("Permission bits in address:", uint160(hookAddress) & Hooks.ALL_HOOK_MASK);
-
-        // Deploy from governance account
-        vm.startPrank(governance);
-
-        // Deploy the hook with the mined salt
-        fullRange = new FullRange{salt: salt}(
-            poolManager,
-            IPoolPolicy(address(policyManager)),
-            liquidityManager,
-            dynamicFeeManager
-        );
-
-        // Verify the deployment
-        require(address(fullRange) == hookAddress, "Hook address mismatch");
-        require((uint160(address(fullRange)) & Hooks.ALL_HOOK_MASK) == flags, "Hook permission bits mismatch");
-
-        // Update managers with correct FullRange address
-        liquidityManager.setFullRangeAddress(address(fullRange));
         
-        // Redeploy the dynamic fee manager with the correct FullRange address
-        dynamicFeeManager = new FullRangeDynamicFeeManager(
-            governance,
-            IPoolPolicy(address(policyManager)),
-            poolManager,
-            address(fullRange),  // Now using the actual FullRange address
-            ICAPEventDetector(address(capEventDetector))
-        );
-
+        // Update managers with correct FullRange address & set DFM in FullRange
         vm.stopPrank();
+        vm.startPrank(governance);
+        liquidityManager.setFullRangeAddress(address(fullRange));
+        // Call the new setter in FullRange
+        fullRange.setDynamicFeeManager(dynamicFeeManager);
+        vm.stopPrank();
+        vm.startPrank(deployer);
 
         // Deploy swap router
         swapRouter = new PoolSwapTest(IPoolManager(address(poolManager)));
 
-        // Initialize pool
+        // Initialize pool key with the deployed hook address
         poolKey = PoolKey({
             currency0: Currency.wrap(address(token0)),
             currency1: Currency.wrap(address(token1)),
             fee: 3000,
             tickSpacing: 60,
-            hooks: IHooks(address(fullRange))
+            hooks: IHooks(address(fullRange)) // Use the deployed instance address
         });
 
         poolId = poolKey.toId();
 
         // Initialize pool with sqrt price of 1
+        // This should now succeed as the hook is deployed and configured
         poolManager.initialize(poolKey, 79228162514264337593543950336);
 
         // Mint test tokens to users
@@ -321,5 +265,56 @@ contract SimpleV4Test is Test {
         assertTrue(bobToken0Before > bobToken0After, "Bob should have spent some token0");
         assertTrue(bobToken1After > bobToken1Before, "Bob should have received some token1");
         assertEq(bobToken1After - bobToken1Before, swapAmount, "Bob should have received exactly the swap amount of token1");
+    }
+
+    function _deployFullRange() internal virtual returns (FullRange) {
+        // Calculate required hook flags
+        uint160 flags = uint160(
+            Hooks.BEFORE_INITIALIZE_FLAG | 
+            Hooks.AFTER_INITIALIZE_FLAG | 
+            Hooks.BEFORE_ADD_LIQUIDITY_FLAG | 
+            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
+            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
+            Hooks.BEFORE_SWAP_FLAG | 
+            Hooks.AFTER_SWAP_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+        );
+
+        // Prepare constructor arguments for FullRange (WITHOUT dynamicFeeManager)
+        bytes memory constructorArgs = abi.encode(
+            address(poolManager),
+            IPoolPolicy(address(policyManager)),
+            address(liquidityManager)
+            // Removed placeholderManager
+        );
+
+        // Mine for a hook address and salt using the CORRECT creation code + args
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            address(this), // Deployer in test context is `this` contract
+            flags,
+            // Use creation code without dynamicFeeManager arg
+            abi.encodePacked(type(FullRange).creationCode, constructorArgs),
+            bytes("") // Constructor args already packed into creation code for find
+        );
+
+        console2.log("Calculated hook address:", hookAddress);
+        console2.logBytes32(salt);
+        console2.log("Permission bits required:", flags);
+
+        // Deploy the hook using the mined salt and CORRECT constructor args
+        FullRange fullRangeInstance = new FullRange{salt: salt}(
+            poolManager, 
+            IPoolPolicy(address(policyManager)), 
+            liquidityManager
+        );
+
+        // Verify the deployed address matches the calculated address
+        require(address(fullRangeInstance) == hookAddress, "HookMiner address mismatch");
+        console2.log("Deployed hook address:", address(fullRangeInstance));
+        console2.log("Permission bits in deployed address:", uint160(address(fullRangeInstance)) & Hooks.ALL_HOOK_MASK);
+
+        // Return the deployed instance
+        return fullRangeInstance;
     }
 } 

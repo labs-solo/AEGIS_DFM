@@ -34,8 +34,11 @@ library Errors {
     error ArrayLengthMismatch();
     error InvalidCallbackSalt();
     error InvalidPolicyImplementationsLength(uint256 length);
-    error NotInitialized();
+    error NotInitialized(string component);
     error ReinvestmentDisabled();
+    error RateLimited();
+    error InvalidPoolKey();
+    error InvalidPoolId();
     
     // Math errors
     error DivisionByZero();
@@ -174,4 +177,6 @@ library Errors {
 
     /// @notice Error thrown when direct pool data reading fails
     error FailedToReadPoolData(PoolId poolId);
+
+    error AlreadyInitialized(string component);
 } 

@@ -122,4 +122,13 @@ interface IFullRange is IHooks {
             uint128 totalShares,
             uint256 tokenId
         );
+
+    /**
+     * @notice Get oracle data for a specific pool
+     * @dev Used by DynamicFeeManager to pull data instead of receiving updates
+     * @param poolId The ID of the pool to get oracle data for
+     * @return tick The latest recorded tick
+     * @return blockNumber The block number when the tick was last updated
+     */
+    function getOracleData(PoolId poolId) external view returns (int24 tick, uint32 blockNumber);
 } 

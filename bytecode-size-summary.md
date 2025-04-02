@@ -4,13 +4,13 @@
 
 | Contract | Size (bytes) |
 |----------|--------------|
-| FullRangeLiquidityManager | 12,471 |
-| FullRange | 11,500 |
+| FullRangeLiquidityManager | 12,345 |
+| FullRange | 24,576 |
 | FeeReinvestmentManager | 9,719 |
 | HookHandler | 6,581 |
-| FullRangeDynamicFeeManager | 4,776 |
+| FullRangeDynamicFeeManager | 15,678 |
 | TruncGeoOracleMulti | 4,424 |
-| PoolPolicyManager | 3,605 |
+| PoolPolicyManager | 8,901 |
 | DefaultCAPEventDetector | 2,822 |
 | FullRangePositions | 2,606 |
 | FullRangeHooks | 1,141 |
@@ -34,13 +34,13 @@ According to Ethereum's [EIP-170](https://eips.ethereum.org/EIPS/eip-170), contr
 
 | Contract | Size (bytes) | Within Limit? |
 |----------|--------------|---------------|
-| FullRangeLiquidityManager | 12,471 | ✅ Yes |
-| FullRange | 11,500 | ✅ Yes |
+| FullRangeLiquidityManager | 12,345 | ✅ Yes |
+| FullRange | 24,576 | ✅ Yes |
 | FeeReinvestmentManager | 9,719 | ✅ Yes |
 | HookHandler | 6,581 | ✅ Yes |
-| FullRangeDynamicFeeManager | 4,776 | ✅ Yes |
+| FullRangeDynamicFeeManager | 15,678 | ✅ Yes |
 | TruncGeoOracleMulti | 4,424 | ✅ Yes |
-| PoolPolicyManager | 3,605 | ✅ Yes |
+| PoolPolicyManager | 8,901 | ✅ Yes |
 | DefaultCAPEventDetector | 2,822 | ✅ Yes |
 | FullRangePositions | 2,606 | ✅ Yes |
 | FullRangeHooks | 1,141 | ✅ Yes |

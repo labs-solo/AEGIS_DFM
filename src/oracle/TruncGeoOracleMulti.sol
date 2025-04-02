@@ -123,7 +123,24 @@ contract TruncGeoOracleMulti {
         bytes32 id = PoolId.unwrap(pid);
         ObservationState memory state = states[id];
         (, int24 tick,,) = StateLibrary.getSlot0(poolManager, pid);
-        return observations[id].observe(_blockTimestamp(), secondsAgos, tick, state.index, 0, state.cardinality);
+        
+        // Get the pool-specific maximum tick movement
+        int24 localMaxAbsTickMove = maxAbsTickMove[id];
+        
+        // If the pool doesn't have a specific value, use the default
+        if (localMaxAbsTickMove == 0) {
+            localMaxAbsTickMove = TruncatedOracle.MAX_ABS_TICK_MOVE;
+        }
+        
+        return observations[id].observe(
+            _blockTimestamp(), 
+            secondsAgos, 
+            tick, 
+            state.index, 
+            0, // Liquidity is not used in time-weighted calculations
+            state.cardinality,
+            localMaxAbsTickMove
+        );
     }
 
     function increaseCardinalityNext(PoolKey calldata key, uint16 cardinalityNext)

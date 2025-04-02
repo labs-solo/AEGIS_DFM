@@ -23,12 +23,10 @@ FullRange follows a modular architecture with specialized components:
 
 ### Core Components
 
-- **FullRange.sol**: Main hook contract implementing the Uniswap V4 Hook interface
-- **FullRangeLiquidityManager.sol**: Manages deposits, withdrawals, and liquidity accounting
-- **FullRangeDynamicFeeManager.sol**: Handles dynamic fee adjustments based on volatility
-- **DefaultCAPEventDetector.sol**: Detects significant price volatility events
-- **FeeReinvestmentManager.sol**: Handles fee collection and reinvestment strategies
-- **PoolPolicyManager.sol**: Manages protocol policies and configurations
+- **FullRange.sol**: The main hook contract that implements the full range liquidity management strategy
+- **FullRangeLiquidityManager.sol**: Manages liquidity positions and handles deposits/withdrawals
+- **FullRangeDynamicFeeManager.sol**: Manages dynamic fees and CAP events based on oracle price movements
+- **PoolPolicyManager.sol**: Manages pool policies and fee distribution
 
 ### Supporting Components
 
