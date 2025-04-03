@@ -65,12 +65,7 @@ interface IFullRangeLiquidityManager {
      * @param delta The balance delta to settle
      */
     function handlePoolDelta(PoolKey memory key, BalanceDelta delta) external;
-    
-    /**
-     * @notice Claim pending ETH payments
-     */
-    function claimETH() external;
-    
+        
     /**
      * @notice Adds user share accounting (no token transfers)
      * @param poolId The pool ID

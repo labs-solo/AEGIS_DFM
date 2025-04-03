@@ -95,21 +95,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     // Emergency controls
     bool public emergencyWithdrawalsEnabled = false;
     mapping(PoolId => bool) public poolEmergencyState;
-    uint256 public emergencyWithdrawalCooldown = 1 days;
-    mapping(address => mapping(PoolId => uint256)) public lastEmergencyWithdrawal;
     address public emergencyAdmin;
-    
-    // ETH handling
-    mapping(address => uint256) public pendingETHPayments;
-    uint256 public ethTransferGasLimit = 50000; // Default gas limit
-    uint8 public maxETHRetries = 1; // Default to 1 retry attempt
-    
-    // Rate limiting for ETH refunds
-    mapping(address => uint256) public lastRefundTimestamp;
-    uint256 public refundCooldown = 1 minutes; // Default cooldown period
-    uint256 public maxRefundPerPeriod = 10 ether; // Default max refund per period
-    mapping(address => uint256) public refundAmountInPeriod;
-    
+            
     // Tracking locked liquidity
     mapping(PoolId => uint256) public lockedLiquidity;
     
@@ -153,14 +140,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint256 amount1Out,
         uint256 sharesBurned
     );
-    event EmergencyCooldownUpdated(uint256 oldCooldown, uint256 newCooldown);
-    
-    // ETH handling events
-    event ETHTransferFailed(address indexed recipient, uint256 amount);
-    event ETHClaimed(address indexed recipient, uint256 amount);
-    event ETHTransferGasLimitUpdated(uint256 oldLimit, uint256 newLimit);
-    event MaxETHRetriesUpdated(uint8 oldValue, uint8 newValue);
-    
+        
     /**
      * @notice Consolidated event for reinvestment operations
      * @dev Reduces gas costs by combining multiple events
@@ -183,16 +163,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint128 totalShares,
         uint8 operationType
     );
-    
-    // Add new event for partial refunds
-    event RefundPartiallyDelayed(address indexed recipient, uint256 refunded, uint256 pending);
-    event RefundCooldownUpdated(uint256 oldValue, uint256 newValue);
-    event MaxRefundPerPeriodUpdated(uint256 oldValue, uint256 newValue);
-    
-    // Add new events for retry mechanism
-    event ETHTransferRetrySucceeded(address indexed recipient, uint256 amount, uint8 attempts, uint256 gasLimit);
-    event ETHTransferRetryFailed(address indexed recipient, uint256 amount, uint8 attempts, uint256 gasLimit);
-    
+            
     // These are kept for backward compatibility but will be no-ops
     event PositionCacheUpdated(PoolId indexed poolId, uint128 liquidity, uint160 sqrtPriceX96);
     
@@ -465,25 +436,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         manager.unlock(abi.encode(callbackData));
         
         // Refund excess ETH if there is any
+        // TODO: clean up the logic in this if block
         if (msg.value > 0) {
             uint256 ethUsed = 0;
             if (hasToken0Native) ethUsed += actual0;
             if (hasToken1Native) ethUsed += actual1;
-            
-            if (msg.value > ethUsed) {
-                uint256 refundAmount = msg.value - ethUsed;
-                
-                // Validate refund amount is reasonable and process the refund
-                if (refundAmount > 0 && refundAmount <= address(this).balance) {
-                    // Return excess ETH with gas limit for safety
-                    (bool success, ) = msg.sender.call{value: refundAmount, gas: ethTransferGasLimit}("");
-                    if (!success) {
-                        // Record failed transfer in pendingETHPayments
-                        pendingETHPayments[msg.sender] += refundAmount;
-                        emit ETHTransferFailed(msg.sender, refundAmount);
-                    }
-                }
-            }
+            if (msg.value > ethUsed) SafeTransferLib.safeTransferETH(msg.sender, msg.value - ethUsed);
         }
         
         // Emit events
@@ -637,15 +595,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (!emergencyWithdrawalsEnabled && !poolEmergencyState[params.poolId]) {
             revert Errors.InvalidInput();
         }
-        
-        // Check cooldown period
-        if (block.timestamp < lastEmergencyWithdrawal[user][params.poolId] + emergencyWithdrawalCooldown) {
-            revert Errors.DeadlinePassed(uint32(lastEmergencyWithdrawal[user][params.poolId] + emergencyWithdrawalCooldown), uint32(block.timestamp));
-        }
-        
-        // Record this withdrawal
-        lastEmergencyWithdrawal[user][params.poolId] = block.timestamp;
-        
+                
         // Execute withdrawal directly (don't try to call external function)
         PoolInfo storage pool = pools[params.poolId];
         if (_poolKeys[params.poolId].tickSpacing == 0) {
@@ -777,67 +727,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         emergencyWithdrawalsEnabled = enabled;
         emit GlobalEmergencyStateChanged(enabled, msg.sender);
     }
-    
-    /**
-     * @notice Set the emergency withdrawal cooldown period
-     * @param newCooldown The new cooldown period in seconds
-     */
-    function setEmergencyWithdrawalCooldown(uint256 newCooldown) external onlyEmergencyAdmin {
-        uint256 oldCooldown = emergencyWithdrawalCooldown;
-        emergencyWithdrawalCooldown = newCooldown;
-        emit EmergencyCooldownUpdated(oldCooldown, newCooldown);
-    }
-    
-    // === ETH HANDLING FUNCTIONS ===
-    
-    /**
-     * @notice Set the gas limit for ETH transfers
-     * @param newLimit The new gas limit
-     */
-    function setEthTransferGasLimit(uint256 newLimit) external onlyOwner {
-        uint256 oldLimit = ethTransferGasLimit;
-        ethTransferGasLimit = newLimit;
-        emit ETHTransferGasLimitUpdated(oldLimit, newLimit);
-    }
-    
-    /**
-     * @notice Set the maximum number of ETH transfer retries
-     * @param newValue The new maximum retry count
-     */
-    function setMaxEthRetries(uint8 newValue) external onlyOwner {
-        uint8 oldValue = maxETHRetries;
-        maxETHRetries = newValue;
-        emit MaxETHRetriesUpdated(oldValue, newValue);
-    }
-    
-    /**
-     * @notice Claim pending ETH payments
-     * @dev For failed native transfers that were recorded in pendingETHPayments
-     */
-    function claimETH() external {
-        uint256 amount = pendingETHPayments[msg.sender];
-        if (amount == 0) revert Errors.ZeroAmount();
-        
-        // Clear pending payment before transfer to prevent reentrancy
-        pendingETHPayments[msg.sender] = 0;
-        
-        // Validate amount before transfer using CurrencyLibrary's method
-        uint256 balance = Currency.wrap(address(0)).balanceOfSelf();
-        if (amount > balance) {
-            revert Errors.InsufficientContractBalance(amount, balance);
-        }
-        
-        // Transfer ETH with gas limit for safety
-        (bool success, ) = msg.sender.call{value: amount, gas: ethTransferGasLimit}("");
-        if (!success) {
-            // Restore pending payment if transfer fails
-            pendingETHPayments[msg.sender] = amount;
-            revert Errors.ETHTransferFailed(msg.sender, amount);
-        }
-        
-        emit ETHClaimed(msg.sender, amount);
-    }
-    
+            
     // === INTERNAL HELPER FUNCTIONS ===
     
     /**
@@ -1006,14 +896,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         
         Currency currency = Currency.wrap(token);
         if (currency.isAddressZero()) {
-            // Handle ETH
-            // Transfer ETH with gas limit for safety
-            (bool success, ) = to.call{value: amount, gas: ethTransferGasLimit}("");
-            if (!success) {
-                // If transfer fails, store as pending payment
-                pendingETHPayments[to] += amount;
-                emit ETHTransferFailed(to, amount);
-            }
+            SafeTransferLib.safeTransferETH(to, amount);
         } else {
             // Handle ERC20 using SafeTransferLib for additional safety checks
             SafeTransferLib.safeTransfer(ERC20(token), to, amount);
@@ -1263,27 +1146,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         amount1 = (pool.reserve1 * shares) / pool.totalShares;
         
         return (amount0, amount1);
-    }
-
-    /**
-     * @notice Set the refund cooldown period
-     * @param newValue The new cooldown period in seconds
-     */
-    function setRefundCooldown(uint256 newValue) external onlyOwner {
-        uint256 oldValue = refundCooldown;
-        refundCooldown = newValue;
-        emit RefundCooldownUpdated(oldValue, newValue);
-    }
-    
-    /**
-     * @notice Set the maximum refund amount per period
-     * @param newValue The new maximum refund amount
-     */
-    function setMaxRefundPerPeriod(uint256 newValue) external onlyOwner {
-        uint256 oldValue = maxRefundPerPeriod;
-        maxRefundPerPeriod = newValue;
-        emit MaxRefundPerPeriodUpdated(oldValue, newValue);
-    }
+    }  
 
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
         // Only allow calls from the pool manager
