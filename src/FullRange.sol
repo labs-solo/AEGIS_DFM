@@ -448,6 +448,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      */
     function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96) 
         external
+        virtual
         override
         returns (bytes4)
     {
@@ -463,7 +464,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         PoolKey calldata key, 
         uint160 sqrtPriceX96, 
         int24 tick
-    ) external override returns (bytes4) {
+    ) external virtual override returns (bytes4) {
         PoolId poolId = key.toId();
         
         // Validation
@@ -525,6 +526,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      */
     function beforeSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata hookData)
         external
+        virtual
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
@@ -549,6 +551,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      */
     function afterSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
         external
+        virtual
         override
         returns (bytes4, int128)
     {
@@ -591,6 +594,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      */
     function beforeAddLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
         external
+        virtual
         override
         returns (bytes4)
     {
@@ -598,7 +602,17 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
-     * @notice Implementation for afterAddLiquidity hook
+     * @notice After Add Liquidity hook
+     * @dev Reverse Authorization Model: Only handles fee processing logic directly
+     *      to reduce gas and remove DynamicFeeManager dependency.
+     * @param sender The sender address
+     * @param key The pool key
+     * @param params Modify liquidity parameters
+     * @param delta The balance delta
+     * @param feesAccrued The fees accrued during the operation
+     * @param hookData Additional hook data
+     * @return bytes4 Selector for afterAddLiquidity hook
+     * @return BalanceDelta The fee delta
      */
     function afterAddLiquidity(
         address sender,
@@ -607,7 +621,8 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) external override returns (bytes4, BalanceDelta) {
+    ) external virtual override returns (bytes4, BalanceDelta) {
+        PoolId poolId = key.toId();
         // Reserves are calculated on demand, no need to update storage
         return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
@@ -617,6 +632,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      */
     function beforeRemoveLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
         external
+        virtual
         override
         returns (bytes4)
     {
@@ -624,7 +640,17 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
-     * @notice Implementation for afterRemoveLiquidity hook
+     * @notice After Remove Liquidity hook
+     * @dev Reverse Authorization Model: Only handles fee processing logic directly
+     *      to reduce gas and remove DynamicFeeManager dependency.
+     * @param sender The sender address
+     * @param key The pool key
+     * @param params Modify liquidity parameters
+     * @param delta The balance delta
+     * @param feesAccrued The fees accrued during the operation
+     * @param hookData Additional hook data
+     * @return bytes4 Selector for afterRemoveLiquidity hook
+     * @return BalanceDelta The fee delta
      */
     function afterRemoveLiquidity(
         address sender,
@@ -633,8 +659,16 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) external override returns (bytes4, BalanceDelta) {
-        // Reserves are now calculated on demand, no need to update storage
+    ) external virtual override returns (bytes4, BalanceDelta) {
+        PoolId poolId = key.toId();
+        // Track fees reinvestment
+        if (poolData[poolId].initialized) {
+            // Process fees if any
+            if (feesAccrued.amount0() != 0 || feesAccrued.amount1() != 0) {
+                _processFees(poolId, IFeeReinvestmentManager.OperationType.WITHDRAWAL, feesAccrued);
+            }
+        }
+        
         return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
@@ -643,6 +677,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      */
     function beforeDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
         external
+        virtual
         override
         returns (bytes4)
     {
@@ -650,20 +685,54 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
-     * @notice Implementation for afterDonate hook
+     * @notice After Donate hook
+     * @dev Processes fees related to donations if reinvestment policy is enabled.
+     * @param sender The sender address
+     * @param key The pool key
+     * @param amount0 Amount of token0 donated
+     * @param amount1 Amount of token1 donated
+     * @param hookData Additional hook data
+     * @return bytes4 Selector for afterDonate hook
      */
     function afterDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
         external
+        virtual
         override
         returns (bytes4)
     {
+        PoolId poolId = key.toId();
         return IHooks.afterDonate.selector;
     }
 
     /**
-     * @notice Implementation for afterRemoveLiquidityReturnDelta hook
-     * @dev This hook delegates all fee calculation and tracking logic to the FeeReinvestmentManager
-     *     to keep the FullRange contract lean
+     * @notice Placeholder for beforeSwapReturnDelta hook (not implemented)
+     */
+    function beforeSwapReturnDelta(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        bytes calldata hookData
+    ) external virtual override returns (bytes4, BeforeSwapDelta) {
+        // Return bytes4(0) as the hook is not implemented/used
+        return (bytes4(0), BeforeSwapDeltaLibrary.ZERO_DELTA);
+    }
+
+    /**
+     * @notice Placeholder for afterSwapReturnDelta hook (not implemented)
+     */
+    function afterSwapReturnDelta(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external virtual override returns (bytes4, BalanceDelta) {
+        return (IFullRangeHooks.afterSwapReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
+    /**
+     * @notice Placeholder for afterRemoveLiquidityReturnDelta hook
+     * @dev Processes fees similar to afterRemoveLiquidity
      */
     function afterRemoveLiquidityReturnDelta(
         address sender,
@@ -672,9 +741,9 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) external override returns (bytes4, BalanceDelta) {
-        // Track fees reinvestment
+    ) external virtual override returns (bytes4, BalanceDelta) {
         PoolId poolId = key.toId();
+        // Track fees reinvestment
         if (poolData[poolId].initialized) {
             // Process fees if any
             if (feesAccrued.amount0() != 0 || feesAccrued.amount1() != 0) {
@@ -686,35 +755,19 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     }
 
     /**
-     * @notice Implementation for beforeSwapReturnDelta hook
-     */
-    function beforeSwapReturnDelta(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        bytes calldata hookData
-    ) external returns (bytes4, BeforeSwapDelta) {
-        return (IFullRangeHooks.beforeSwapReturnDelta.selector, BeforeSwapDeltaLibrary.ZERO_DELTA);
-    }
-
-    /**
-     * @notice Implementation for afterSwapReturnDelta hook
-     */
-    function afterSwapReturnDelta(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        BalanceDelta delta,
-        bytes calldata hookData
-    ) external returns (bytes4, BalanceDelta) {
-        return (IFullRangeHooks.afterSwapReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
-    }
-
-    /**
-     * @notice Implementation of afterAddLiquidityReturnDelta hook
+     * @notice After Add Liquidity Return Delta hook
+     * @dev Processes fees related to add liquidity if reinvestment policy is enabled
+     * @param sender The sender address
+     * @param key The pool key
+     * @param params Modify liquidity parameters
+     * @param delta The balance delta
+     * @param hookData Additional hook data
+     * @return bytes4 Selector for afterAddLiquidityReturnDelta hook
+     * @return BalanceDelta The fee delta
      */
     function afterAddLiquidityReturnDelta(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, BalanceDelta delta, bytes calldata hookData)
         external
+        virtual
         override
         returns (bytes4, BalanceDelta)
     {
@@ -726,6 +779,19 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         }
         
         return (IFullRangeHooks.afterAddLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
+    /**
+     * @notice Internal function called after pool initialization
+     * @dev Can be overridden by inheriting contracts
+     */
+    function _afterPoolInitialized(
+        PoolId poolId,
+        PoolKey memory key,
+        uint160 sqrtPriceX96,
+        int24 tick
+    ) internal virtual {
+        // Base implementation (can be empty or contain core logic)
     }
 
     /**
