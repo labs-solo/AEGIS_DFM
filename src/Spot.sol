@@ -76,9 +76,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     // Pool keys stored separately since they're larger structures
     mapping(PoolId => PoolKey) public poolKeys;
     
-    // Mapping to track pending ETH withdrawals
-    mapping(address => uint256) public pendingETHPayments;
-    
     // Internal callback data structure - minimized to save gas
     struct CallbackData {
         PoolId poolId;           // Pool ID
@@ -90,8 +87,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     }
     
     // Events
-    event ETHTransferFailed(address indexed recipient, uint256 amount);
-    event ETHClaimed(address indexed recipient, uint256 amount);
     event FeeUpdateFailed(PoolId indexed poolId);
     event ReinvestmentSuccess(PoolId indexed poolId, uint256 amount0, uint256 amount1);
     event ReinvestmentFailed(PoolId indexed poolId, string reason);
@@ -151,8 +146,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
 
         policyManager = _policyManager;
         liquidityManager = _liquidityManager;
-        
-        // validateHookAddress();
     }
 
     /**
@@ -268,27 +261,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     }
 
     /**
-     * @notice Claim pending ETH payments
-     * @dev Simple wrapper around liquidityManager functionality
-     */
-    function claimPendingETH() external {
-        liquidityManager.claimETH();
-    }
-
-    /**
-     * @notice Safe transfer ETH with fallback to pending payments
-     */
-    function _safeTransferETH(address recipient, uint256 amount) internal {
-        if (amount == 0) return;
-        
-        (bool success, ) = recipient.call{value: amount, gas: 50000}("");
-        if (!success) {
-            pendingETHPayments[recipient] += amount;
-            emit ETHTransferFailed(recipient, amount);
-        }
-    }
-
-    /**
      * @notice Safe transfer token with ETH handling
      */
     function _safeTransferToken(address token, address to, uint256 amount) internal {
@@ -296,7 +268,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         
         Currency currency = Currency.wrap(token);
         if (currency.isAddressZero()) {
-            _safeTransferETH(to, amount);
+            SafeTransferLib.safeTransferETH(to, amount);
         } else {
             SafeTransferLib.safeTransfer(ERC20(token), to, amount);
         }

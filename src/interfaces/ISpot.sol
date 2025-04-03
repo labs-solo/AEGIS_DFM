@@ -94,11 +94,6 @@ interface ISpot is IHooks {
     function setPoolEmergencyState(PoolId poolId, bool isEmergency) external;
 
     /**
-     * @notice Allows users to claim any pending ETH payments
-     */
-    function claimPendingETH() external;
-
-    /**
      * @notice Get the pool key for a pool ID
      * @param poolId The pool ID to get the key for
      * @return The pool key
