@@ -17,7 +17,7 @@ import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {IFullRange} from "./interfaces/IFullRange.sol";
+import {ISpot} from "./interfaces/ISpot.sol";
 import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {TokenSafetyWrapper} from "./utils/TokenSafetyWrapper.sol";
 
@@ -45,7 +45,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     /// @notice The Uniswap V4 pool manager
     IPoolManager public immutable poolManager;
     
-    /// @notice The FullRange contract address
+    /// @notice The Spot contract address
     address public immutable fullRange;
     
     // ================ CONFIGURATION ================
@@ -162,7 +162,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     }
     
     /**
-     * @notice Ensures only the FullRange contract can call a function
+     * @notice Ensures only the Spot contract can call a function
      */
     modifier onlyFullRange() {
         if (msg.sender != fullRange) revert Errors.AccessNotAuthorized(msg.sender);
@@ -182,7 +182,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     /**
      * @notice Constructor initializes the contract with required dependencies
      * @param _poolManager The Uniswap V4 pool manager
-     * @param _fullRange The FullRange contract address
+     * @param _fullRange The Spot contract address
      * @param _governance The governance address
      * @param _policyManager The policy manager contract
      */
@@ -271,8 +271,8 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     // ================ CORE FUNCTIONS ================
     
     /**
-     * @notice Comprehensive fee extraction handler for FullRange.sol
-     * @dev This function handles all fee extraction logic to keep FullRange.sol lean
+     * @notice Comprehensive fee extraction handler for Spot.sol
+     * @dev This function handles all fee extraction logic to keep Spot.sol lean
      * 
      * @param poolId The pool ID
      * @param feesAccrued The total fees accrued during the operation
@@ -740,8 +740,8 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
      * @return reserve1 Token1 reserves
      */
     function _getReserves(PoolId poolId) internal view returns (uint256 reserve0, uint256 reserve1) {
-        // Try getting from IFullRange interface if available
-        try IFullRange(fullRange).getPoolInfo(poolId) returns (
+        // Try getting from ISpot interface if available
+        try ISpot(fullRange).getPoolInfo(poolId) returns (
             bool isInitialized,
             uint256[2] memory reserves,
             uint128,
@@ -774,20 +774,24 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
      * @return key The pool key
      */
     function _getPoolKey(PoolId poolId) internal view returns (PoolKey memory key) {
-        // First try getting from fullRange interface
-        if (address(fullRange) != address(0)) {
-            key = IFullRange(fullRange).getPoolKey(poolId);
-            if (key.tickSpacing != 0) {
-                return key;
+        // Try getting from ISpot interface if available
+        try ISpot(fullRange).getPoolKey(poolId) returns (PoolKey memory poolKey) {
+            return poolKey;
+        } catch {
+            // Fallback: Try getting from liquidity manager
+            try liquidityManager.poolKeys(poolId) returns (PoolKey memory lmKey) {
+                return lmKey;
+            } catch {
+                // Silent failure, return zero key
+                return PoolKey({
+                    currency0: Currency.wrap(address(0)),
+                    currency1: Currency.wrap(address(0)),
+                    fee: 0,
+                    tickSpacing: 0,
+                    hooks: IHooks(address(0))
+                });
             }
         }
-        
-        // Fallback to liquidity manager if available
-        if (address(liquidityManager) != address(0)) {
-            key = liquidityManager.poolKeys(poolId);
-        }
-        
-        return key;
     }
     
     // ================ VIEW FUNCTIONS ================

@@ -8,10 +8,10 @@ import {BeforeSwapDelta} from "v4-core/src/types/BeforeSwapDelta.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 /**
- * @title IFullRangeHooks
- * @notice Extended interface for FullRange hooks including additional helper methods
+ * @title ISpotHooks
+ * @notice Extended interface for Spot hooks including additional helper methods
  */
-interface IFullRangeHooks is IHooks {
+interface ISpotHooks is IHooks {
     /**
      * @notice The hook called before a swap that returns a delta
      * @param sender The initial msg.sender for the swap call

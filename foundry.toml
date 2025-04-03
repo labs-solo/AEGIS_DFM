@@ -9,6 +9,14 @@ evm_version = "cancun"
 viaIR = true
 dotenv = true  # Enable .env file loading
 exclude_paths = ["test/old-tests"]
+remappings = [
+    "forge-std/=lib/forge-std/src/",
+    "v4-core/=lib/v4-core/src",
+    "v4-periphery/=lib/v4-periphery/src/",
+    "solmate/=lib/solmate/src/",
+    "openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/", # Assuming standard OZ path
+    "uniswap-hooks/=lib/uniswap-hooks/src/"
+]
 
 # Sepolia configuration for integration testing
 [profile.sepolia]

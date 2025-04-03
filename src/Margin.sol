@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import { FullRange } from "./FullRange.sol";
+import { Spot } from "./Spot.sol";
 import { IMargin } from "./interfaces/IMargin.sol";
 import { PoolId, PoolIdLibrary } from "v4-core/src/types/PoolId.sol";
 import { PoolKey } from "v4-core/src/types/PoolKey.sol";
@@ -20,16 +20,17 @@ import { FullMath } from "v4-core/src/libraries/FullMath.sol";
 import { IInterestRateModel } from "./interfaces/IInterestRateModel.sol";
 import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
 import { StateLibrary } from "v4-core/src/libraries/StateLibrary.sol";
-import { IFullRangeHooks } from "./interfaces/IFullRangeHooks.sol";
+import { ISpotHooks } from "./interfaces/ISpotHooks.sol";
 import { PoolTokenIdUtils } from "./utils/PoolTokenIdUtils.sol";
+import { BaseHook } from "lib/uniswap-hooks/src/base/BaseHook.sol";
 
 /**
  * @title Margin
- * @notice Foundation for a margin lending system on Uniswap V4 full-range liquidity positions
+ * @notice Foundation for a margin lending system on Uniswap V4 spot liquidity positions
  * @dev Phase 1 establishes the architecture and data structures needed for future phases.
- *      Inherits governance/ownership from FullRange via IPoolPolicy.
+ *      Inherits governance/ownership from Spot via IPoolPolicy.
  */
-contract Margin is FullRange, IMargin {
+contract Margin is Spot, IMargin {
     using SafeCast for uint256;
     using SafeCast for int256;
     using PoolIdLibrary for PoolKey;
@@ -120,7 +121,7 @@ contract Margin is FullRange, IMargin {
     address public interestRateModelAddress;
 
     /**
-     * @notice Price oracle will leverage ITruncGeoOracleMulti from FullRange (Phase 2)
+     * @notice Price oracle will leverage ITruncGeoOracleMulti from Spot (Phase 2)
      */
     // address public priceOracleAddress; // Deferred until Phase 2
 
@@ -137,13 +138,13 @@ contract Margin is FullRange, IMargin {
      * @notice Constructor
      * @param _poolManager The Uniswap V4 pool manager
      * @param _policyManager The policy manager (handles governance)
-     * @param _liquidityManager The liquidity manager (dependency of FullRange)
+     * @param _liquidityManager The liquidity manager (dependency of Spot)
      */
     constructor(
         IPoolManager _poolManager,
         IPoolPolicy _policyManager,
         FullRangeLiquidityManager _liquidityManager
-    ) FullRange(_poolManager, _policyManager, _liquidityManager) {
+    ) Spot(_poolManager, _policyManager, _liquidityManager) {
         // Phase 1 initialization is minimal
         // Phase 2 will add interest rate model and leverage price oracle functionality
     }
@@ -158,7 +159,7 @@ contract Margin is FullRange, IMargin {
      * @return tokenId The ERC-6909 token ID
      */
     function poolIdToTokenId(PoolId poolId) internal pure returns (uint256 tokenId) {
-        // Use the same utility as FullRange
+        // Use the same utility as Spot
         return PoolTokenIdUtils.toTokenId(poolId);
         // assembly {
         //     tokenId := poolId
@@ -279,11 +280,11 @@ contract Margin is FullRange, IMargin {
     }
 
     /**
-     * @notice Verify pool exists and is initialized in FullRange
+     * @notice Verify pool exists and is initialized in Spot
      * @param poolId The pool ID
      */
     function _verifyPoolInitialized(PoolId poolId) internal view {
-        if (!isPoolInitialized(poolId)) { // Inherited from FullRange
+        if (!isPoolInitialized(poolId)) { // Inherited from Spot
             revert Errors.PoolNotInitialized(poolId);
         }
     }
@@ -414,7 +415,7 @@ contract Margin is FullRange, IMargin {
     // No setPriceOracle function needed in Phase 1 - will use ITruncGeoOracleMulti
 
     // =========================================================================
-    // Access Control Modifiers (Inherited from FullRange / Defined Below)
+    // Access Control Modifiers (Inherited from Spot / Defined Below)
     // =========================================================================
 
     /**
@@ -425,8 +426,8 @@ contract Margin is FullRange, IMargin {
         _;
     }
 
-    // onlyGovernance is inherited effectively via FullRange's dependency on IPoolPolicy
-    // onlyPoolManager is inherited from FullRange
+    // onlyGovernance is inherited effectively via Spot's dependency on IPoolPolicy
+    // onlyPoolManager is inherited from Spot
 
     // =========================================================================
     // Overrides and Hook Security
@@ -442,15 +443,16 @@ contract Margin is FullRange, IMargin {
 
     /**
      * @notice Set up initial pool state when a pool is initialized
-     * @dev Extends FullRange._afterPoolInitialized to set Phase 2 variables
+     * @dev Extends Spot._afterPoolInitialized to set Phase 2 variables
      */
     function _afterPoolInitialized(
         PoolId poolId,
-        PoolKey memory key,
+        PoolKey calldata key,
         uint160 sqrtPriceX96,
         int24 tick
-    ) internal override {
-        super._afterPoolInitialized(poolId, key, sqrtPriceX96, tick);
+    ) internal virtual override {
+        // Call Spot's internal implementation
+        Spot._afterPoolInitialized(poolId, key, sqrtPriceX96, tick);
         
         // Initialize interest multiplier (Phase 2+)
         interestMultiplier[poolId] = PRECISION;
@@ -458,84 +460,86 @@ contract Margin is FullRange, IMargin {
         // Initialize last interest accrual time (Phase 2+)
         lastInterestAccrualTime[poolId] = block.timestamp;
         
-        // Emit an event? Or rely on FullRange event?
+        // Emit an event? Or rely on Spot event?
     }
 
     // --- Hook Overrides with onlyPoolManager --- 
     // Ensure ALL hooks callable by the PoolManager are overridden and protected.
     
     // Initialize hooks
-    function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96)
-        external override onlyPoolManager returns (bytes4)
+    function _beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96)
+        internal override onlyPoolManager returns (bytes4)
     {
         // Return selector directly instead of using super
-        return IHooks.beforeInitialize.selector;
+        return this.beforeInitialize.selector;
     }
         
-    function afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
-        external override onlyPoolManager returns (bytes4)
+    function _afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
+        internal override onlyPoolManager returns (bytes4)
     {
-        // Note: The internal _afterPoolInitialized is called by FullRange.afterInitialize
-        // Return selector directly instead of using super
-        return IHooks.afterInitialize.selector;
+        // Call the internal implementation from the base contract
+        _afterInitializeInternal(sender, key, sqrtPriceX96, tick);
+        // Margin-specific logic (if any) would go here
+        // Return selector directly instead of using super's return value (which is the same)
+        return this.afterInitialize.selector;
     }
 
     // Add/remove liquidity hooks
-    function beforeAddLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
-        external override onlyPoolManager returns (bytes4)
+    function _beforeAddLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
+        internal override onlyPoolManager returns (bytes4)
     {
         // Phase 2+: May need checks here related to deposits
         // Return selector directly instead of using super
-        return IHooks.beforeAddLiquidity.selector;
+        return this.beforeAddLiquidity.selector;
     }
         
-    function afterAddLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, BalanceDelta delta, BalanceDelta feesAccrued, bytes calldata hookData)
-        external override onlyPoolManager returns (bytes4, BalanceDelta)
+    function _afterAddLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, BalanceDelta delta, BalanceDelta feesAccrued, bytes calldata hookData)
+        internal override onlyPoolManager returns (bytes4, BalanceDelta)
     {
         // Phase 2+: Will need to update vaults based on delta/hookData
         // Return selector and zero delta directly
-        return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+        return (this.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
         
-    function beforeRemoveLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
-        external override onlyPoolManager returns (bytes4)
+    function _beforeRemoveLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
+        internal override onlyPoolManager returns (bytes4)
     {
         // Phase 2+: May need checks here related to withdrawals/solvency
         // Return selector directly instead of using super
-        return IHooks.beforeRemoveLiquidity.selector;
+        return this.beforeRemoveLiquidity.selector;
     }
         
-    function afterRemoveLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, BalanceDelta delta, BalanceDelta feesAccrued, bytes calldata hookData)
-        external override onlyPoolManager returns (bytes4, BalanceDelta)
+    function _afterRemoveLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, BalanceDelta delta, BalanceDelta feesAccrued, bytes calldata hookData)
+        internal override onlyPoolManager returns (bytes4, BalanceDelta)
     {
         // Phase 2+: Will need to update vaults based on delta/hookData
         // Return selector and zero delta directly
-        return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+        return (this.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     // Swap hooks
-    function beforeSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata hookData)
-        external override onlyPoolManager returns (bytes4, BeforeSwapDelta, uint24)
+    function _beforeSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata hookData)
+        internal override onlyPoolManager returns (bytes4, BeforeSwapDelta, uint24)
     {
-        // Phase 1: Defer to FullRange logic (Replicated here to avoid super issues)
+        // Phase 1: Defer to Spot logic (Replicated here to avoid super issues)
         
-        // Ensure dynamic fee manager has been set (inherited from FullRange)
+        // Ensure dynamic fee manager has been set (inherited from Spot)
         if (address(dynamicFeeManager) == address(0)) {
             revert Errors.NotInitialized("DynamicFeeManager");
         }
 
         // Return dynamic fee and no delta
         return (
-            IHooks.beforeSwap.selector,
+            this.beforeSwap.selector,
             BeforeSwapDeltaLibrary.ZERO_DELTA,
             uint24(dynamicFeeManager.getCurrentDynamicFee(key.toId()))
         );
     }
         
-    function afterSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
-        external override onlyPoolManager returns (bytes4, int128)
+    function _afterSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
+        internal override onlyPoolManager returns (bytes4, int128)
     {
-        // Phase 1: Defer to FullRange logic (Replicated here to avoid super issues)
+        // Phase 1: Defer to Spot logic (Replicated here to avoid super issues)
         PoolId poolId = key.toId();
         
         // Ensure dynamic fee manager is set before proceeding if oracle depends on it
@@ -567,60 +571,60 @@ contract Margin is FullRange, IMargin {
             }
         }
         
-        return (IHooks.afterSwap.selector, 0);
+        return (this.afterSwap.selector, 0);
     }
 
-    // Donate hooks (Assuming FullRange implements these - verify if needed)
-    function beforeDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
-        external override onlyPoolManager returns (bytes4)
-    {
-        // Phase 1: Defer to FullRange
-        // Return selector directly instead of using super
-        return IHooks.beforeDonate.selector;
-    }
+    // Donate hooks (Assuming Spot implements these - verify if needed)
+    // function beforeDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
+    //     external override onlyPoolManager returns (bytes4)
+    // {
+    //     // Phase 1: Defer to Spot
+    //     // Return selector directly instead of using super
+    //     return IHooks.beforeDonate.selector;
+    // }
         
-    function afterDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
-        external override onlyPoolManager returns (bytes4)
-    {
-        // Phase 1: Defer to FullRange
-        // Return selector directly instead of using super
-        return IHooks.afterDonate.selector;
-    }
+    // function afterDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
+    //     external override onlyPoolManager returns (bytes4)
+    // {
+    //     // Phase 1: Defer to Spot
+    //     // Return selector directly instead of using super
+    //     return IHooks.afterDonate.selector;
+    // }
 
-    // Return delta hooks (Verify which are implemented/needed by FullRange)
-    // These might not all be strictly required to override if FullRange doesn't use them,
+    // Return delta hooks (Verify which are implemented/needed by Spot)
+    // These might not all be strictly required to override if Spot doesn't use them,
     // but overriding ensures protection if the base contract changes.
     
-    function beforeSwapReturnDelta(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata hookData)
-        external override onlyPoolManager returns (bytes4, BeforeSwapDelta)
-    {
-        // Return defaults directly (from FullRange)
-        return (bytes4(0), BeforeSwapDeltaLibrary.ZERO_DELTA);
-    }
+    // function beforeSwapReturnDelta(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata hookData)
+    //     external override onlyPoolManager returns (bytes4, BeforeSwapDelta)
+    // {
+    //     // Return defaults directly (from Spot)
+    //     return (bytes4(0), BeforeSwapDeltaLibrary.ZERO_DELTA);
+    // }
         
-    function afterSwapReturnDelta(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
-        external override onlyPoolManager returns (bytes4, BalanceDelta)
-    {
-        // Return defaults directly (from FullRange)
-        // Note: FullRange uses IFullRangeHooks.afterSwapReturnDelta.selector here, needs check if defined/needed
-        return (IFullRangeHooks.afterSwapReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
-    }
+    // function afterSwapReturnDelta(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
+    //     external override onlyPoolManager returns (bytes4, BalanceDelta)
+    // {
+    //     // Return defaults directly (from Spot)
+    //     // Note: Spot uses ISpotHooks.afterSwapReturnDelta.selector here, needs check if defined/needed
+    //     return (ISpotHooks.afterSwapReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    // }
         
-    function afterAddLiquidityReturnDelta(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, BalanceDelta delta, bytes calldata hookData)
-        external override onlyPoolManager returns (bytes4, BalanceDelta)
-    {
-        // Phase 2+: Vault updates might happen here too
-        // Return defaults directly (from FullRange)
-        // Note: FullRange uses IFullRangeHooks.afterAddLiquidityReturnDelta.selector here, needs check if defined/needed
-        return (IFullRangeHooks.afterAddLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
-    }
+    // function afterAddLiquidityReturnDelta(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, BalanceDelta delta, bytes calldata hookData)
+    //     external override onlyPoolManager returns (bytes4, BalanceDelta)
+    // {
+    //     // Phase 2+: Vault updates might happen here too
+    //     // Return defaults directly (from Spot)
+    //     // Note: Spot uses ISpotHooks.afterAddLiquidityReturnDelta.selector here, needs check if defined/needed
+    //     return (ISpotHooks.afterAddLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    // }
         
     function afterRemoveLiquidityReturnDelta(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, BalanceDelta delta, BalanceDelta feesAccrued, bytes calldata hookData)
         external override onlyPoolManager returns (bytes4, BalanceDelta)
     {
         // Phase 2+: Vault updates might happen here too
-        // Return defaults directly (from FullRange)
-        // Note: FullRange uses IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector here, needs check if defined/needed
-        return (IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+        // Return defaults directly (from Spot)
+        // Note: Spot uses ISpotHooks.afterRemoveLiquidityReturnDelta.selector here, needs check if defined/needed
+        return (ISpotHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 } 

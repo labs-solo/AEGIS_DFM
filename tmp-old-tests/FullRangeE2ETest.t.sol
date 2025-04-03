@@ -10,8 +10,8 @@ pragma solidity 0.8.26;
 /*
 
 /**
- * @title FullRangeE2ETest
- * @notice End-to-End integration tests for FullRange on Unichain Sepolia testnet
+ * @title SpotE2ETest
+ * @notice End-to-End integration tests for Spot on Unichain Sepolia testnet
  * This file implements all 7 phases of testing as described in Integration_Test.md
  * Phase 1: Environment Setup & Network Forking
  * With addition of ERC6909Claims position token testing
@@ -21,13 +21,13 @@ import "forge-std/Test.sol";
 import "forge-std/console2.sol";
 
 // Project imports
-import "../src/FullRange.sol";
+import "../src/Spot.sol";
 import "../src/FullRangePoolManager.sol";
 import "../src/FullRangeLiquidityManager.sol";
 import "../src/FullRangeOracleManager.sol";
 import "../src/FullRangeDynamicFeeManager.sol";
 import "../src/utils/FullRangeUtils.sol";
-import "../src/interfaces/IFullRange.sol";
+import "../src/interfaces/ISpot.sol";
 import "../src/oracle/TruncGeoOracleMulti.sol";
 import "../src/token/FullRangePositions.sol";
 import "../src/utils/PoolTokenIdUtils.sol";
@@ -55,7 +55,7 @@ import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 import "../test/utils/MockERC20.sol";
 
 /**
- * @notice FullRangeE2ETestBase - Base contract for all E2E tests
+ * @notice SpotE2ETestBase - Base contract for all E2E tests
  * Handles common setup and provides helper functions for all phases
  */
 contract FullRangeE2ETestBase is Test {
@@ -103,8 +103,8 @@ contract FullRangeE2ETestBase is Test {
     address public poolManagerAddress;
     address public fullRangeAddress;
     
-    // FullRange contract instances
-    FullRange public fullRange;
+    // Spot contract instances
+    Spot public fullRange;
     FullRangePoolManager public poolManagerContract;
     FullRangeLiquidityManager public liquidityManager;
     FullRangeOracleManager public oracleManager;
@@ -251,12 +251,12 @@ contract FullRangeE2ETestBase is Test {
     }
 
     /**
-     * @notice Phase 2 - Deploy the FullRange contract suite
+     * @notice Phase 2 - Deploy the Spot contract suite
      * @dev This function deploys all required contracts and sets up permissions
-     * @return hookAddress The address of the deployed FullRange hook
+     * @return hookAddress The address of the deployed Spot hook
      */
     function _deployFullRangeContractSuite() internal returns (address hookAddress) {
-        console2.log("Starting FullRange contract suite deployment");
+        console2.log("Starting Spot contract suite deployment");
         
         // Deploy contracts as the deployer
         vm.startPrank(deployer);
@@ -302,7 +302,7 @@ contract FullRangeE2ETestBase is Test {
         );
         console2.log("FullRangeDynamicFeeManager deployed at:", address(dynamicFeeManager));
         
-        // 2. Calculate the FullRange hook address with required permissions
+        // 2. Calculate the Spot hook address with required permissions
         console2.log("Mining hook address with required permissions...");
         uint160 flags = uint160(
             Hooks.BEFORE_INITIALIZE_FLAG | 
@@ -325,7 +325,7 @@ contract FullRangeE2ETestBase is Test {
         (address hookAddr, bytes32 salt) = HookMiner.find(
             deployer,
             flags,
-            type(FullRange).creationCode,
+            type(Spot).creationCode,
             abi.encode(
                 IPoolManager(UNICHAIN_SEPOLIA_POOL_MANAGER),
                 poolManagerContract,
@@ -339,9 +339,9 @@ contract FullRangeE2ETestBase is Test {
         console2.log("Hook address mined:", hookAddr);
         console2.log("Salt used:", uint256(salt));
         
-        // 3. Deploy the FullRange hook with the mined address
-        console2.log("Deploying FullRange hook...");
-        fullRange = new FullRange{salt: salt}(
+        // 3. Deploy the Spot hook with the mined address
+        console2.log("Deploying Spot hook...");
+        fullRange = new Spot{salt: salt}(
             IPoolManager(UNICHAIN_SEPOLIA_POOL_MANAGER),
             poolManagerContract,
             liquidityManager,
@@ -353,7 +353,7 @@ contract FullRangeE2ETestBase is Test {
         hookAddress = address(fullRange);
         fullRangeAddress = hookAddress;
         
-        console2.log("FullRange hook deployed at:", hookAddress);
+        console2.log("Spot hook deployed at:", hookAddress);
         
         // 4. Set up permissions between contracts
         console2.log("Setting up permissions between contracts...");
@@ -363,11 +363,11 @@ contract FullRangeE2ETestBase is Test {
         
         vm.stopPrank();
         
-        // Switch to governance for setting the FullRange address in pool manager
+        // Switch to governance for setting the Spot address in pool manager
         vm.startPrank(governance);
         
-        // Set FullRange hook address in pool manager
-        console2.log("Setting FullRange address in PoolManager as governance...");
+        // Set Spot hook address in pool manager
+        console2.log("Setting Spot address in PoolManager as governance...");
         poolManagerContract.setFullRangeAddress(hookAddress);
         
         // Test a privileged operation as governance
@@ -381,6 +381,7 @@ contract FullRangeE2ETestBase is Test {
         
         vm.stopPrank();
         
+        console2.log("Spot contract suite deployment complete");
         console2.log("FullRange contract suite deployment complete");
         return hookAddress;
     }

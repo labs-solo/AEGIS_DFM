@@ -10,7 +10,7 @@ import {SortTokens} from "v4-core/test/utils/SortTokens.sol";
 
 // Project imports
 import {IFullRangeDynamicFeeManager} from "./interfaces/IFullRangeDynamicFeeManager.sol";
-import {IFullRange} from "./interfaces/IFullRange.sol";
+import {ISpot} from "./interfaces/ISpot.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 import {MathUtils} from "./libraries/MathUtils.sol";
 import {Errors} from "./errors/Errors.sol";
@@ -60,7 +60,7 @@ contract FullRangeDynamicFeeManager is Owned {
     // Reference to the pool manager
     IPoolManager public immutable poolManager;
     
-    // The address of the FullRange contract - used for access control
+    // The address of the Spot contract - used for access control
     address public immutable fullRangeAddress;
     
     // Oracle threshold config
@@ -86,11 +86,11 @@ contract FullRangeDynamicFeeManager is Owned {
     event ThresholdsUpdated(uint32 blockUpdateThreshold, int24 tickThreshold);
     
     /**
-     * @notice Access control modifier for FullRange contract
+     * @notice Access control modifier for Spot contract
      * @dev This is a legacy modifier that will be phased out with the reverse authorization model
      */
     modifier onlyFullRange() {
-        // Fast path: direct call from the FullRange contract
+        // Fast path: direct call from the Spot contract
         if (msg.sender == fullRangeAddress) {
             _;
             return;
@@ -98,16 +98,16 @@ contract FullRangeDynamicFeeManager is Owned {
         
         // Since we now use the reverse authorization model,
         // we don't need to validate hook instances anymore
-        // Just reject any calls that aren't from the main FullRange contract
+        // Just reject any calls that aren't from the main Spot contract
         revert Errors.AccessNotAuthorized(msg.sender);
     }
     
     /**
-     * @notice Access control modifier for owner or FullRange contract
+     * @notice Access control modifier for owner or Spot contract
      * @dev This is a legacy modifier that will be phased out with the reverse authorization model
      */
     modifier onlyOwnerOrFullRange() {
-        // Fast path: direct call from owner or FullRange contract
+        // Fast path: direct call from owner or Spot contract
         if (msg.sender == owner || msg.sender == fullRangeAddress) {
             _;
             return;
@@ -115,7 +115,7 @@ contract FullRangeDynamicFeeManager is Owned {
         
         // Since we now use the reverse authorization model,
         // we don't need to validate hook instances anymore
-        // Just reject any calls that aren't from the owner or main FullRange contract
+        // Just reject any calls that aren't from the owner or main Spot contract
         revert Errors.AccessNotAuthorized(msg.sender);
     }
     
@@ -124,7 +124,7 @@ contract FullRangeDynamicFeeManager is Owned {
      * @param _owner The owner of this contract
      * @param _policy The consolidated policy contract
      * @param _poolManager The pool manager contract
-     * @param _fullRange The address of the FullRange contract
+     * @param _fullRange The address of the Spot contract
      */
     constructor(
         address _owner,
@@ -148,9 +148,9 @@ contract FullRangeDynamicFeeManager is Owned {
     }
     
     /**
-     * @notice Get oracle data for a pool from the FullRange contract
+     * @notice Get oracle data for a pool from the Spot contract
      * @dev Implements Reverse Authorization Model for gas efficiency:
-     *      - Pulls data from FullRange instead of receiving updates
+     *      - Pulls data from Spot instead of receiving updates
      *      - Eliminates need for expensive access control validation
      *      - Reduces cross-contract call overhead
      *      - Improves security by restricting write access to contract state
@@ -159,8 +159,8 @@ contract FullRangeDynamicFeeManager is Owned {
      * @return lastUpdateBlock The block number of the last update
      */
     function getOracleData(PoolId poolId) internal view returns (int24 tick, uint32 lastUpdateBlock) {
-        // Call FullRange contract to get the latest oracle data
-        return IFullRange(fullRangeAddress).getOracleData(poolId);
+        // Call Spot contract to get the latest oracle data
+        return ISpot(fullRangeAddress).getOracleData(poolId);
     }
     
     /**
@@ -170,7 +170,7 @@ contract FullRangeDynamicFeeManager is Owned {
      * @return tickCapped Whether the tick was capped
      */
     function processOracleData(PoolId poolId) internal returns (bool tickCapped) {
-        // Retrieve data from FullRange
+        // Retrieve data from Spot
         (int24 tick, uint32 lastBlockUpdate) = getOracleData(poolId);
         PoolState storage pool = poolStates[poolId];
         

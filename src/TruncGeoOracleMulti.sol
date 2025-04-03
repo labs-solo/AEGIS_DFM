@@ -13,15 +13,15 @@ import {Errors} from "./errors/Errors.sol";
 /**
  * @title TruncGeoOracleMulti
  * @notice A non-hook contract that provides truncated geomean oracle data for multiple pools.
- *         Pools using FullRange.sol must have their oracle updated by calling updateObservation(poolKey)
+ *         Pools using Spot.sol must have their oracle updated by calling updateObservation(poolKey)
  *         on this contract. Each pool is set up via enableOracleForPool(), which initializes observation state
  *         and sets a pool-specific maximum tick movement (maxAbsTickMove).
  * 
  * @dev SECURITY BY MUTUAL AUTHENTICATION:
- *      This contract implements a bilateral authentication pattern between FullRange.sol and TruncGeoOracleMulti.
- *      1. During deployment, the TruncGeoOracleMulti is initialized with the known FullRange address
- *      2. The FullRange contract is then initialized with the TruncGeoOracleMulti address
- *      3. All sensitive oracle functions require the caller to be the trusted FullRange contract
+ *      This contract implements a bilateral authentication pattern between Spot.sol and TruncGeoOracleMulti.
+ *      1. During deployment, the TruncGeoOracleMulti is initialized with the known Spot address
+ *      2. The Spot contract is then initialized with the TruncGeoOracleMulti address
+ *      3. All sensitive oracle functions require the caller to be the trusted Spot contract
  *      4. This creates a secure mutual authentication loop that prevents:
  *         - Unauthorized oracle updates that could manipulate price data
  *         - Spoofed oracle observations from malicious contracts
@@ -36,7 +36,7 @@ contract TruncGeoOracleMulti {
     // The Uniswap V4 Pool Manager
     IPoolManager public immutable poolManager;
     
-    // The authorized FullRange hook address - critical for secure mutual authentication
+    // The authorized Spot hook address - critical for secure mutual authentication
     address public fullRangeHook;
 
     // Number of historic observations to keep (roughly 24h at 1h sample rate)
@@ -76,10 +76,10 @@ contract TruncGeoOracleMulti {
         // fullRangeHook = _fullRangeHook; // REMOVED
     }
 
-    // NEW FUNCTION: Setter for FullRange hook address
+    // NEW FUNCTION: Setter for Spot hook address
     /**
-     * @notice Sets the trusted FullRange hook address after deployment.
-     * @param _hook The address of the FullRange hook contract.
+     * @notice Sets the trusted Spot hook address after deployment.
+     * @param _hook The address of the Spot hook contract.
      */
     function setFullRangeHook(address _hook) external {
         // Only allow governance to set this once
@@ -261,11 +261,11 @@ contract TruncGeoOracleMulti {
      * @param newMove The new maximum tick movement.
      * 
      * @dev SECURITY: This is a governance function protected by the mutual authentication system.
-     *      Only the trusted FullRange hook can update the tick movement configuration.
+     *      Only the trusted Spot hook can update the tick movement configuration.
      *      This prevents unauthorized changes to the tick capping parameters.
      */
     function updateMaxAbsTickMoveForPool(bytes32 poolId, int24 newMove) public virtual {
-        // Only FullRange hook can update the configuration
+        // Only Spot hook can update the configuration
         // Part of the mutual authentication security system
         if (msg.sender != fullRangeHook) {
             revert Errors.AccessNotAuthorized(msg.sender);
@@ -319,12 +319,12 @@ contract TruncGeoOracleMulti {
      * @return cardinalityNextNew The new cardinality.
      * 
      * @dev SECURITY: Protected by the mutual authentication system.
-     *      Only the trusted FullRange hook can increase cardinality.
+     *      Only the trusted Spot hook can increase cardinality.
      */
     function increaseCardinalityNext(PoolKey calldata key, uint16 cardinalityNext)
         external returns (uint16 cardinalityNextOld, uint16 cardinalityNextNew)
     {
-        // Only FullRange hook can increase cardinality
+        // Only Spot hook can increase cardinality
         // Part of the mutual authentication security system
         if (msg.sender != fullRangeHook) {
             revert Errors.AccessNotAuthorized(msg.sender);

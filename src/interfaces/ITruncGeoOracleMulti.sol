@@ -21,7 +21,7 @@ interface ITruncGeoOracleMulti {
     /**
      * @notice Updates oracle observations for a pool.
      * @param key The pool key.
-     * @dev Called by the hook (FullRange.sol) during its callbacks.
+     * @dev Called by the hook (Spot.sol) during its callbacks.
      */
     function updateObservation(PoolKey calldata key) external;
 

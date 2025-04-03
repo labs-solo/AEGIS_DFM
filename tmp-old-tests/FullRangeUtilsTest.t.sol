@@ -10,8 +10,8 @@ pragma solidity 0.8.26;
 /*
 
 /**
- * @title FullRangeUtilsTest
- * @notice Unit tests for the FullRangeUtils library introduced in Phase 6,
+ * @title SpotUtilsTest
+ * @notice Unit tests for the SpotUtils library introduced in Phase 6,
  *         ensuring 90%+ coverage across ratio-based deposit logic, partial withdrawal,
  *         and leftover token pulling.
  */

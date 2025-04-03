@@ -5,7 +5,7 @@ import "./LocalUniswapV4TestBase.t.sol";
 import "forge-std/console2.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
-import {DepositParams} from "../src/interfaces/IFullRange.sol";
+import {DepositParams} from "../src/interfaces/ISpot.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
@@ -13,7 +13,7 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 /**
  * @title GasBenchmarkTest
- * @notice Compares gas costs between regular Uniswap V4 pools (tight tick spacing) and FullRange hook pools (wide tick spacing)
+ * @notice Compares gas costs between regular Uniswap V4 pools (tight tick spacing) and Spot hook pools (wide tick spacing)
  */
 contract GasBenchmarkTest is LocalUniswapV4TestBase {
     using StateLibrary for IPoolManager;

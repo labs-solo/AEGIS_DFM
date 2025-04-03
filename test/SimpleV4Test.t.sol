@@ -16,14 +16,14 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {HookMiner} from "../src/utils/HookMiner.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
-import {FullRange} from "../src/FullRange.sol";
+import {Spot} from "../src/Spot.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
-import {DepositParams, WithdrawParams} from "../src/interfaces/IFullRange.sol";
+import {DepositParams, WithdrawParams} from "../src/interfaces/ISpot.sol";
 
 /**
  * @title SimpleV4Test
@@ -35,7 +35,7 @@ contract SimpleV4Test is Test {
     using CurrencyLibrary for Currency;
 
     PoolManager poolManager;
-    FullRange fullRange;
+    Spot fullRange;
     FullRangeLiquidityManager liquidityManager;
     FullRangeDynamicFeeManager dynamicFeeManager;
     PoolPolicyManager policyManager;
@@ -88,22 +88,22 @@ contract SimpleV4Test is Test {
         // Deploy Liquidity Manager
         liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
 
-        // Deploy FullRange hook using our improved method
+        // Deploy Spot hook using our improved method
         fullRange = _deployFullRange();
         
-        // Deploy Dynamic Fee Manager AFTER FullRange, passing its address
+        // Deploy Dynamic Fee Manager AFTER Spot, passing its address
         dynamicFeeManager = new FullRangeDynamicFeeManager(
             governance,
             IPoolPolicy(address(policyManager)),
             poolManager,
-            address(fullRange) // Pass the actual FullRange address now
+            address(fullRange) // Pass the actual Spot address now
         );
         
-        // Update managers with correct FullRange address & set DFM in FullRange
+        // Update managers with correct Spot address & set DFM in Spot
         vm.stopPrank();
         vm.startPrank(governance);
         liquidityManager.setFullRangeAddress(address(fullRange));
-        // Call the new setter in FullRange
+        // Call the new setter in Spot
         fullRange.setDynamicFeeManager(dynamicFeeManager);
         vm.stopPrank();
         vm.startPrank(deployer);
@@ -134,7 +134,7 @@ contract SimpleV4Test is Test {
     }
     
     /**
-     * @notice Tests that a user can add liquidity to a Uniswap V4 pool through the FullRange hook
+     * @notice Tests that a user can add liquidity to a Uniswap V4 pool through the Spot hook
      * @dev This test ensures the hook correctly handles liquidity provision and updates token balances
      */
     function test_addLiquidity() public {
@@ -193,7 +193,7 @@ contract SimpleV4Test is Test {
     }
     
     /**
-     * @notice Tests that a user can perform a token swap in a Uniswap V4 pool with the FullRange hook
+     * @notice Tests that a user can perform a token swap in a Uniswap V4 pool with the Spot hook
      * @dev This test verifies swap execution, token transfers, and balance updates after a swap
      */
     function test_swap() public {
@@ -267,7 +267,7 @@ contract SimpleV4Test is Test {
         assertEq(bobToken1After - bobToken1Before, swapAmount, "Bob should have received exactly the swap amount of token1");
     }
 
-    function _deployFullRange() internal virtual returns (FullRange) {
+    function _deployFullRange() internal virtual returns (Spot) {
         // Calculate required hook flags
         uint160 flags = uint160(
             Hooks.BEFORE_INITIALIZE_FLAG | 
@@ -281,7 +281,7 @@ contract SimpleV4Test is Test {
             Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
         );
 
-        // Prepare constructor arguments for FullRange (WITHOUT dynamicFeeManager)
+        // Prepare constructor arguments for Spot (WITHOUT dynamicFeeManager)
         bytes memory constructorArgs = abi.encode(
             address(poolManager),
             IPoolPolicy(address(policyManager)),
@@ -294,7 +294,7 @@ contract SimpleV4Test is Test {
             address(this), // Deployer in test context is `this` contract
             flags,
             // Use creation code without dynamicFeeManager arg
-            abi.encodePacked(type(FullRange).creationCode, constructorArgs),
+            abi.encodePacked(type(Spot).creationCode, constructorArgs),
             bytes("") // Constructor args already packed into creation code for find
         );
 
@@ -303,7 +303,7 @@ contract SimpleV4Test is Test {
         console2.log("Permission bits required:", flags);
 
         // Deploy the hook using the mined salt and CORRECT constructor args
-        FullRange fullRangeInstance = new FullRange{salt: salt}(
+        Spot fullRangeInstance = new Spot{salt: salt}(
             poolManager, 
             IPoolPolicy(address(policyManager)), 
             liquidityManager

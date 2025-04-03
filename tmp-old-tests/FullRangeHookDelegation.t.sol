@@ -10,7 +10,7 @@ pragma solidity 0.8.26;
 /*
 
 import "forge-std/Test.sol";
-import {FullRange} from "../src/FullRange.sol";
+import {Spot} from "../src/Spot.sol";
 import {DefaultHookHandler} from "../src/DefaultHookHandler.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -19,13 +19,13 @@ import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.
 import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
 
 /**
- * @title FullRangeHookDelegation Test
- * @notice Tests the hook delegation pattern implementation in FullRange
+ * @title SpotHookDelegation Test
+ * @notice Tests the hook delegation pattern implementation in Spot
  */
 contract FullRangeHookDelegationTest is Test {
     address mockPoolManager;
     address mockHookHandler;
-    FullRange mockFullRange;
+    Spot mockFullRange;
 
     // Mock all the constructor dependencies
     function setUp() public {
@@ -53,7 +53,7 @@ contract FullRangeHookDelegationTest is Test {
     }
     
     function testHookDelegation() public {
-        // Test that the FullRange contract correctly delegates to DefaultHookHandler
+        // Test that the Spot contract correctly delegates to DefaultHookHandler
         // when hooks are called. This would be a more complex integration test
         // with actual contract deployment. In this case, we're just testing the concept.
         

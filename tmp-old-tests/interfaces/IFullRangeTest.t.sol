@@ -10,7 +10,7 @@ pragma solidity 0.8.26;
 /*
 
 import {Test} from "forge-std/Test.sol";
-import {IFullRange, DepositParams, WithdrawParams, CallbackData, ModifyLiquidityParams} from "../../src/interfaces/IFullRange.sol";
+import {ISpot, DepositParams, WithdrawParams, CallbackData, ModifyLiquidityParams} from "../../src/interfaces/ISpot.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {BalanceDelta, toBalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
@@ -18,10 +18,10 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 /**
- * @title FullRangeMock
- * @notice A mock implementation of IFullRange for testing purposes
+ * @title SpotMock
+ * @notice A mock implementation of ISpot for testing purposes
  */
-contract FullRangeMock is IFullRange {
+contract FullRangeMock is ISpot {
     using PoolIdLibrary for PoolKey;
 
     mapping(PoolId => bool) public initializedPools;
@@ -66,11 +66,51 @@ contract FullRangeMock is IFullRange {
     function reinvestFees(PoolId poolId) external override {
         // Mock implementation - do nothing
     }
+
+    // --- Functions required by ISpot but not IFullRange ---
+    function getHookAddress() external view override returns (address) {
+        return address(this);
+    }
+    function setPoolEmergencyState(PoolId poolId, bool isEmergency) external override {}
+    function claimPendingETH() external override {}
+    function getPoolKey(PoolId poolId) external view override returns (PoolKey memory) {
+        return createMockPoolKey();
+    }
+    function getPoolInfo(PoolId poolId) external view override returns (
+            bool isInitialized,
+            uint256[2] memory reserves,
+            uint128 totalShares,
+            uint256 tokenId
+        ) {
+        isInitialized = initializedPools[poolId];
+        if (isInitialized) {
+            reserves[0] = _userShares[poolId][address(this)];
+            reserves[1] = _userShares[poolId][address(this)];
+            totalShares = uint128(reserves[0] + reserves[1]);
+            tokenId = 1;
+        } else {
+            return (false, [uint256(0), uint256(0)], 0, 0);
+        }
+    }
+    function getOracleData(PoolId poolId) external view override returns (int24 tick, uint32 blockNumber) {
+        return (0, 0);
+    }
+    function isPoolInitialized(PoolId poolId) external view override returns (bool) {
+        return initializedPools[poolId];
+    }
+    function getPoolReservesAndShares(PoolId poolId) external view override returns (uint256 reserve0, uint256 reserve1, uint128 totalShares) {
+        (bool isInit, uint256[2] memory reserves, uint128 shares, ) = getPoolInfo(poolId);
+        return (reserves[0], reserves[1], shares);
+    }
+    function getPoolTokenId(PoolId poolId) external view override returns (uint256) {
+        return 1;
+    }
+    // --------------------------------------------------------
 }
 
 /**
- * @title IFullRangeTest
- * @notice Tests for the IFullRange interface
+ * @title ISpotTest
+ * @notice Tests for the ISpot interface
  */
 contract IFullRangeTest is Test {
     FullRangeMock fullRangeMock;

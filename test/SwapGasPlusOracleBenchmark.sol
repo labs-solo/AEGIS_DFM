@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import "./LocalUniswapV4TestBase.t.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
-import {DepositParams} from "../src/interfaces/IFullRange.sol";
+import {DepositParams} from "../src/interfaces/ISpot.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";

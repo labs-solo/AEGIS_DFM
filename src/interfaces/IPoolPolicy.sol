@@ -6,7 +6,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
 /**
  * @title IPoolPolicy
- * @notice Consolidated interface for all policy types in the FullRange system
+ * @notice Consolidated interface for all policy types in the Spot system
  * @dev Combines fee, tick scaling, and v-tier policies into a single interface
  */
 interface IPoolPolicy {
