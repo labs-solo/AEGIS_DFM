@@ -73,6 +73,7 @@ library Errors {
     error DelegateCallFailed();
     error EthTransferFailed(address to, uint256 amount);
     error NotImplemented();
+    error ContractPaused();
     
     // Pool errors
     error PoolNotInitialized(PoolId poolId);

@@ -49,8 +49,8 @@ interface IFeeReinvestmentManager {
     }
     
     /**
-     * @notice Comprehensive fee extraction handler for FullRange.sol
-     * @dev This function handles all fee extraction logic to keep FullRange.sol lean
+     * @notice Comprehensive fee extraction handler for Spot.sol
+     * @dev This function handles all fee extraction logic to keep Spot.sol lean
      * 
      * @param poolId The pool ID
      * @param feesAccrued The total fees accrued during the operation

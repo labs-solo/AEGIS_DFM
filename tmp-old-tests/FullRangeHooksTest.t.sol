@@ -10,7 +10,7 @@ pragma solidity 0.8.26;
 /*
 
 /**
- * @title FullRangeHooksTest
+ * @title SpotHooksTest
  * @notice Unit tests for the hook/callback logic introduced in Phase 4.
  *         Achieves 90%+ coverage by testing:
  *         - valid salt => deposit or withdrawal
@@ -20,7 +20,7 @@ pragma solidity 0.8.26;
 
 import "forge-std/Test.sol";
 import "../src/FullRangeHooks.sol";
-import {CallbackData, PoolKey, ModifyLiquidityParams} from "../src/interfaces/IFullRange.sol";
+import {CallbackData, PoolKey, ModifyLiquidityParams} from "../src/interfaces/ISpot.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
@@ -55,7 +55,7 @@ contract FullRangeHooksTest is Test {
                 tickLower: -887220,
                 tickUpper: 887220,
                 liquidityDelta: int256(1000), // deposit
-                salt: keccak256("FullRangeHook")
+                salt: keccak256("SpotHook")
             }),
             isHookOp: true
         });
@@ -96,7 +96,7 @@ contract FullRangeHooksTest is Test {
                 tickLower: -120,
                 tickUpper: 120,
                 liquidityDelta: int256(-500), // withdrawal
-                salt: keccak256("FullRangeHook")
+                salt: keccak256("SpotHook")
             }),
             isHookOp: true
         });
@@ -159,7 +159,7 @@ contract FullRangeHooksTest is Test {
                 tickLower: -60,
                 tickUpper: 60,
                 liquidityDelta: 0, // Zero delta
-                salt: keccak256("FullRangeHook")
+                salt: keccak256("SpotHook")
             }),
             isHookOp: true
         });
@@ -171,10 +171,10 @@ contract FullRangeHooksTest is Test {
     
     function testFullRangeSaltConstantValue() public {
         // Verify the salt constant has the correct value
-        bytes32 expectedSalt = keccak256("FullRangeHook");
+        bytes32 expectedSalt = keccak256("SpotHook");
         bytes32 actualSalt = hooks.FULL_RANGE_SALT();
         
-        assertEq(actualSalt, expectedSalt, "FULL_RANGE_SALT should match keccak256('FullRangeHook')");
+        assertEq(actualSalt, expectedSalt, "FULL_RANGE_SALT should match keccak256('SpotHook')");
     }
 } 
 */

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import { IFullRange, DepositParams, WithdrawParams } from "./interfaces/IFullRange.sol";
+import { ISpot, DepositParams, WithdrawParams } from "./interfaces/ISpot.sol";
 import { PoolId, PoolIdLibrary } from "v4-core/src/types/PoolId.sol";
 import { PoolKey } from "v4-core/src/types/PoolKey.sol";
-import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
 import { IPoolManager } from "v4-core/src/interfaces/IPoolManager.sol";
 import { BalanceDelta, BalanceDeltaLibrary } from "v4-core/src/types/BalanceDelta.sol";
 import { Currency as UniswapCurrency } from "v4-core/src/types/Currency.sol";
@@ -23,38 +22,39 @@ import { IFeeReinvestmentManager } from "./interfaces/IFeeReinvestmentManager.so
 import { ReentrancyGuard } from "solmate/src/utils/ReentrancyGuard.sol";
 import { StateLibrary } from "v4-core/src/libraries/StateLibrary.sol";
 import { PoolTokenIdUtils } from "./utils/PoolTokenIdUtils.sol";
-import { IFullRangeHooks } from "./interfaces/IFullRangeHooks.sol";
+import { ISpotHooks } from "./interfaces/ISpotHooks.sol";
 import { Currency } from "v4-core/src/types/Currency.sol";
 import { IERC20Minimal } from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import { TruncGeoOracleMulti } from "./TruncGeoOracleMulti.sol";
 import { IFullRangeDynamicFeeManager } from "./interfaces/IFullRangeDynamicFeeManager.sol";
 import { IFullRangeLiquidityManager } from "./interfaces/IFullRangeLiquidityManager.sol";
 import { TruncatedOracle } from "./libraries/TruncatedOracle.sol";
+import { BaseHook } from "lib/v4-periphery/src/utils/BaseHook.sol";
 
 /**
- * @title FullRange
+ * @title Spot
  * @notice Optimized Uniswap V4 Hook contract with minimized bytecode size
- * @dev Implements IFullRange and uses delegate calls to manager contracts for complex logic
+ * @dev Implements ISpot and uses delegate calls to manager contracts for complex logic
+ *      Inherits from BaseHook to provide default hook implementations.
  */
-contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGuard {
+contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     using PoolIdLibrary for PoolKey;
     
     // =========================================================================
-    // Constants for hook selectors
+    // Constants for hook selectors - No longer needed as BaseHook handles this
     // =========================================================================
-    bytes4 internal constant BEFORE_INITIALIZE_SELECTOR = IHooks.beforeInitialize.selector;
-    bytes4 internal constant AFTER_INITIALIZE_SELECTOR = IHooks.afterInitialize.selector;
-    bytes4 internal constant BEFORE_ADD_LIQUIDITY_SELECTOR = IHooks.beforeAddLiquidity.selector;
-    bytes4 internal constant AFTER_ADD_LIQUIDITY_SELECTOR = IHooks.afterAddLiquidity.selector;
-    bytes4 internal constant BEFORE_REMOVE_LIQUIDITY_SELECTOR = IHooks.beforeRemoveLiquidity.selector;
-    bytes4 internal constant AFTER_REMOVE_LIQUIDITY_SELECTOR = IHooks.afterRemoveLiquidity.selector;
-    bytes4 internal constant BEFORE_SWAP_SELECTOR = IHooks.beforeSwap.selector;
-    bytes4 internal constant AFTER_SWAP_SELECTOR = IHooks.afterSwap.selector;
-    bytes4 internal constant BEFORE_DONATE_SELECTOR = IHooks.beforeDonate.selector;
-    bytes4 internal constant AFTER_DONATE_SELECTOR = IHooks.afterDonate.selector;
+    // bytes4 internal constant BEFORE_INITIALIZE_SELECTOR = IHooks.beforeInitialize.selector;
+    // bytes4 internal constant AFTER_INITIALIZE_SELECTOR = IHooks.afterInitialize.selector;
+    // bytes4 internal constant BEFORE_ADD_LIQUIDITY_SELECTOR = IHooks.beforeAddLiquidity.selector;
+    // bytes4 internal constant AFTER_ADD_LIQUIDITY_SELECTOR = IHooks.afterAddLiquidity.selector;
+    // bytes4 internal constant BEFORE_REMOVE_LIQUIDITY_SELECTOR = IHooks.beforeRemoveLiquidity.selector;
+    // bytes4 internal constant AFTER_REMOVE_LIQUIDITY_SELECTOR = IHooks.afterRemoveLiquidity.selector;
+    // bytes4 internal constant BEFORE_SWAP_SELECTOR = IHooks.beforeSwap.selector;
+    // bytes4 internal constant AFTER_SWAP_SELECTOR = IHooks.afterSwap.selector;
+    // bytes4 internal constant BEFORE_DONATE_SELECTOR = IHooks.beforeDonate.selector;
+    // bytes4 internal constant AFTER_DONATE_SELECTOR = IHooks.afterDonate.selector;
     
     // Immutable core contracts and managers
-    IPoolManager public immutable poolManager;
     IPoolPolicy public immutable policyManager;
     FullRangeLiquidityManager public immutable liquidityManager;
     FullRangeDynamicFeeManager public dynamicFeeManager;
@@ -109,7 +109,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     event OracleInitializationFailed(PoolId indexed poolId, bytes reason);
     
     // Oracle data storage - reverse authorization model for gas optimization
-    // Stores tick data directly in FullRange instead of calling DynamicFeeManager
+    // Stores tick data directly in Spot instead of calling DynamicFeeManager
     // This eliminates expensive cross-contract validation and improves gas efficiency
     mapping(PoolId => int24) public lastOracleTicks;
     mapping(PoolId => uint32) public lastOracleUpdateBlocks;
@@ -130,13 +130,6 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         _;
     }
     
-    modifier onlyPoolManager() {
-        if (msg.sender != address(poolManager)) {
-            revert Errors.AccessOnlyPoolManager(msg.sender);
-        }
-        _;
-    }
-    
     modifier ensure(uint256 deadline) {
         if (deadline < block.timestamp) {
             revert Errors.DeadlinePassed(uint32(deadline), uint32(block.timestamp));
@@ -151,16 +144,15 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         IPoolManager _manager,
         IPoolPolicy _policyManager,
         FullRangeLiquidityManager _liquidityManager
-    ) {
+    ) BaseHook(_manager) {
         if (address(_manager) == address(0)) revert Errors.ZeroAddress();
         if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_liquidityManager) == address(0)) revert Errors.ZeroAddress();
 
-        poolManager = _manager;
         policyManager = _policyManager;
         liquidityManager = _liquidityManager;
         
-        validateHookAddress();
+        // validateHookAddress();
     }
 
     /**
@@ -171,7 +163,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     /**
      * @notice Get hook permissions for Uniswap V4
      */
-    function getHookPermissions() public pure returns (Hooks.Permissions memory) {
+    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: true,
             afterInitialize: true,
@@ -193,9 +185,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     /**
      * @notice Validate hook address
      */
-    function validateHookAddress() internal view {
-        Hooks.validateHookPermissions(this, getHookPermissions());
-    }
+    // validateHookAddress is handled by BaseHook
 
     /**
      * @notice Returns hook address
@@ -408,7 +398,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      * @notice Callback function for Uniswap V4 unlock pattern
      * @dev Called by the pool manager during deposit/withdraw operations
      */
-    function unlockCallback(bytes calldata data) external onlyPoolManager returns (bytes memory) {
+    function unlockCallback(bytes calldata data) external returns (bytes memory) {
         CallbackData memory cbData = abi.decode(data, (CallbackData));
         PoolKey memory key = poolKeys[cbData.poolId];
 
@@ -446,58 +436,74 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
     /**
      * @notice Implementation for beforeInitialize hook
      */
-    function beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96) 
-        external
+    function _beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96)
+        internal
+        virtual
         override
         returns (bytes4)
     {
-        return IHooks.beforeInitialize.selector;
+        // BaseHook returns the selector automatically
+        return this.beforeInitialize.selector;
     }
 
     /**
      * @notice After initialize hook implementation
      * @dev Sets up the pool data and initializes the liquidity manager
      */
-    function afterInitialize(
+    function _afterInitialize(
         address sender, 
         PoolKey calldata key, 
         uint160 sqrtPriceX96, 
         int24 tick
-    ) external override returns (bytes4) {
+    ) internal virtual override returns (bytes4) {
+        _afterInitializeInternal(sender, key, sqrtPriceX96, tick);
+        return this.afterInitialize.selector;
+    }
+
+    /**
+     * @notice Internal function containing the core logic for afterInitialize
+     * @dev Moved logic here to allow overriding contracts to call it without `super` on an external function.
+     */
+    function _afterInitializeInternal(
+        address sender,
+        PoolKey calldata key,
+        uint160 sqrtPriceX96,
+        int24 tick
+    ) internal virtual {
         PoolId poolId = key.toId();
-        
+
         // Validation
         if (poolData[poolId].initialized) {
             revert Errors.PoolAlreadyInitialized(poolId);
         }
-        
+
         if (sqrtPriceX96 == 0) {
             revert Errors.InvalidPrice(sqrtPriceX96);
         }
-        
+
         // Store pool data
         poolData[poolId] = PoolData({
             initialized: true,
             emergencyState: false,
             tokenId: PoolTokenIdUtils.toTokenId(poolId)
         });
-        
+
         poolKeys[poolId] = key;
-        
+
         // Register pool with liquidity manager
         liquidityManager.registerPool(poolId, key, sqrtPriceX96);
-        
+
         // Enhanced security: Only initialize oracle if:
         // 1. We're using dynamic fee flag (0x800000) OR fee is 0
         // 2. The actual hook address matches this contract
         // 3. Oracle is set up
-        if ((key.fee == 0x800000 || key.fee == 0) && 
+        if ((key.fee == 0x800000 || key.fee == 0) &&
             address(key.hooks) == address(this) &&
             address(truncGeoOracle) != address(0)) {
-            
+
             // Get max tick move from policy if available, otherwise use TruncatedOracle's constant
             int24 maxAbsTickMove = TruncatedOracle.MAX_ABS_TICK_MOVE; // Default from library
-            
+
             int24 scalingFactor = policyManager.getTickScalingFactor();
             // Dynamic calculation based on policy scaling factor
             if (scalingFactor > 0) {
@@ -505,26 +511,28 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
                 // Makes use of policy manager rather than hardcoding
                 maxAbsTickMove = int24(uint24(3000 / uint256(uint24(scalingFactor))));
             }
-            
+
             // Initialize the oracle without try/catch
             truncGeoOracle.enableOracleForPool(key, maxAbsTickMove);
             emit OracleInitialized(poolId, tick, maxAbsTickMove);
         }
-        
+
         // Initialize policies if required
         if (address(policyManager) != address(0)) {
             policyManager.handlePoolInitialization(poolId, key, sqrtPriceX96, tick, address(this));
         }
-        
-        return IHooks.afterInitialize.selector;
+
+        // Call the internal hook for potential overrides in inheriting contracts
+        _afterPoolInitialized(poolId, key, sqrtPriceX96, tick);
     }
 
     /**
      * @notice Implementation for beforeSwap hook
      * @dev Returns dynamic fee for the pool
      */
-    function beforeSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata hookData)
-        external
+    function _beforeSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata hookData)
+        internal
+        virtual
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
@@ -535,7 +543,7 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         
         // Return dynamic fee and no delta
         return (
-            IHooks.beforeSwap.selector,
+            this.beforeSwap.selector,
             BeforeSwapDeltaLibrary.ZERO_DELTA,
             uint24(dynamicFeeManager.getCurrentDynamicFee(key.toId()))
         );
@@ -547,8 +555,9 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
      *      instead of calling into DynamicFeeManager, which eliminates validation overhead
      *      and significantly reduces gas costs while maintaining security.
      */
-    function afterSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
-        external
+    function _afterSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
+        internal
+        virtual
         override
         returns (bytes4, int128)
     {
@@ -583,87 +592,153 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
             }
         }
         
-        return (IHooks.afterSwap.selector, 0);
+        return (this.afterSwap.selector, 0);
     }
 
     /**
      * @notice Implementation for beforeAddLiquidity hook
      */
-    function beforeAddLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
-        external
+    function _beforeAddLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
+        internal
+        virtual
         override
         returns (bytes4)
     {
-        return IHooks.beforeAddLiquidity.selector;
+        return this.beforeAddLiquidity.selector;
     }
 
     /**
-     * @notice Implementation for afterAddLiquidity hook
+     * @notice After Add Liquidity hook
+     * @dev Reverse Authorization Model: Only handles fee processing logic directly
+     *      to reduce gas and remove DynamicFeeManager dependency.
+     * @param sender The sender address
+     * @param key The pool key
+     * @param params Modify liquidity parameters
+     * @param delta The balance delta
+     * @param feesAccrued The fees accrued during the operation
+     * @param hookData Additional hook data
+     * @return bytes4 Selector for afterAddLiquidity hook
+     * @return BalanceDelta The fee delta
      */
-    function afterAddLiquidity(
+    function _afterAddLiquidity(
         address sender,
         PoolKey calldata key,
         IPoolManager.ModifyLiquidityParams calldata params,
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) external override returns (bytes4, BalanceDelta) {
+    ) internal virtual override returns (bytes4, BalanceDelta) {
+        PoolId poolId = key.toId();
         // Reserves are calculated on demand, no need to update storage
-        return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+        return (this.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     /**
      * @notice Implementation for beforeRemoveLiquidity hook
      */
-    function beforeRemoveLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
-        external
+    function _beforeRemoveLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
+        internal
+        virtual
         override
         returns (bytes4)
     {
-        return IHooks.beforeRemoveLiquidity.selector;
+        return this.beforeRemoveLiquidity.selector;
     }
 
     /**
-     * @notice Implementation for afterRemoveLiquidity hook
+     * @notice After Remove Liquidity hook
+     * @dev Reverse Authorization Model: Only handles fee processing logic directly
+     *      to reduce gas and remove DynamicFeeManager dependency.
+     * @param sender The sender address
+     * @param key The pool key
+     * @param params Modify liquidity parameters
+     * @param delta The balance delta
+     * @param feesAccrued The fees accrued during the operation
+     * @param hookData Additional hook data
+     * @return bytes4 Selector for afterRemoveLiquidity hook
+     * @return BalanceDelta The fee delta
      */
-    function afterRemoveLiquidity(
+    function _afterRemoveLiquidity(
         address sender,
         PoolKey calldata key,
         IPoolManager.ModifyLiquidityParams calldata params,
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) external override returns (bytes4, BalanceDelta) {
-        // Reserves are now calculated on demand, no need to update storage
-        return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    ) internal virtual override returns (bytes4, BalanceDelta) {
+        PoolId poolId = key.toId();
+        // Track fees reinvestment
+        if (poolData[poolId].initialized) {
+            // Process fees if any
+            if (feesAccrued.amount0() != 0 || feesAccrued.amount1() != 0) {
+                _processFees(poolId, IFeeReinvestmentManager.OperationType.WITHDRAWAL, feesAccrued);
+            }
+        }
+        
+        return (this.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     /**
      * @notice Implementation for beforeDonate hook
      */
-    function beforeDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
-        external
+    function _beforeDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
+        internal
+        virtual
         override
         returns (bytes4)
     {
-        return IHooks.beforeDonate.selector;
+        return this.beforeDonate.selector; // Should rely on BaseHook revert if not implemented
     }
 
     /**
-     * @notice Implementation for afterDonate hook
+     * @notice After Donate hook
+     * @dev Processes fees related to donations if reinvestment policy is enabled.
+     * @param sender The sender address
+     * @param key The pool key
+     * @param amount0 Amount of token0 donated
+     * @param amount1 Amount of token1 donated
+     * @param hookData Additional hook data
+     * @return bytes4 Selector for afterDonate hook
      */
-    function afterDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
-        external
+    function _afterDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
+        internal
+        virtual
         override
         returns (bytes4)
     {
-        return IHooks.afterDonate.selector;
+        PoolId poolId = key.toId();
+        return this.afterDonate.selector; // Should rely on BaseHook revert if not implemented
     }
 
     /**
-     * @notice Implementation for afterRemoveLiquidityReturnDelta hook
-     * @dev This hook delegates all fee calculation and tracking logic to the FeeReinvestmentManager
-     *     to keep the FullRange contract lean
+     * @notice Placeholder for beforeSwapReturnDelta hook (required by ISpotHooks)
+     */
+    function beforeSwapReturnDelta(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        bytes calldata hookData
+    ) external virtual override returns (bytes4, BeforeSwapDelta) {
+        // Return bytes4(0) as the hook is not implemented/used in base Spot
+        return (bytes4(0), BeforeSwapDeltaLibrary.ZERO_DELTA);
+    }
+
+    /**
+     * @notice Placeholder for afterSwapReturnDelta hook (not implemented)
+     */
+    function afterSwapReturnDelta(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external virtual override returns (bytes4, BalanceDelta) {
+        return (ISpotHooks.afterSwapReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
+    /**
+     * @notice Placeholder for afterRemoveLiquidityReturnDelta hook
+     * @dev Processes fees similar to afterRemoveLiquidity
      */
     function afterRemoveLiquidityReturnDelta(
         address sender,
@@ -672,9 +747,9 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) external override returns (bytes4, BalanceDelta) {
-        // Track fees reinvestment
+    ) external virtual override returns (bytes4, BalanceDelta) {
         PoolId poolId = key.toId();
+        // Track fees reinvestment
         if (poolData[poolId].initialized) {
             // Process fees if any
             if (feesAccrued.amount0() != 0 || feesAccrued.amount1() != 0) {
@@ -682,39 +757,15 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
             }
         }
         
-        return (IFullRangeHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+        return (ISpotHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     /**
-     * @notice Implementation for beforeSwapReturnDelta hook
-     */
-    function beforeSwapReturnDelta(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        bytes calldata hookData
-    ) external returns (bytes4, BeforeSwapDelta) {
-        return (IFullRangeHooks.beforeSwapReturnDelta.selector, BeforeSwapDeltaLibrary.ZERO_DELTA);
-    }
-
-    /**
-     * @notice Implementation for afterSwapReturnDelta hook
-     */
-    function afterSwapReturnDelta(
-        address sender,
-        PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        BalanceDelta delta,
-        bytes calldata hookData
-    ) external returns (bytes4, BalanceDelta) {
-        return (IFullRangeHooks.afterSwapReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
-    }
-
-    /**
-     * @notice Implementation of afterAddLiquidityReturnDelta hook
+     * @notice Placeholder for afterAddLiquidityReturnDelta hook (not implemented)
      */
     function afterAddLiquidityReturnDelta(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, BalanceDelta delta, bytes calldata hookData)
         external
+        virtual
         override
         returns (bytes4, BalanceDelta)
     {
@@ -725,7 +776,16 @@ contract FullRange is IFullRange, IFullRangeHooks, IUnlockCallback, ReentrancyGu
             _processFees(poolId, IFeeReinvestmentManager.OperationType.DEPOSIT, BalanceDeltaLibrary.ZERO_DELTA);
         }
         
-        return (IFullRangeHooks.afterAddLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+        return (ISpotHooks.afterAddLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
+    /**
+     * @notice Internal function called after a pool is initialized.
+     * @dev Sets up initial state, potentially including oracle and fee configurations.
+     */
+    function _afterPoolInitialized(PoolId poolId, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick) internal virtual {
+        // Placeholder for potential logic in inheriting contracts
+        // No base implementation needed here beyond what _afterInitializeInternal does
     }
 
     /**

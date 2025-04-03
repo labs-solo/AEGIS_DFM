@@ -12,9 +12,10 @@ pragma solidity 0.8.26;
  *  • Achieve 90%+ coverage in FullRangeHooksTest.
  */
 
-import {IFullRange, CallbackData, ModifyLiquidityParams} from "./interfaces/IFullRange.sol";
+import {ISpot, CallbackData, ModifyLiquidityParams} from "./interfaces/ISpot.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
 import {Errors} from "./errors/Errors.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 /**
  * @dev Minimal contract handling the callback data. 

@@ -8,9 +8,9 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 
 /**
- * @title IFullRange
- * @notice Interface for the FullRange Uniswap V4 hook.
- * @dev Defines core data structures and functions for interacting with FullRange liquidity positions.
+ * @title ISpot
+ * @notice Interface for the Spot Uniswap V4 hook.
+ * @dev Defines core data structures and functions for interacting with Spot liquidity positions.
  */
 
 /**
@@ -76,10 +76,10 @@ struct ModifyLiquidityParams {
 }
 
 /**
- * @notice Interface for the FullRange system
+ * @notice Interface for the Spot system
  * @dev Provides functions for depositing/withdrawing liquidity and managing the hook
  */
-interface IFullRange is IHooks {
+interface ISpot is IHooks {
     /**
      * @notice Returns the address of this hook for use in pool initialization
      * @return The address of this contract
@@ -131,4 +131,49 @@ interface IFullRange is IHooks {
      * @return blockNumber The block number when the tick was last updated
      */
     function getOracleData(PoolId poolId) external view returns (int24 tick, uint32 blockNumber);
+
+    /**
+     * @notice Deposits liquidity into a pool.
+     * @param params The parameters for the deposit operation.
+     * @return shares The amount of LP shares minted.
+     * @return amount0 The actual amount of token0 deposited.
+     * @return amount1 The actual amount of token1 deposited.
+     */
+    function deposit(DepositParams calldata params) 
+        external 
+        payable 
+        returns (uint256 shares, uint256 amount0, uint256 amount1);
+
+    /**
+     * @notice Withdraws liquidity from a pool.
+     * @param params The parameters for the withdrawal operation.
+     * @return amount0 The actual amount of token0 withdrawn.
+     * @return amount1 The actual amount of token1 withdrawn.
+     */
+    function withdraw(WithdrawParams calldata params)
+        external
+        returns (uint256 amount0, uint256 amount1);
+
+    /**
+     * @notice Checks if a specific pool is initialized.
+     * @param poolId The PoolId to check.
+     * @return True if the pool is initialized, false otherwise.
+     */
+    function isPoolInitialized(PoolId poolId) external view returns (bool);
+
+    /**
+     * @notice Gets the current reserves and total liquidity shares for a pool.
+     * @param poolId The PoolId of the target pool.
+     * @return reserve0 The reserve amount of token0.
+     * @return reserve1 The reserve amount of token1.
+     * @return totalShares The total liquidity shares outstanding for the pool.
+     */
+    function getPoolReservesAndShares(PoolId poolId) external view returns (uint256 reserve0, uint256 reserve1, uint128 totalShares);
+
+    /**
+     * @notice Gets the token ID associated with a specific pool.
+     * @param poolId The PoolId of the target pool.
+     * @return The ERC1155 token ID representing the pool's LP shares.
+     */
+    function getPoolTokenId(PoolId poolId) external view returns (uint256);
 } 

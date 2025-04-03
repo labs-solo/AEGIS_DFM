@@ -19,7 +19,7 @@ import "forge-std/Test.sol";
 import "../src/FullRangeLiquidityManager.sol";
 import {FullRangePoolManager} from "../src/FullRangePoolManager.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {DepositParams, WithdrawParams, ModifyLiquidityParams} from "../src/interfaces/IFullRange.sol";
+import {DepositParams, WithdrawParams, ModifyLiquidityParams} from "../src/interfaces/ISpot.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";

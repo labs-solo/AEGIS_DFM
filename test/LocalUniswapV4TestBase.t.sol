@@ -18,8 +18,8 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 
-// FullRange Contracts
-import {FullRange} from "../src/FullRange.sol";
+// Spot Contracts
+import {Spot} from "../src/Spot.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {IFullRangeDynamicFeeManager} from "../src/interfaces/IFullRangeDynamicFeeManager.sol";
@@ -39,9 +39,9 @@ import { TruncGeoOracleMulti } from "../src/TruncGeoOracleMulti.sol";
 
 /**
  * @title LocalUniswapV4TestBase
- * @notice Base test contract that sets up a complete local Uniswap V4 environment with the FullRange hook
+ * @notice Base test contract that sets up a complete local Uniswap V4 environment with the Spot hook
  * @dev This provides a testing foundation with:
- * 1. All core contracts deployed (PoolManager, FullRange hook, Policy managers, etc.)
+ * 1. All core contracts deployed (PoolManager, Spot hook, Policy managers, etc.)
  * 2. Test tokens (MockERC20s)
  * 3. Helper functions for common operations (create pools, add liquidity, swap)
  * 4. Test accounts with pre-loaded balances
@@ -57,7 +57,7 @@ abstract contract LocalUniswapV4TestBase is Test {
     PoolPolicyManager public policyManager;
     FullRangeLiquidityManager public liquidityManager;
     FullRangeDynamicFeeManager public dynamicFeeManager;
-    FullRange public fullRange;
+    Spot public fullRange;
     TruncGeoOracleMulti public truncGeoOracle;
     
     // Test contract references - these are adapter contracts for interacting with the PoolManager
@@ -99,7 +99,7 @@ abstract contract LocalUniswapV4TestBase is Test {
     
     /**
      * @notice Sets up the complete testing environment with all contracts and accounts
-     * @dev This creates a fully functioning Uniswap V4 environment with the FullRange hook
+     * @dev This creates a fully functioning Uniswap V4 environment with the Spot hook
      */
     function setUp() public virtual {
         // Set up test accounts with ETH
@@ -145,9 +145,9 @@ abstract contract LocalUniswapV4TestBase is Test {
         
         vm.stopPrank();
         vm.startPrank(governance);
-        console2.log("[SETUP] Deploying FullRange...");
+        console2.log("[SETUP] Deploying Spot...");
         fullRange = _deployFullRange();
-        console2.log("[SETUP] FullRange Deployed at:", address(fullRange));
+        console2.log("[SETUP] Spot Deployed at:", address(fullRange));
         
         console2.log("[SETUP] Deploying DynamicFeeManager...");
         dynamicFeeManager = new FullRangeDynamicFeeManager(
@@ -217,11 +217,11 @@ abstract contract LocalUniswapV4TestBase is Test {
     }
 
     /**
-     * @notice Deploy the FullRange hook with proper permissions encoded in the address
+     * @notice Deploy the Spot hook with proper permissions encoded in the address
      * @dev Uses CREATE2 with address mining to ensure the hook address has the correct permission bits
-     * @return hookAddress The deployed FullRange hook address with correct permissions
+     * @return hookAddress The deployed Spot hook address with correct permissions
      */
-    function _deployFullRange() internal virtual returns (FullRange) {
+    function _deployFullRange() internal virtual returns (Spot) {
         // Calculate required hook flags
         uint160 flags = uint160(
             Hooks.BEFORE_INITIALIZE_FLAG |
@@ -246,7 +246,7 @@ abstract contract LocalUniswapV4TestBase is Test {
         (address hookAddress, bytes32 salt) = HookMiner.find(
             governance, // Use the actual deployer address (governance)
             flags,
-            abi.encodePacked(type(FullRange).creationCode, constructorArgs),
+            abi.encodePacked(type(Spot).creationCode, constructorArgs),
             bytes("")
         );
 
@@ -254,7 +254,7 @@ abstract contract LocalUniswapV4TestBase is Test {
         console2.logBytes32(salt);
 
         // Deploy using new 3-arg constructor
-        FullRange hookContract = new FullRange{salt: salt}(
+        Spot hookContract = new Spot{salt: salt}(
             poolManager,
             IPoolPolicy(address(policyManager)),
             liquidityManager
@@ -295,7 +295,7 @@ abstract contract LocalUniswapV4TestBase is Test {
     
     /**
      * @notice Helper function to add full range liquidity to a pool
-     * @dev This creates liquidity across the entire price range through the FullRange hook
+     * @dev This creates liquidity across the entire price range through the Spot hook
      * @param account The address that will provide the liquidity
      * @param liquidity The amount of tokens to add as liquidity
      */
@@ -495,6 +495,6 @@ abstract contract LocalUniswapV4TestBase is Test {
         
         // Verify that core contracts are deployed
         assertTrue(address(poolManager) != address(0), "PoolManager should be deployed");
-        assertTrue(address(fullRange) != address(0), "FullRange hook should be deployed");
+        assertTrue(address(fullRange) != address(0), "Spot hook should be deployed");
     }
 } 

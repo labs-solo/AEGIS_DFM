@@ -60,7 +60,7 @@ interface IFullRangeLiquidityManager {
     );
     
     /**
-     * @notice Handles delta settlement from FullRange's unlockCallback
+     * @notice Handles delta settlement from Spot's unlockCallback
      * @param key The pool key
      * @param delta The balance delta to settle
      */

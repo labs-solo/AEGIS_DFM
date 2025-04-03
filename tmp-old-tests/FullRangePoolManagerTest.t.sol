@@ -29,7 +29,7 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {BalanceDelta, toBalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {FullRange} from "../src/FullRange.sol";
+import {Spot} from "../src/Spot.sol";
 import "./utils/PoolCreationHelper.sol";
 
 /**
@@ -102,7 +102,7 @@ contract FullRangePoolManagerTest is Test {
     
     FullRangePoolManager poolManager;
     MockV4Manager mockManager;
-    FullRange mockFullRange;
+    Spot mockFullRange;
 
     address gov = address(0x1234);
     address nonGov = address(0x5678);
@@ -118,8 +118,8 @@ contract FullRangePoolManagerTest is Test {
         MockTickScalingPolicy mockTickScalingPolicy = new MockTickScalingPolicy();
         MockFeePolicy mockFeePolicy = new MockFeePolicy();
         
-        // Deploy mock FullRange (we only need it for hook callbacks)
-        mockFullRange = new FullRange(
+        // Deploy mock Spot (we only need it for hook callbacks)
+        mockFullRange = new Spot(
             IPoolManager(address(mockManager)),
             poolManager,
             FullRangeLiquidityManager(address(0)), // Not used in this test
@@ -132,7 +132,7 @@ contract FullRangePoolManagerTest is Test {
             mockTickScalingPolicy
         );
         
-        // Set the FullRange address in the pool manager
+        // Set the Spot address in the pool manager
         vm.prank(gov);
         poolManager.setFullRangeAddress(address(mockFullRange));
 

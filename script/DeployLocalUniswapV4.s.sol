@@ -12,7 +12,7 @@ import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
 
 // FullRange Contracts
-import {FullRange} from "../src/FullRange.sol";
+import {Spot} from "../src/Spot.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
@@ -21,6 +21,7 @@ import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -37,7 +38,7 @@ contract DeployLocalUniswapV4 is Script {
     PoolPolicyManager public policyManager;
     FullRangeLiquidityManager public liquidityManager;
     FullRangeDynamicFeeManager public dynamicFeeManager;
-    FullRange public fullRange;
+    Spot public fullRange;
     
     // Test contract references
     PoolModifyLiquidityTest public lpRouter;
@@ -84,13 +85,8 @@ contract DeployLocalUniswapV4 is Script {
         liquidityManager = new FullRangeLiquidityManager(IPoolManager(address(poolManager)), governance);
         console2.log("LiquidityManager deployed at:", address(liquidityManager));
         
-        // Deploy FullRange (using new 3-arg constructor)
-        console2.log("Deploying FullRange hook...");
-        fullRange = new FullRange(
-            IPoolManager(address(poolManager)),
-            IPoolPolicy(address(policyManager)),
-            liquidityManager
-        );
+        // Deploy Spot hook
+        fullRange = _deployFullRange(deployerAddress);
         console2.log("FullRange hook deployed at:", address(fullRange));
         
         // Deploy DynamicFeeManager AFTER FullRange
@@ -114,7 +110,7 @@ contract DeployLocalUniswapV4 is Script {
         donateRouter = new PoolDonateTest(IPoolManager(address(poolManager)));
         console2.log("LiquidityRouter deployed at:", address(lpRouter));
         console2.log("SwapRouter deployed at:", address(swapRouter));
-        console2.log("DonateRouter deployed at:", address(donateRouter));
+        console2.log("Test Donate Router:", address(donateRouter));
         
         vm.stopBroadcast();
         
@@ -128,5 +124,51 @@ contract DeployLocalUniswapV4 is Script {
         console2.log("Test LP Router:", address(lpRouter));
         console2.log("Test Swap Router:", address(swapRouter));
         console2.log("Test Donate Router:", address(donateRouter));
+    }
+
+    function _deployFullRange(address _deployer) internal returns (Spot) {
+        // Calculate required hook flags
+        uint160 flags = uint160(
+            Hooks.BEFORE_INITIALIZE_FLAG |
+            Hooks.AFTER_INITIALIZE_FLAG |
+            Hooks.BEFORE_ADD_LIQUIDITY_FLAG |
+            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
+            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
+            Hooks.BEFORE_SWAP_FLAG |
+            Hooks.AFTER_SWAP_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+        );
+
+        // Prepare constructor arguments for Spot (WITHOUT dynamicFeeManager)
+        bytes memory constructorArgs = abi.encode(
+            address(poolManager),
+            IPoolPolicy(address(policyManager)),
+            address(liquidityManager)
+        );
+
+        // Find salt using the correct deployer
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            _deployer, // Use the passed deployer address
+            flags,
+            abi.encodePacked(type(Spot).creationCode, constructorArgs),
+            bytes("") // Constructor args already packed into creation code
+        );
+
+        console.log("Calculated hook address:", hookAddress);
+        console.logBytes32(salt);
+
+        // Deploy the hook using the mined salt and CORRECT constructor args
+        Spot fullRangeInstance = new Spot{salt: salt}(
+            poolManager,
+            IPoolPolicy(address(policyManager)),
+            liquidityManager
+        );
+
+        // Verify the deployed address matches the calculated address
+        require(address(fullRangeInstance) == hookAddress, "HookMiner address mismatch");
+        console.log("Deployed hook address:", address(fullRangeInstance));
+
+        return fullRangeInstance;
     }
 } 
