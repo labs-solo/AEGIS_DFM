@@ -39,21 +39,7 @@ import { BaseHook } from "lib/v4-periphery/src/utils/BaseHook.sol";
  */
 contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     using PoolIdLibrary for PoolKey;
-    
-    // =========================================================================
-    // Constants for hook selectors - No longer needed as BaseHook handles this
-    // =========================================================================
-    // bytes4 internal constant BEFORE_INITIALIZE_SELECTOR = IHooks.beforeInitialize.selector;
-    // bytes4 internal constant AFTER_INITIALIZE_SELECTOR = IHooks.afterInitialize.selector;
-    // bytes4 internal constant BEFORE_ADD_LIQUIDITY_SELECTOR = IHooks.beforeAddLiquidity.selector;
-    // bytes4 internal constant AFTER_ADD_LIQUIDITY_SELECTOR = IHooks.afterAddLiquidity.selector;
-    // bytes4 internal constant BEFORE_REMOVE_LIQUIDITY_SELECTOR = IHooks.beforeRemoveLiquidity.selector;
-    // bytes4 internal constant AFTER_REMOVE_LIQUIDITY_SELECTOR = IHooks.afterRemoveLiquidity.selector;
-    // bytes4 internal constant BEFORE_SWAP_SELECTOR = IHooks.beforeSwap.selector;
-    // bytes4 internal constant AFTER_SWAP_SELECTOR = IHooks.afterSwap.selector;
-    // bytes4 internal constant BEFORE_DONATE_SELECTOR = IHooks.beforeDonate.selector;
-    // bytes4 internal constant AFTER_DONATE_SELECTOR = IHooks.afterDonate.selector;
-    
+        
     // Immutable core contracts and managers
     IPoolPolicy public immutable policyManager;
     FullRangeLiquidityManager public immutable liquidityManager;
