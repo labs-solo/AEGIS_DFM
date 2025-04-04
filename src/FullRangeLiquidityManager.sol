@@ -1004,42 +1004,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
     
     /**
-     * @notice Process deposit shares operation
-     * @dev This function is called by FullRange during deposits
-     * @param poolId The pool ID
-     * @param user The user address
-     * @param sharesToMint The number of shares to mint
-     * @param currentTotalShares The current total shares in the pool
-     * @return newTotalShares The new total shares
-     */
-    function processDepositShares(
-        PoolId poolId, 
-        address user, 
-        uint256 sharesToMint, 
-        uint128 currentTotalShares
-    ) external onlyFullRange returns (uint128 newTotalShares) {
-        // Verify pool total shares match expected value (prevents race conditions)
-        PoolInfo storage pool = pools[poolId];
-        if (pool.totalShares != currentTotalShares) {
-            revert Errors.ValidationInvalidInput("Total shares mismatch");
-        }
-        
-        // First perform external call (mint tokens)
-        uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
-        positions.mint(user, tokenId, sharesToMint);
-        
-        // Then update state
-        newTotalShares = currentTotalShares + uint128(sharesToMint);
-        pool.totalShares = newTotalShares;
-        
-        // Simplified event emission
-        emit UserSharesAdded(poolId, user, sharesToMint);
-        emit PoolStateUpdated(poolId, newTotalShares, 1); // 1 = deposit
-        
-        return newTotalShares;
-    }
-
-    /**
      * @notice Checks if a pool exists
      * @param poolId The pool ID to check
      * @return True if the pool exists
