@@ -389,10 +389,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Transfer tokens from recipient (the user)
         if (actual0 > 0 && !hasToken0Native) {
             IERC20Minimal(Currency.unwrap(key.currency0)).transferFrom(recipient, address(this), actual0);
+            IERC20Minimal(Currency.unwrap(key.currency0)).approve(address(manager), actual0);
         }
         
         if (actual1 > 0 && !hasToken1Native) {
             IERC20Minimal(Currency.unwrap(key.currency1)).transferFrom(recipient, address(this), actual1);
+            IERC20Minimal(Currency.unwrap(key.currency1)).approve(address(manager), actual1);
         }
         
         // Update reserves
@@ -412,16 +414,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Mint position tokens to user (only the non-locked shares)
         uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
         positions.mint(recipient, tokenId, newShares);
-        
-        // Approve tokens to the PoolManager
-        if (actual0 > 0 && !hasToken0Native) {
-            IERC20Minimal(Currency.unwrap(key.currency0)).approve(address(manager), actual0);
-        }
-        
-        if (actual1 > 0 && !hasToken1Native) {
-            IERC20Minimal(Currency.unwrap(key.currency1)).approve(address(manager), actual1);
-        }
-        
+                
         // Create callback data for the FullRange hook to handle
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
