@@ -23,6 +23,9 @@ import { StateLibrary } from "v4-core/src/libraries/StateLibrary.sol";
 import { ISpotHooks } from "./interfaces/ISpotHooks.sol";
 import { PoolTokenIdUtils } from "./utils/PoolTokenIdUtils.sol";
 import { BaseHook } from "lib/uniswap-hooks/src/base/BaseHook.sol";
+import { SafeTransferLib } from "solmate/src/utils/SafeTransferLib.sol";
+import { ERC20 } from "solmate/src/tokens/ERC20.sol";
+import { Currency, CurrencyLibrary } from "v4-core/src/types/Currency.sol";
 
 /**
  * @title Margin
@@ -36,6 +39,7 @@ contract Margin is Spot, IMargin {
     using PoolIdLibrary for PoolKey;
     using EnumerableSet for EnumerableSet.AddressSet;
     using BalanceDeltaLibrary for BalanceDelta;
+    using CurrencyLibrary for Currency;
 
     // =========================================================================
     // Constants
@@ -96,6 +100,11 @@ contract Margin is Spot, IMargin {
     mapping(PoolId => EnumerableSet.AddressSet) private poolUsers;
 
     /**
+     * @notice Tracks pending ETH payments for failed transfers
+     */
+    mapping(address => uint256) public pendingETHPayments;
+
+    /**
      * @notice Tracks the total amount of rented liquidity per pool (Phase 2+)
      */
     mapping(PoolId => uint256) public rentedLiquidity;
@@ -128,7 +137,18 @@ contract Margin is Spot, IMargin {
     /**
      * @notice Storage gap for future extensions
      */
-    uint256[50] private __gap;
+    uint256[49] private __gap;
+
+    // =========================================================================
+    // Events (Added/Renamed for Phase 2)
+    // =========================================================================
+    event DepositCollateral(PoolId indexed poolId, address indexed user, uint256 amount0, uint256 amount1);
+    event WithdrawCollateral(PoolId indexed poolId, address indexed user, uint256 sharesReduced, uint256 amount0, uint256 amount1);
+    event VaultUpdated(PoolId indexed poolId, address indexed user, uint128 token0Balance, uint128 token1Balance, uint128 debtShare, uint256 timestamp);
+    event ETHTransferFailed(address indexed recipient, uint256 amount);
+    event ETHClaimed(address indexed recipient, uint256 amount);
+    event PauseStatusChanged(bool isPaused);
+    event InterestRateModelUpdated(address newModel);
 
     // =========================================================================
     // Constructor
@@ -290,35 +310,192 @@ contract Margin is Spot, IMargin {
     }
 
     // =========================================================================
-    // Phase 2+ Functions (Stubs for Phase 1)
+    // Phase 2+ Functions (Implementations for Phase 2)
     // =========================================================================
 
     /**
-     * @notice Placeholder for deposit function (Phase 2)
+     * @notice Deposit tokens as collateral into the user's vault
+     * @param poolId The pool ID
+     * @param amount0 Amount of token0 to deposit
+     * @param amount1 Amount of token1 to deposit
+     * @dev No return value, LP shares are not calculated here.
      */
-    function deposit(PoolId poolId, uint256 amount0, uint256 amount1) external payable whenNotPaused {
-        revert Errors.NotImplemented(); // Use standard error from Errors.sol
+    function depositCollateral(
+        PoolId poolId,
+        uint256 amount0,
+        uint256 amount1
+    ) external payable whenNotPaused nonReentrant {
+        // Verify the pool is initialized
+        _verifyPoolInitialized(poolId);
+        
+        // Get the pool key and check for native ETH
+        PoolKey memory key = getPoolKey(poolId);
+        
+        // Check for native ETH usage
+        bool hasNative = key.currency0.isNative() || key.currency1.isNative();
+        if (msg.value > 0 && !hasNative) {
+            revert Errors.NonzeroNativeValue();
+        }
+        
+        // Ensure at least one token is being deposited
+        if (amount0 == 0 && amount1 == 0) {
+            revert Errors.ZeroAmount();
+        }
+        
+        // Get the vault
+        Vault storage vault = vaults[poolId][msg.sender];
+        
+        // Calculate the LP-equivalent shares of the deposit
+        // Removed: shares = _lpEquivalent(poolId, amount0, amount1); // Not needed in Phase 1/2 deposit
+        
+        // Transfer tokens from the user to the contract
+        if (amount0 > 0) {
+            if (key.currency0.isNative()) {
+                // Ensure sufficient ETH was sent
+                if (msg.value < amount0) {
+                     revert Errors.InsufficientETH(amount0, msg.value);
+                }
+                // No WETH.wrap needed as we hold native ETH
+            } else {
+                SafeTransferLib.safeTransferFrom(
+                    ERC20(Currency.unwrap(key.currency0)), 
+                    msg.sender, 
+                    address(this), 
+                    amount0
+                );
+            }
+        }
+        
+        if (amount1 > 0) {
+            if (key.currency1.isNative()) {
+                 // Adjust amount needed based on whether token0 was also ETH
+                uint256 ethNeeded = key.currency0.isNative() ? amount0 + amount1 : amount1;
+                if (msg.value < ethNeeded) {
+                     revert Errors.InsufficientETH(ethNeeded, msg.value);
+                }
+                 // No WETH.wrap needed
+            } else {
+                SafeTransferLib.safeTransferFrom(
+                    ERC20(Currency.unwrap(key.currency1)), 
+                    msg.sender, 
+                    address(this), 
+                    amount1
+                );
+            }
+        }
+
+        // Refund excess ETH
+        uint256 ethUsed = 0;
+        if (key.currency0.isNative()) ethUsed += amount0;
+        if (key.currency1.isNative()) ethUsed += amount1;
+        if (msg.value > ethUsed) {
+            SafeTransferLib.safeTransferETH(msg.sender, msg.value - ethUsed);
+        }
+        
+        // Update the vault's token balances (use SafeCast)
+        vault.token0Balance = (uint256(vault.token0Balance) + amount0).toUint128();
+        vault.token1Balance = (uint256(vault.token1Balance) + amount1).toUint128();
+        
+        // Initialize lastAccrual if first deposit (for Phase 3)
+        if (vault.lastAccrual == 0) {
+            vault.lastAccrual = uint64(block.timestamp);
+        }
+        
+        // Create a memory copy to pass to _updateVault
+        Vault memory updatedVault = vault; 
+        
+        // Update the vault state, emit events, and manage user tracking
+        _updateVault(poolId, msg.sender, updatedVault); 
+        
+        emit DepositCollateral(poolId, msg.sender, amount0, amount1);
+        
+        // Removed return shares;
     }
 
     /**
-     * @notice Placeholder for withdraw function (Phase 2)
+     * @notice Withdraw collateral from the user's vault by specifying token amounts
+     * @param poolId The pool ID
+     * @param amount0 Amount of token0 to withdraw
+     * @param amount1 Amount of token1 to withdraw
+     * @return sharesReduced The equivalent LP shares of the withdrawn tokens
      */
-    function withdraw(PoolId poolId, uint256 shares, uint256 amount0Min, uint256 amount1Min) external whenNotPaused {
-        revert Errors.NotImplemented(); // Use standard error from Errors.sol
+    function withdrawCollateral(
+        PoolId poolId,
+        uint256 amount0,
+        uint256 amount1
+    ) external whenNotPaused nonReentrant returns (uint256 sharesReduced) {
+        // Verify the pool is initialized
+        _verifyPoolInitialized(poolId);
+        
+        // Get the pool key
+        PoolKey memory key = getPoolKey(poolId);
+        
+        // Get the vault
+        Vault storage vault = vaults[poolId][msg.sender];
+        
+        // Ensure the user has enough balance to withdraw
+        if (amount0 > vault.token0Balance) {
+            revert Errors.InsufficientBalance(amount0, vault.token0Balance);
+        }
+        if (amount1 > vault.token1Balance) {
+            revert Errors.InsufficientBalance(amount1, vault.token1Balance);
+        }
+        
+        // Calculate the LP-equivalent shares of the withdrawal
+        sharesReduced = _lpEquivalent(poolId, amount0, amount1);
+        
+        // Update the vault's token balances (use SafeCast)
+        vault.token0Balance = (uint256(vault.token0Balance) - amount0).toUint128();
+        vault.token1Balance = (uint256(vault.token1Balance) - amount1).toUint128();
+        
+        // Transfer tokens to the user
+        if (amount0 > 0) {
+            if (key.currency0.isNative()) {
+                _safeTransferETH(msg.sender, amount0);
+            } else {
+                SafeTransferLib.safeTransfer(
+                    ERC20(Currency.unwrap(key.currency0)), 
+                    msg.sender, 
+                    amount0
+                );
+            }
+        }
+        
+        if (amount1 > 0) {
+            if (key.currency1.isNative()) {
+                _safeTransferETH(msg.sender, amount1);
+            } else {
+                SafeTransferLib.safeTransfer(
+                    ERC20(Currency.unwrap(key.currency1)), 
+                    msg.sender, 
+                    amount1
+                );
+            }
+        }
+        
+        // Create a memory copy to pass to _updateVault
+        Vault memory updatedVault = vault;
+
+        // Update the vault state, emit events, and manage user tracking
+        _updateVault(poolId, msg.sender, updatedVault);
+        
+        emit WithdrawCollateral(poolId, msg.sender, sharesReduced, amount0, amount1);
+        
+        return sharesReduced;
     }
 
     /**
-     * @notice Placeholder for borrow function (Phase 2)
+     * @notice Placeholder for borrow function (Phase 3)
      */
-    function borrow(PoolId poolId, uint256 shares) external whenNotPaused {
-        revert Errors.NotImplemented(); // Use standard error from Errors.sol
+    function borrow(PoolId poolId, uint256 shares) external override whenNotPaused {
+        revert Errors.NotImplemented(); // Keep as not implemented for Phase 2
     }
 
     /**
-     * @notice Placeholder for repay function (Phase 2)
+     * @notice Placeholder for repay function (Phase 3)
      */
-    function repay(PoolId poolId, uint256 shares, uint256 amount0Max, uint256 amount1Max) external payable whenNotPaused {
-        revert Errors.NotImplemented(); // Use standard error from Errors.sol
+    function repay(PoolId poolId, uint256 shares, uint256 amount0Max, uint256 amount1Max) external payable override whenNotPaused {
+        revert Errors.NotImplemented(); // Keep as not implemented for Phase 2
     }
 
     // =========================================================================
@@ -333,18 +510,51 @@ contract Margin is Spot, IMargin {
     }
 
     /**
-     * @notice Placeholder for isVaultSolvent (Phase 2)
+     * @notice Get the value of a vault in LP-equivalent shares
+     * @param poolId The pool ID
+     * @param user The user address
+     * @return value The LP-equivalent value of the vault
+     */
+    function getVaultValue(PoolId poolId, address user) external view returns (uint256 value) {
+        Vault memory vault = vaults[poolId][user];
+        // Phase 2: Value is purely collateral
+        return _lpEquivalent(poolId, vault.token0Balance, vault.token1Balance);
+    }
+
+    /**
+     * @notice Get detailed information about a vault's collateral
+     * @param poolId The pool ID
+     * @param user The user address
+     * @return token0Balance Amount of token0 in the vault
+     * @return token1Balance Amount of token1 in the vault
+     * @return equivalentLPShares The LP-equivalent value of the vault collateral
+     */
+    function getVaultCollateral(PoolId poolId, address user) external view returns (
+        uint256 token0Balance,
+        uint256 token1Balance,
+        uint256 equivalentLPShares
+    ) {
+        Vault memory vault = vaults[poolId][user];
+        token0Balance = vault.token0Balance;
+        token1Balance = vault.token1Balance;
+        // Phase 2: Value is purely collateral
+        equivalentLPShares = _lpEquivalent(poolId, vault.token0Balance, vault.token1Balance);
+        return (token0Balance, token1Balance, equivalentLPShares);
+    }
+
+    /**
+     * @notice Placeholder for isVaultSolvent (Phase 3)
      */
     function isVaultSolvent(PoolId poolId, address user) external view override returns (bool) {
-        // Phase 1: No borrowing, so all vaults are solvent by default
+        // Phase 2: No borrowing, so all vaults are solvent by default
         return true;
     }
 
     /**
-     * @notice Placeholder for getVaultLTV (Phase 2)
+     * @notice Placeholder for getVaultLTV (Phase 3)
      */
     function getVaultLTV(PoolId poolId, address user) external view override returns (uint256) {
-        // Phase 1: No borrowing, so LTV is always 0
+        // Phase 2: No borrowing, so LTV is always 0
         return 0;
     }
 
@@ -626,5 +836,45 @@ contract Margin is Spot, IMargin {
         // Return defaults directly (from Spot)
         // Note: Spot uses ISpotHooks.afterRemoveLiquidityReturnDelta.selector here, needs check if defined/needed
         return (ISpotHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+
+    // =========================================================================
+    // Helper Functions (Added for Phase 2)
+    // =========================================================================
+    
+    /**
+     * @notice Safe transfer ETH with fallback to pending payments
+     * @param recipient The address to send ETH to
+     * @param amount The amount of ETH to send
+     */
+    function _safeTransferETH(address recipient, uint256 amount) internal {
+        if (amount == 0) return;
+        
+        (bool success, ) = recipient.call{value: amount, gas: 50000}(""); // Use fixed gas stipend
+        if (!success) {
+            pendingETHPayments[recipient] += amount;
+            emit ETHTransferFailed(recipient, amount);
+        }
+    }
+
+    /**
+     * @notice Claim pending ETH payments resulting from failed transfers during withdrawal
+     */
+    function claimPendingETH() external nonReentrant {
+        uint256 amount = pendingETHPayments[msg.sender];
+        if (amount == 0) return; // Nothing to claim
+        
+        // Clear pending amount *before* transfer (Reentrancy check)
+        pendingETHPayments[msg.sender] = 0; 
+        
+        // Attempt transfer again
+        (bool success, ) = msg.sender.call{value: amount, gas: 50000}(""); 
+        if (!success) {
+             // If it still fails, revert and restore the pending amount
+            pendingETHPayments[msg.sender] = amount; 
+            revert Errors.ETHTransferFailed(msg.sender, amount); 
+        }
+        
+        emit ETHClaimed(msg.sender, amount);
     }
 } 
