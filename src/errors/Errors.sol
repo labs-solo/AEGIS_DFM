@@ -180,4 +180,12 @@ library Errors {
     error FailedToReadPoolData(PoolId poolId);
 
     error AlreadyInitialized(string component);
+
+    // Margin errors
+    error WithdrawalWouldMakeVaultInsolvent();
+    error NoDebtToRepay();
+    error DepositFailed();
+    error InsufficientCollateral(uint256 debt, uint256 collateral, uint256 threshold);
+    error PoolUtilizationTooHigh();
+    error InsufficientPhysicalShares(uint256 requested, uint256 available);
 } 
