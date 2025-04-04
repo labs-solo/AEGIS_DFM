@@ -315,7 +315,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
             (reserves[0], reserves[1]) = liquidityManager.getPoolReserves(poolId);
             
             // Get total shares from liquidity manager
-            (totalShares, , ) = liquidityManager.poolInfo(poolId);
+            totalShares = liquidityManager.poolTotalShares(poolId);
             
             // Get token ID from stored data
             tokenId = data.tokenId;
@@ -349,7 +349,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     function getPoolReservesAndShares(PoolId poolId) public view returns (uint256 reserve0, uint256 reserve1, uint128 totalShares) {
         // Get reserves directly from the liquidity manager instead of storing them
         (reserve0, reserve1) = liquidityManager.getPoolReserves(poolId);
-        totalShares = liquidityManager.totalShares(poolId);
+        totalShares = liquidityManager.poolTotalShares(poolId);
     }
 
     /**

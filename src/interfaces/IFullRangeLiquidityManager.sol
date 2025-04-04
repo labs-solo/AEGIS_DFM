@@ -147,16 +147,6 @@ interface IFullRangeLiquidityManager {
     function getShareValue(PoolId poolId, uint256 shares) external view returns (uint256 amount0, uint256 amount1);
 
     /**
-     * @notice Get pool information 
-     * @param poolId The pool ID
-     */
-    function poolInfo(PoolId poolId) external view returns (
-        uint128 totalShares,
-        uint256 reserve0,
-        uint256 reserve1
-    );
-
-    /**
      * @notice Pool keys mapping
      */
     function poolKeys(PoolId poolId) external view returns (PoolKey memory);
@@ -175,4 +165,11 @@ interface IFullRangeLiquidityManager {
      * @return success Whether the update was successful
      */
     function updatePositionCache(PoolId poolId) external returns (bool success);
+
+    /**
+     * @notice Gets the total shares for a pool
+     * @param poolId The pool ID
+     * @return The total shares for the pool
+     */
+    function poolTotalShares(PoolId poolId) external view returns (uint128);
 } 

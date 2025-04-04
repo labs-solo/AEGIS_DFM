@@ -754,16 +754,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         } catch {
             // Fallback to liquidity manager if available
             if (address(liquidityManager) != address(0)) {
-                try liquidityManager.poolInfo(poolId) returns (
-                    uint128, // totalShares
-                    uint256 r0, // reserve0
-                    uint256 r1  // reserve1
-                ) {
-                    reserve0 = r0;
-                    reserve1 = r1;
-                } catch {
-                    // Silent failure, return zeros
-                }
+                (reserve0, reserve1) = liquidityManager.getPoolReserves(poolId);
             }
         }
     }
