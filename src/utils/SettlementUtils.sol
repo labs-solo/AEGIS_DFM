@@ -122,7 +122,7 @@ library SettlementUtils {
         uint256 feeAmount1,
         FullRangeLiquidityManager liquidityManager
     ) internal view returns (uint256 sharesFromFees) {
-        uint128 totalLiquidity = liquidityManager.totalShares(poolId);
+        uint128 totalLiquidity = liquidityManager.poolTotalShares(poolId);
         if (totalLiquidity == 0) return 0;
         
         // Use MathUtils to calculate geometric shares

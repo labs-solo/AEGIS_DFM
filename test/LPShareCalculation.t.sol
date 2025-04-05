@@ -259,7 +259,8 @@ contract LPShareCalculationTest is Test {
     // =========================================================================
 
     function testLpEquivalentStandardConversion() public {
-        (uint128 totalShares, uint256 reserve0, uint256 reserve1) = liquidityManager.poolInfo(poolId);
+        uint128 totalShares = liquidityManager.poolTotalShares(poolId);
+        (uint256 reserve0, uint256 reserve1) = liquidityManager.getPoolReserves(poolId);
         assertTrue(totalShares > 0, "PRE-TEST: Total shares > 0");
 
         uint256 amount0_1pct = reserve0 / 100;
@@ -278,7 +279,8 @@ contract LPShareCalculationTest is Test {
     }
 
     function testLpEquivalentZeroInputs() public {
-        (uint128 totalShares, uint256 reserve0, ) = liquidityManager.poolInfo(poolId);
+        uint128 totalShares = liquidityManager.poolTotalShares(poolId);
+        (uint256 reserve0, uint256 reserve1) = liquidityManager.getPoolReserves(poolId);
         assertTrue(totalShares > 0, "PRE-TEST: Total shares > 0");
         uint256 amount1_1pct = reserve0 / 100;
 
@@ -288,7 +290,8 @@ contract LPShareCalculationTest is Test {
     }
 
     function testLpEquivalentExtremeValues() public {
-        (uint128 totalShares, uint256 reserve0, uint256 reserve1) = liquidityManager.poolInfo(poolId);
+        uint128 totalShares = liquidityManager.poolTotalShares(poolId);
+        (uint256 reserve0, uint256 reserve1) = liquidityManager.getPoolReserves(poolId);
         assertTrue(totalShares > 0, "PRE-TEST: Total shares > 0");
 
         // Small Amounts (relative)
@@ -319,7 +322,8 @@ contract LPShareCalculationTest is Test {
     }
 
     function testLpEquivalentStateChange() public {
-        (uint128 totalShares_before, uint256 reserve0_before, uint256 reserve1_before) = liquidityManager.poolInfo(poolId);
+        uint128 totalShares_before = liquidityManager.poolTotalShares(poolId);
+        (uint256 reserve0_before, uint256 reserve1_before) = liquidityManager.getPoolReserves(poolId);
         assertTrue(totalShares_before > 0, "PRE-TEST: Total shares > 0");
 
         // Bob deposits
@@ -335,7 +339,8 @@ contract LPShareCalculationTest is Test {
         vm.stopPrank();
 
         // Test after state change
-        (uint128 totalShares_after, uint256 reserve0_after, uint256 reserve1_after) = liquidityManager.poolInfo(poolId);
+        uint128 totalShares_after = liquidityManager.poolTotalShares(poolId);
+        (uint256 reserve0_after, uint256 reserve1_after) = liquidityManager.getPoolReserves(poolId);
         assertTrue(totalShares_after > totalShares_before, "POST-DEPOSIT: Shares increased");
         uint256 amount0_new_2pct = reserve0_after / 50;
         uint256 amount1_new_2pct = reserve1_after / 50;
@@ -409,7 +414,8 @@ contract LPShareCalculationTest is Test {
     struct ShareConversionTestCase { uint256 percentage; string description; }
 
     function _testShareConversion(ShareConversionTestCase memory tc, PoolId _poolId) internal {
-        (uint128 totalShares, uint256 reserve0, uint256 reserve1) = liquidityManager.poolInfo(_poolId);
+        uint128 totalShares = liquidityManager.poolTotalShares(_poolId);
+        (uint256 reserve0, uint256 reserve1) = liquidityManager.getPoolReserves(_poolId);
         assertTrue(totalShares > 0, string(abi.encodePacked(tc.description, ": PRE-TEST: Shares > 0")));
         uint256 sharesToTest = (uint256(totalShares) * tc.percentage) / 100;
 
@@ -435,7 +441,7 @@ contract LPShareCalculationTest is Test {
     }
 
     function testSharesTokenZeroLiquidityPool() public {
-        (uint128 totalShares,,) = liquidityManager.poolInfo(poolId);
+        uint128 totalShares = liquidityManager.poolTotalShares(poolId);
         (uint256 calcToken0, uint256 calcToken1) = margin.exposed_sharesTokenEquivalent(emptyPoolId, uint256(totalShares) / 10);
         assertEq(calcToken0, 0, "Zero Liq T0");
         assertEq(calcToken1, 0, "Zero Liq T1");
@@ -472,7 +478,8 @@ contract LPShareCalculationTest is Test {
 
         for (uint256 r = 0; r < ratios.length; r++) {
             (PoolKey memory imbKey, PoolId imbId) = createImbalancedPool(ratios[r][0], ratios[r][1]);
-            (uint128 imbTotalShares, uint256 imbReserve0, uint256 imbReserve1) = liquidityManager.poolInfo(imbId);
+            uint128 imbTotalShares = liquidityManager.poolTotalShares(imbId);
+            (uint256 imbReserve0, uint256 imbReserve1) = liquidityManager.getPoolReserves(imbId);
             assertApproxEqRel(imbReserve1 * ratios[r][0], imbReserve0 * ratios[r][1], 1e16, "Pool Ratio Check"); // 1% tolerance
 
             for (uint256 p = 0; p < testPercentages.length; p++) {
@@ -527,7 +534,8 @@ contract LPShareCalculationTest is Test {
     // --- Edge Cases and Boundary Tests ---
 
     function testSharesTokenPrecisionBoundaries() public {
-        (uint128 totalShares, uint256 reserve0, uint256 reserve1) = liquidityManager.poolInfo(poolId);
+        uint128 totalShares = liquidityManager.poolTotalShares(poolId);
+        (uint256 reserve0, uint256 reserve1) = liquidityManager.getPoolReserves(poolId);
         assertTrue(totalShares > 0, "PRE-TEST: Shares > 0");
 
         (uint256 minT0, uint256 minT1) = margin.exposed_sharesTokenEquivalent(poolId, 1); // 1 share
@@ -554,7 +562,8 @@ contract LPShareCalculationTest is Test {
     // --- State Change Tests ---
 
     function testSharesTokenStateChangeResilience() public {
-        (uint128 beforeShares, uint256 beforeR0, uint256 beforeR1) = liquidityManager.poolInfo(poolId);
+        uint128 beforeShares = liquidityManager.poolTotalShares(poolId);
+        (uint256 beforeR0, uint256 beforeR1) = liquidityManager.getPoolReserves(poolId);
         uint256 sharesToTest = uint256(beforeShares) * 30 / 100; // 30% shares
         (uint256 beforeT0, uint256 beforeT1) = margin.exposed_sharesTokenEquivalent(poolId, sharesToTest);
 
@@ -566,7 +575,7 @@ contract LPShareCalculationTest is Test {
         margin.deposit(params);
         vm.stopPrank();
 
-        (uint128 afterShares,,) = liquidityManager.poolInfo(poolId);
+        uint128 afterShares = liquidityManager.poolTotalShares(poolId);
         assertGt(afterShares, beforeShares * 2, "Pool Size Check");
 
         // Token value for the *same* shares should be unchanged

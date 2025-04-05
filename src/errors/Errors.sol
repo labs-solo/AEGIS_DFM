@@ -13,7 +13,6 @@ library Errors {
     error AccessOnlyGovernance(address caller);
     error AccessOnlyPoolManager(address caller);
     error AccessNotAuthorized(address caller);
-    error AccessOnlyHookHandler(address caller);
     error AccessOnlyEmergencyAdmin(address caller);
     error Unauthorized();
     
@@ -68,7 +67,6 @@ library Errors {
     error ZeroPolicyManagerAddress();
     error ZeroPoolManagerAddress();
     error ZeroFullRangeAddress();
-    error HookHandlerCallFailed(bytes reason);
     error HookDispatchFailed(bytes4 selector);
     error DelegateCallFailed();
     error EthTransferFailed(address to, uint256 amount);

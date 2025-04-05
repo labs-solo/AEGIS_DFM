@@ -114,20 +114,20 @@ interface IFullRangeLiquidityManager {
     ) external returns (uint128 newTotalShares);
     
     /**
-     * @notice Atomic operation for processing deposit share accounting
-     * @dev Combines share minting and total share update in one call for atomicity
-     * @param poolId The pool ID
-     * @param user The user address
-     * @param sharesToMint Shares to mint
-     * @param currentTotalShares Current total shares (for validation)
-     * @return newTotalShares The new total shares amount
-     */
-    function processDepositShares(
-        PoolId poolId, 
-        address user, 
-        uint256 sharesToMint, 
-        uint128 currentTotalShares
-    ) external returns (uint128 newTotalShares);
+    //  * @notice Atomic operation for processing deposit share accounting
+    //  * @dev Combines share minting and total share update in one call for atomicity
+    //  * @param poolId The pool ID
+    //  * @param user The user address
+    //  * @param sharesToMint Shares to mint
+    //  * @param currentTotalShares Current total shares (for validation)
+    //  * @return newTotalShares The new total shares amount
+    //  */
+    // function processDepositShares(
+    //     PoolId poolId, 
+    //     address user, 
+    //     uint256 sharesToMint, 
+    //     uint128 currentTotalShares
+    // ) external returns (uint128 newTotalShares);
 
     /**
      * @notice Reinvests fees for protocol-owned liquidity
@@ -145,16 +145,6 @@ interface IFullRangeLiquidityManager {
     function getAccountPosition(PoolId poolId, address account) external view returns (bool initialized, uint256 shares);
     
     function getShareValue(PoolId poolId, uint256 shares) external view returns (uint256 amount0, uint256 amount1);
-
-    /**
-     * @notice Get pool information 
-     * @param poolId The pool ID
-     */
-    function poolInfo(PoolId poolId) external view returns (
-        uint128 totalShares,
-        uint256 reserve0,
-        uint256 reserve1
-    );
 
     /**
      * @notice Pool keys mapping
@@ -175,4 +165,11 @@ interface IFullRangeLiquidityManager {
      * @return success Whether the update was successful
      */
     function updatePositionCache(PoolId poolId) external returns (bool success);
+
+    /**
+     * @notice Gets the total shares for a pool
+     * @param poolId The pool ID
+     * @return The total shares for the pool
+     */
+    function poolTotalShares(PoolId poolId) external view returns (uint128);
 } 
