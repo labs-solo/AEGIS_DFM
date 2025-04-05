@@ -1205,7 +1205,7 @@ contract Margin is Spot, IMargin {
         }
 
         // Also check system-wide pool utilization to prevent too much borrowing
-        (uint128 totalSharesLM, , ) = liquidityManager.poolInfo(poolId);
+        uint128 totalSharesLM = liquidityManager.poolTotalShares(poolId);
         if (totalSharesLM == 0) revert Errors.PoolNotInitialized(poolId); // Should not happen if _verifyPoolInitialized passed
 
         uint256 totalBorrowedAfter = rentedLiquidity[poolId] + sharesToBorrow;
@@ -1296,7 +1296,7 @@ contract Margin is Spot, IMargin {
 
         // --- Margin Layer Check ---
         // Get total shares from the liquidity manager perspective
-        (uint128 totalSharesLM, , ) = liquidityManager.poolInfo(params.poolId);
+        uint128 totalSharesLM = liquidityManager.poolTotalShares(params.poolId);
         
         // Get currently rented liquidity (does NOT include interest multiplier here)
         uint256 borrowedBase = rentedLiquidity[params.poolId];
