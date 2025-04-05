@@ -225,6 +225,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
      */
     function withdraw(WithdrawParams calldata params)
         external
+        virtual
         nonReentrant
         ensure(params.deadline)
         returns (uint256 amount0, uint256 amount1)
