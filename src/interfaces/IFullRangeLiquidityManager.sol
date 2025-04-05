@@ -114,20 +114,20 @@ interface IFullRangeLiquidityManager {
     ) external returns (uint128 newTotalShares);
     
     /**
-     * @notice Atomic operation for processing deposit share accounting
-     * @dev Combines share minting and total share update in one call for atomicity
-     * @param poolId The pool ID
-     * @param user The user address
-     * @param sharesToMint Shares to mint
-     * @param currentTotalShares Current total shares (for validation)
-     * @return newTotalShares The new total shares amount
-     */
-    function processDepositShares(
-        PoolId poolId, 
-        address user, 
-        uint256 sharesToMint, 
-        uint128 currentTotalShares
-    ) external returns (uint128 newTotalShares);
+    //  * @notice Atomic operation for processing deposit share accounting
+    //  * @dev Combines share minting and total share update in one call for atomicity
+    //  * @param poolId The pool ID
+    //  * @param user The user address
+    //  * @param sharesToMint Shares to mint
+    //  * @param currentTotalShares Current total shares (for validation)
+    //  * @return newTotalShares The new total shares amount
+    //  */
+    // function processDepositShares(
+    //     PoolId poolId, 
+    //     address user, 
+    //     uint256 sharesToMint, 
+    //     uint128 currentTotalShares
+    // ) external returns (uint128 newTotalShares);
 
     /**
      * @notice Reinvests fees for protocol-owned liquidity
