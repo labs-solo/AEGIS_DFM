@@ -31,6 +31,7 @@ import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {Position} from "v4-core/src/libraries/Position.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
+import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
 
 using SafeCast for uint256;
 using SafeCast for int256;
@@ -53,6 +54,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         PoolId poolId;
         uint8 callbackType; // 1 for deposit, 2 for withdraw
         uint128 shares;
+        uint128 oldTotalShares;
         uint256 amount0;
         uint256 amount1;
         address recipient;
@@ -84,6 +86,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     
     /// @dev Address of the FullRange main contract
     address public fullRangeAddress;
+    
+    // Constants for minimum liquidity locking
+    uint256 private constant MIN_LOCKED_SHARES = 1000; // e.g., 1000 wei, adjust as needed
     
     // Emergency controls
     bool public emergencyWithdrawalsEnabled = false;
@@ -377,6 +382,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             poolId: poolId,
             callbackType: 1, // 1 for deposit
             shares: uint128(newShares),  // Only use the non-locked shares for the callback!
+            oldTotalShares: oldTotalShares,
             amount0: actual0,
             amount1: actual1,
             recipient: recipient
@@ -477,6 +483,10 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint128 sharesToBurnSafe = sharesToBurn.toUint128();
         poolTotalShares[poolId] = uint128(uint256(oldTotalShares) - sharesToBurnSafe);
         
+        // Burn position tokens *before* calling unlock, consistent with CEI pattern
+        // This prevents reentrancy issues where unlockCallback might see stale token balances.
+        positions.burn(msg.sender, tokenId, sharesToBurn); // Burn from msg.sender who initiated withdraw
+        
         // Create ModifyLiquidityParams with negative liquidity delta
         IPoolManager.ModifyLiquidityParams memory modifyLiqParams = IPoolManager.ModifyLiquidityParams({
             tickLower: TickMath.MIN_TICK,
@@ -490,6 +500,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             poolId: poolId,
             callbackType: 2, // 2 for withdraw
             shares: sharesToBurnSafe,
+            oldTotalShares: oldTotalShares,
             amount0: amount0,
             amount1: amount1,
             recipient: recipient
@@ -592,6 +603,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             poolId: params.poolId,
             callbackType: 2, // 2 for withdraw
             shares: uint128(sharesToBurn),
+            oldTotalShares: oldTotalShares,
             amount0: amount0Out,
             amount1: amount1Out,
             recipient: user
@@ -697,60 +709,94 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     ) {
         // First deposit case - implement proportional first deposit with minimum liquidity locking
         if (totalSharesAmount == 0) {
+            // Require non-zero amounts for the first deposit to establish a ratio
+            if (amount0Desired == 0 || amount1Desired == 0) revert Errors.ZeroAmount();
+
             actual0 = amount0Desired;
             actual1 = amount1Desired;
             
             // Calculate shares as geometric mean of token amounts
             newShares = MathUtils.sqrt(actual0 * actual1);
             
-            // Lock a small amount for minimum liquidity (1000 units = 0.001% of total)
-            lockedShares = 1000;
+            // Lock a small amount for minimum liquidity (e.g., 1000 wei)
+            lockedShares = 1000; 
             
-            // Ensure we don't mint zero shares
-            if (newShares == 0) newShares = MIN_VIABLE_RESERVE;
+            // Ensure we don't mint zero or negligible shares, adjust MIN_VIABLE_RESERVE if needed
+            if (newShares < MIN_VIABLE_RESERVE) {
+                 // If geometric mean is too low, consider alternative initial share calculation
+                 // or revert if amounts are too small to represent meaningful liquidity.
+                 // For now, set to minimum, but review if this is appropriate.
+                 newShares = MIN_VIABLE_RESERVE; 
+            }
+
+            // Ensure locked shares don't exceed minted shares
+            if (lockedShares >= newShares) lockedShares = newShares - 1; 
+            if (lockedShares == 0 && newShares > 1) lockedShares = 1; // Ensure at least 1 share is locked if possible
             
-            return (actual0, actual1, newShares, lockedShares);
+            // Check if calculated shares are sufficient to cover minimum lock + some usable shares
+            // Require at least MIN_LOCKED_SHARES + 1 to proceed
+            if (newShares <= MIN_LOCKED_SHARES) { 
+                revert Errors.InitialDepositTooSmall(MIN_LOCKED_SHARES + 1, newShares);
+            }
+            
+            // Set locked shares to the constant minimum
+            lockedShares = MIN_LOCKED_SHARES;
+            
+            // Return non-locked shares (newShares - lockedShares) and locked shares
+            return (actual0, actual1, newShares - lockedShares, lockedShares);
         }
         
-        // Subsequent deposits - match the current reserve ratio
+        // Subsequent deposits - match the current reserve ratio if possible
         if (reserve0 > 0 && reserve1 > 0) {
-            // Calculate shares based on the minimum of the two ratios
-            // Multiply before division to prevent precision loss
-            uint256 share0 = (amount0Desired * totalSharesAmount) / reserve0;
-            uint256 share1 = (amount1Desired * totalSharesAmount) / reserve1;
+            // Calculate share amounts based on each token
+            uint256 share0 = FullMath.mulDiv(amount0Desired, totalSharesAmount, reserve0);
+            uint256 share1 = FullMath.mulDiv(amount1Desired, totalSharesAmount, reserve1);
             
             if (share0 <= share1) {
-                // Token0 is the limiting factor
+                // Token0 is the limiting factor or amounts are proportional
                 newShares = share0;
-                // Use the calculated share ratio for consistent amounts
                 actual0 = amount0Desired;
-                // Multiply before dividing to prevent overflow/underflow
-                actual1 = (amount0Desired * reserve1) / reserve0;
+                // Calculate actual1 based on the limiting token's ratio
+                actual1 = FullMath.mulDiv(share0, reserve1, totalSharesAmount);
+                // Cap actual1 at the desired amount to prevent exceeding user input due to precision
+                if (actual1 > amount1Desired) actual1 = amount1Desired;
             } else {
                 // Token1 is the limiting factor
                 newShares = share1;
-                // Use the calculated share ratio for consistent amounts
                 actual1 = amount1Desired;
-                // Multiply before dividing to prevent overflow/underflow
-                actual0 = (amount1Desired * reserve0) / reserve1;
+                // Calculate actual0 based on the limiting token's ratio
+                actual0 = FullMath.mulDiv(share1, reserve0, totalSharesAmount);
+                 // Cap actual0 at the desired amount
+                if (actual0 > amount0Desired) actual0 = amount0Desired;
             }
-            
-            // Ensure actual amounts don't exceed the inputs, which could happen due to precision
-            if (actual0 > amount0Desired) actual0 = amount0Desired;
-            if (actual1 > amount1Desired) actual1 = amount1Desired;
-        } else if (reserve0 > 0) {
-            // Only token0 has reserves
-            newShares = (amount0Desired * totalSharesAmount) / reserve0;
+        } else if (reserve0 > 0) { // Only token0 has reserves
+            if (amount0Desired == 0) revert Errors.ZeroAmount(); // Cannot deposit 0 of the only available token
+            newShares = FullMath.mulDiv(amount0Desired, totalSharesAmount, reserve0);
             actual0 = amount0Desired;
+            actual1 = 0; // Cannot add token1 if its reserve is 0 based on ratio
+        } else if (reserve1 > 0) { // Only token1 has reserves
+             if (amount1Desired == 0) revert Errors.ZeroAmount(); // Cannot deposit 0 of the only available token
+            newShares = FullMath.mulDiv(amount1Desired, totalSharesAmount, reserve1);
+            actual0 = 0; // Cannot add token0 if its reserve is 0 based on ratio
             actual1 = amount1Desired;
-        } else {
-            // Only token1 has reserves
-            newShares = (amount1Desired * totalSharesAmount) / reserve1;
-            actual0 = amount0Desired;
-            actual1 = amount1Desired;
+        } else { 
+            // Both reserves are 0, but totalSharesAmount > 0. This indicates an inconsistent state.
+            // This case should ideally not be reachable if reserves track totalShares correctly.
+            // Revert or handle as an error condition.
+            revert Errors.InconsistentState("Reserves are zero but total shares exist");
+            // Or potentially allow deposit but reset ratio? Less safe.
+            // newShares = ???; actual0 = amount0Desired; actual1 = amount1Desired; // Risky
         }
         
-        return (actual0, actual1, newShares, 0);
+        // Ensure we are not minting zero shares when amounts are provided
+        if (newShares == 0 && (amount0Desired > 0 || amount1Desired > 0)) {
+             // This might happen with extremely small deposit amounts relative to total liquidity.
+             // Consider reverting or setting a minimum share amount if this is undesirable.
+             revert Errors.DepositTooSmall();
+        }
+
+        lockedShares = 0; // No locking for subsequent deposits in this logic
+        return (actual0, actual1, newShares, lockedShares);
     }
     
     /**
@@ -1064,10 +1110,30 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         
         if (cbData.callbackType == 1) {
             // DEPOSIT
+            // Get current sqrtPriceX96 from the pool's slot0
+            bytes32 stateSlot = _getPoolStateSlot(cbData.poolId);
+            uint160 sqrtPriceX96;
+            try manager.extsload(stateSlot) returns (bytes32 slot0Data) {
+                sqrtPriceX96 = uint160(uint256(slot0Data));
+            } catch {
+                revert Errors.FailedToReadPoolData(cbData.poolId);
+            }
+            if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Pool price is zero");
+
+            // Calculate the V4 liquidity amount based on deposited tokens and current price
+            uint128 liquidityAmount = LiquidityAmounts.getLiquidityForAmounts(
+                sqrtPriceX96,
+                TickMath.getSqrtPriceAtTick(TickMath.minUsableTick(key.tickSpacing)),
+                TickMath.getSqrtPriceAtTick(TickMath.maxUsableTick(key.tickSpacing)),
+                cbData.amount0,
+                cbData.amount1
+            );
+            
+            // Create params with the calculated V4 liquidity amount
             IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
                 tickLower: TickMath.minUsableTick(key.tickSpacing),
                 tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-                liquidityDelta: int256(uint256(cbData.amount0)),
+                liquidityDelta: int256(uint256(liquidityAmount)), // Use calculated V4 liquidity
                 salt: bytes32(0)
             });
             
@@ -1083,10 +1149,44 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             return abi.encode(delta);
         } else if (cbData.callbackType == 2) {
             // WITHDRAW
+            // Get current sqrtPriceX96 from the pool's slot0
+            bytes32 stateSlot = _getPoolStateSlot(cbData.poolId);
+            uint160 sqrtPriceX96;
+            try manager.extsload(stateSlot) returns (bytes32 slot0Data) {
+                sqrtPriceX96 = uint160(uint256(slot0Data));
+            } catch {
+                 revert Errors.FailedToReadPoolData(cbData.poolId);
+            }
+            if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Pool price is zero");
+
+            // Get current total V4 liquidity for the position
+            (uint128 currentV4Liquidity, , bool success) = getPositionData(cbData.poolId);
+            if (!success || currentV4Liquidity == 0) {
+                // If we can't read liquidity or it's zero, we can't proceed proportionally.
+                // This might indicate the pool state is inconsistent or has been fully withdrawn.
+                // Revert or handle based on desired behavior for empty/unreadable positions.
+                revert Errors.FailedToReadPoolData(cbData.poolId); 
+            }
+
+            // Calculate V4 liquidity to withdraw proportionally to shares burned
+            // Ensure total shares is read *before* burning, potentially pass it in cbData if necessary,
+            // or read it from storage (make sure it reflects state before this withdrawal started)
+            uint128 totalPoolShares = cbData.oldTotalShares; // Use the pre-burn total passed in callback data
+            if (totalPoolShares == 0) revert Errors.ZeroShares(); // Cannot withdraw if no shares exist
+            
+            // Use FullMath for safe multiplication and division
+            uint256 liquidityToWithdraw = FullMath.mulDiv(cbData.shares, currentV4Liquidity, totalPoolShares);
+            if (liquidityToWithdraw > type(uint128).max) liquidityToWithdraw = type(uint128).max; // Cap at uint128
+            if (liquidityToWithdraw == 0 && cbData.shares > 0) { 
+                // Handle case where shares are burned but calculated liquidity is 0 (dust amount)
+                // Maybe withdraw 1 unit of liquidity if any shares are burned?
+                liquidityToWithdraw = 1; 
+            }
+
             IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
                 tickLower: TickMath.minUsableTick(key.tickSpacing),
                 tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-                liquidityDelta: -int256(uint256(cbData.shares)),
+                liquidityDelta: -int256(uint256(liquidityToWithdraw)), // Use calculated V4 liquidity
                 salt: bytes32(0)
             });
             
@@ -1155,8 +1255,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         int24 tickUpper = TickMath.maxUsableTick(key.tickSpacing);
         bool readSuccess = false;
         
-        // Get position data via extsload
-        bytes32 positionKey = Position.calculatePositionKey(address(fullRangeAddress), tickLower, tickUpper, bytes32(0));
+        // Get position data via extsload - use this contract's address as owner
+        // since it's the one calling modifyLiquidity via unlockCallback
+        bytes32 positionKey = Position.calculatePositionKey(address(this), tickLower, tickUpper, bytes32(0));
         bytes32 positionSlot = _getPositionInfoSlot(poolId, positionKey);
         
         try manager.extsload(positionSlot) returns (bytes32 liquidityData) {
@@ -1193,15 +1294,19 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint160 sqrtPriceBX96,
         uint128 liquidity
     ) internal pure returns (uint256 amount0, uint256 amount1) {
+        // Correct implementation using SqrtPriceMath
         if (sqrtPriceAX96 > sqrtPriceBX96) (sqrtPriceAX96, sqrtPriceBX96) = (sqrtPriceBX96, sqrtPriceAX96);
 
         if (sqrtPriceX96 <= sqrtPriceAX96) {
-            amount0 = FullMath.mulDiv(liquidity, FixedPoint96.Q96, sqrtPriceAX96) * (sqrtPriceBX96 - sqrtPriceAX96) / sqrtPriceBX96;
+            // Price is below the range, only token0 is present
+            amount0 = SqrtPriceMath.getAmount0Delta(sqrtPriceAX96, sqrtPriceBX96, liquidity, true);
         } else if (sqrtPriceX96 < sqrtPriceBX96) {
-            amount0 = FullMath.mulDiv(liquidity, FixedPoint96.Q96, sqrtPriceX96) * (sqrtPriceBX96 - sqrtPriceX96) / sqrtPriceBX96;
-            amount1 = FullMath.mulDiv(liquidity, sqrtPriceX96 - sqrtPriceAX96, FixedPoint96.Q96);
+            // Price is within the range
+            amount0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtPriceBX96, liquidity, true);
+            amount1 = SqrtPriceMath.getAmount1Delta(sqrtPriceAX96, sqrtPriceX96, liquidity, true);
         } else {
-            amount1 = FullMath.mulDiv(liquidity, sqrtPriceBX96 - sqrtPriceAX96, FixedPoint96.Q96);
+            // Price is above the range, only token1 is present
+            amount1 = SqrtPriceMath.getAmount1Delta(sqrtPriceAX96, sqrtPriceBX96, liquidity, true);
         }
     }
 
