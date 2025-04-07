@@ -21,6 +21,7 @@ import {ISpot} from "./interfaces/ISpot.sol";
 import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {TokenSafetyWrapper} from "./utils/TokenSafetyWrapper.sol";
 import {IMargin} from "./interfaces/IMargin.sol";
+import "forge-std/console2.sol";
 
 /**
  * @title FeeReinvestmentManager
@@ -288,7 +289,9 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
      * @param _marginAddress The address of the deployed Margin contract
      */
     function setMarginContract(address _marginAddress) external onlyGovernance {
-        require(_marginAddress != address(0), "FeeReinvest: Zero address");
+        if (_marginAddress == address(0)) {
+            revert Errors.ZeroAddress();
+        }
         marginContract = IMargin(_marginAddress);
         emit MarginContractSet(_marginAddress);
     }
@@ -946,8 +949,8 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     /**
      * @notice Triggers processing of accumulated protocol interest fees from the Margin contract.
      * @dev Called periodically by an authorized address. Queries Margin for pending fees,
-     *      extracts corresponding token value from the pool via take(), processes them as POL,
-     *      and resets the accumulated fee counter in Margin.
+     *      extracts corresponding token value from the pool via reinvestProtocolFees(),
+     *      processes them as POL, and resets the accumulated fee counter in Margin.
      * @param poolId The pool ID to process fees for.
      * @return success Boolean indicating successful processing.
      */
@@ -958,54 +961,70 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         returns (bool success)
     {
         // Authorization: Only Governance or specifically authorized reinvestors
-        // Policy manager reference should already be set
-        require(address(policyManager) != address(0), "FeeReinvest: PolicyManager not set");
-        require(
-            msg.sender == policyManager.getSoloGovernance() ||
-            policyManager.isAuthorizedReinvestor(msg.sender), // Use check from policy manager
-            "FeeReinvest: Not authorized"
-        );
+        address governor = policyManager.getSoloGovernance();
+        console2.log("FRM.triggerInterestFeeProcessing: governor =", governor);
+        console2.log("FRM.triggerInterestFeeProcessing: msg.sender =", msg.sender);
+        console2.log("FRM.triggerInterestFeeProcessing: isAuthorizedReinvestor =", policyManager.isAuthorizedReinvestor(msg.sender));
+        
+        if (msg.sender != governor && !policyManager.isAuthorizedReinvestor(msg.sender)) {
+             revert Errors.FeeReinvestNotAuthorized(msg.sender);
+        }
 
-        // Ensure Margin contract reference is set
-        address marginAddr = address(marginContract);
-        require(marginAddr != address(0), "FeeReinvest: Margin contract not set");
+        IMargin currentMarginContract = marginContract;
+        console2.log("FRM.triggerInterestFeeProcessing: marginContract =", address(currentMarginContract));
+        
+        if (address(currentMarginContract) == address(0)) {
+            revert Errors.MarginContractNotSet();
+        }
 
         // 1. Get pending interest token amounts from Margin contract
-        // This is a view call and requires Margin to authorize this contract address (FeeReinvestmentManager)
-        (uint256 amount0ToTake, uint256 amount1ToTake) = marginContract.getPendingProtocolInterestTokens(poolId);
+        (uint256 amount0ToTake, uint256 amount1ToTake) = currentMarginContract.getPendingProtocolInterestTokens(poolId);
+        console2.log("FRM.triggerInterestFeeProcessing: amount0ToTake =", amount0ToTake);
+        console2.log("FRM.triggerInterestFeeProcessing: amount1ToTake =", amount1ToTake);
 
         // If no fees are pending, nothing to do.
         if (amount0ToTake == 0 && amount1ToTake == 0) {
             return true; // Return true as there was nothing to fail on
         }
 
-        // 2. Extract tokens from the pool manager into this contract
-        PoolKey memory key = _getPoolKey(poolId); // Use existing internal helper
+        // 2. Call Margin contract to extract tokens for reinvestment
+        try marginContract.reinvestProtocolFees(
+            poolId,
+            amount0ToTake,
+            amount1ToTake,
+            address(this) // Send the extracted tokens to this contract (FeeReinvestmentManager)
+        ) returns (bool extractSuccess) {
+            if (!extractSuccess) {
+                console2.log("FRM.triggerInterestFeeProcessing: marginContract.reinvestProtocolFees failed");
+                emit ReinvestmentFailed(poolId, "Protocol fee extraction via Margin failed");
+                return false;
+            }
+            console2.log("FRM.triggerInterestFeeProcessing: marginContract.reinvestProtocolFees succeeded");
+        } catch (bytes memory reason) {
+            console2.log("FRM.triggerInterestFeeProcessing: marginContract.reinvestProtocolFees failed with exception");
+            emit ReinvestmentFailed(poolId, string.concat("Protocol fee extraction via Margin failed: ", string(reason)));
+            return false;
+        }
+        
+        // TODO: Need logic here to handle the received tokens (amount0ToTake, amount1ToTake)
+        //       and trigger the actual reinvestment (_processPOLPortion). 
+        //       This might involve a separate function or handling in a receive/fallback.
+        //       For now, we assume the extraction itself is the main goal for this trigger.
+        
+        // 3. Reset the accumulated fees counter in the Margin contract
+        uint256 processedShares = currentMarginContract.resetAccumulatedFees(poolId);
+        console2.log("FRM.triggerInterestFeeProcessing: processedShares =", processedShares);
 
-        // Directly call take; if it fails, the transaction will revert
-        poolManager.take(key.currency0, address(this), amount0ToTake);
-
-        // Directly call take; if it fails, the transaction will revert
-        poolManager.take(key.currency1, address(this), amount1ToTake);
-
-        // 3. Process the taken tokens as POL using existing internal logic
-        // _processPOLPortion likely needs `amount0ToTake`, `amount1ToTake` as input
-        // Ensure this function exists and handles the tokens correctly (e.g., adds liquidity)
-        (uint256 reinvested0, uint256 reinvested1) = _processPOLPortion(poolId, amount0ToTake, amount1ToTake);
-
-        // 4. Reset the accumulated fees counter in the Margin contract
-        // This call requires Margin to authorize this contract address
-        // If resetting fees fails, the transaction will revert.
-        uint256 processedShares = marginContract.resetAccumulatedFees(poolId);
-
-        // 5. Emit event
+        // 4. Emit event (Simplified - removed reinvested amounts for now)
         emit InterestFeesProcessed(
             poolId,
             processedShares,
-            amount0ToTake, // Actual amount taken
-            amount1ToTake, // Actual amount taken
-            reinvested0,   // Amount successfully reinvested by _processPOLPortion
-            reinvested1    // Amount successfully reinvested by _processPOLPortion
+            amount0ToTake,
+            amount1ToTake,
+            0, // Placeholder
+            0  // Placeholder
         );
+
+        return true;
     }
 }

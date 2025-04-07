@@ -67,6 +67,36 @@ interface IMargin {
      */
     function resetAccumulatedFees(PoolId poolId) external returns (uint256 previousValue);
 
+    /**
+     * @notice View function to get the current accumulated protocol fees for a pool.
+     * @param poolId The pool ID.
+     * @return The amount of accumulated fees, denominated in share value.
+     */
+    function accumulatedFees(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice View function to get the current borrow interest rate per second for a pool.
+     * @param poolId The pool ID.
+     * @return rate The interest rate per second (PRECISION scaled).
+     */
+    function getInterestRatePerSecond(PoolId poolId) external view returns (uint256 rate);
+
+    /**
+     * @notice Extract protocol fees from the liquidity pool and send them to the recipient.
+     * @dev Called by FeeReinvestmentManager.
+     * @param poolId The pool ID to extract fees from.
+     * @param amount0 Amount of token0 to extract.
+     * @param amount1 Amount of token1 to extract.
+     * @param recipient The address to receive the extracted fees.
+     * @return success Boolean indicating if the extraction call succeeded.
+     */
+    function reinvestProtocolFees(
+        PoolId poolId,
+        uint256 amount0,
+        uint256 amount1,
+        address recipient
+    ) external returns (bool success);
+
     // Events (included in Phase 1 but most will be emitted in future phases)
     event Deposit(
         PoolId indexed poolId,

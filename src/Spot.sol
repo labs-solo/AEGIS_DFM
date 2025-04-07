@@ -30,6 +30,7 @@ import { IFullRangeDynamicFeeManager } from "./interfaces/IFullRangeDynamicFeeMa
 import { IFullRangeLiquidityManager } from "./interfaces/IFullRangeLiquidityManager.sol";
 import { TruncatedOracle } from "./libraries/TruncatedOracle.sol";
 import { BaseHook } from "lib/v4-periphery/src/utils/BaseHook.sol";
+import { console2 } from "forge-std/console2.sol";
 
 /**
  * @title Spot
@@ -105,9 +106,15 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     
     // Modifiers
     modifier onlyGovernance() {
-        if (msg.sender != policyManager.getSoloGovernance()) {
+        address currentOwner = policyManager.getSoloGovernance();
+        console2.log(">>> Spot::onlyGovernance Check START <<<");
+        console2.log("Spot::onlyGovernance Check: msg.sender =", msg.sender);
+        console2.log("Spot::onlyGovernance Check: policyManager.getSoloGovernance() =", currentOwner);
+        if (msg.sender != currentOwner) {
+            console2.log("!!! Reverting in Spot::onlyGovernance !!!");
             revert Errors.AccessOnlyGovernance(msg.sender);
         }
+        console2.log(">>> Spot::onlyGovernance Check END <<<");
         _;
     }
     
@@ -187,6 +194,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
      */
     function deposit(DepositParams calldata params) 
         external 
+        virtual
         payable 
         nonReentrant 
         ensure(params.deadline)

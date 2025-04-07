@@ -5,6 +5,7 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {Errors} from "../errors/Errors.sol";
 import {FullRangeLiquidityManager} from "../FullRangeLiquidityManager.sol";
@@ -61,6 +62,50 @@ library SettlementUtils {
             uint256 amountToSend = uint256(-delta1);
             ERC20(token1).safeTransferFrom(recipientOrSender, address(this), amountToSend);
             ERC20(token1).safeApprove(address(manager), amountToSend);
+            manager.settle();
+        }
+    }
+
+    /**
+     * @notice Collects tokens from a BalanceDelta into this contract
+     * @dev Similar to settleBalanceDelta but always takes tokens to the contract itself
+     * @param manager The PoolManager address
+     * @param key The PoolKey to operate on
+     * @param delta The balance delta from operation
+     */
+    function collectDeltas(
+        IPoolManager manager,
+        PoolKey memory key,
+        BalanceDelta delta
+    ) internal {
+        // Decode delta values
+        int256 delta0 = delta.amount0();
+        int256 delta1 = delta.amount1();
+        
+        // Handle token0 collection if positive (we get tokens from pool)
+        if (delta0 > 0) {
+            manager.take(key.currency0, address(this), uint256(delta0));
+        }
+        
+        // Handle token1 collection if positive (we get tokens from pool)
+        if (delta1 > 0) {
+            manager.take(key.currency1, address(this), uint256(delta1));
+        }
+        
+        // Handle negative deltas (we owe tokens to pool)
+        if (delta0 < 0 || delta1 < 0) {
+            // We need to settle negative delta values
+            if (delta0 < 0) {
+                uint256 amountToSend = uint256(-delta0);
+                ERC20(Currency.unwrap(key.currency0)).safeApprove(address(manager), amountToSend);
+            }
+            
+            if (delta1 < 0) {
+                uint256 amountToSend = uint256(-delta1);
+                ERC20(Currency.unwrap(key.currency1)).safeApprove(address(manager), amountToSend);
+            }
+            
+            // Call settle once for both currencies if needed
             manager.settle();
         }
     }

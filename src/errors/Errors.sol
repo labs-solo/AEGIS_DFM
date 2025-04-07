@@ -72,6 +72,7 @@ library Errors {
     error EthTransferFailed(address to, uint256 amount);
     error NotImplemented();
     error ContractPaused();
+    error InvalidCallbackType(uint8 callbackType);
     
     // Pool errors
     error PoolNotInitialized(PoolId poolId);
@@ -192,4 +193,10 @@ library Errors {
     error InconsistentState(string reason);
     error DepositTooSmall();
     error InitialDepositTooSmall(uint256 minSharesRequired, uint256 calculatedShares);
+
+    // <<< PHASE 4 MARGIN/FEE ERRORS >>>
+    error MaxPoolUtilizationExceeded(uint256 utilization, uint256 maxUtilization);
+    error MarginContractNotSet();
+    error FeeReinvestNotAuthorized(address caller);
+    // <<< END PHASE 4 MARGIN/FEE ERRORS >>>
 } 

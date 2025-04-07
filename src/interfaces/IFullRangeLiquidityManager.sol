@@ -31,6 +31,12 @@ interface IFullRangeLiquidityManager {
     event UserSharesAdded(PoolId indexed poolId, address indexed user, uint256 shares);
     event UserSharesRemoved(PoolId indexed poolId, address indexed user, uint256 shares);
     event PoolTotalSharesUpdated(PoolId indexed poolId, uint128 oldShares, uint128 newShares);
+    
+    // Event for borrowing tokens (no share burning, just token extraction)
+    event TokensBorrowed(PoolId indexed poolId, address indexed recipient, uint256 amount0, uint256 amount1, uint256 shares);
+    
+    // Event for protocol fee reinvestment
+    event ProtocolFeesReinvested(PoolId indexed poolId, address indexed recipient, uint256 amount0, uint256 amount1);
 
     /**
      * @notice Deposit tokens into a pool with native ETH support
@@ -172,4 +178,36 @@ interface IFullRangeLiquidityManager {
      * @return The total shares for the pool
      */
     function poolTotalShares(PoolId poolId) external view returns (uint128);
+    
+    /**
+     * @notice Special internal function for Margin contract to borrow liquidity without burning LP tokens
+     * @param poolId The pool ID to borrow from
+     * @param sharesToBorrow Amount of shares to borrow (determines token amounts)
+     * @param recipient Address to receive the tokens (typically the Margin contract)
+     * @return amount0 Amount of token0 received
+     * @return amount1 Amount of token1 received
+     */
+    function borrowImpl(
+        PoolId poolId,
+        uint256 sharesToBorrow,
+        address recipient
+    ) external returns (
+        uint256 amount0,
+        uint256 amount1
+    );
+    
+    /**
+     * @notice Extract protocol fees from the pool and prepare to reinvest them as protocol-owned liquidity
+     * @param poolId The pool ID to extract and reinvest fees for
+     * @param amount0 Amount of token0 to extract for reinvestment
+     * @param amount1 Amount of token1 to extract for reinvestment
+     * @param recipient Address to receive the extracted fees (typically the FeeReinvestmentManager)
+     * @return success Whether the extraction for reinvestment was successful
+     */
+    function reinvestProtocolFees(
+        PoolId poolId,
+        uint256 amount0,
+        uint256 amount1,
+        address recipient
+    ) external returns (bool success);
 } 
