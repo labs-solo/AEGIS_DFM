@@ -73,6 +73,19 @@ contract MockPoolPolicy is IPoolPolicy {
     function setPoolSpecificPOLSharingEnabled(bool /*enabled*/) external override {}
     function updateSupportedTickSpacing(uint24 /*tickSpacing*/, bool /*isSupported*/) external override {}
 
+    // --- Missing Implementations ---
+    function getFeeCollector() external view override returns (address) {
+        return address(0); // Return zero address for mock
+    }
+
+    function getProtocolFeePercentage(PoolId /*poolId*/) external view override returns (uint256 feePercentage) {
+        return 1e17; // Return 10% (scaled by 1e18) as default
+    }
+
+    function isAuthorizedReinvestor(address reinvestor) external view override returns (bool isAuthorized) {
+        // Only allow the owner (deployer) in this mock
+        return reinvestor == owner;
+    }
     // --- End: Dummy Implementations for IPoolPolicy ---
 }
 

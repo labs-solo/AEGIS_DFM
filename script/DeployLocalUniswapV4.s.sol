@@ -74,7 +74,9 @@ contract DeployLocalUniswapV4 is Script {
             1000,            // defaultPolMultiplier (1000)
             300,             // defaultDynamicFeePpm (0.03%)
             4,               // tickScalingFactor
-            new uint24[](0)  // supportedTickSpacings (empty for now)
+            new uint24[](0),  // supportedTickSpacings (empty for now)
+            1e17,            // _initialProtocolInterestFeePercentage (10%)
+            address(0)       // _initialFeeCollector (zero address)
         );
         console2.log("PolicyManager deployed at:", address(policyManager));
                 

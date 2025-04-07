@@ -7,6 +7,8 @@ fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access
 solc_version = "0.8.26"
 evm_version = "cancun"
 viaIR = true
+optimizer = true
+optimizer_runs = 1_000_000
 dotenv = true  # Enable .env file loading
 exclude_paths = ["test/old-tests"]
 remappings = [

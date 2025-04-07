@@ -180,4 +180,24 @@ interface IPoolPolicy {
      * @return Boolean indicating if the vtier is valid
      */
     function isValidVtier(uint24 fee, int24 tickSpacing) external view returns (bool);
+
+    /**
+     * @notice Returns the protocol fee percentage for interest earned on borrowed funds.
+     * @param poolId The ID of the pool (allows for future pool-specific overrides).
+     * @return feePercentage Protocol fee percentage (scaled by PRECISION, e.g., 0.1e18 for 10%).
+     */
+    function getProtocolFeePercentage(PoolId poolId) external view returns (uint256 feePercentage);
+
+    /**
+     * @notice Returns the designated fee collector address (optional, might not be needed if fees go to POL).
+     * @return The address authorized to potentially collect protocol fees (or address(0) if unused).
+     */
+    function getFeeCollector() external view returns (address);
+
+    /**
+     * @notice Checks if an address is authorized to trigger the reinvestment of protocol interest fees.
+     * @param reinvestor The address to check.
+     * @return isAuthorized True if the address is authorized.
+     */
+    function isAuthorizedReinvestor(address reinvestor) external view returns (bool isAuthorized);
 } 

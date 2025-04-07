@@ -18,8 +18,9 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 
-// Spot Contracts
-import {Spot} from "../src/Spot.sol";
+// Spot/Margin Contracts (Modified for MarginTestBase)
+// import {Spot} from "../src/Spot.sol"; // Import Margin instead
+import {Margin} from "../src/Margin.sol"; // Import Margin
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {IFullRangeDynamicFeeManager} from "../src/interfaces/IFullRangeDynamicFeeManager.sol";
@@ -36,19 +37,14 @@ import "../src/token/MockERC20.sol";
 // New imports
 import { TruncatedOracle } from "../src/libraries/TruncatedOracle.sol";
 import { TruncGeoOracleMulti } from "../src/TruncGeoOracleMulti.sol";
+import {DepositParams, WithdrawParams} from "../src/interfaces/ISpot.sol";
 
 /**
- * @title LocalUniswapV4TestBase
- * @notice Base test contract that sets up a complete local Uniswap V4 environment with the Spot hook
- * @dev This provides a testing foundation with:
- * 1. All core contracts deployed (PoolManager, Spot hook, Policy managers, etc.)
- * 2. Test tokens (MockERC20s)
- * 3. Helper functions for common operations (create pools, add liquidity, swap)
- * 4. Test accounts with pre-loaded balances
- * 
- * IMPORTANT: This base test must be used with Solidity 0.8.26 for proper hook address validation
+ * @title MarginTestBase
+ * @notice Base test contract that sets up a complete local Uniswap V4 environment with the Margin hook
+ * @dev Copy of LocalUniswapV4TestBase, modified to deploy Margin instead of Spot as the hook.
  */
-abstract contract LocalUniswapV4TestBase is Test {
+abstract contract MarginTestBase is Test { // Renamed contract
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
 
@@ -57,7 +53,8 @@ abstract contract LocalUniswapV4TestBase is Test {
     PoolPolicyManager public policyManager;
     FullRangeLiquidityManager public liquidityManager;
     FullRangeDynamicFeeManager public dynamicFeeManager;
-    Spot public fullRange;
+    // Spot public fullRange; // Changed type to Margin
+    Margin public fullRange; // Changed type to Margin
     TruncGeoOracleMulti public truncGeoOracle;
     
     // Test contract references - these are adapter contracts for interacting with the PoolManager
@@ -99,7 +96,7 @@ abstract contract LocalUniswapV4TestBase is Test {
     
     /**
      * @notice Sets up the complete testing environment with all contracts and accounts
-     * @dev This creates a fully functioning Uniswap V4 environment with the Spot hook
+     * @dev This creates a fully functioning Uniswap V4 environment with the Margin hook
      */
     function setUp() public virtual {
         // Set up test accounts with ETH
@@ -147,21 +144,21 @@ abstract contract LocalUniswapV4TestBase is Test {
         
         vm.stopPrank();
         vm.startPrank(governance);
-        console2.log("[SETUP] Deploying Spot...");
-        fullRange = _deployFullRange();
-        console2.log("[SETUP] Spot Deployed at:", address(fullRange));
+        console2.log("[SETUP] Deploying Margin hook..."); // Updated log
+        fullRange = _deployFullRange(); // Deploys Margin now
+        console2.log("[SETUP] Margin Deployed at:", address(fullRange)); // Updated log
         
         console2.log("[SETUP] Deploying DynamicFeeManager...");
         dynamicFeeManager = new FullRangeDynamicFeeManager(
             governance,
             IPoolPolicy(address(policyManager)),
             poolManager,
-            address(fullRange)
+            address(fullRange) // Pass Margin address
         );
         console2.log("[SETUP] DynamicFeeManager Deployed.");
         
         console2.log("[SETUP] Setting LM.FullRangeAddress...");
-        liquidityManager.setFullRangeAddress(address(fullRange));
+        liquidityManager.setFullRangeAddress(address(fullRange)); // Sets Margin address
         console2.log("[SETUP] Setting FR.DynamicFeeManager...");
         fullRange.setDynamicFeeManager(dynamicFeeManager);
         console2.log("[SETUP] Setting FR.OracleAddress...");
@@ -208,7 +205,7 @@ abstract contract LocalUniswapV4TestBase is Test {
             currency1: Currency.wrap(address(token1)),
             fee: DEFAULT_FEE,
             tickSpacing: DEFAULT_TICK_SPACING,
-            hooks: IHooks(address(fullRange))
+            hooks: IHooks(address(fullRange)) // Use Margin address as hook
         });
         poolManager.initialize(poolKey, uint160(1 << 96));
         poolId = poolKey.toId();
@@ -219,12 +216,12 @@ abstract contract LocalUniswapV4TestBase is Test {
     }
 
     /**
-     * @notice Deploy the Spot hook with proper permissions encoded in the address
+     * @notice Deploy the Margin hook with proper permissions encoded in the address
      * @dev Uses CREATE2 with address mining to ensure the hook address has the correct permission bits
-     * @return hookAddress The deployed Spot hook address with correct permissions
+     * @return hookAddress The deployed Margin hook address with correct permissions
      */
-    function _deployFullRange() internal virtual returns (Spot) {
-        // Calculate required hook flags
+    function _deployFullRange() internal virtual returns (Margin) { // Changed return type
+        // Calculate required hook flags manually based on Margin's needs
         uint160 flags = uint160(
             Hooks.BEFORE_INITIALIZE_FLAG |
             Hooks.AFTER_INITIALIZE_FLAG |
@@ -235,9 +232,10 @@ abstract contract LocalUniswapV4TestBase is Test {
             Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
             Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+            // Add/remove flags if Margin's requirements change
         );
 
-        // Prepare constructor arguments (3 args)
+        // Prepare constructor arguments for Margin (Ensure these match Margin's constructor)
         bytes memory constructorArgs = abi.encode(
             address(poolManager),
             IPoolPolicy(address(policyManager)),
@@ -248,21 +246,22 @@ abstract contract LocalUniswapV4TestBase is Test {
         (address hookAddress, bytes32 salt) = HookMiner.find(
             governance, // Use the actual deployer address (governance)
             flags,
-            abi.encodePacked(type(Spot).creationCode, constructorArgs),
+            // Use Margin creation code
+            abi.encodePacked(type(Margin).creationCode, constructorArgs),
             bytes("")
         );
 
         console2.log("[BaseTest] Calculated Hook Addr:", hookAddress);
         console2.logBytes32(salt);
 
-        // Deploy using new 3-arg constructor
-        Spot hookContract = new Spot{salt: salt}(
+        // Deploy using Margin constructor with mined salt
+        Margin hookContract = new Margin{salt: salt}(
             poolManager,
             IPoolPolicy(address(policyManager)),
             liquidityManager
         );
 
-        require(address(hookContract) == hookAddress, "BaseTest: Hook address mismatch");
+        require(address(hookContract) == hookAddress, "MarginTestBase: Hook address mismatch");
         console2.log("[BaseTest] Deployed Hook Addr:", address(hookContract));
 
         return hookContract;
@@ -282,8 +281,15 @@ abstract contract LocalUniswapV4TestBase is Test {
         // Approve tokens first
         token0.approve(address(poolManager), type(uint256).max);
         token1.approve(address(poolManager), type(uint256).max);
-        token2.approve(address(poolManager), type(uint256).max);
+        // token2.approve(address(poolManager), type(uint256).max); // Remove approval for unused token2
         
+        console2.log("addLiquidity Debug: Account=", account);
+        console2.log("addLiquidity Debug: token0 balance=", token0.balanceOf(account));
+        console2.log("addLiquidity Debug: token1 balance=", token1.balanceOf(account));
+        console2.log("addLiquidity Debug: token0 allowance for PM=", token0.allowance(account, address(poolManager)));
+        console2.log("addLiquidity Debug: token1 allowance for PM=", token1.allowance(account, address(poolManager)));
+        console2.log("addLiquidity Debug: Liquidity Delta=", int256(uint256(liquidity)));
+
         IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
             tickLower: tickLower,
             tickUpper: tickUpper,
@@ -297,23 +303,37 @@ abstract contract LocalUniswapV4TestBase is Test {
     
     /**
      * @notice Helper function to add full range liquidity to a pool
-     * @dev This creates liquidity across the entire price range through the Spot hook
+     * @dev This creates liquidity across the entire price range through the Margin hook (as fullRange)
      * @param account The address that will provide the liquidity
      * @param liquidity The amount of tokens to add as liquidity
      */
     function addFullRangeLiquidity(address account, uint128 liquidity) internal {
         // ======================= ARRANGE =======================
-        // Calculate the min and max ticks for full range liquidity
-        // Full range = minimum usable tick to maximum usable tick based on the pool's tick spacing
-        int24 tickLower = TickMath.minUsableTick(poolKey.tickSpacing);
-        int24 tickUpper = TickMath.maxUsableTick(poolKey.tickSpacing);
+        vm.stopPrank(); // Stop any existing prank
+        vm.startPrank(account);
+        
+        // Approve tokens for the LiquidityManager to transfer
+        token0.approve(address(liquidityManager), type(uint256).max);
+        token1.approve(address(liquidityManager), type(uint256).max);
         
         // ======================= ACT =======================
-        // Add liquidity using the standard addLiquidity helper with full range ticks
-        addLiquidity(account, tickLower, tickUpper, liquidity);
+        // Use the proper deposit flow to add liquidity
+        DepositParams memory params = DepositParams({
+            poolId: poolId,
+            amount0Desired: liquidity,
+            amount1Desired: liquidity,
+            amount0Min: 0,  // No slippage protection for this test
+            amount1Min: 0,  // No slippage protection for this test
+            deadline: block.timestamp + 1 hours
+        });
         
-        // ======================= ASSERT =======================
-        // The addLiquidity function handles stopping the prank and verification
+        // Call deposit which will pull tokens and add liquidity
+        (uint256 shares, uint256 amount0, uint256 amount1) = fullRange.deposit(params);
+        console2.log("Deposit successful - shares:", shares);
+        console2.log("Amount0 used:", amount0);
+        console2.log("Amount1 used:", amount1);
+        
+        vm.stopPrank();
     }
     
     /**
@@ -361,8 +381,6 @@ abstract contract LocalUniswapV4TestBase is Test {
     function swapExactInput(address account, bool zeroForOne, uint256 amountIn) internal {
         // ======================= ARRANGE =======================
         // Set the price limit based on swap direction
-        // For swapping token0 → token1, use a low price limit to accept any price
-        // For swapping token1 → token0, use a high price limit to accept any price
         uint160 sqrtPriceLimitX96 = zeroForOne ? 
             TickMath.MIN_SQRT_PRICE + 1 : 
             TickMath.MAX_SQRT_PRICE - 1;
@@ -387,116 +405,8 @@ abstract contract LocalUniswapV4TestBase is Test {
         return (currentTick, liquidity);
     }
     
-    /**
-     * @notice Test to verify basic oracle functionality - just reading current tick
-     * @dev Ensures we can read the current tick from the pool without any operations
-     */
-    function test_readCurrentTick() public {
-        // Get the current tick from the pool
-        (int24 currentTick, uint128 liquidity) = queryCurrentTick();
-        
-        // Log for debugging
-        console2.log("Current tick:", currentTick);
-        console2.log("Current liquidity:", liquidity);
-        
-        // Verify that tick is within valid range
-        assertTrue(
-            currentTick >= TickMath.MIN_TICK && currentTick <= TickMath.MAX_TICK,
-            "Tick should be within valid range"
-        );
-    }
-    
-    /**
-     * @notice Test to verify oracle tracks a single price change via swap
-     * @dev Isolates a single swap operation and verifies tick changes
-     */
-    function test_oracleTracksSinglePriceChange() public virtual {
-        // ======================= ARRANGE =======================
-        // Get initial tick
-        (int24 initialTick, ) = queryCurrentTick();
-        console2.log("Initial tick:", initialTick);
-        
-        // ======================= ACT =======================
-        // Prepare token balances for bob
-        vm.startPrank(deployer);
-        token0.mint(bob, 1000e18);  // Mint fewer tokens to avoid large balances
-        token1.mint(bob, 1000e18);
-        vm.stopPrank();
-        
-        // Perform a swap to change the price
-        // Calculate a target tick that's aligned with tick spacing
-        int24 targetTick = initialTick - 100; // Move 100 ticks down
-        targetTick = (targetTick / 10) * 10; // Align with tick spacing of 10
-        uint160 sqrtPriceLimitX96 = TickMath.getSqrtPriceAtTick(targetTick);
-        
-        vm.startPrank(bob);
-        
-        // Approve tokens first
-        token0.approve(address(poolManager), type(uint256).max);
-        token1.approve(address(poolManager), type(uint256).max);
-        
-        // Prepare swap parameters with smaller amount
-        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
-            zeroForOne: true,
-            amountSpecified: int256(0.1e18),  // Use a much smaller amount
-            sqrtPriceLimitX96: sqrtPriceLimitX96
-        });
-        
-        PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({
-            takeClaims: true, // Take claims to settle balances
-            settleUsingBurn: false
-        });
-        
-        // Execute swap
-        swapRouter.swap(poolKey, params, testSettings, "");
-        vm.stopPrank();
-        
-        // ======================= ASSERT =======================
-        // Get tick after swap
-        (int24 tickAfterSwap, ) = queryCurrentTick();
-        console2.log("Tick after swap:", tickAfterSwap);
-        
-        // Verify that swap moved price as expected
-        assertTrue(tickAfterSwap < initialTick, "Swap should decrease the price");
-        assertTrue(tickAfterSwap % 10 == 0, "Tick should be aligned with spacing");
-    }
-    
-    /**
-     * @notice Test to validate basic oracle functionality
-     * @dev Simply checks that we can read the current tick value from the pool
-     */
-    function test_oracleValidation() public {
-        // ======================= ARRANGE & ACT =======================
-        // Get the current tick from the pool
-        (int24 currentTick, uint128 liquidity) = queryCurrentTick();
-        
-        // ======================= ASSERT =======================
-        // Log the current tick and liquidity for debugging
-        console2.log("Current tick:", currentTick);
-        console2.log("Current liquidity:", liquidity);
-        
-        // Verify that tick is within valid range
-        assertTrue(
-            currentTick >= TickMath.MIN_TICK && currentTick <= TickMath.MAX_TICK,
-            "Tick should be within valid range"
-        );
-    }
-    
-    /**
-     * @notice Basic test to verify the test environment is properly set up
-     * @dev Ensures accounts have correct balances and contracts are deployed
-     */
-    function test_setup() public {
-        // ======================= ARRANGE =======================
-        // No arrangement needed for this verification test
-        
-        // ======================= ACT & ASSERT =======================
-        // Verify that test accounts have tokens
-        assertTrue(token0.balanceOf(alice) > 0, "Alice should have some token0 balance");
-        assertTrue(token1.balanceOf(alice) > 0, "Alice should have some token1 balance");
-        
-        // Verify that core contracts are deployed
-        assertTrue(address(poolManager) != address(0), "PoolManager should be deployed");
-        assertTrue(address(fullRange) != address(0), "Spot hook should be deployed");
-    }
+    // --- Test Functions Removed (Keep only setup and helpers in base) ---
+    // Removed test_readCurrentTick, test_oracleTracksSinglePriceChange, 
+    // test_oracleValidation, test_setup as they should be in specific test files.
+
 } 
