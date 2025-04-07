@@ -28,6 +28,8 @@ import { Currency } from "lib/v4-core/src/types/Currency.sol";
 import { CurrencyLibrary } from "lib/v4-core/src/types/Currency.sol";
 import { TruncatedOracle } from "./libraries/TruncatedOracle.sol";
 import { IFeeReinvestmentManager } from "./interfaces/IFeeReinvestmentManager.sol";
+import { SolvencyUtils } from "./libraries/SolvencyUtils.sol";
+import { TransferUtils } from "./utils/TransferUtils.sol";
 import "forge-std/console2.sol";
 
 /**
@@ -213,66 +215,6 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
     }
 
     /**
-     * @notice Calculate the LP-equivalent value of token amounts
-     * @param poolId The pool ID
-     * @param amount0 Amount of token0
-     * @param amount1 Amount of token1
-     * @return lpShares Equivalent LP shares (rounded down)
-     */
-    function _lpEquivalent(
-        PoolId poolId,
-        uint256 amount0,
-        uint256 amount1
-    ) internal view returns (uint256 lpShares) {
-        (uint256 reserve0, uint256 reserve1, uint128 totalLiquidity) = getPoolReservesAndShares(poolId);
-        
-        if (reserve0 == 0 || reserve1 == 0 || totalLiquidity == 0) return 0;
-        
-        // Use Uniswap's actual liquidity calculation for accuracy
-        // Both calculations use floor division (rounded down)
-        uint256 liquidityFrom0 = FullMath.mulDiv(amount0, totalLiquidity, reserve0);
-        uint256 liquidityFrom1 = FullMath.mulDiv(amount1, totalLiquidity, reserve1);
-        
-        // Take the minimum to determine actual liquidity (conservative approach)
-        lpShares = liquidityFrom0 < liquidityFrom1 ? liquidityFrom0 : liquidityFrom1;
-        
-        return lpShares;
-    }
-
-    /**
-     * @notice Convert LP shares to token amounts
-     * @param poolId The pool ID
-     * @param shares Number of LP shares
-     * @return amount0 Amount of token0
-     * @return amount1 Amount of token1
-     * @dev Special care needed for the edge case of tiny share values:
-     *      If calculated amount is 0 but shares > 0, we set amount to 1 to prevent 
-     *      returning zero tokens for non-zero shares. This approach needs careful testing
-     *      to ensure it doesn't lead to unexpected economic outcomes, particularly:
-     *      - Test with extremely small share values near precision boundaries
-     *      - Verify that the "amount = 1" assignment doesn't create disproportionate
-     *        economics that could be exploited
-     *      - Ensure consistency with other contracts that may round differently
-     */
-    function _sharesTokenEquivalent(
-        PoolId poolId,
-        uint256 shares
-    ) internal view returns (uint256 amount0, uint256 amount1) {
-        (uint256 reserve0, uint256 reserve1, uint128 totalLiquidity) = getPoolReservesAndShares(poolId);
-        
-        if (totalLiquidity == 0) return (0, 0);
-        
-        // Calculate proportional token amounts
-        amount0 = FullMath.mulDiv(reserve0, shares, totalLiquidity);
-        amount1 = FullMath.mulDiv(reserve1, shares, totalLiquidity);
-        
-        // Ensure non-zero amounts for very small shares
-        // IMPORTANT: This approach needs careful testing to avoid economic exploits
-        if (amount0 == 0 && shares > 0 && reserve0 > 0) amount0 = 1;
-        if (amount1 == 0 && shares > 0 && reserve1 > 0) amount1 = 1;
-    }
-
-    /**
      * @notice Add a user to the pool users tracking set
      * @param poolId The pool ID
      * @param user The user address
@@ -357,25 +299,19 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
         // Accrue interest before modifying vault state
         _accrueInterestForUser(poolId, msg.sender);
         
-        // Get the pool key and check for native ETH
+        // Get the pool key
         PoolKey memory key = getPoolKey(poolId);
         
-        // Check for native ETH usage
-        bool hasNative = key.currency0.isAddressZero() || key.currency1.isAddressZero();
-        if (msg.value > 0 && !hasNative) {
-            revert Errors.NonzeroNativeValue();
-        }
-
         // Ensure at least one token is being deposited
         if (amount0 == 0 && amount1 == 0) {
             revert Errors.ZeroAmount();
         }
 
+        // Transfer tokens using the helper
+        _transferTokensIn(key, msg.sender, amount0, amount1);
+
         // Get the vault
         Vault storage vault = vaults[poolId][msg.sender];
-
-        // Transfer tokens from the user to the contract
-        _transferTokensIn(key, msg.sender, amount0, amount1);
 
         // Update the vault's token balances (use SafeCast)
         vault.token0Balance = (uint256(vault.token0Balance) + amount0).toUint128();
@@ -422,21 +358,29 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
             revert Errors.InsufficientBalance(amount1, vault.token1Balance);
         }
 
-        // Calculate the LP-equivalent value of the withdrawal
-        sharesValue = _lpEquivalent(poolId, amount0, amount1);
+        // Calculate the LP-equivalent value of the withdrawal using MathUtils
+        (uint256 reserve0, uint256 reserve1, uint128 totalLiquidity) = getPoolReservesAndShares(poolId);
+        sharesValue = MathUtils.calculateProportionalShares(
+            amount0,
+            amount1,
+            totalLiquidity, // Use uint128 directly
+            reserve0,
+            reserve1,
+            false // Standard precision
+        );
+
 
         // Create hypothetical balances after withdrawal
         uint128 newToken0Balance = (uint256(vault.token0Balance) - amount0).toUint128();
         uint128 newToken1Balance = (uint256(vault.token1Balance) - amount1).toUint128();
         uint128 currentDebtShare = vault.debtShare; // Debt doesn't change here
 
-        // Check if the withdrawal would make the vault insolvent using internal helper
-        // Debt share is passed directly as it's already updated by _accrueInterestForUser
+        // Check if the withdrawal would make the vault insolvent using the helper
         if (!_isVaultSolventWithBalances(
             poolId,
             newToken0Balance,
             newToken1Balance,
-            currentDebtShare // Use current debt share
+            currentDebtShare // Use current debt share (already updated by _accrueInterestForUser)
         )) {
             revert Errors.WithdrawalWouldMakeVaultInsolvent(); // Use specific error
         }
@@ -445,7 +389,7 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
         vault.token0Balance = newToken0Balance;
         vault.token1Balance = newToken1Balance;
 
-        // Transfer tokens to the user
+        // Transfer tokens to the user using the helper
         PoolKey memory key = getPoolKey(poolId);
         _transferTokensOut(key, msg.sender, amount0, amount1);
 
@@ -559,7 +503,6 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
         }
 
         // --- Prepare Tokens for Deposit ---
-        PoolKey memory key = getPoolKey(poolId); // Needed for transfers if not using vault balance
         if (useVaultBalance) {
             // Check vault has sufficient balance
             if (amount0 > vault.token0Balance) {
@@ -570,7 +513,8 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
             }
             // Note: Balances are deducted *after* successful deposit
         } else {
-            // Transfer tokens from user to this contract first
+            // Transfer tokens from user to this contract first using the helper
+            PoolKey memory key = getPoolKey(poolId); 
             _transferTokensIn(key, msg.sender, amount0, amount1);
         }
 
@@ -653,7 +597,15 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
     function getVaultValue(PoolId poolId, address user) external view returns (uint256 value) {
         Vault memory vault = vaults[poolId][user];
         // Value is purely collateral balances (which include borrowed tokens per BAMM)
-        return _lpEquivalent(poolId, vault.token0Balance, vault.token1Balance);
+        (uint256 reserve0, uint256 reserve1, uint128 totalLiquidity) = getPoolReservesAndShares(poolId);
+        return MathUtils.calculateProportionalShares(
+            vault.token0Balance,
+            vault.token1Balance,
+            totalLiquidity, // Use uint128 directly
+            reserve0,
+            reserve1,
+            false // Standard precision
+        );
     }
 
     /**
@@ -673,7 +625,15 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
         Vault memory vault = vaults[poolId][user];
         token0Balance = vault.token0Balance;
         token1Balance = vault.token1Balance;
-        equivalentLPShares = _lpEquivalent(poolId, vault.token0Balance, vault.token1Balance);
+        (uint256 reserve0, uint256 reserve1, uint128 totalLiquidity) = getPoolReservesAndShares(poolId);
+        equivalentLPShares = MathUtils.calculateProportionalShares(
+            vault.token0Balance,
+            vault.token1Balance,
+            totalLiquidity, // Use uint128 directly
+            reserve0,
+            reserve1,
+            false // Standard precision
+        );
         return (token0Balance, token1Balance, equivalentLPShares);
     }
 
@@ -686,41 +646,25 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
     function isVaultSolvent(PoolId poolId, address user) external view override returns (bool) {
         Vault memory vault = vaults[poolId][user];
 
-        // If user has no debt, the vault is solvent
+        // If there's no debt share, it's always solvent.
         if (vault.debtShare == 0) {
             return true;
         }
 
-        // Calculate current collateral value in LP shares using vault balances
-        uint256 collateralValue = _lpEquivalent(
-            poolId,
-            vault.token0Balance,
-            vault.token1Balance
+        // Fetch pool state
+        (uint256 reserve0, uint256 reserve1, uint128 totalLiquidity) = getPoolReservesAndShares(poolId);
+        uint256 multiplier = interestMultiplier[poolId];
+
+        // Use the SolvencyUtils library helper function
+        return SolvencyUtils.checkVaultSolvency(
+            vault,
+            reserve0,
+            reserve1,
+            totalLiquidity,
+            multiplier,
+            SOLVENCY_THRESHOLD_LIQUIDATION,
+            PRECISION
         );
-
-        // If collateral value is zero but debt exists, it's insolvent
-        if (collateralValue == 0) {
-            return false;
-        }
-
-        // Calculate the debt considering interest accrual using the current multiplier
-        // Perform calculation directly without modifying state (no _accrueInterestForUser call)
-        // Note: This view function doesn't update the global multiplier, it uses the latest recorded one.
-        uint256 currentMultiplier = interestMultiplier[poolId]; // Use the stored multiplier
-        uint256 currentDebtSharesAdjustedForInterest = vault.debtShare;
-        if (currentMultiplier > PRECISION) { // Apply interest multiplier only if it has increased
-            currentDebtSharesAdjustedForInterest = FullMath.mulDiv(
-                vault.debtShare,
-                currentMultiplier,
-                PRECISION
-            );
-        } // If multiplier hasn't increased or is 0/PRECISION, use original debtShare
-
-        // Check if collateral value satisfies the solvency threshold
-        // debt / collateral < threshold <=> debt * PRECISION / collateral < threshold * PRECISION
-        // <=> debt * PRECISION < threshold * collateral ( rearranged to avoid division)
-        // Use the calculated currentDebtSharesAdjustedForInterest
-        return FullMath.mulDiv(currentDebtSharesAdjustedForInterest, PRECISION, collateralValue) < SOLVENCY_THRESHOLD_LIQUIDATION;
     }
 
     /**
@@ -732,40 +676,19 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
     function getVaultLTV(PoolId poolId, address user) external view override returns (uint256) {
         Vault memory vault = vaults[poolId][user];
 
-        // If user has no debt, LTV is 0
-        if (vault.debtShare == 0) {
-            return 0;
-        }
+        // Fetch pool state
+        (uint256 reserve0, uint256 reserve1, uint128 totalLiquidity) = getPoolReservesAndShares(poolId);
+        uint256 multiplier = interestMultiplier[poolId];
 
-        // Calculate current collateral value in LP shares
-        uint256 collateralValue = _lpEquivalent(
-            poolId,
-            vault.token0Balance,
-            vault.token1Balance
+        // Use the SolvencyUtils library helper function
+        return SolvencyUtils.computeVaultLTV(
+            vault,
+            reserve0,
+            reserve1,
+            totalLiquidity,
+            multiplier,
+            PRECISION
         );
-
-        // If collateral value is zero but debt exists, LTV is effectively infinite/undefined.
-        // Returning type(uint256).max might be appropriate, or revert.
-        // Let's return max for now, consistent with division by zero implying max ratio.
-        if (collateralValue == 0) {
-            return type(uint256).max;
-        }
-
-        // Calculate the debt considering interest accrual using the current multiplier
-        // Perform calculation directly without modifying state (no _accrueInterestForUser call)
-        uint256 currentMultiplier = interestMultiplier[poolId]; // Use the stored multiplier
-        uint256 currentDebtSharesAdjustedForInterest = vault.debtShare;
-        if (currentMultiplier > PRECISION) { // Apply interest multiplier only if it has increased
-            currentDebtSharesAdjustedForInterest = FullMath.mulDiv(
-                vault.debtShare,
-                currentMultiplier,
-                PRECISION
-            );
-        }
-
-        // LTV = Debt / Value
-        // Calculate LTV scaled by PRECISION (debt * PRECISION / value)
-        return FullMath.mulDiv(currentDebtSharesAdjustedForInterest, PRECISION, collateralValue);
     }
 
     /**
@@ -953,14 +876,14 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
     // afterRemoveLiquidityReturnDelta remains the same
 
     // =========================================================================
-    // Helper Functions (Added/Modified for Phase 3)
+    // Helper Functions (Internal - Refactored to use TransferUtils where applicable)
     // =========================================================================
 
     /**
-     * @notice Safe transfer ETH with fallback to pending payments
+     * @notice Internal: Safe transfer ETH with fallback to pending payments (stateful)
      * @param recipient The address to send ETH to
      * @param amount The amount of ETH to send
-     * @dev Re-added for Phase 3 as it's used by _transferTokensOut.
+     * @dev This function remains internal as it modifies contract state (pendingETHPayments).
      */
     function _safeTransferETH(address recipient, uint256 amount) internal {
         if (amount == 0) return;
@@ -968,90 +891,59 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
         (bool success, ) = recipient.call{value: amount, gas: 50000}(""); // Use fixed gas stipend
         if (!success) {
             pendingETHPayments[recipient] += amount;
-            // event ETHTransferFailed(recipient, amount);
+            emit ETHTransferFailed(recipient, amount); // Emit event here
         }
     }
 
     /**
-     * @notice Helper function for transferring tokens into the contract from a user
+     * @notice Internal: Helper for transferring tokens into the contract from a user.
      * @param key The pool key (for currency types)
      * @param from The sender address
      * @param amount0 Amount of token0 to transfer
      * @param amount1 Amount of token1 to transfer
-     * @dev Handles native ETH payments via msg.value. Refunds excess ETH.
+     * @dev Handles ETH checks and refunds, calls TransferUtils for ERC20 transfers.
      */
     function _transferTokensIn(PoolKey memory key, address from, uint256 amount0, uint256 amount1) internal {
         uint256 ethAmountRequired = 0;
-        // Transfer token0 if needed
-        if (amount0 > 0) {
-            if (key.currency0.isAddressZero()) {
-                ethAmountRequired += amount0;
-            } else {
-                SafeTransferLib.safeTransferFrom(
-                    ERC20(Currency.unwrap(key.currency0)),
-                    from,
-                    address(this),
-                    amount0
-                );
-            }
+        if (key.currency0.isAddressZero()) ethAmountRequired += amount0;
+        if (key.currency1.isAddressZero()) ethAmountRequired += amount1;
+
+        // Check ETH value before calling library (which also checks, but good practice here)
+        if (msg.value < ethAmountRequired) {
+            revert Errors.InsufficientETH(ethAmountRequired, msg.value);
         }
 
-        // Transfer token1 if needed
-        if (amount1 > 0) {
-            if (key.currency1.isAddressZero()) {
-                ethAmountRequired += amount1;
-            } else {
-                SafeTransferLib.safeTransferFrom(
-                    ERC20(Currency.unwrap(key.currency1)),
-                    from,
-                    address(this),
-                    amount1
-                );
-            }
-        }
-
-        // Check if enough ETH was sent if required
-        if (ethAmountRequired > 0 && msg.value < ethAmountRequired) {
-             revert Errors.InsufficientETH(ethAmountRequired, msg.value);
-        }
+        // Call library to handle transfers (ERC20s + ETH check)
+        // The library function will revert if msg.value is insufficient, redundant but safe.
+        uint256 actualEthRequired = TransferUtils.transferTokensIn(key, from, amount0, amount1, msg.value);
+        // It's extremely unlikely actualEthRequired != ethAmountRequired, but double-check
+        // if (actualEthRequired != ethAmountRequired) revert Errors.InternalError("ETH mismatch"); // REMOVED: Library already handles insufficient ETH check.
 
         // Refund excess ETH
         if (msg.value > ethAmountRequired) {
+            // Use SafeTransferLib directly for refunds
             SafeTransferLib.safeTransferETH(from, msg.value - ethAmountRequired);
         }
     }
 
     /**
-     * @notice Helper function to transfer tokens out from the contract to a user
+     * @notice Internal: Helper to transfer tokens out from the contract to a user.
      * @param key The pool key (contains currency information)
      * @param to Recipient address
      * @param amount0 Amount of token0 to transfer
      * @param amount1 Amount of token1 to transfer
-     * @dev Uses _safeTransferETH for native currency.
+     * @dev Calls TransferUtils library and handles ETH transfer failures via _safeTransferETH.
      */
     function _transferTokensOut(PoolKey memory key, address to, uint256 amount0, uint256 amount1) internal {
-        if (amount0 > 0) {
-            if (key.currency0.isAddressZero()) {
-                _safeTransferETH(to, amount0);
-            } else {
-                SafeTransferLib.safeTransfer(
-                    ERC20(Currency.unwrap(key.currency0)),
-                    to,
-                    amount0
-                );
-            }
-        }
+        // Call library to handle ERC20 transfers and attempt direct ETH transfers
+        (bool eth0Success, bool eth1Success) = TransferUtils.transferTokensOut(key, to, amount0, amount1);
 
-        if (amount1 > 0) {
-            if (key.currency1.isAddressZero()) {
-                _safeTransferETH(to, amount1);
-            } else {
-                SafeTransferLib.safeTransfer(
-                    ERC20(Currency.unwrap(key.currency1)),
-                    to,
-                    amount1
-                );
-            }
+        // If ETH transfers failed, use internal stateful function to record pending payment
+        if (!eth0Success) {
+            _safeTransferETH(to, amount0); // Handles amount0 > 0 check internally
+        }
+        if (!eth1Success) {
+            _safeTransferETH(to, amount1); // Handles amount1 > 0 check internally
         }
     }
 
@@ -1176,54 +1068,6 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
     }
 
     /**
-     * @notice Calculate a user's current debt including accrued interest
-     * @param poolId The pool ID
-     * @param user The user address
-     * @return Current debt value including interest, scaled by PRECISION
-     */
-    function getCurrentUserDebt(PoolId poolId, address user) public view returns (uint256) {
-        Vault memory vault = vaults[poolId][user];
-
-        // If user has no debt, return 0
-        if (vault.debtShare == 0) {
-            return 0;
-        }
-
-        // Calculate debt including interest using the latest recorded multiplier
-        // Note: This does NOT update the multiplier based on block.timestamp difference
-        // like _updateInterestForPool does. It reflects debt based on last chain update.
-        return FullMath.mulDiv(
-            vault.debtShare,
-            interestMultiplier[poolId], // Use stored multiplier
-            PRECISION
-        );
-    }
-
-    /**
-     * @notice Gets the current interest rate per second for a pool from the model.
-     * @param poolId The pool ID
-     * @return rate The interest rate per second (scaled by PRECISION)
-     */
-    function getInterestRatePerSecond(PoolId poolId) public view returns (uint256 rate) {
-        address modelAddress = interestRateModelAddress;
-        if (modelAddress == address(0)) return 0; // No model, no rate
-
-        IInterestRateModel model = IInterestRateModel(modelAddress);
-
-        uint128 totalShares = liquidityManager.poolTotalShares(poolId);
-        uint256 rentedShares = rentedLiquidity[poolId];
-
-        if (totalShares == 0) return 0; // Avoid division by zero if pool somehow has no shares
-
-        // Use model's helper for utilization
-        uint256 utilization = model.getUtilizationRate(poolId, rentedShares, uint256(totalShares));
-
-        // Get rate from model
-        rate = model.getBorrowRate(poolId, utilization);
-        return rate;
-    }
-
-    /**
      * @notice Verify if a borrowing operation would keep the vault solvent and pool within utilization limits.
      * @param poolId The pool ID
      * @param user The user address
@@ -1231,14 +1075,11 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
      * @dev Updated for Phase 4 to check pool utilization against the Interest Rate Model.
      */
     function _checkBorrowingCapacity(PoolId poolId, address user, uint256 sharesToBorrow) internal view {
-        // Ensure pool is initialized (redundant if called after _verifyPoolInitialized, but safe)
-        // _verifyPoolInitialized(poolId); // Assuming already called by public entry points like borrow()
-
         // Ensure interest rate model is set
         address modelAddr = interestRateModelAddress;
         require(modelAddr != address(0), "Margin: Interest model not set"); // Use specific error if available
 
-        // --- NEW: Check Pool Utilization Limit ---
+        // --- Check Pool Utilization Limit ---
         uint128 totalSharesLM = liquidityManager.poolTotalShares(poolId);
         if (totalSharesLM == 0) revert Errors.PoolNotInitialized(poolId); // Safety check
 
@@ -1256,36 +1097,59 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
              revert Errors.MaxPoolUtilizationExceeded(utilization, maxAllowedUtilization);
         }
 
-        // --- EXISTING: Check User Vault Solvency ---
-        // Accrue interest first (should be done by the calling function like borrow())
-        // _accrueInterestForUser(poolId, user); // Removed: redundant call, already done in borrow()
+        // --- Check User Vault Solvency ---
+        // Note: Interest already accrued for user by calling function (e.g., borrow)
 
-        // Calculate token amounts corresponding to sharesToBorrow
-        (uint256 amount0FromShares, uint256 amount1FromShares) = _sharesTokenEquivalent(
-            poolId,
-            sharesToBorrow
+        // Calculate token amounts corresponding to sharesToBorrow using MathUtils
+        (uint256 reserve0, uint256 reserve1, uint128 totalLiquidity) = getPoolReservesAndShares(poolId);
+        (uint256 amount0FromShares, uint256 amount1FromShares) = MathUtils.computeWithdrawAmounts(
+            totalLiquidity, // Use uint128 directly
+            sharesToBorrow,
+            reserve0,
+            reserve1,
+            false // Standard precision
         );
 
         // Calculate hypothetical new vault state after borrow
-        // Note: Balances increase, Debt Share increases
-        uint128 newToken0Balance = (uint256(vaults[poolId][user].token0Balance) + amount0FromShares).toUint128();
-        uint128 newToken1Balance = (uint256(vaults[poolId][user].token1Balance) + amount1FromShares).toUint128();
-        // Proposed new debt share *before* considering interest on the *newly borrowed* amount (interest starts next block)
-        uint128 newDebtShareBase = (uint256(vaults[poolId][user].debtShare) + sharesToBorrow).toUint128();
+        Vault memory currentVault = vaults[poolId][user];
+        uint128 newToken0Balance = (uint256(currentVault.token0Balance) + amount0FromShares).toUint128();
+        uint128 newToken1Balance = (uint256(currentVault.token1Balance) + amount1FromShares).toUint128();
+        // Proposed new debt share *after* accrual but *before* adding the new borrow amount interest.
+        // Interest on the new borrowed amount starts accruing from the *next* block/update.
+        uint128 newDebtShareBase = (uint256(currentVault.debtShare) + sharesToBorrow).toUint128(); 
 
-        // Check if the post-borrow position would be solvent using the internal helper
-        // This helper uses the *current* interest multiplier for the solvency check
+        // Check if the post-borrow position would be solvent using the helper
+        // Use the *current* interest multiplier as interest on new debt hasn't started yet
         if (!_isVaultSolventWithBalances(
             poolId,
             newToken0Balance,
             newToken1Balance,
-            newDebtShareBase // Check solvency based on the proposed base debt share increase
+            newDebtShareBase // Use the proposed base debt share
         )) {
-             // Calculate hypothetical collateral value for the error message
-            uint256 hypotheticalCollateralValue = _lpEquivalent(poolId, newToken0Balance, newToken1Balance);
-            // Calculate estimated debt value *using current multiplier* for the error message
-            uint256 estimatedDebtValue = FullMath.mulDiv(newDebtShareBase, interestMultiplier[poolId], PRECISION);
-            // Use existing InsufficientCollateral error, but ensure it's defined in Errors.sol
+            // Fetch necessary values for detailed error message (recalculate for clarity)
+            (uint256 reserve0_err, uint256 reserve1_err, uint128 totalLiquidity_err) = getPoolReservesAndShares(poolId);
+            uint256 multiplier_err = interestMultiplier[poolId];
+            
+            // Calculate hypothetical collateral value using MathUtils
+            uint256 hypotheticalCollateralValue = MathUtils.calculateProportionalShares(
+                newToken0Balance,
+                newToken1Balance,
+                totalLiquidity_err, 
+                reserve0_err,
+                reserve1_err,
+                false // Standard precision
+            );
+            // Calculate estimated debt value *using current multiplier* on the proposed base debt share
+            uint256 estimatedDebtValue;
+            if (newDebtShareBase == 0) {
+                 estimatedDebtValue = 0;
+            } else if (multiplier_err == 0 || multiplier_err == PRECISION) {
+                 estimatedDebtValue = newDebtShareBase;
+            } else {
+                 estimatedDebtValue = FullMath.mulDiv(newDebtShareBase, multiplier_err, PRECISION);
+            }
+            
+
             revert Errors.InsufficientCollateral(
                 estimatedDebtValue,
                 hypotheticalCollateralValue,
@@ -1295,63 +1159,41 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
     }
 
     /**
-     * @notice Internal function to check solvency with specified balances
-     * @dev Used to check hypothetical solvency after potential withdrawal or before borrow
+     * @notice Internal function to check solvency with specified balances using SolvencyUtils.
+     * @dev Used to check hypothetical solvency after potential withdrawal or before borrow.
      * @param poolId The pool ID
      * @param token0Balance Hypothetical token0 balance
      * @param token1Balance Hypothetical token1 balance
-     * @param debtShare The debt share amount (pre-interest for calculation)
+     * @param baseDebtShare The base debt share amount (before applying current interest multiplier).
      * @return True if solvent, False otherwise
      */
     function _isVaultSolventWithBalances(
         PoolId poolId,
         uint128 token0Balance,
         uint128 token1Balance,
-        uint128 debtShare // Pass the base debt share
+        uint128 baseDebtShare // Pass the base debt share
     ) internal view returns (bool) {
-        // If user has no debt, the vault is solvent
-        if (debtShare == 0) {
+        // If base debt share is 0, it's solvent.
+        if (baseDebtShare == 0) {
             return true;
         }
 
-        // Calculate current collateral value in LP shares using provided balances
-        uint256 collateralValue = _lpEquivalent(
-            poolId,
+        // Fetch pool state required by the utility function
+        (uint256 reserve0, uint256 reserve1, uint128 totalLiquidity) = getPoolReservesAndShares(poolId);
+        uint256 multiplier = interestMultiplier[poolId];
+
+        // Use the SolvencyUtils library helper function
+        return SolvencyUtils.checkSolvencyWithValues(
             token0Balance,
-            token1Balance
-        );
-
-        // If collateral is zero but debt exists, it's insolvent
-        if (collateralValue == 0) {
-            return false;
-        }
-
-        // Calculate the current debt value using the latest interest multiplier
-        uint256 currentDebtValue = FullMath.mulDiv(
-            debtShare,
-            interestMultiplier[poolId], // Use the current stored multiplier
+            token1Balance,
+            baseDebtShare,
+            reserve0,
+            reserve1,
+            totalLiquidity,
+            multiplier,
+            SOLVENCY_THRESHOLD_LIQUIDATION,
             PRECISION
         );
-
-        // Check solvency: debt / collateral < threshold
-        // Rearranged: debt * PRECISION < threshold * collateral
-        return FullMath.mulDiv(currentDebtValue, PRECISION, collateralValue) < SOLVENCY_THRESHOLD_LIQUIDATION;
-    }
-
-    /**
-     * @notice Placeholder: Calculate the number of shares repaid given token amounts
-     * @dev This function is NOT used in the current repay logic, which calculates shares
-     *      based on the actual deposit result (_depositImpl return value). Kept for reference/future.
-     */
-    function _calculateSharesForRepayment(
-        PoolId poolId,
-        uint256 amount0,
-        uint256 amount1,
-        uint256 currentDebt // Already includes interest
-    ) internal view returns (uint256 sharesRepaid) {
-        // Phase 3 Repay uses _depositImpl return value, not this calculation.
-        // This is kept as a placeholder/reference from an earlier spec version.
-        return _lpEquivalent(poolId, amount0, amount1);
     }
 
     // =========================================================================
@@ -1510,7 +1352,7 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
             IInterestRateModel rateModel = IInterestRateModel(interestRateModelAddress);
 
             // Get current state needed for calculation
-            (,, uint128 totalShares) = getPoolReservesAndShares(poolId); // Read-only call
+            (uint256 reserve0, uint256 reserve1, uint128 totalShares) = getPoolReservesAndShares(poolId); // Read-only call
             uint256 currentRentedLiquidity = rentedLiquidity[poolId]; // Read state
             uint256 currentMultiplier = interestMultiplier[poolId]; // Read state
 
@@ -1549,8 +1391,15 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
             return (0, 0);
         }
 
-        // Convert the total potential fee shares to equivalent token amounts
-        (amount0, amount1) = _sharesTokenEquivalent(poolId, totalPotentialFeeShares); // Internal view call
+        // Convert the total potential fee shares to equivalent token amounts using MathUtils
+        (uint256 reserve0_fee, uint256 reserve1_fee, uint128 totalLiquidity_fee) = getPoolReservesAndShares(poolId);
+        (amount0, amount1) = MathUtils.computeWithdrawAmounts(
+            totalLiquidity_fee, // Use uint128 directly
+            totalPotentialFeeShares,
+            reserve0_fee,
+            reserve1_fee,
+            false // Standard precision
+        );
     }
 
     /**
@@ -1613,6 +1462,30 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
         
         // No need to emit event here, FeeReinvestmentManager handles events.
         return success;
+    }
+
+    /**
+     * @notice Gets the current interest rate per second for a pool from the model.
+     * @param poolId The pool ID
+     * @return rate The interest rate per second (scaled by PRECISION)
+     */
+    function getInterestRatePerSecond(PoolId poolId) public view override returns (uint256 rate) {
+        address modelAddress = interestRateModelAddress;
+        if (modelAddress == address(0)) return 0; // No model, no rate
+
+        IInterestRateModel model = IInterestRateModel(modelAddress);
+
+        uint128 totalShares = liquidityManager.poolTotalShares(poolId);
+        uint256 rentedShares = rentedLiquidity[poolId];
+
+        if (totalShares == 0) return 0; // Avoid division by zero if pool somehow has no shares
+
+        // Use model's helper for utilization
+        uint256 utilization = model.getUtilizationRate(poolId, rentedShares, uint256(totalShares));
+
+        // Get rate from model
+        rate = model.getBorrowRate(poolId, utilization);
+        return rate;
     }
 
 } // End Contract Margin 
