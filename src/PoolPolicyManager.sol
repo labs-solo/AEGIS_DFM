@@ -51,6 +51,12 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // Add a flag to enable/disable pool-specific POL percentages
     bool public allowPoolSpecificPolShare;
     
+    // === Phase 4 State Variables ===
+    uint256 public constant PRECISION = 1e18; // Added for fee percentage scaling
+    uint256 public protocolInterestFeePercentage; // Scaled by PRECISION
+    address public feeCollector; // Optional: May not be used if all fees become POL
+    mapping(address => bool) public authorizedReinvestors;
+    
     // Events
     event FeeConfigChanged(
         uint256 polSharePpm,
@@ -67,6 +73,10 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     event PoolInitialized(PoolId indexed poolId, address hook, int24 initialTick);
     event PoolPOLShareChanged(PoolId indexed poolId, uint256 polSharePpm);
     event PoolSpecificPOLSharingEnabled(bool enabled);
+    // --- Phase 4 Events ---
+    event ProtocolInterestFeePercentageChanged(uint256 newPercentage);
+    event FeeCollectorChanged(address newCollector);
+    event AuthorizedReinvestorChanged(address indexed reinvestor, bool isAuthorized);
     
     /**
      * @notice Constructor initializes the policy manager with default values
@@ -80,6 +90,8 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      * @param _defaultDynamicFeePpm Initial default dynamic fee in PPM
      * @param _tickScalingFactor Initial tick scaling factor
      * @param _supportedTickSpacings Array of initially supported tick spacings
+     * @param _initialProtocolInterestFeePercentage Initial protocol interest fee percentage (scaled by PRECISION)
+     * @param _initialFeeCollector Initial fee collector address (can be address(0))
      */
     constructor(
         address _owner,
@@ -91,7 +103,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         uint256 _defaultPolMultiplier,
         uint256 _defaultDynamicFeePpm,
         int24 _tickScalingFactor,
-        uint24[] memory _supportedTickSpacings
+        uint24[] memory _supportedTickSpacings,
+        uint256 _initialProtocolInterestFeePercentage, // Added Phase 4 param
+        address _initialFeeCollector // Added Phase 4 param
     ) Owned(_owner) {
         // Initialize fee policy values
         _setFeeConfig(
@@ -112,6 +126,10 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
             supportedTickSpacings[_supportedTickSpacings[i]] = true;
             emit TickSpacingSupportChanged(_supportedTickSpacings[i], true);
         }
+
+        // Initialize Phase 4 parameters
+        _setProtocolFeePercentage(_initialProtocolInterestFeePercentage);
+        _setFeeCollector(_initialFeeCollector);
     }
     
     // === Policy Management Functions ===
@@ -396,6 +414,62 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         return false;
     }
     
+    // === Phase 4 Implementation ===
+
+    /**
+     * @inheritdoc IPoolPolicy
+     * @dev Returns the globally configured protocol interest fee percentage.
+     *      PoolId parameter is included for interface consistency and future flexibility.
+     */
+    function getProtocolFeePercentage(PoolId poolId) external view override returns (uint256 feePercentage) {
+        // Add poolId param for future flexibility, but return global value for now
+        poolId; // Silence unused variable warning
+        return protocolInterestFeePercentage;
+    }
+
+    /**
+     * @inheritdoc IPoolPolicy
+     */
+    function getFeeCollector() external view override returns (address) {
+        return feeCollector;
+    }
+
+    /**
+     * @inheritdoc IPoolPolicy
+     */
+    function isAuthorizedReinvestor(address reinvestor) external view override returns (bool isAuthorized) {
+        // Also allow the owner (governance) to always be authorized implicitly
+        return authorizedReinvestors[reinvestor] || reinvestor == owner;
+    }
+
+    /**
+     * @notice Sets the global protocol interest fee percentage.
+     * @param _newPercentage The new percentage scaled by PRECISION (e.g., 0.1e18 for 10%)
+     */
+    function setProtocolFeePercentage(uint256 _newPercentage) external onlyOwner {
+        _setProtocolFeePercentage(_newPercentage);
+    }
+
+    /**
+     * @notice Sets the fee collector address.
+     * @param _newCollector The new fee collector address. Can be address(0) if not used.
+     */
+    function setFeeCollector(address _newCollector) external onlyOwner {
+       _setFeeCollector(_newCollector);
+    }
+
+    /**
+     * @notice Authorizes or deauthorizes an address to trigger fee reinvestment.
+     * @param _reinvestor The address to authorize/deauthorize.
+     * @param _isAuthorized True to authorize, false to deauthorize.
+     */
+    function setAuthorizedReinvestor(address _reinvestor, bool _isAuthorized) external onlyOwner {
+        require(_reinvestor != address(0), "PPM: Zero address");
+        require(_reinvestor != owner, "PPM: Owner is implicitly authorized"); // Prevent explicit setting for owner
+        authorizedReinvestors[_reinvestor] = _isAuthorized;
+        emit AuthorizedReinvestorChanged(_reinvestor, _isAuthorized);
+    }
+
     // === Internal Helper Functions ===
     
     /**
@@ -446,5 +520,23 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
             _feeClaimThresholdPpm,
             _defaultPolMultiplier
         );
+    }
+
+    /**
+     * @notice Internal logic for setting protocol interest fee percentage
+     */
+    function _setProtocolFeePercentage(uint256 _newPercentage) internal {
+        require(_newPercentage <= PRECISION, "PPM: Percentage <= 100%");
+        protocolInterestFeePercentage = _newPercentage;
+        emit ProtocolInterestFeePercentageChanged(_newPercentage);
+    }
+
+    /**
+     * @notice Internal logic for setting the fee collector
+     */
+    function _setFeeCollector(address _newCollector) internal {
+        // Allow address(0) if collector role is unused
+        feeCollector = _newCollector;
+        emit FeeCollectorChanged(_newCollector);
     }
 } 

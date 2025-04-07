@@ -35,6 +35,7 @@ import { ISpot } from "./interfaces/ISpot.sol";
  * @dev Phase 1 establishes the architecture and data structures needed for future phases.
  *      Phase 2 added basic collateral deposit/withdraw.
  *      Phase 3 implements borrowing, repayment, and interest accrual following the BAMM model.
+ *      Phase 4 adds dynamic interest rates via IInterestRateModel, protocol fee tracking, and utilization limits.
  *      Inherits governance/ownership from Spot via IPoolPolicy.
  */
 contract Margin is Spot, IMargin {
@@ -44,6 +45,7 @@ contract Margin is Spot, IMargin {
     using EnumerableSet for EnumerableSet.AddressSet;
     using BalanceDeltaLibrary for BalanceDelta;
     using CurrencyLibrary for Currency;
+    using FullMath for uint256;
 
     // =========================================================================
     // Constants (Updated for Phase 3)
@@ -128,9 +130,15 @@ contract Margin is Spot, IMargin {
     address public interestRateModelAddress;
 
     /**
+     * @notice Tracks protocol fees accrued from interest, denominated in share value
+     * @dev Added in Phase 4
+     */
+    mapping(PoolId => uint256) public accumulatedFees; // Phase 4 Addition
+
+    /**
      * @notice Storage gap for future extensions
      */
-    uint256[49] private __gap;
+    uint256[48] private __gap;
 
     // =========================================================================
     // Events (Updated/Added for Phase 3)
@@ -1045,73 +1053,158 @@ contract Margin is Spot, IMargin {
     }
 
     // =========================================================================
-    // Phase 3+ Interest Accrual Logic
+    // Phase 4 Interest Accrual Logic
     // =========================================================================
 
     /**
-     * @notice Updates the global interest multiplier for a pool based on elapsed time
+     * @notice Updates the global interest multiplier for a pool based on elapsed time and utilization.
      * @param poolId The pool ID
+     * @dev Replaces Phase 3 placeholder with Phase 4 logic using IInterestRateModel and fee calculation.
      */
     function _updateInterestForPool(PoolId poolId) internal {
         uint256 lastUpdate = lastInterestAccrualTime[poolId];
 
-        // If pool just initialized or first interaction
-        if (lastUpdate == 0) {
+        // Optimization: If already updated in this block, skip redundant calculation.
+        // Also handles the case where pool was *just* initialized in this block.
+        if (lastUpdate == block.timestamp) return;
+
+        uint256 timeElapsed = block.timestamp - lastUpdate;
+        // If pool was initialized *before* this block but this is the first action
+        // causing accrual, timeElapsed could be non-zero but lastUpdate might be 0
+        // if _afterPoolInitialized wasn't triggered yet or happened before this code path.
+        // The logic below handles initialization correctly.
+        if (timeElapsed == 0 && lastUpdate != 0) return; // No time passed since last *valid* update
+
+        // Address of the interest rate model
+        address modelAddr = interestRateModelAddress;
+
+        // If no interest rate model is set, cannot accrue interest.
+        // Only update timestamp to prevent state where accrual seems perpetually outdated.
+        if (modelAddr == address(0)) {
             lastInterestAccrualTime[poolId] = block.timestamp;
-            // Ensure multiplier is initialized if not already
-            if (interestMultiplier[poolId] == 0) {
-                 interestMultiplier[poolId] = PRECISION;
-            }
             return;
         }
 
-        uint256 timeElapsed = block.timestamp - lastUpdate;
-        if (timeElapsed == 0) return; // No time passed
+        // Get current pool state for utilization calculation
+        // Assuming liquidityManager reference is available (inherited via Spot)
+        uint128 totalShares = liquidityManager.poolTotalShares(poolId);
+        uint256 rentedShares = rentedLiquidity[poolId]; // 'borrowed' measure
 
-        // Calculate interest using the interest rate model (placeholder for now)
-        uint256 interestRate = getInterestRatePerSecond(poolId); // Per second rate
-        uint256 interestFactor = interestRate * timeElapsed; // Simple interest factor
+        // If no shares rented or no total liquidity provided yet, no interest accrues on debt.
+        if (rentedShares == 0 || totalShares == 0) {
+            lastInterestAccrualTime[poolId] = block.timestamp; // Update time even if no interest accrued
+            // Ensure multiplier is initialized if it's the very first interaction
+            if (interestMultiplier[poolId] == 0) interestMultiplier[poolId] = PRECISION;
+            return;
+        }
 
-        // Update interest multiplier: multiplier = multiplier * (1 + interestFactor/PRECISION)
-        // Using FullMath: multiplier * (PRECISION + interestFactor) / PRECISION
+        // Ensure multiplier is initialized (should happen in _afterPoolInitialized, but safety check)
         uint256 currentMultiplier = interestMultiplier[poolId];
+        if (currentMultiplier == 0) {
+             currentMultiplier = PRECISION;
+             // If multiplier was 0, it implies lastUpdate was likely 0 too, or pool just init'd.
+             // Reset timeElapsed based on a potential 0 lastUpdate.
+             if (lastUpdate == 0) {
+                 timeElapsed = 0; // Cannot calculate interest delta from an uninitialized state
+             }
+             // Assign PRECISION back to storage if it was uninitialized
+             interestMultiplier[poolId] = currentMultiplier;
+        }
+
+        // If no time elapsed after initialization checks, just update time and exit
+        if (timeElapsed == 0) {
+             lastInterestAccrualTime[poolId] = block.timestamp;
+             return;
+        }
+
+        // Calculate utilization using the model's helper function
+        uint256 utilization = IInterestRateModel(modelAddr)
+            .getUtilizationRate(poolId, rentedShares, uint256(totalShares));
+
+        // Get the current interest rate per second from the model
+        uint256 interestRatePerSecond = IInterestRateModel(modelAddr)
+            .getBorrowRate(poolId, utilization);
+
+        // Calculate the new global interest multiplier using linear compounding
+        // newMultiplier = currentMultiplier * (1 + rate * timeElapsed)
+        uint256 interestFactor = interestRatePerSecond * timeElapsed; // Total interest rate over the period
         uint256 newMultiplier = FullMath.mulDiv(
             currentMultiplier,
-            PRECISION + interestFactor, // Assuming interestFactor needs scaling if rate isn't PRECISION based
+            PRECISION + interestFactor, // Interest factor added to 1 (PRECISION)
             PRECISION
         );
 
+        // --- Protocol Fee Calculation ---
+        // Calculate the total interest accrued *on the rented shares* during this period, denominated in share value.
+        // This represents the increase in the *value* of the debt due to interest.
+        // Interest Value Increase (shares) = RentedShares * (NewMultiplier / OldMultiplier - 1)
+        // Interest Value Increase (shares) = RentedShares * (NewMultiplier - OldMultiplier) / OldMultiplier
+        // We calculate the increase relative to PRECISION (1.0) as the multipliers grow from PRECISION.
+        // interestAmountShares = rentedShares * (newMultiplier - currentMultiplier) / PRECISION
+        uint256 interestAmountShares = FullMath.mulDiv(
+            rentedShares,
+            newMultiplier - currentMultiplier, // The increase in multiplier represents the interest factor per share
+            PRECISION // Scale back down because multiplier diff is scaled by PRECISION^2 conceptually
+        );
+
+        // Get protocol fee percentage from Policy Manager
+        // Assuming policyManager reference is available (inherited via Spot -> OwnablePolicy)
+        uint256 protocolFeePercentage = policyManager.getProtocolFeePercentage(poolId);
+
+        if (protocolFeePercentage > 0 && interestAmountShares > 0) {
+            // Calculate the protocol's share of the accrued interest value (in shares)
+            uint256 protocolFeeShares = FullMath.mulDiv(
+                interestAmountShares,
+                protocolFeePercentage, // Already scaled by PRECISION
+                PRECISION
+            );
+
+            // Add to accumulated fees for later processing
+            accumulatedFees[poolId] += protocolFeeShares;
+        }
+
+        // --- Update State ---
+        // Update the global multiplier *after* fee calculation which uses the delta
         interestMultiplier[poolId] = newMultiplier;
+
+        // Update the last accrual time AFTER all calculations
         lastInterestAccrualTime[poolId] = block.timestamp;
 
-        // event InterestAccrued(
-        //     poolId,
-        //     address(0), // address(0) for pool-level accrual
-        //     interestRate,
-        //     timeElapsed,
-        //     newMultiplier
-        // );
+        // Emit event for pool-level accrual (matches IMargin definition)
+        emit InterestAccrued(
+            poolId,
+            address(0), // Zero address signifies pool-level update
+            interestRatePerSecond,
+            timeElapsed,
+            newMultiplier
+        );
     }
+
 
     /**
      * @notice Updates user's last accrual time after ensuring pool interest is current.
      * @param poolId The pool ID
      * @param user The user address
-     * @dev Debt calculation is dynamic via getCurrentUserDebt. This only updates timestamp.
+     * @dev Ensures the global pool interest multiplier is up-to-date before any user action.
+     *      Actual debt value is calculated dynamically using the global multiplier.
+     *      Replaces Phase 3 logic.
      */
     function _accrueInterestForUser(PoolId poolId, address user) internal {
-        // Update global interest first
+        // 1. Update the global interest multiplier for the pool first.
+        // This computes and stores interest, and calculates protocol fees.
         _updateInterestForPool(poolId);
 
+        // 2. Update the user's vault timestamp.
+        //    No per-user interest calculation or state update is needed here because
+        //    the user's debt value is derived dynamically using their `debtShare`
+        //    and the latest `interestMultiplier[poolId]`.
+        //    This timestamp marks the point in time relative to the global multiplier
+        //    up to which the user's state is considered current (for off-chain purposes mostly).
         Vault storage vault = vaults[poolId][user];
+        // Update timestamp regardless of debt, signifies interaction time relative to global multiplier.
+        vault.lastAccrual = uint64(block.timestamp);
 
-        // If user has no debt, just ensure lastAccrual is initialized if needed.
-        // If debt exists, update lastAccrual time. The actual debt value
-        // will be calculated using the global multiplier when needed.
-        if (vault.lastAccrual == 0 || vault.debtShare > 0) {
-             vault.lastAccrual = uint64(block.timestamp);
-        }
-        // If debtShare is 0 and lastAccrual is already set, no update needed.
+        // Note: No separate InterestAccrued event needed here as the pool-level one covers the multiplier update.
     }
 
     /**
@@ -1139,43 +1232,69 @@ contract Margin is Spot, IMargin {
     }
 
     /**
-     * @notice Placeholder: Get the current interest rate per second for a pool
+     * @notice Gets the current interest rate per second for a pool from the model.
      * @param poolId The pool ID
      * @return rate The interest rate per second (scaled by PRECISION)
-     * @dev Phase 3 uses a fixed rate placeholder. Phase 4+ will use model.
+     * @dev Calculates utilization and queries the interest rate model. Replaces Phase 3 placeholder.
      */
-    function getInterestRatePerSecond(PoolId poolId) internal view returns (uint256 rate) {
-        // Placeholder: Fixed rate of 1% APR (needs PRECISION scaling)
-        // 1% APR = 0.01 per year
-        // Per second rate = (0.01 / seconds_in_year) * PRECISION
-        // seconds_in_year = 365 * 24 * 3600 = 31,536,000
-        // Rate = (1 * PRECISION / 100) / 31536000 = PRECISION / 3153600000
-        // uint256 secondsPerYear = 365 days * 24 hours * 3600 seconds; // 31536000
-        // return FullMath.mulDiv(PRECISION, 1, 100 * secondsPerYear); // 1% APR expressed per second
-        return PRECISION / 3153600000; // Approx 1% APR
+    function getInterestRatePerSecond(PoolId poolId) public view returns (uint256 rate) {
+        // If no interest rate model is set, return 0
+        address modelAddr = interestRateModelAddress; // Cache storage read
+        if (modelAddr == address(0)) return 0;
 
-        // Phase 4+ Implementation using interestRateModelAddress:
-        // if (interestRateModelAddress == address(0)) return 0; // Or revert
-        // (uint128 totalLiquidityLM, , ) = liquidityManager.poolInfo(poolId);
-        // if (totalLiquidityLM == 0) return 0; // Avoid division by zero
-        // uint256 currentBorrowedShares = rentedLiquidity[poolId]; // Snapshot
-        // uint256 currentTotalShares = uint256(totalLiquidityLM);
-        // // Calculate utilization = borrowed / total_available (total = collateral + borrowed)
-        // uint256 utilization = FullMath.mulDiv(currentBorrowedShares, PRECISION, currentTotalShares);
-        // // Clip utilization at MAX_UTILITY_RATE? Or let model handle > 100%? Typically model handles.
-        // rate = IInterestRateModel(interestRateModelAddress).getInterestRate(utilization);
-        // return rate; // Ensure model returns rate per second scaled by PRECISION
+        // Get total and rented shares
+        // Assuming liquidityManager reference is available (likely inherited via Spot)
+        uint128 totalShares = liquidityManager.poolTotalShares(poolId);
+        uint256 rentedShares = rentedLiquidity[poolId]; // Already tracks borrowed shares
+
+        if (totalShares == 0) return 0; // Avoid division by zero if pool somehow has no shares
+
+        // Use model's helper for utilization
+        uint256 utilization = IInterestRateModel(modelAddr)
+            .getUtilizationRate(poolId, rentedShares, uint256(totalShares));
+
+        // Get rate from model
+        rate = IInterestRateModel(modelAddr).getBorrowRate(poolId, utilization);
+        return rate;
     }
 
     /**
-     * @notice Verify if a borrowing operation would keep the vault solvent and pool within limits
+     * @notice Verify if a borrowing operation would keep the vault solvent and pool within utilization limits.
      * @param poolId The pool ID
      * @param user The user address
      * @param sharesToBorrow The amount of LP shares to borrow
+     * @dev Updated for Phase 4 to check pool utilization against the Interest Rate Model.
      */
     function _checkBorrowingCapacity(PoolId poolId, address user, uint256 sharesToBorrow) internal view {
-        // Get the vault (debtShare is already updated via _accrueInterestForUser call)
-        Vault memory vault = vaults[poolId][user];
+        // Ensure pool is initialized (redundant if called after _verifyPoolInitialized, but safe)
+        // _verifyPoolInitialized(poolId); // Assuming already called by public entry points like borrow()
+
+        // Ensure interest rate model is set
+        address modelAddr = interestRateModelAddress;
+        require(modelAddr != address(0), "Margin: Interest model not set"); // Use specific error if available
+
+        // --- NEW (Phase 4): Check Pool Utilization Limit ---
+        uint128 totalSharesLM = liquidityManager.poolTotalShares(poolId);
+        // This check should ideally be redundant due to _verifyPoolInitialized, but belts-and-suspenders:
+        if (totalSharesLM == 0) revert Errors.PoolNotInitialized(poolId); // Safety check
+
+        uint256 currentBorrowed = rentedLiquidity[poolId];
+        uint256 newBorrowed = currentBorrowed + sharesToBorrow;
+
+        // Use the model's helper for utilization calculation
+        uint256 utilization = IInterestRateModel(modelAddr)
+            .getUtilizationRate(poolId, newBorrowed, uint256(totalSharesLM));
+
+        // Get max allowed utilization from the interest rate model
+        uint256 maxAllowedUtilization = IInterestRateModel(modelAddr).maxUtilizationRate();
+
+        // Check against the model's max utilization limit
+        require(utilization <= maxAllowedUtilization, "Margin: Max pool utilization exceeded"); // Use specific error if available
+
+        // --- EXISTING (Phase 3): Check User Vault Solvency ---
+        // Note: _accrueInterestForUser should have been called by the public function (e.g., borrow)
+        // *before* this check, ensuring interestMultiplier is up-to-date.
+        Vault storage vault = vaults[poolId][user]; // Read vault *after* potential accrual
 
         // Calculate token amounts corresponding to sharesToBorrow
         (uint256 amount0FromShares, uint256 amount1FromShares) = _sharesTokenEquivalent(
@@ -1184,36 +1303,33 @@ contract Margin is Spot, IMargin {
         );
 
         // Calculate hypothetical new vault state after borrow
+        // Note: Balances increase, Debt Share increases
         uint128 newToken0Balance = (uint256(vault.token0Balance) + amount0FromShares).toUint128();
         uint128 newToken1Balance = (uint256(vault.token1Balance) + amount1FromShares).toUint128();
-        uint128 newDebtShare = (uint256(vault.debtShare) + sharesToBorrow).toUint128();
+        // Proposed new debt share *before* considering interest on the *newly borrowed* amount (interest starts next block)
+        uint128 newDebtShareBase = (uint256(vault.debtShare) + sharesToBorrow).toUint128();
 
-        // Check if the post-borrow position would be solvent using internal helper
+        // Check if the post-borrow position would be solvent using the internal helper
+        // This helper uses the *current* interest multiplier for the solvency check
         if (!_isVaultSolventWithBalances(
             poolId,
             newToken0Balance,
             newToken1Balance,
-            newDebtShare // Use the proposed new debt share
+            newDebtShareBase // Check solvency based on the proposed base debt share increase
         )) {
-             // Calculate collateral value for the error message
+             // Calculate hypothetical collateral value for the error message
             uint256 hypotheticalCollateralValue = _lpEquivalent(poolId, newToken0Balance, newToken1Balance);
+            // Calculate estimated debt value *using current multiplier* for the error message
+            uint256 estimatedDebtValue = FullMath.mulDiv(newDebtShareBase, interestMultiplier[poolId], PRECISION);
             revert Errors.InsufficientCollateral(
-                FullMath.mulDiv(newDebtShare, interestMultiplier[poolId], PRECISION), // Estimated debt value
+                estimatedDebtValue,
                 hypotheticalCollateralValue,
                 SOLVENCY_THRESHOLD_LIQUIDATION
             ); // Use specific error
         }
 
-        // Also check system-wide pool utilization to prevent too much borrowing
-        uint128 totalSharesLM = liquidityManager.poolTotalShares(poolId);
-        if (totalSharesLM == 0) revert Errors.PoolNotInitialized(poolId); // Should not happen if _verifyPoolInitialized passed
-
-        uint256 totalBorrowedAfter = rentedLiquidity[poolId] + sharesToBorrow;
-        // Utilization = borrowed / total_available (where total_available = total_lp_shares in PoolManager)
-        // We use totalSharesLM from our Liquidity Manager which should track PoolManager's total shares
-        if (FullMath.mulDiv(totalBorrowedAfter, PRECISION, uint256(totalSharesLM)) > MAX_UTILITY_RATE) {
-            revert Errors.PoolUtilizationTooHigh(); // Use specific error
-        }
+        // Remove redundant utilization check from Phase 3 if it existed here.
+        // The check against the model's maxUtilizationRate replaces the old hardcoded MAX_UTILITY_RATE check.
     }
 
     /**
@@ -1338,6 +1454,77 @@ contract Margin is Spot, IMargin {
     {
         // Call parent's deposit to access Spot's implementation directly
         return ISpot(this).deposit(params);
+    }
+
+    // =========================================================================
+    // Phase 4+ Fee Reinvestment Interaction Functions
+    // =========================================================================
+
+    /**
+     * @notice View function called by FeeReinvestmentManager to check pending interest fees.
+     * @param poolId The pool ID.
+     * @return amount0 Estimated token0 value of pending fees.
+     * @return amount1 Estimated token1 value of pending fees.
+     * @dev Converts accumulated fee share value to token amounts based on current reserves.
+     *      Requires authorization check via PolicyManager.
+     */
+    function getPendingProtocolInterestTokens(PoolId poolId)
+        external
+        view
+        override // from IMargin
+        returns (uint256 amount0, uint256 amount1)
+    {
+        // Authorization: Allow calls from the designated Reinvestment Policy or Governance
+        // Assuming policyManager is accessible (inherited via Spot -> OwnablePolicy)
+        address reinvestmentPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
+        require(
+            msg.sender == reinvestmentPolicy ||
+            policyManager.isAuthorizedReinvestor(msg.sender) || // Use check from policy manager
+            msg.sender == policyManager.getSoloGovernance(), // Allow direct governance call
+            "Margin: Not authorized"
+        );
+
+        // Get pending fees (denominated in share value)
+        uint256 feeShares = accumulatedFees[poolId];
+
+        // Convert share value to token amounts using the internal helper
+        if (feeShares > 0) {
+            (amount0, amount1) = _sharesTokenEquivalent(poolId, feeShares);
+        }
+
+        // Returns (0, 0) if no fees pending or conversion yields zero
+        return (amount0, amount1);
+    }
+
+    /**
+     * @notice Called by FeeReinvestmentManager after successfully processing interest fees.
+     * @param poolId The pool ID.
+     * @return previousValue The amount of fee shares that were just cleared.
+     * @dev Resets the accumulated fee shares for the pool. Requires authorization via PolicyManager.
+     */
+    function resetAccumulatedFees(PoolId poolId)
+        external
+        override // from IMargin
+        returns (uint256 previousValue)
+    {
+        // Authorization: Allow calls from the designated Reinvestment Policy or Governance
+        // Assuming policyManager is accessible (inherited via Spot -> OwnablePolicy)
+        address reinvestmentPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
+         require(
+            msg.sender == reinvestmentPolicy ||
+            policyManager.isAuthorizedReinvestor(msg.sender) || // Use check from policy manager
+            msg.sender == policyManager.getSoloGovernance(), // Allow direct governance call
+            "Margin: Not authorized"
+        );
+
+        previousValue = accumulatedFees[poolId];
+
+        if (previousValue > 0) {
+            accumulatedFees[poolId] = 0;
+            emit ProtocolFeesProcessed(poolId, previousValue); // Emit event on successful reset
+        }
+
+        return previousValue;
     }
 
 } // End Contract Margin 

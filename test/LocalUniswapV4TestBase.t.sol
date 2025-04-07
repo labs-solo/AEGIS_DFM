@@ -131,7 +131,9 @@ abstract contract LocalUniswapV4TestBase is Test {
             DEFAULT_POL_MULTIPLIER,
             DEFAULT_DYNAMIC_FEE_PPM,
             TICK_SCALING_FACTOR,
-            supportedTickSpacings
+            supportedTickSpacings,
+            1e17,            // _initialProtocolInterestFeePercentage (10%)
+            address(0)       // _initialFeeCollector (zero address)
         );
         console2.log("[SETUP] PolicyManager Deployed.");
         

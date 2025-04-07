@@ -20,6 +20,7 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ISpot} from "./interfaces/ISpot.sol";
 import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {TokenSafetyWrapper} from "./utils/TokenSafetyWrapper.sol";
+import {IMargin} from "./interfaces/IMargin.sol";
 
 /**
  * @title FeeReinvestmentManager
@@ -95,6 +96,9 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     /// @notice Reference to the policy manager
     IPoolPolicy public policyManager;
     
+    /// @notice Reference to the Margin contract (Phase 4 addition)
+    IMargin public marginContract;
+    
     // ================ CONSTANTS ================
     
     /// @notice Default POL share
@@ -150,6 +154,17 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     
     /// @notice Emitted when cache update fails
     event CacheUpdateFailed(PoolId indexed poolId);
+
+    /// @notice Phase 4 Events
+    event InterestFeesProcessed(
+        PoolId indexed poolId,
+        uint256 shareValue, // The share value processed
+        uint256 token0Taken, // Token0 amount taken from pool
+        uint256 token1Taken, // Token1 amount taken from pool
+        uint256 token0Reinvested, // Token0 amount reinvested as POL
+        uint256 token1Reinvested // Token1 amount reinvested as POL
+    );
+    event MarginContractSet(address indexed newMarginContract);
     
     // ================ MODIFIERS ================
     
@@ -266,6 +281,16 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         
         minimumCollectionInterval = newIntervalSeconds;
         emit CollectionIntervalUpdated(newIntervalSeconds);
+    }
+
+    /**
+     * @notice Sets the Margin contract address (Phase 4)
+     * @param _marginAddress The address of the deployed Margin contract
+     */
+    function setMarginContract(address _marginAddress) external onlyGovernance {
+        require(_marginAddress != address(0), "FeeReinvest: Zero address");
+        marginContract = IMargin(_marginAddress);
+        emit MarginContractSet(_marginAddress);
     }
     
     // ================ CORE FUNCTIONS ================
@@ -915,4 +940,72 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         PoolFeeState storage feeState = poolFeeStates[poolId];
         return feeState.pendingFee1 + feeState.leftoverToken1;
     }
-} 
+
+    // ================ Phase 4: Interest Fee Processing ================
+
+    /**
+     * @notice Triggers processing of accumulated protocol interest fees from the Margin contract.
+     * @dev Called periodically by an authorized address. Queries Margin for pending fees,
+     *      extracts corresponding token value from the pool via take(), processes them as POL,
+     *      and resets the accumulated fee counter in Margin.
+     * @param poolId The pool ID to process fees for.
+     * @return success Boolean indicating successful processing.
+     */
+    function triggerInterestFeeProcessing(PoolId poolId)
+        external
+        override // from IFeeReinvestmentManager
+        nonReentrant // Reuse existing ReentrancyGuard
+        returns (bool success)
+    {
+        // Authorization: Only Governance or specifically authorized reinvestors
+        // Policy manager reference should already be set
+        require(address(policyManager) != address(0), "FeeReinvest: PolicyManager not set");
+        require(
+            msg.sender == policyManager.getSoloGovernance() ||
+            policyManager.isAuthorizedReinvestor(msg.sender), // Use check from policy manager
+            "FeeReinvest: Not authorized"
+        );
+
+        // Ensure Margin contract reference is set
+        address marginAddr = address(marginContract);
+        require(marginAddr != address(0), "FeeReinvest: Margin contract not set");
+
+        // 1. Get pending interest token amounts from Margin contract
+        // This is a view call and requires Margin to authorize this contract address (FeeReinvestmentManager)
+        (uint256 amount0ToTake, uint256 amount1ToTake) = marginContract.getPendingProtocolInterestTokens(poolId);
+
+        // If no fees are pending, nothing to do.
+        if (amount0ToTake == 0 && amount1ToTake == 0) {
+            return true; // Return true as there was nothing to fail on
+        }
+
+        // 2. Extract tokens from the pool manager into this contract
+        PoolKey memory key = _getPoolKey(poolId); // Use existing internal helper
+
+        // Directly call take; if it fails, the transaction will revert
+        poolManager.take(key.currency0, address(this), amount0ToTake);
+
+        // Directly call take; if it fails, the transaction will revert
+        poolManager.take(key.currency1, address(this), amount1ToTake);
+
+        // 3. Process the taken tokens as POL using existing internal logic
+        // _processPOLPortion likely needs `amount0ToTake`, `amount1ToTake` as input
+        // Ensure this function exists and handles the tokens correctly (e.g., adds liquidity)
+        (uint256 reinvested0, uint256 reinvested1) = _processPOLPortion(poolId, amount0ToTake, amount1ToTake);
+
+        // 4. Reset the accumulated fees counter in the Margin contract
+        // This call requires Margin to authorize this contract address
+        // If resetting fees fails, the transaction will revert.
+        uint256 processedShares = marginContract.resetAccumulatedFees(poolId);
+
+        // 5. Emit event
+        emit InterestFeesProcessed(
+            poolId,
+            processedShares,
+            amount0ToTake, // Actual amount taken
+            amount1ToTake, // Actual amount taken
+            reinvested0,   // Amount successfully reinvested by _processPOLPortion
+            reinvested1    // Amount successfully reinvested by _processPOLPortion
+        );
+    }
+}

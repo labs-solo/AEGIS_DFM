@@ -81,9 +81,12 @@ contract SimpleV4Test is Test {
             1000,   // FEE_CLAIM_THRESHOLD_PPM (0.1%)
             2,      // DEFAULT_POL_MULTIPLIER
             3000,   // DEFAULT_DYNAMIC_FEE_PPM (0.3%)
-            10,     // TICK_SCALING_FACTOR
-            supportedTickSpacings
+            4,      // tickScalingFactor
+            new uint24[](0),  // supportedTickSpacings (empty for now)
+            1e17,    // _initialProtocolInterestFeePercentage (10%)
+            address(0)       // _initialFeeCollector (zero address)
         );
+        console2.log("[SETUP] PolicyManager Deployed.");
 
         // Deploy Liquidity Manager
         liquidityManager = new FullRangeLiquidityManager(poolManager, governance);

@@ -186,6 +186,7 @@ library Errors {
     error InsufficientCollateral(uint256 debt, uint256 collateral, uint256 threshold);
     error PoolUtilizationTooHigh();
     error InsufficientPhysicalShares(uint256 requested, uint256 available);
+    error InterestModelNotSet();
 
     // New errors
     error InconsistentState(string reason);
