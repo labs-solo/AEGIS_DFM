@@ -85,11 +85,16 @@ contract MarginTest is MarginTestBase {
         // Set the policy so that the fee manager is authorized
         policyManager.setPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT, reinvestPolicy);
         
+        // Start prank as governance to call setters
+        vm.startPrank(governance);
         // Also set the margin contract in the fee manager
         feeManager.setMarginContract(address(fullRange));
+        // Log liquidityManager address before calling setter
+        // console2.log("[MarginTest Setup Debug] liquidityManager address:", address(liquidityManager));
+        // console2.log("[MarginTest Setup Debug] feeManager address:", address(feeManager));
+        // console2.log("[MarginTest Setup Debug] governance address:", address(governance));
         feeManager.setLiquidityManager(address(liquidityManager));
-        
-        vm.stopPrank();
+        vm.stopPrank(); // Stop governance prank
 
         // --- Add Initial Pool Liquidity --- 
         uint128 initialPoolLiquidity = 1000 * 1e18;

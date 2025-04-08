@@ -6,6 +6,9 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 import {Errors} from "./errors/Errors.sol";
+import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
+import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 
 /**
  * @title PoolPolicyManager
@@ -185,14 +188,13 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     /**
      * @inheritdoc IPoolPolicy
      */
-    function handlePoolInitialization(PoolId poolId, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick, address hook) external {
-        // Ensure caller has proper permissions
+    function handlePoolInitialization(PoolId poolId, PoolKey calldata /*key*/, uint160 /*sqrtPriceX96*/, int24 tick, address hook) external {
+        // Ensure caller has proper permissions (Owner or the Hook itself)
         if (msg.sender != owner && msg.sender != hook) revert Errors.Unauthorized();
+
+        // --- ORACLE LOGIC REMOVED --- 
         
-        // No additional logic needed at this point, but we keep the function
-        // to maintain the interface contract and allow for future extensions
-        
-        // Emit an event for better observability
+        // Emit the original event for observability
         emit PoolInitialized(poolId, hook, tick);
     }
     

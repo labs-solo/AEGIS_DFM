@@ -24,6 +24,7 @@ import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {DepositParams, WithdrawParams} from "../src/interfaces/ISpot.sol";
+import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 
 /**
  * @title SimpleV4Test
@@ -40,6 +41,7 @@ contract SimpleV4Test is Test {
     FullRangeDynamicFeeManager dynamicFeeManager;
     PoolPolicyManager policyManager;
     PoolSwapTest swapRouter;
+    TruncGeoOracleMulti public truncGeoOracle;
 
     // Test tokens
     MockERC20 token0;
@@ -66,6 +68,11 @@ contract SimpleV4Test is Test {
             (token0, token1) = (token1, token0);
         }
 
+        // Deploy Oracle (BEFORE PolicyManager)
+        vm.startPrank(deployer);
+        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance);
+        vm.stopPrank();
+
         // Deploy policy manager with configuration
         uint24[] memory supportedTickSpacings = new uint24[](3);
         supportedTickSpacings[0] = 10;
@@ -84,7 +91,7 @@ contract SimpleV4Test is Test {
             4,      // tickScalingFactor
             new uint24[](0),  // supportedTickSpacings (empty for now)
             1e17,    // _initialProtocolInterestFeePercentage (10%)
-            address(0)       // _initialFeeCollector (zero address)
+            address(0)      // _initialFeeCollector (zero address)
         );
         console2.log("[SETUP] PolicyManager Deployed.");
 
@@ -106,8 +113,9 @@ contract SimpleV4Test is Test {
         vm.stopPrank();
         vm.startPrank(governance);
         liquidityManager.setFullRangeAddress(address(fullRange));
-        // Call the new setter in Spot
         fullRange.setDynamicFeeManager(dynamicFeeManager);
+        fullRange.setOracleAddress(address(truncGeoOracle));
+        truncGeoOracle.setFullRangeHook(address(fullRange));
         vm.stopPrank();
         vm.startPrank(deployer);
 
@@ -271,15 +279,15 @@ contract SimpleV4Test is Test {
     }
 
     function _deployFullRange() internal virtual returns (Spot) {
-        // Calculate required hook flags
+        // Calculate required hook flags (MATCHING Spot.sol's getHookPermissions)
         uint160 flags = uint160(
-            Hooks.BEFORE_INITIALIZE_FLAG | 
-            Hooks.AFTER_INITIALIZE_FLAG | 
-            Hooks.BEFORE_ADD_LIQUIDITY_FLAG | 
+            // Hooks.BEFORE_INITIALIZE_FLAG | // Removed
+            Hooks.AFTER_INITIALIZE_FLAG |
+            // Hooks.BEFORE_ADD_LIQUIDITY_FLAG | // Removed
             Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
+            // Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | // Removed
             Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
-            Hooks.BEFORE_SWAP_FLAG | 
+            Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
             Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
         );

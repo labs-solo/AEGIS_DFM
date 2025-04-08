@@ -729,44 +729,51 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint128 liquidity,
         uint128 lockedLiquidityAmount
     ) {
+        // Calculate tick boundaries
         int24 tickLower = TickMath.minUsableTick(tickSpacing);
         int24 tickUpper = TickMath.maxUsableTick(tickSpacing);
         uint160 sqrtPriceAX96 = TickMath.getSqrtPriceAtTick(tickLower);
         uint160 sqrtPriceBX96 = TickMath.getSqrtPriceAtTick(tickUpper);
 
         if (totalLiquidityInternal == 0) {
-            // First deposit case - use V4 liquidity math
+            // First deposit case
             if (amount0Desired == 0 || amount1Desired == 0) revert Errors.ZeroAmount();
             if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Initial price is zero");
 
-            // Calculate liquidity based on desired amounts and current price
-            uint128 liquidity0 = LiquidityAmounts.getLiquidityForAmount0(sqrtPriceX96, sqrtPriceBX96, amount0Desired);
-            uint128 liquidity1 = LiquidityAmounts.getLiquidityForAmount1(sqrtPriceAX96, sqrtPriceX96, amount1Desired);
-            liquidity = liquidity0 < liquidity1 ? liquidity0 : liquidity1;
+            // Use MathUtils to calculate liquidity based on desired amounts and current price
+            liquidity = MathUtils.computeLiquidityFromAmounts(
+                sqrtPriceX96,
+                sqrtPriceAX96,
+                sqrtPriceBX96,
+                amount0Desired,
+                amount1Desired
+            );
 
             if (liquidity < MIN_LIQUIDITY) {
-                 revert Errors.InitialDepositTooSmall(MIN_LIQUIDITY, liquidity);
+                revert Errors.InitialDepositTooSmall(MIN_LIQUIDITY, liquidity);
             }
 
-            // Calculate actual amounts required for this liquidity (use rounding up)
-            actual0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtPriceBX96, liquidity, true);
-            actual1 = SqrtPriceMath.getAmount1Delta(sqrtPriceAX96, sqrtPriceX96, liquidity, true);
+            // Calculate actual amounts required for this liquidity
+            (actual0, actual1) = MathUtils.computeAmountsFromLiquidity(
+                sqrtPriceX96,
+                sqrtPriceAX96,
+                sqrtPriceBX96,
+                liquidity,
+                true // Round up for deposits
+            );
 
             // Lock minimum liquidity
             lockedLiquidityAmount = MIN_LOCKED_LIQUIDITY;
-             // Ensure locked doesn't exceed total and some usable exists
+            // Ensure locked doesn't exceed total and some usable exists
             if (lockedLiquidityAmount >= liquidity) lockedLiquidityAmount = liquidity - 1;
             if (lockedLiquidityAmount == 0 && liquidity > 1) lockedLiquidityAmount = 1; // Lock at least 1 if possible
             if (liquidity <= lockedLiquidityAmount) { // Check if enough usable liquidity remains
-                 revert Errors.InitialDepositTooSmall(lockedLiquidityAmount + 1, liquidity);
+                revert Errors.InitialDepositTooSmall(lockedLiquidityAmount + 1, liquidity);
             }
-
-            // Return actual amounts, total liquidity, and locked liquidity
-            return (actual0, actual1, liquidity, lockedLiquidityAmount);
         } else {
             // Subsequent deposits - Calculate ratio-matched amounts first, then liquidity
             if (reserve0 == 0 && reserve1 == 0) {
-                 revert Errors.InconsistentState("Reserves are zero but total liquidity exists");
+                revert Errors.InconsistentState("Reserves are zero but total liquidity exists");
             }
 
             // Calculate optimal amounts based on current reserves/ratio
@@ -782,44 +789,43 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
                     actual0 = optimalAmount0;
                 }
             } else if (reserve0 > 0) { // Only token0 in reserves
-                 if (amount0Desired == 0) revert Errors.ZeroAmount();
-                 actual0 = amount0Desired;
-                 actual1 = 0;
+                if (amount0Desired == 0) revert Errors.ZeroAmount();
+                actual0 = amount0Desired;
+                actual1 = 0;
             } else { // Only token1 in reserves
-                 if (amount1Desired == 0) revert Errors.ZeroAmount();
-                 actual0 = 0;
-                 actual1 = amount1Desired;
+                if (amount1Desired == 0) revert Errors.ZeroAmount();
+                actual0 = 0;
+                actual1 = amount1Desired;
             }
 
-            // Calculate liquidity add based on the chosen actual amounts
-            // Important: Need to handle potential zero actual amounts correctly
-            uint128 liquidity0 = actual0 == 0 ? 0 : LiquidityAmounts.getLiquidityForAmount0(sqrtPriceX96, sqrtPriceBX96, actual0);
-            uint128 liquidity1 = actual1 == 0 ? 0 : LiquidityAmounts.getLiquidityForAmount1(sqrtPriceAX96, sqrtPriceX96, actual1);
-
-            if (actual0 > 0 && actual1 > 0) {
-                liquidity = liquidity0 < liquidity1 ? liquidity0 : liquidity1;
-            } else if (actual0 > 0) {
-                liquidity = liquidity0;
-            } else { // actual1 > 0
-                liquidity = liquidity1;
-            }
-
+            // Use MathUtils to calculate liquidity based on the chosen actual amounts
+            liquidity = MathUtils.computeLiquidityFromAmounts(
+                sqrtPriceX96,
+                sqrtPriceAX96,
+                sqrtPriceBX96,
+                actual0,
+                actual1
+            );
 
             if (liquidity == 0 && (amount0Desired > 0 || amount1Desired > 0)) {
-                 // This might happen if desired amounts are non-zero but ratio calculation leads to zero actuals,
-                 // or if amounts are too small for the price.
-                 revert Errors.DepositTooSmall();
+                // This might happen if desired amounts are non-zero but ratio calculation leads to zero actuals,
+                // or if amounts are too small for the price.
+                revert Errors.DepositTooSmall();
             }
 
-            // Recalculate actual amounts based on the final liquidity to ensure consistency
-            // This is crucial to match what modifyLiquidity will expect/use
-            actual0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtPriceBX96, liquidity, true);
-            actual1 = SqrtPriceMath.getAmount1Delta(sqrtPriceAX96, sqrtPriceX96, liquidity, true);
-
+            // Recalculate actual amounts to ensure consistency with V4 core
+            (actual0, actual1) = MathUtils.computeAmountsFromLiquidity(
+                sqrtPriceX96,
+                sqrtPriceAX96,
+                sqrtPriceBX96,
+                liquidity,
+                true // Round up for deposits
+            );
 
             lockedLiquidityAmount = 0; // No locking for subsequent deposits
-            return (actual0, actual1, liquidity, lockedLiquidityAmount);
         }
+
+        return (actual0, actual1, liquidity, lockedLiquidityAmount);
     }
     
     /**
@@ -1395,6 +1401,17 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint160 sqrtPriceBX96,
         uint128 liquidity
     ) internal pure returns (uint256 amount0, uint256 amount1) {
+        // Delegate calculation to the centralized MathUtils library
+        // Match original behavior: Use 'true' for roundUp 
+        return MathUtils.computeAmountsFromLiquidity(
+            sqrtPriceX96,
+            sqrtPriceAX96,
+            sqrtPriceBX96,
+            liquidity,
+            true // Match original rounding behavior
+        );
+        
+        /* // Original implementation (now redundant)
         // Correct implementation using SqrtPriceMath
         if (sqrtPriceAX96 > sqrtPriceBX96) (sqrtPriceAX96, sqrtPriceBX96) = (sqrtPriceBX96, sqrtPriceAX96);
 
@@ -1409,6 +1426,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             // Price is above the range, only token1 is present
             amount1 = SqrtPriceMath.getAmount1Delta(sqrtPriceAX96, sqrtPriceBX96, liquidity, true);
         }
+        */
     }
 
     /**
