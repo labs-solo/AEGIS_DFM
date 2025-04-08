@@ -56,6 +56,66 @@ interface IFullRangeLiquidityManager {
         uint256 deadline;
     }
     
+    // Events for pool management
+    event PoolInitialized(PoolId indexed poolId, PoolKey key, uint160 sqrtPrice, uint24 fee);
+    event TotalLiquidityUpdated(PoolId indexed poolId, uint128 oldLiquidity, uint128 newLiquidity);
+
+    // Events for liquidity operations
+    event LiquidityAdded(
+        PoolId indexed poolId,
+        address indexed user,
+        uint256 amount0,
+        uint256 amount1,
+        uint128 sharesTotal,
+        uint128 sharesMinted,
+        uint256 timestamp
+    );
+    event LiquidityRemoved(
+        PoolId indexed poolId,
+        address indexed user,
+        uint256 amount0,
+        uint256 amount1,
+        uint128 sharesTotal,
+        uint128 sharesBurned,
+        uint256 timestamp
+    );
+    event MinimumLiquidityLocked(PoolId indexed poolId, uint256 amount);
+    
+    // Emergency events
+    event EmergencyStateActivated(PoolId indexed poolId, address indexed activator, string reason);
+    event EmergencyStateDeactivated(PoolId indexed poolId, address indexed deactivator);
+    event GlobalEmergencyStateChanged(bool enabled, address indexed changedBy);
+    event EmergencyWithdrawalCompleted(
+        PoolId indexed poolId,
+        address indexed user,
+        uint256 amount0Out,
+        uint256 amount1Out,
+        uint256 sharesBurned
+    );
+        
+    /**
+     * @notice Consolidated event for reinvestment operations
+     * @dev Reduces gas costs by combining multiple events
+     */
+    event ReinvestmentProcessed(
+        PoolId indexed poolId, 
+        uint256 amount0, 
+        uint256 amount1, 
+        uint256 shares,
+        uint128 oldTotalShares,
+        uint128 newTotalShares
+    );
+    
+    /**
+     * @notice Simplified event for pool state updates
+     * @dev Operation types: 1=deposit, 2=withdraw, 3=reinvest
+     */
+    event PoolStateUpdated(
+        PoolId indexed poolId,
+        uint128 totalShares,
+        uint8 operationType
+    );
+
     // Events for share accounting operations
     event UserSharesAdded(PoolId indexed poolId, address indexed user, uint256 shares);
     event UserSharesRemoved(PoolId indexed poolId, address indexed user, uint256 shares);
