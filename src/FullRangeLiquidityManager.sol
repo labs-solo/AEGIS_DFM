@@ -84,7 +84,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     address public fullRangeAddress;
     
     // Constants for minimum liquidity locking
-    uint256 private constant MIN_LOCKED_SHARES = 1000; // e.g., 1000 wei, adjust as needed
     uint128 private constant MIN_LIQUIDITY = 1000; // Mimics Uniswap V3 Minimum Liquidity
     uint128 private constant MIN_LOCKED_LIQUIDITY = 1000; // Lock 1000 units of liquidity
     
@@ -297,7 +296,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint256 amount1Min,
         address recipient
     ) external payable override returns (
-        uint256 usableLiquidity, // Changed return type
+        uint256 usableLiquidity,
         uint256 amount0,
         uint256 amount1
     ) {
@@ -491,8 +490,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Update total shares with more comprehensive SafeCast
         // TODO: look into this cast
         uint128 oldTotalShares = poolTotalShares[poolId];
-        uint128 sharesToBurnSafe = sharesToBurn.toUint128();
-        poolTotalShares[poolId] = uint128(uint256(oldTotalShares) - sharesToBurnSafe);
+        poolTotalShares[poolId] = oldTotalShares - uint128(sharesToBurn);
         
         // Burn position tokens *before* calling unlock, consistent with CEI pattern
         // This prevents reentrancy issues where unlockCallback might see stale token balances.
@@ -502,7 +500,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         IPoolManager.ModifyLiquidityParams memory modifyLiqParams = IPoolManager.ModifyLiquidityParams({
             tickLower: TickMath.minUsableTick(key.tickSpacing),
             tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-            liquidityDelta: -int256(uint256(sharesToBurnSafe)),
+            liquidityDelta: -int256(uint256(sharesToBurn)),
             salt: bytes32(0)
         });
         
@@ -510,7 +508,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
             callbackType: 2, // 2 for withdraw
-            shares: sharesToBurnSafe,
+            shares: uint128(sharesToBurn),
             oldTotalShares: oldTotalShares,
             amount0: amount0,
             amount1: amount1,
@@ -536,7 +534,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             amount0,
             amount1,
             oldTotalShares,
-            sharesToBurnSafe,
+            uint128(sharesToBurn),
             block.timestamp
         );
         
@@ -1217,91 +1215,37 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         PoolKey memory key = _poolKeys[cbData.poolId];
         if (key.tickSpacing == 0) revert Errors.PoolNotInitialized(cbData.poolId);
         
-        BalanceDelta delta; // Declare delta here
-
+        BalanceDelta delta;
+        
+        // Create ModifyLiquidityParams based on callback type
+        int256 liquidityDelta;
+        address recipient;
+        
         if (cbData.callbackType == ACTION_DEPOSIT) {
-            console2.log("--- unlockCallback (Deposit) ---");
-            console2.log("Callback Shares:", cbData.shares);
-            // Log PoolKey details
-            console2.log("PoolKey Currency0:", address(Currency.unwrap(key.currency0)));
-            console2.log("PoolKey Currency1:", address(Currency.unwrap(key.currency1)));
-            console2.log("PoolKey Fee:", key.fee);
-            console2.log("PoolKey TickSpacing:", key.tickSpacing);
-            console2.log("PoolKey Hooks:", address(key.hooks));
-
-            IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({ // Corrected params
-                tickLower: TickMath.minUsableTick(key.tickSpacing),
-                tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-                liquidityDelta: int256(uint256(cbData.shares)), // Use the shares from callback data for liquidity delta
-                salt: bytes32(0)
-            });
-
-            // Call modifyLiquidity to add liquidity to the pool
-            (delta, ) = manager.modifyLiquidity(key, params, ""); // Pass empty bytes for hook data
-
-            // Use the extension library to handle the settlement
-            CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, address(this));
-
-        } else if (cbData.callbackType == ACTION_WITHDRAW) { // Handle Withdraw
-            console2.log("--- unlockCallback (Withdraw) ---");
-            console2.log("Callback Shares:", cbData.shares);
-            console2.log("PoolKey Currency0:", address(Currency.unwrap(key.currency0)));
-            console2.log("PoolKey Currency1:", address(Currency.unwrap(key.currency1)));
-
-            // Create ModifyLiquidityParams for withdrawal (negative delta)
-            IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
-                tickLower: TickMath.minUsableTick(key.tickSpacing),
-                tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-                liquidityDelta: -int256(uint256(cbData.shares)), // Negative delta for removal
-                salt: bytes32(0)
-            });
-
-            // Call modifyLiquidity to remove liquidity
-            (delta, ) = manager.modifyLiquidity(key, params, "");
-
-            // Use the extension library to handle the settlement, sending tokens to the recipient
-            CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, cbData.recipient);
-
-        } else if (cbData.callbackType == ACTION_BORROW) { // Handle Borrow
-            console2.log("--- unlockCallback (Borrow) ---");
-            // Borrow implies removing liquidity like a withdraw, but without burning user shares
-             IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
-                tickLower: TickMath.minUsableTick(key.tickSpacing),
-                tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-                // Convert shares from callback data (representing borrowed amount) to liquidity delta
-                // Note: This assumes cbData.shares accurately represents the liquidity to remove for the borrow
-                liquidityDelta: -int256(uint256(cbData.shares)),
-                salt: bytes32(0)
-            });
-
-            (delta, ) = manager.modifyLiquidity(key, params, "");
-
-            // Use the extension library to handle the settlement, sending tokens to the recipient
-            CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, cbData.recipient);
-
-        } else if (cbData.callbackType == ACTION_REINVEST_PROTOCOL_FEES) { // Handle Reinvest Protocol Fees
-            console2.log("--- unlockCallback (Reinvest Protocol Fees) ---");
-            // This callback removes liquidity corresponding to protocol fees
-            // and sends the tokens to the recipient (FeeReinvestmentManager)
-            IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
-                tickLower: TickMath.minUsableTick(key.tickSpacing),
-                tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-                // cbData.shares here represents the liquidity corresponding to fees being removed
-                liquidityDelta: -int256(uint256(cbData.shares)),
-                salt: bytes32(0)
-            });
-
-            (delta, ) = manager.modifyLiquidity(key, params, "");
-
-            // Use the extension library to handle the settlement, sending tokens to the recipient
-            CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, cbData.recipient);
+            liquidityDelta = int256(uint256(cbData.shares));
+            recipient = address(this); // For deposits, tokens stay in this contract
+        } else if (cbData.callbackType == ACTION_WITHDRAW || 
+                  cbData.callbackType == ACTION_BORROW || 
+                  cbData.callbackType == ACTION_REINVEST_PROTOCOL_FEES) {
+            liquidityDelta = -int256(uint256(cbData.shares));
+            recipient = cbData.recipient; // For withdrawals/borrows/reinvests, send to recipient
         } else {
-            // Revert if the callback type is unknown
             revert Errors.InvalidCallbackType(cbData.callbackType);
         }
-
-        // Return the encoded delta for potential use by the caller of unlock
-        // The delta returned here is the one from the *last* modifyLiquidity call in the callback flow.
+        
+        // Execute the liquidity modification
+        IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
+            tickLower: TickMath.minUsableTick(key.tickSpacing),
+            tickUpper: TickMath.maxUsableTick(key.tickSpacing),
+            liquidityDelta: liquidityDelta,
+            salt: bytes32(0)
+        });
+        
+        (delta, ) = manager.modifyLiquidity(key, params, "");
+        
+        // Handle settlement
+        CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, recipient);
+        
         return abi.encode(delta);
     }
 
@@ -1356,7 +1300,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         bool readSuccess = false;
         
         // Get position data via extsload - use this contract's address as owner
-        // since it's the one calling modifyLiquidity via unlockCallback
         bytes32 positionKey = Position.calculatePositionKey(address(this), tickLower, tickUpper, bytes32(0));
         bytes32 positionSlot = _getPositionInfoSlot(poolId, positionKey);
         
