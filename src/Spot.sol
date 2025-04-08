@@ -76,7 +76,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     // Events
     event FeeUpdateFailed(PoolId indexed poolId);
     event ReinvestmentSuccess(PoolId indexed poolId, uint256 amount0, uint256 amount1);
-    event ReinvestmentFailed(PoolId indexed poolId, string reason);
     event PoolEmergencyStateChanged(PoolId indexed poolId, bool isEmergency);
     event PolicyInitializationFailed(PoolId indexed poolId, string reason);
     event Deposit(address indexed sender, PoolId indexed poolId, uint256 amount0, uint256 amount1, uint256 shares);
@@ -107,14 +106,14 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     // Modifiers
     modifier onlyGovernance() {
         address currentOwner = policyManager.getSoloGovernance();
-        console2.log(">>> Spot::onlyGovernance Check START <<<");
-        console2.log("Spot::onlyGovernance Check: msg.sender =", msg.sender);
-        console2.log("Spot::onlyGovernance Check: policyManager.getSoloGovernance() =", currentOwner);
+        // console2.log(">>> Spot::onlyGovernance Check START <<<");
+        // console2.log("Spot::onlyGovernance Check: msg.sender =", msg.sender);
+        // console2.log("Spot::onlyGovernance Check: policyManager.getSoloGovernance() =", currentOwner);
         if (msg.sender != currentOwner) {
-            console2.log("!!! Reverting in Spot::onlyGovernance !!!");
+            // console2.log("!!! Reverting in Spot::onlyGovernance !!!");
             revert Errors.AccessOnlyGovernance(msg.sender);
         }
-        console2.log(">>> Spot::onlyGovernance Check END <<<");
+        // console2.log(">>> Spot::onlyGovernance Check END <<<");
         _;
     }
     
@@ -151,11 +150,11 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
      */
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
-            beforeInitialize: true,
+            beforeInitialize: false,
             afterInitialize: true,
-            beforeAddLiquidity: true,
+            beforeAddLiquidity: false,
             afterAddLiquidity: true,
-            beforeRemoveLiquidity: true,
+            beforeRemoveLiquidity: false,
             afterRemoveLiquidity: true,
             beforeSwap: true,
             afterSwap: true,
@@ -288,13 +287,13 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         
         address reinvestPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
         if (reinvestPolicy != address(0)) {
-            try IFeeReinvestmentManager(reinvestPolicy).collectFees(poolId, opType) returns (bool success, uint256 amount0, uint256 amount1) {
-                if (success) {
-                    emit ReinvestmentSuccess(poolId, fee0, fee1);
-                }
-            } catch {
-                emit ReinvestmentFailed(poolId, "Processing failed");
+            // Directly call collectFees - if it fails, the whole tx reverts
+            // Correctly handle multiple return values, ignoring unused amounts
+            (bool success, , ) = IFeeReinvestmentManager(reinvestPolicy).collectFees(poolId, opType);
+            if (success) {
+                emit ReinvestmentSuccess(poolId, fee0, fee1);
             }
+            // No catch block or ReinvestmentFailed event needed
         }
     }
 
@@ -401,19 +400,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     }
 
     /**
-     * @notice Implementation for beforeInitialize hook
-     */
-    function _beforeInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96)
-        internal
-        virtual
-        override
-        returns (bytes4)
-    {
-        // BaseHook returns the selector automatically
-        return this.beforeInitialize.selector;
-    }
-
-    /**
      * @notice After initialize hook implementation
      * @dev Sets up the pool data and initializes the liquidity manager
      */
@@ -460,6 +446,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         // Register pool with liquidity manager
         liquidityManager.registerPool(poolId, key, sqrtPriceX96);
 
+        // --- RESTORED ORACLE INITIALIZATION LOGIC --- 
         // Enhanced security: Only initialize oracle if:
         // 1. We're using dynamic fee flag (0x800000) OR fee is 0
         // 2. The actual hook address matches this contract
@@ -476,13 +463,22 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
             if (scalingFactor > 0) {
                 // Calculate dynamic maxAbsTickMove based on policy
                 // Makes use of policy manager rather than hardcoding
-                maxAbsTickMove = int24(uint24(3000 / uint256(uint24(scalingFactor))));
+                // Add safety check for scalingFactor > 3000
+                 if (uint256(uint24(scalingFactor)) > 3000) { 
+                     maxAbsTickMove = 1; 
+                 } else {
+                    maxAbsTickMove = int24(uint24(3000 / uint256(uint24(scalingFactor))));
+                 }
+            } else {
+                // Handle case where scalingFactor is somehow <= 0, use default
+                 maxAbsTickMove = TruncatedOracle.MAX_ABS_TICK_MOVE;
             }
 
             // Initialize the oracle without try/catch
             truncGeoOracle.enableOracleForPool(key, maxAbsTickMove);
             emit OracleInitialized(poolId, tick, maxAbsTickMove);
         }
+        // --- END RESTORED BLOCK ---
 
         // Initialize policies if required
         if (address(policyManager) != address(0)) {
@@ -494,10 +490,22 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     }
 
     /**
+     * @notice Implementation for beforeInitialize hook
+     */
+    function _beforeInitialize(address /*sender*/, PoolKey calldata /*key*/, uint160 /*sqrtPriceX96*/) 
+        internal 
+        virtual 
+        override 
+        returns (bytes4) 
+    {
+        return this.beforeInitialize.selector;
+    }
+
+    /**
      * @notice Implementation for beforeSwap hook
      * @dev Returns dynamic fee for the pool
      */
-    function _beforeSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, bytes calldata hookData)
+    function _beforeSwap(address /*sender*/, PoolKey calldata key, IPoolManager.SwapParams calldata /*params*/, bytes calldata /*hookData*/)
         internal
         virtual
         override
@@ -563,29 +571,9 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     }
 
     /**
-     * @notice Implementation for beforeAddLiquidity hook
-     */
-    function _beforeAddLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
-        internal
-        virtual
-        override
-        returns (bytes4)
-    {
-        return this.beforeAddLiquidity.selector;
-    }
-
-    /**
      * @notice After Add Liquidity hook
      * @dev Reverse Authorization Model: Only handles fee processing logic directly
      *      to reduce gas and remove DynamicFeeManager dependency.
-     * @param sender The sender address
-     * @param key The pool key
-     * @param params Modify liquidity parameters
-     * @param delta The balance delta
-     * @param feesAccrued The fees accrued during the operation
-     * @param hookData Additional hook data
-     * @return bytes4 Selector for afterAddLiquidity hook
-     * @return BalanceDelta The fee delta
      */
     function _afterAddLiquidity(
         address sender,
@@ -601,29 +589,21 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     }
 
     /**
-     * @notice Implementation for beforeRemoveLiquidity hook
+     * @notice Implementation for beforeAddLiquidity hook
      */
-    function _beforeRemoveLiquidity(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, bytes calldata hookData)
+    function _beforeAddLiquidity(address /*sender*/, PoolKey calldata /*key*/, IPoolManager.ModifyLiquidityParams calldata /*params*/, bytes calldata /*hookData*/)
         internal
         virtual
         override
         returns (bytes4)
     {
-        return this.beforeRemoveLiquidity.selector;
+        return this.beforeAddLiquidity.selector;
     }
 
     /**
      * @notice After Remove Liquidity hook
      * @dev Reverse Authorization Model: Only handles fee processing logic directly
      *      to reduce gas and remove DynamicFeeManager dependency.
-     * @param sender The sender address
-     * @param key The pool key
-     * @param params Modify liquidity parameters
-     * @param delta The balance delta
-     * @param feesAccrued The fees accrued during the operation
-     * @param hookData Additional hook data
-     * @return bytes4 Selector for afterRemoveLiquidity hook
-     * @return BalanceDelta The fee delta
      */
     function _afterRemoveLiquidity(
         address sender,
@@ -646,35 +626,15 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     }
 
     /**
-     * @notice Implementation for beforeDonate hook
+     * @notice Implementation for beforeRemoveLiquidity hook
      */
-    function _beforeDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
+    function _beforeRemoveLiquidity(address /*sender*/, PoolKey calldata /*key*/, IPoolManager.ModifyLiquidityParams calldata /*params*/, bytes calldata /*hookData*/)
         internal
         virtual
         override
         returns (bytes4)
     {
-        return this.beforeDonate.selector; // Should rely on BaseHook revert if not implemented
-    }
-
-    /**
-     * @notice After Donate hook
-     * @dev Processes fees related to donations if reinvestment policy is enabled.
-     * @param sender The sender address
-     * @param key The pool key
-     * @param amount0 Amount of token0 donated
-     * @param amount1 Amount of token1 donated
-     * @param hookData Additional hook data
-     * @return bytes4 Selector for afterDonate hook
-     */
-    function _afterDonate(address sender, PoolKey calldata key, uint256 amount0, uint256 amount1, bytes calldata hookData)
-        internal
-        virtual
-        override
-        returns (bytes4)
-    {
-        PoolId poolId = key.toId();
-        return this.afterDonate.selector; // Should rely on BaseHook revert if not implemented
+        return this.beforeRemoveLiquidity.selector;
     }
 
     /**

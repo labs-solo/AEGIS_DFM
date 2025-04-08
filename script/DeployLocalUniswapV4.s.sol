@@ -22,6 +22,7 @@ import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -39,6 +40,7 @@ contract DeployLocalUniswapV4 is Script {
     FullRangeLiquidityManager public liquidityManager;
     FullRangeDynamicFeeManager public dynamicFeeManager;
     Spot public fullRange;
+    TruncGeoOracleMulti public truncGeoOracle;
     
     // Test contract references
     PoolModifyLiquidityTest public lpRouter;
@@ -62,23 +64,33 @@ contract DeployLocalUniswapV4 is Script {
         poolManager = new PoolManager(address(uint160(DEFAULT_PROTOCOL_FEE)));
         console2.log("PoolManager deployed at:", address(poolManager));
         
+        // Step 1.5: Deploy Oracle (BEFORE PolicyManager)
+        console2.log("Deploying TruncGeoOracleMulti...");
+        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance);
+        console2.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
+        
         // Step 2: Deploy Policy Manager
         console2.log("Deploying PolicyManager...");
+        uint24[] memory supportedTickSpacings = new uint24[](3);
+        supportedTickSpacings[0] = 10;
+        supportedTickSpacings[1] = 60;
+        supportedTickSpacings[2] = 200;
+
         policyManager = new PoolPolicyManager(
-            governance,      // owner
-            100000,          // polSharePpm (10%)
-            0,               // fullRangeSharePpm (0%)
-            900000,          // lpSharePpm (90% - corrected from 80)
-            100,             // minimumTradingFeePpm (0.01%)
-            10000,           // feeClaimThresholdPpm (1%)
-            1000,            // defaultPolMultiplier (1000)
-            300,             // defaultDynamicFeePpm (0.03%)
-            4,               // tickScalingFactor
-            new uint24[](0),  // supportedTickSpacings (empty for now)
-            1e17,            // _initialProtocolInterestFeePercentage (10%)
-            address(0)       // _initialFeeCollector (zero address)
+            governance,
+            250000, // POL_SHARE_PPM (25%)
+            250000, // FULLRANGE_SHARE_PPM (25%)
+            500000, // LP_SHARE_PPM (50%)
+            1000,   // MIN_TRADING_FEE_PPM (0.1%)
+            10000,  // FEE_CLAIM_THRESHOLD_PPM (1%)
+            10,     // DEFAULT_POL_MULTIPLIER
+            3000,   // DEFAULT_DYNAMIC_FEE_PPM (0.3%)
+            2,      // TICK_SCALING_FACTOR
+            supportedTickSpacings,
+            1e17,   // Protocol Interest Fee Percentage (10%)
+            address(0) // Fee Collector
         );
-        console2.log("PolicyManager deployed at:", address(policyManager));
+        console2.log("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
                 
         // Step 3: Deploy FullRange components
         console2.log("Deploying FullRange components...");

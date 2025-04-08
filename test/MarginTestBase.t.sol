@@ -221,18 +221,20 @@ abstract contract MarginTestBase is Test { // Renamed contract
      * @return hookAddress The deployed Margin hook address with correct permissions
      */
     function _deployFullRange() internal virtual returns (Margin) { // Changed return type
-        // Calculate required hook flags manually based on Margin's needs
+        // Calculate required hook flags for MARGIN based on its *actual* permissions
+        // which now inherit Spot's modified permissions.
         uint160 flags = uint160(
-            Hooks.BEFORE_INITIALIZE_FLAG |
+            // Hooks.BEFORE_INITIALIZE_FLAG | // Removed due to Spot change
             Hooks.AFTER_INITIALIZE_FLAG |
-            Hooks.BEFORE_ADD_LIQUIDITY_FLAG |
+            // Hooks.BEFORE_ADD_LIQUIDITY_FLAG | // Removed due to Spot change
             Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
+            // Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | // Removed due to Spot change
             Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
             Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
             Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
-            // Add/remove flags if Margin's requirements change
+            // Note: Margin itself doesn't override getHookPermissions,
+            // so it directly inherits Spot's (modified) permissions.
         );
 
         // Prepare constructor arguments for Margin (Ensure these match Margin's constructor)

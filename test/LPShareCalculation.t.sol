@@ -172,12 +172,12 @@ contract LPShareCalculationTest is Test {
         }
 
         // Mine Hook Address & Deploy Margin Harness
-        uint160 flags = Hooks.BEFORE_INITIALIZE_FLAG
-            | Hooks.AFTER_INITIALIZE_FLAG
-            | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
-            | Hooks.AFTER_ADD_LIQUIDITY_FLAG
-            | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
-            | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
+        uint160 flags = // Hooks.BEFORE_INITIALIZE_FLAG | // Removed
+            Hooks.AFTER_INITIALIZE_FLAG
+            | // Hooks.BEFORE_ADD_LIQUIDITY_FLAG | // Removed
+            Hooks.AFTER_ADD_LIQUIDITY_FLAG
+            | // Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | // Removed
+            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
             | Hooks.BEFORE_SWAP_FLAG
             | Hooks.AFTER_SWAP_FLAG
             | Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG;

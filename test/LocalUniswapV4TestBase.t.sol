@@ -115,6 +115,12 @@ abstract contract LocalUniswapV4TestBase is Test {
         poolManager = new PoolManager(address(deployer)); 
         console2.log("[SETUP] PoolManager Deployed.");
         
+        // Deploy Oracle BEFORE Policy Manager
+        console2.log("[SETUP] Deploying TruncGeoOracleMulti...");
+        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance);
+        console2.log("[SETUP] TruncGeoOracleMulti Deployed.");
+
+        // Deploy Policy Manager AFTER Oracle
         console2.log("[SETUP] Deploying PolicyManager...");
         uint24[] memory supportedTickSpacings = new uint24[](3);
         supportedTickSpacings[0] = 10;
@@ -141,10 +147,6 @@ abstract contract LocalUniswapV4TestBase is Test {
         liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
         console2.log("[SETUP] LiquidityManager Deployed.");
 
-        console2.log("[SETUP] Deploying TruncGeoOracleMulti...");
-        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance);
-        console2.log("[SETUP] TruncGeoOracleMulti Deployed.");
-        
         vm.stopPrank();
         vm.startPrank(governance);
         console2.log("[SETUP] Deploying Spot...");
@@ -224,13 +226,13 @@ abstract contract LocalUniswapV4TestBase is Test {
      * @return hookAddress The deployed Spot hook address with correct permissions
      */
     function _deployFullRange() internal virtual returns (Spot) {
-        // Calculate required hook flags
+        // Calculate required hook flags (MATCHING Spot.sol's getHookPermissions)
         uint160 flags = uint160(
-            Hooks.BEFORE_INITIALIZE_FLAG |
+            // Hooks.BEFORE_INITIALIZE_FLAG | // Removed
             Hooks.AFTER_INITIALIZE_FLAG |
-            Hooks.BEFORE_ADD_LIQUIDITY_FLAG |
+            // Hooks.BEFORE_ADD_LIQUIDITY_FLAG | // Removed
             Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
+            // Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | // Removed
             Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
             Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
