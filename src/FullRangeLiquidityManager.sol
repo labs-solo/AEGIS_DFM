@@ -38,24 +38,7 @@ using SafeCast for int256;
 contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidityManager {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
-    
-    // Callback data structure for unlock pattern
-    struct CallbackData {
-        PoolId poolId;
-        CallbackType callbackType;  // Changed from uint8 to enum
-        uint128 shares;
-        uint128 oldTotalShares;
-        uint256 amount0;
-        uint256 amount1;
-        address recipient;
-    }
-        
-    // User position information
-    struct AccountPosition {
-        bool initialized;     // Whether the position has been initialized
-        uint256 shares;       // User's share balance
-    }
-    
+            
     /// @dev The Uniswap V4 PoolManager reference
     IPoolManager public immutable manager;
     
@@ -158,36 +141,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     bytes32 private constant POOLS_SLOT = bytes32(uint256(6));
     uint256 private constant POSITIONS_OFFSET = 6;
     
-    
-    /**
-     * @notice Constructor
-     * @param _manager The Uniswap V4 pool manager
-     * @param _owner The owner of the contract
-     */
-    constructor(IPoolManager _manager, address _owner) Owned(_owner) {
-        manager = _manager;
-        
-        // Create position token contract
-        positions = new FullRangePositions("FullRange Position", "FRP", address(this));
-    }
-    
-    /**
-     * @notice Sets the FullRange main contract address
-     * @param _fullRangeAddress The address of the FullRange contract
-     */
-    function setFullRangeAddress(address _fullRangeAddress) external onlyOwner {
-        if (_fullRangeAddress == address(0)) revert Errors.ZeroAddress();
-        fullRangeAddress = _fullRangeAddress;
-    }
-    
-    /**
-     * @notice Sets the emergency admin address
-     * @param _emergencyAdmin The new emergency admin address
-     */
-    function setEmergencyAdmin(address _emergencyAdmin) external onlyOwner {
-        emergencyAdmin = _emergencyAdmin;
-    }
-    
     /**
      * @notice Access control modifier for FullRange or owner
      */
@@ -219,9 +172,38 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
     
     /**
+     * @notice Constructor
+     * @param _manager The Uniswap V4 pool manager
+     * @param _owner The owner of the contract
+     */
+    constructor(IPoolManager _manager, address _owner) Owned(_owner) {
+        manager = _manager;
+        
+        // Create position token contract
+        positions = new FullRangePositions("FullRange Position", "FRP", address(this));
+    }
+
+    /**
      * @notice Allows the contract to receive ETH
      */
     receive() external payable {}
+    
+    /**
+     * @notice Sets the FullRange main contract address
+     * @param _fullRangeAddress The address of the FullRange contract
+     */
+    function setFullRangeAddress(address _fullRangeAddress) external onlyOwner {
+        if (_fullRangeAddress == address(0)) revert Errors.ZeroAddress();
+        fullRangeAddress = _fullRangeAddress;
+    }
+    
+    /**
+     * @notice Sets the emergency admin address
+     * @param _emergencyAdmin The new emergency admin address
+     */
+    function setEmergencyAdmin(address _emergencyAdmin) external onlyOwner {
+        emergencyAdmin = _emergencyAdmin;
+    }
     
     // === POOL MANAGEMENT FUNCTIONS ===
     
@@ -1351,9 +1333,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             reserve0,
             reserve1
         );
-        
-        // Get token addresses from pool key
-        PoolKey memory key = _poolKeys[poolId];
         
         // Get current position data for V4 liquidity calculation
         (uint128 currentV4Liquidity, uint160 sqrtPriceX96) = getPositionData(poolId);

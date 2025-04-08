@@ -22,6 +22,23 @@ interface IFullRangeLiquidityManager {
         REBALANCE       // 5
     }
 
+    // User position information
+    struct AccountPosition {
+        bool initialized;     // Whether the position has been initialized
+        uint256 shares;       // User's share balance
+    }
+
+    // Callback data structure for unlock pattern
+    struct CallbackData {
+        PoolId poolId;
+        CallbackType callbackType;  // Changed from uint8 to enum
+        uint128 shares;
+        uint128 oldTotalShares;
+        uint256 amount0;
+        uint256 amount1;
+        address recipient;
+    }
+
     struct DepositParams {
         PoolId poolId;
         uint256 amount0Desired;
