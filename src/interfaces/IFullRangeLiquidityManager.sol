@@ -178,13 +178,6 @@ interface IFullRangeLiquidityManager {
     function getPoolReserves(PoolId poolId) external view returns (uint256 reserve0, uint256 reserve1);
 
     /**
-     * @notice Updates the position cache for a pool
-     * @param poolId The pool ID
-     * @return success Whether the update was successful
-     */
-    function updatePositionCache(PoolId poolId) external returns (bool success);
-
-    /**
      * @notice Gets the total shares for a pool
      * @param poolId The pool ID
      * @return The total shares for the pool

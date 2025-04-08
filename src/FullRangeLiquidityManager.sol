@@ -300,10 +300,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         
         // Get pool key and necessary pool data
         PoolKey memory key = _poolKeys[poolId];
-        (uint128 currentPositionLiquidity, uint160 sqrtPriceX96, bool readSuccess) = getPositionData(poolId);
-        if (!readSuccess) {
-            revert Errors.FailedToReadPoolData(poolId);
-        }
+        ( , uint160 sqrtPriceX96) = getPositionData(poolId);
+
         if (sqrtPriceX96 == 0 && poolTotalShares[poolId] == 0) { // Need price for first deposit calculation
             // Try to read from pool state directly if position data failed initially
              bytes32 stateSlot = _getPoolStateSlot(poolId);
@@ -443,13 +441,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (!userPosition.initialized || userPosition.shares < sharesToBurn) {
             revert Errors.InsufficientShares(sharesToBurn, userPosition.shares);
         }
-        
-        // Get direct position data
-        (uint128 liquidity, uint160 sqrtPriceX96, bool readSuccess) = getPositionData(poolId);
-        if (!readSuccess) {
-            revert Errors.FailedToReadPoolData(poolId);
-        }
-                
+                        
         // Get the user's share balance
         uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
         uint256 userShareBalance = positions.balanceOf(recipient, tokenId);
@@ -488,15 +480,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Burn position tokens *before* calling unlock, consistent with CEI pattern
         // This prevents reentrancy issues where unlockCallback might see stale token balances.
         positions.burn(msg.sender, tokenId, sharesToBurn); // Burn from msg.sender who initiated withdraw
-        
-        // Create ModifyLiquidityParams with negative liquidity delta
-        IPoolManager.ModifyLiquidityParams memory modifyLiqParams = IPoolManager.ModifyLiquidityParams({
-            tickLower: TickMath.minUsableTick(key.tickSpacing),
-            tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-            liquidityDelta: -int256(uint256(sharesToBurn)),
-            salt: bytes32(0)
-        });
-        
+                
         // Create callback data for the FullRange hook to handle
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
@@ -591,15 +575,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         
         // Burn position tokens
         positions.burn(user, tokenId, sharesToBurn);
-        
-        // Call modifyLiquidity on PoolManager
-        IPoolManager.ModifyLiquidityParams memory modifyLiqParams = IPoolManager.ModifyLiquidityParams({
-            tickLower: TickMath.minUsableTick(key.tickSpacing),
-            tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-            liquidityDelta: -int256(sharesToBurn),
-            salt: bytes32(0)
-        });
-        
+                
         // Create callback data for the FullRange hook to handle
         CallbackData memory callbackData = CallbackData({
             poolId: params.poolId,
@@ -1130,15 +1106,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (recipient == address(0)) revert Errors.ZeroAddress();
         if (!isPoolInitialized(poolId)) revert Errors.PoolNotInitialized(poolId);
         if (amount0 == 0 && amount1 == 0) revert Errors.ZeroAmount();
-        
-        // Get pool key for token addresses
-        PoolKey memory key = _poolKeys[poolId];
-        
+                
         // Get current pool data for proper liquidity calculation
-        (uint128 currentLiquidity, uint160 sqrtPriceX96, bool readSuccess) = getPositionData(poolId);
-        if (!readSuccess || currentLiquidity == 0) {
-            revert Errors.FailedToReadPoolData(poolId);
-        }
+        (uint128 currentLiquidity, ) = getPositionData(poolId);
         
         // Get current total shares (needed for calculating proportion to remove)
         uint128 totalShares = poolTotalShares[poolId];
@@ -1258,7 +1228,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         int24 tickUpper = TickMath.maxUsableTick(key.tickSpacing);
         
         // Get position data directly
-        (uint128 liquidity, uint160 sqrtPriceX96, bool success) = getPositionData(poolId);
+        (uint128 liquidity, uint160 sqrtPriceX96) = getPositionData(poolId);
                 
         // If still no usable data, return zeros
         // TODO: is this needed?
@@ -1280,12 +1250,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @param poolId The pool ID
      * @return liquidity The current liquidity of the position
      * @return sqrtPriceX96 The current sqrt price of the pool
-     * @return success Whether the read was successful
      */
-    function getPositionData(PoolId poolId) public view returns (uint128 liquidity, uint160 sqrtPriceX96, bool success) {
-        if (!isPoolInitialized(poolId)) {
-            return (0, 0, false);
-        }
+    function getPositionData(PoolId poolId) public view returns (uint128 liquidity, uint160 sqrtPriceX96) {
+        if (!isPoolInitialized(poolId)) revert Errors.PoolNotInitialized(poolId);
         
         PoolKey memory key = _poolKeys[poolId];
         int24 tickLower = TickMath.minUsableTick(key.tickSpacing);
@@ -1312,20 +1279,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             // Leave sqrtPriceX96 as 0 if read fails
         }
         
-        return (liquidity, sqrtPriceX96, readSuccess);
-    }
-
-    /**
-     * @notice Updates the position cache for a pool
-     * @dev Maintained for backward compatibility, but now directly reads position data
-     * @param poolId The pool ID
-     * @return success Whether the update was successful
-     */
-    function updatePositionCache(PoolId poolId) public returns (bool success) {
-        // We don't need to update a cache anymore, but we'll return success
-        // based on whether we can read the current position data
-        (, , success) = getPositionData(poolId);
-        return success;
+        return (liquidity, sqrtPriceX96);
     }
     
     /**
@@ -1421,10 +1375,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         PoolKey memory key = _poolKeys[poolId];
         
         // Get current position data for V4 liquidity calculation
-        (uint128 currentV4Liquidity, uint160 sqrtPriceX96, bool readSuccess) = getPositionData(poolId);
-        if (!readSuccess || currentV4Liquidity == 0) {
-            revert Errors.FailedToReadPoolData(poolId);
-        }
+        (uint128 currentV4Liquidity, uint160 sqrtPriceX96) = getPositionData(poolId);
+
         if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Pool price is zero");
         
         // Calculate V4 liquidity to withdraw proportionally to shares borrowed
