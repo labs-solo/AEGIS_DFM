@@ -1336,12 +1336,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             return (0, 0);
         }
         
-        // Calculate reserves from position data
-        return _getAmountsForLiquidity(
+        return MathUtils.computeAmountsFromLiquidity(
             sqrtPriceX96,
             TickMath.getSqrtPriceAtTick(tickLower),
             TickMath.getSqrtPriceAtTick(tickUpper),
-            liquidity
+            liquidity,
+            true
         );
     }
     
@@ -1384,49 +1384,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
         
         return (liquidity, sqrtPriceX96, readSuccess);
-    }
-
-    /**
-     * @notice Computes the token0 and token1 value for a given amount of liquidity
-     * @param sqrtPriceX96 A sqrt price representing the current pool prices
-     * @param sqrtPriceAX96 A sqrt price representing the first tick boundary
-     * @param sqrtPriceBX96 A sqrt price representing the second tick boundary
-     * @param liquidity The liquidity being valued
-     * @return amount0 The amount of token0
-     * @return amount1 The amount of token1
-     */
-    function _getAmountsForLiquidity(
-        uint160 sqrtPriceX96,
-        uint160 sqrtPriceAX96,
-        uint160 sqrtPriceBX96,
-        uint128 liquidity
-    ) internal pure returns (uint256 amount0, uint256 amount1) {
-        // Delegate calculation to the centralized MathUtils library
-        // Match original behavior: Use 'true' for roundUp 
-        return MathUtils.computeAmountsFromLiquidity(
-            sqrtPriceX96,
-            sqrtPriceAX96,
-            sqrtPriceBX96,
-            liquidity,
-            true // Match original rounding behavior
-        );
-        
-        /* // Original implementation (now redundant)
-        // Correct implementation using SqrtPriceMath
-        if (sqrtPriceAX96 > sqrtPriceBX96) (sqrtPriceAX96, sqrtPriceBX96) = (sqrtPriceBX96, sqrtPriceAX96);
-
-        if (sqrtPriceX96 <= sqrtPriceAX96) {
-            // Price is below the range, only token0 is present
-            amount0 = SqrtPriceMath.getAmount0Delta(sqrtPriceAX96, sqrtPriceBX96, liquidity, true);
-        } else if (sqrtPriceX96 < sqrtPriceBX96) {
-            // Price is within the range
-            amount0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtPriceBX96, liquidity, true);
-            amount1 = SqrtPriceMath.getAmount1Delta(sqrtPriceAX96, sqrtPriceX96, liquidity, true);
-        } else {
-            // Price is above the range, only token1 is present
-            amount1 = SqrtPriceMath.getAmount1Delta(sqrtPriceAX96, sqrtPriceBX96, liquidity, true);
-        }
-        */
     }
 
     /**
