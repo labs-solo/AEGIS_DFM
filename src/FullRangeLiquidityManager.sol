@@ -39,16 +39,10 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
     
-    // Constants for deposit/withdraw actions
-    uint8 internal constant ACTION_DEPOSIT = 1;
-    uint8 internal constant ACTION_WITHDRAW = 2;
-    uint8 internal constant ACTION_BORROW = 3;
-    uint8 internal constant ACTION_REINVEST_PROTOCOL_FEES = 4;
-    
     // Callback data structure for unlock pattern
     struct CallbackData {
         PoolId poolId;
-        uint8 callbackType; // 1 for deposit, 2 for withdraw, 3 for borrow, 4 for reinvestProtocolFees
+        CallbackType callbackType;  // Changed from uint8 to enum
         uint128 shares;
         uint128 oldTotalShares;
         uint256 amount0;
@@ -391,10 +385,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Create callback data for the FullRange hook to handle
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
-            callbackType: 1, // 1 for deposit
-            // Pass the TOTAL liquidity added for the callback!
-            shares: liquidityToAdd, 
-            oldTotalShares: oldTotalLiquidityInternal, // Pass old internal liquidity
+            callbackType: CallbackType.DEPOSIT,
+            shares: liquidityToAdd,
+            oldTotalShares: oldTotalLiquidityInternal,
             amount0: amount0,
             amount1: amount1,
             recipient: recipient
@@ -507,7 +500,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Create callback data for the FullRange hook to handle
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
-            callbackType: 2, // 2 for withdraw
+            callbackType: CallbackType.WITHDRAW,
             shares: uint128(sharesToBurn),
             oldTotalShares: oldTotalShares,
             amount0: amount0,
@@ -610,7 +603,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Create callback data for the FullRange hook to handle
         CallbackData memory callbackData = CallbackData({
             poolId: params.poolId,
-            callbackType: 2, // 2 for withdraw
+            callbackType: CallbackType.WITHDRAW,
             shares: uint128(sharesToBurn),
             oldTotalShares: oldTotalShares,
             amount0: amount0Out,
@@ -1179,8 +1172,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Create callback data for the unlock operation
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
-            callbackType: ACTION_REINVEST_PROTOCOL_FEES, // 4 for protocol fee reinvestment
-            shares: uint128(liquidityToRemove), // Shares/liquidity to remove
+            callbackType: CallbackType.REINVEST_PROTOCOL_FEES,
+            shares: uint128(liquidityToRemove),
             oldTotalShares: totalShares,
             amount0: amount0,
             amount1: amount1,
@@ -1221,16 +1214,16 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         int256 liquidityDelta;
         address recipient;
         
-        if (cbData.callbackType == ACTION_DEPOSIT) {
+        if (cbData.callbackType == CallbackType.DEPOSIT) {
             liquidityDelta = int256(uint256(cbData.shares));
             recipient = address(this); // For deposits, tokens stay in this contract
-        } else if (cbData.callbackType == ACTION_WITHDRAW || 
-                  cbData.callbackType == ACTION_BORROW || 
-                  cbData.callbackType == ACTION_REINVEST_PROTOCOL_FEES) {
+        } else if (cbData.callbackType == CallbackType.WITHDRAW || 
+                  cbData.callbackType == CallbackType.BORROW || 
+                  cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES) {
             liquidityDelta = -int256(uint256(cbData.shares));
             recipient = cbData.recipient; // For withdrawals/borrows/reinvests, send to recipient
         } else {
-            revert Errors.InvalidCallbackType(cbData.callbackType);
+            revert Errors.InvalidCallbackType(uint8(cbData.callbackType));
         }
         
         // Execute the liquidity modification
@@ -1445,7 +1438,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Create callback data for the unlock operation
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
-            callbackType: 3, // New type for borrow (3)
+            callbackType: CallbackType.BORROW,
             shares: uint128(sharesToBorrow),
             oldTotalShares: totalShares,
             amount0: amount0,

@@ -10,6 +10,18 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
  * @notice Interface for the FullRangeLiquidityManager contract
  */
 interface IFullRangeLiquidityManager {
+    /**
+     * @notice Constants for deposit/withdraw actions
+     */
+    enum CallbackType {
+        NONE,           // 0 - Not used, as 0 could be a default uninitialized value
+        DEPOSIT,        // 1
+        WITHDRAW,       // 2 
+        BORROW,         // 3
+        REINVEST_PROTOCOL_FEES,  // 4
+        REBALANCE       // 5
+    }
+
     struct DepositParams {
         PoolId poolId;
         uint256 amount0Desired;
