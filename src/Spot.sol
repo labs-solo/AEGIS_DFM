@@ -30,7 +30,6 @@ import { IFullRangeDynamicFeeManager } from "./interfaces/IFullRangeDynamicFeeMa
 import { IFullRangeLiquidityManager } from "./interfaces/IFullRangeLiquidityManager.sol";
 import { TruncatedOracle } from "./libraries/TruncatedOracle.sol";
 import { BaseHook } from "lib/v4-periphery/src/utils/BaseHook.sol";
-import { console2 } from "forge-std/console2.sol";
 
 /**
  * @title Spot
@@ -46,9 +45,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     FullRangeLiquidityManager public immutable liquidityManager;
     FullRangeDynamicFeeManager public dynamicFeeManager;
     
-    // Add a storage variable to track the current active dynamic fee manager
-    FullRangeDynamicFeeManager private activeDynamicFeeManager;
-
     // Optimized storage layout - pack related data together
     struct PoolData {
         bool initialized;      // Whether pool is initialized (1 byte)
@@ -89,31 +85,21 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     event OracleInitialized(PoolId indexed poolId, int24 initialTick, int24 maxAbsTickMove);
     event OracleInitializationFailed(PoolId indexed poolId, bytes reason);
     
-    // Oracle data storage - reverse authorization model for gas optimization
-    // Stores tick data directly in Spot instead of calling DynamicFeeManager
-    // This eliminates expensive cross-contract validation and improves gas efficiency
-    mapping(PoolId => int24) public lastOracleTicks;
-    mapping(PoolId => uint32) public lastOracleUpdateBlocks;
+    // Consolidated oracle storage - removed redundant mappings
+    // Removed: lastOracleTicks and lastOracleUpdateBlocks since they were redundant
+    // Kept only the fallback versions which serve the same purpose
+    mapping(PoolId => int24) private oracleTicks;    // Stores all oracle ticks (previously lastFallbackTicks)
+    mapping(PoolId => uint32) private oracleBlocks;  // Stores all oracle blocks (previously lastFallbackBlocks)
     
-    // Oracle tracking variables - only store fallbacks (used when oracle fails)
-    // Kept minimal to reduce storage costs 
-    mapping(PoolId => int24) private lastFallbackTicks;
-    mapping(PoolId => uint32) private lastFallbackBlocks;
-    
-    // Add to state variables section near the top with other state variables
+    // TruncGeoOracle instance
     TruncGeoOracleMulti public truncGeoOracle;
     
     // Modifiers
     modifier onlyGovernance() {
         address currentOwner = policyManager.getSoloGovernance();
-        // console2.log(">>> Spot::onlyGovernance Check START <<<");
-        // console2.log("Spot::onlyGovernance Check: msg.sender =", msg.sender);
-        // console2.log("Spot::onlyGovernance Check: policyManager.getSoloGovernance() =", currentOwner);
         if (msg.sender != currentOwner) {
-            // console2.log("!!! Reverting in Spot::onlyGovernance !!!");
             revert Errors.AccessOnlyGovernance(msg.sender);
         }
-        // console2.log(">>> Spot::onlyGovernance Check END <<<");
         _;
     }
     
@@ -298,6 +284,36 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     }
 
     /**
+     * @notice Internal helper to get pool reserves and shares
+     * @dev Helper function used by both getPoolInfo and getPoolReservesAndShares
+     */
+    function _getPoolReservesAndShares(PoolId poolId) 
+        private 
+        view 
+        returns (
+            bool isInitialized,
+            uint256 reserve0,
+            uint256 reserve1,
+            uint128 totalShares,
+            uint256 tokenId
+        ) 
+    {
+        PoolData storage data = poolData[poolId];
+        isInitialized = data.initialized;
+        
+        if (isInitialized) {
+            // Get reserves from liquidity manager
+            (reserve0, reserve1) = liquidityManager.getPoolReserves(poolId);
+            
+            // Get total shares from liquidity manager
+            totalShares = liquidityManager.poolTotalShares(poolId);
+            
+            // Get token ID from stored data
+            tokenId = data.tokenId;
+        }
+    }
+
+    /**
      * @notice Get pool information
      * @param poolId The pool ID
      * @return isInitialized Whether the pool is initialized
@@ -315,19 +331,8 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
             uint256 tokenId
         ) 
     {
-        PoolData storage data = poolData[poolId];
-        isInitialized = data.initialized;
-        
-        if (isInitialized) {
-            // Get reserves from liquidity manager
-            (reserves[0], reserves[1]) = liquidityManager.getPoolReserves(poolId);
-            
-            // Get total shares from liquidity manager
-            totalShares = liquidityManager.poolTotalShares(poolId);
-            
-            // Get token ID from stored data
-            tokenId = data.tokenId;
-        }
+        // Call the internal helper function
+        (isInitialized, reserves[0], reserves[1], totalShares, tokenId) = _getPoolReservesAndShares(poolId);
     }
 
     /**
@@ -353,11 +358,14 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
 
     /**
      * @notice Get pool reserves and shares
+     * @dev Uses the same internal helper as getPoolInfo
      */
     function getPoolReservesAndShares(PoolId poolId) public view returns (uint256 reserve0, uint256 reserve1, uint128 totalShares) {
-        // Get reserves directly from the liquidity manager instead of storing them
-        (reserve0, reserve1) = liquidityManager.getPoolReserves(poolId);
-        totalShares = liquidityManager.poolTotalShares(poolId);
+        // Call the internal helper function and ignore the tokenId value
+        bool isInitialized;
+        (isInitialized, reserve0, reserve1, totalShares, ) = _getPoolReservesAndShares(poolId);
+        
+        // If not initialized, all values default to 0 (already handled by the helper)
     }
 
     /**
@@ -490,18 +498,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     }
 
     /**
-     * @notice Implementation for beforeInitialize hook
-     */
-    function _beforeInitialize(address /*sender*/, PoolKey calldata /*key*/, uint160 /*sqrtPriceX96*/) 
-        internal 
-        virtual 
-        override 
-        returns (bytes4) 
-    {
-        return this.beforeInitialize.selector;
-    }
-
-    /**
      * @notice Implementation for beforeSwap hook
      * @dev Returns dynamic fee for the pool
      */
@@ -589,18 +585,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     }
 
     /**
-     * @notice Implementation for beforeAddLiquidity hook
-     */
-    function _beforeAddLiquidity(address /*sender*/, PoolKey calldata /*key*/, IPoolManager.ModifyLiquidityParams calldata /*params*/, bytes calldata /*hookData*/)
-        internal
-        virtual
-        override
-        returns (bytes4)
-    {
-        return this.beforeAddLiquidity.selector;
-    }
-
-    /**
      * @notice After Remove Liquidity hook
      * @dev Reverse Authorization Model: Only handles fee processing logic directly
      *      to reduce gas and remove DynamicFeeManager dependency.
@@ -614,27 +598,10 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         bytes calldata hookData
     ) internal virtual override returns (bytes4, BalanceDelta) {
         PoolId poolId = key.toId();
-        // Track fees reinvestment
-        if (poolData[poolId].initialized) {
-            // Process fees if any
-            if (feesAccrued.amount0() != 0 || feesAccrued.amount1() != 0) {
-                _processFees(poolId, IFeeReinvestmentManager.OperationType.WITHDRAWAL, feesAccrued);
-            }
-        }
+        // Track fees reinvestment using the shared method
+        _processRemoveLiquidityFees(poolId, feesAccrued);
         
         return (this.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
-    }
-
-    /**
-     * @notice Implementation for beforeRemoveLiquidity hook
-     */
-    function _beforeRemoveLiquidity(address /*sender*/, PoolKey calldata /*key*/, IPoolManager.ModifyLiquidityParams calldata /*params*/, bytes calldata /*hookData*/)
-        internal
-        virtual
-        override
-        returns (bytes4)
-    {
-        return this.beforeRemoveLiquidity.selector;
     }
 
     /**
@@ -676,6 +643,19 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         bytes calldata hookData
     ) external virtual override returns (bytes4, BalanceDelta) {
         PoolId poolId = key.toId();
+        // Track fees reinvestment using the shared method
+        _processRemoveLiquidityFees(poolId, feesAccrued);
+        
+        return (ISpotHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
+    }
+    
+    /**
+     * @notice Internal helper to process fees after liquidity removal
+     * @dev Extracted common logic from _afterRemoveLiquidity and afterRemoveLiquidityReturnDelta
+     * @param poolId The ID of the pool
+     * @param feesAccrued The fees accrued during the operation
+     */
+    function _processRemoveLiquidityFees(PoolId poolId, BalanceDelta feesAccrued) internal {
         // Track fees reinvestment
         if (poolData[poolId].initialized) {
             // Process fees if any
@@ -683,8 +663,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
                 _processFees(poolId, IFeeReinvestmentManager.OperationType.WITHDRAWAL, feesAccrued);
             }
         }
-        
-        return (ISpotHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     /**
@@ -725,7 +703,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     function getOracleData(PoolId poolId) external view returns (int24 tick, uint32 blockTimestamp) {
         // Check if oracle is set
         if (address(truncGeoOracle) == address(0)) {
-            return (lastFallbackTicks[poolId], lastFallbackBlocks[poolId]);
+            return (oracleTicks[poolId], oracleBlocks[poolId]);
         }
         
         // Get data directly from oracle - this never reverts even if pool isn't initialized
@@ -737,7 +715,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         }
         
         // Otherwise fall back to local storage
-        return (lastFallbackTicks[poolId], lastFallbackBlocks[poolId]);
+        return (oracleTicks[poolId], oracleBlocks[poolId]);
     }
 
     /**
@@ -762,6 +740,5 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         if (address(_dynamicFeeManager) == address(0)) revert Errors.ZeroAddress();
         
         dynamicFeeManager = _dynamicFeeManager;
-        activeDynamicFeeManager = _dynamicFeeManager; // Set active manager as well
     }
 }
