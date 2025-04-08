@@ -153,10 +153,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint128 totalShares,
         uint8 operationType
     );
-            
-    // These are kept for backward compatibility but will be no-ops
-    event PositionCacheUpdated(PoolId indexed poolId, uint128 liquidity, uint160 sqrtPriceX96);
-    
+                
     // Storage slot constants for V4 state access
     bytes32 private constant POOLS_SLOT = bytes32(uint256(6));
     uint256 private constant POSITIONS_OFFSET = 6;
@@ -1315,22 +1312,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      */
     function isPoolInitialized(PoolId poolId) public view returns (bool) {
         return _poolKeys[poolId].fee != 0; // If fee is set, the pool is initialized
-    }
-
-    /**
-     * @notice Force position cache update for a pool
-     * @dev Maintained for backward compatibility but just emits an event
-     * @param poolId The ID of the pool to update
-     * @param liquidity The liquidity value (not used)
-     * @param sqrtPriceX96 The price value (not used)
-     */
-    function forcePositionCache(
-        PoolId poolId,
-        uint128 liquidity,
-        uint160 sqrtPriceX96
-    ) external onlyFullRangeOrOwner {
-        // Only emits the event for compatibility, doesn't store anything
-        emit PositionCacheUpdated(poolId, liquidity, sqrtPriceX96);
     }
 
     /**
