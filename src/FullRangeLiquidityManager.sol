@@ -1,13 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
-import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
@@ -15,20 +13,15 @@ import {MathUtils} from "./libraries/MathUtils.sol";
 import {Errors} from "./errors/Errors.sol";
 import {FullRangePositions} from "./token/FullRangePositions.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
-import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {PoolTokenIdUtils} from "./utils/PoolTokenIdUtils.sol";
 import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
 import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "./interfaces/IFullRangeLiquidityManager.sol";
-import {FullRangeUtils} from "./utils/FullRangeUtils.sol";
-import {SettlementUtils} from "./utils/SettlementUtils.sol";
 import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
-import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {Position} from "v4-core/src/libraries/Position.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
