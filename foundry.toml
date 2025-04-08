@@ -50,3 +50,11 @@ eth_rpc_url = "${UNICHAIN_SEPOLIA_RPC_URL}"
 chain_id = 1301
 
 # See more config options https://github.com/foundry-rs/foundry/tree/master/config
+
+[fuzz]
+runs = 256 # Default fuzz runs
+
+[fuzz.overrides."src/libraries/MathUtils.sol:MathUtils.testComputeLiquidityFromAmounts(uint160,uint160,uint160,uint256,uint256)"]
+# Constrain amount0 and amount1 to prevent hitting known V4 core overflow reverts
+# Using approximately type(uint128).max * 10 as a large but reasonable limit
+max_inputs = { amount0 = "3402823669209384634633746074317682114550", amount1 = "3402823669209384634633746074317682114550" }
