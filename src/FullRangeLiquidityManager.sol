@@ -99,7 +99,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint128 sharesBurned,
         uint256 timestamp
     );
-    event ReserveCapped(PoolId indexed poolId, uint256 amount0Excess, uint256 amount1Excess);
     event MinimumLiquidityLocked(PoolId indexed poolId, uint256 amount);
     
     // Emergency events
