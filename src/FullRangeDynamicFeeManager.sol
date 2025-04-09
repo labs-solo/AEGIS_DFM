@@ -7,6 +7,7 @@ import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {SortTokens} from "v4-core/test/utils/SortTokens.sol";
+import { Currency, CurrencyLibrary } from "v4-core/src/types/Currency.sol";
 
 // Project imports
 import {IFullRangeDynamicFeeManager} from "./interfaces/IFullRangeDynamicFeeManager.sol";
@@ -18,7 +19,6 @@ import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {MathUtils} from "./libraries/MathUtils.sol";
 import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
 import { Hooks } from "v4-core/src/libraries/Hooks.sol";
-import { Currency } from "v4-core/src/types/Currency.sol";
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 
 /**

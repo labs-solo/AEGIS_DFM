@@ -6,8 +6,8 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 // TODO: Uncomment when Errors.sol is updated or confirm it exists
 // import {Errors} from "./errors/Errors.sol";
-import {SafeCast} from "v4-core/src/libraries/SafeCast.sol"; // Assuming SafeCast exists
-import {FullMath} from "v4-core/src/libraries/FullMath.sol"; // Assuming FullMath exists for calculations
+import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 
 /**
  * @title LinearInterestRateModel

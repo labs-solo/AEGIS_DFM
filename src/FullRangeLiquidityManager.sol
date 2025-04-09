@@ -33,6 +33,8 @@ import {Position} from "v4-core/src/libraries/Position.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
 import "forge-std/console2.sol";
+import {LiquidityMath} from "v4-core/src/libraries/LiquidityMath.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 using SafeCast for uint256;
 using SafeCast for int256;

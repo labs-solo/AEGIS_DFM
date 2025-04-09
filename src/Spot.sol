@@ -23,13 +23,16 @@ import { ReentrancyGuard } from "solmate/src/utils/ReentrancyGuard.sol";
 import { StateLibrary } from "v4-core/src/libraries/StateLibrary.sol";
 import { PoolTokenIdUtils } from "./utils/PoolTokenIdUtils.sol";
 import { ISpotHooks } from "./interfaces/ISpotHooks.sol";
-import { Currency } from "v4-core/src/types/Currency.sol";
+import { Currency, CurrencyLibrary } from "v4-core/src/types/Currency.sol";
 import { IERC20Minimal } from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import { TruncGeoOracleMulti } from "./TruncGeoOracleMulti.sol";
 import { IFullRangeDynamicFeeManager } from "./interfaces/IFullRangeDynamicFeeManager.sol";
 import { IFullRangeLiquidityManager } from "./interfaces/IFullRangeLiquidityManager.sol";
 import { TruncatedOracle } from "./libraries/TruncatedOracle.sol";
 import { BaseHook } from "lib/v4-periphery/src/utils/BaseHook.sol";
+import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
+import { SafeCast } from "v4-core/src/libraries/SafeCast.sol";
+import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
 
 /**
  * @title Spot
