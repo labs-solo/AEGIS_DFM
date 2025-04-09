@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import { PoolId } from "v4-core/src/types/PoolId.sol";
+import { IMarginData } from "./IMarginData.sol"; // Import needed for Vault
 
 /**
  * @title IMargin
@@ -9,29 +10,16 @@ import { PoolId } from "v4-core/src/types/PoolId.sol";
  * @dev Defines the main structures and future functions for margin positions
  */
 interface IMargin {
-    /**
-     * @notice Information about a user's position in a pool
-     * @param token0Balance Amount of token0 in the vault
-     * @param token1Balance Amount of token1 in the vault
-     * @param debtShare LP-equivalent debt in share units (will be used in Phase 2)
-     * @param lastAccrual Last time interest was accrued (will be used in Phase 2)
-     * @param flags Bitwise flags for future extensions
-     */
-    struct Vault {
-        uint128 token0Balance;
-        uint128 token1Balance;
-        uint128 debtShare;
-        uint64 lastAccrual;
-        uint32 flags;
-    }
-    
+    // Using Vault defined in IMarginData
+    // struct Vault { ... }
+
     /**
      * @notice Get vault information
      * @param poolId The pool ID
      * @param user The user address
      * @return The vault data
      */
-    function getVault(PoolId poolId, address user) external view returns (Vault memory);
+    function getVault(PoolId poolId, address user) external view returns (IMarginData.Vault memory);
     
     /**
      * @notice Check if a vault is solvent (placeholder for Phase 2)
@@ -85,71 +73,23 @@ interface IMargin {
      * @notice Extract protocol fees from the liquidity pool and send them to the recipient.
      * @dev Called by FeeReinvestmentManager.
      * @param poolId The pool ID to extract fees from.
-     * @param amount0 Amount of token0 to extract.
-     * @param amount1 Amount of token1 to extract.
+     * @param amount0ToWithdraw Amount of token0 to extract.
+     * @param amount1ToWithdraw Amount of token1 to extract.
      * @param recipient The address to receive the extracted fees.
      * @return success Boolean indicating if the extraction call succeeded.
      */
     function reinvestProtocolFees(
         PoolId poolId,
-        uint256 amount0,
-        uint256 amount1,
+        uint256 amount0ToWithdraw,
+        uint256 amount1ToWithdraw,
         address recipient
     ) external returns (bool success);
 
-    // Events (included in Phase 1 but most will be emitted in future phases)
-    event Deposit(
-        PoolId indexed poolId,
-        address indexed user,
-        uint256 amount0,
-        uint256 amount1,
-        uint256 shares
-    );
-    
-    event Withdraw(
-        PoolId indexed poolId,
-        address indexed user,
-        uint256 shares,
-        uint256 amount0,
-        uint256 amount1
-    );
-    
-    event Borrow(
-        PoolId indexed poolId,
-        address indexed user,
-        uint256 shares,
-        uint256 amount0,
-        uint256 amount1
-    );
-    
-    event Repay(
-        PoolId indexed poolId,
-        address indexed user,
-        uint256 shares,
-        uint256 amount0,
-        uint256 amount1
-    );
-    
-    event InterestAccrued(
-        PoolId indexed poolId,
-        address indexed user,
-        uint256 interestRatePerSecond,
-        uint256 timeElapsed,
-        uint256 newMultiplier
-    );
-    
-    event VaultUpdated(
-        PoolId indexed poolId,
-        address indexed user,
-        uint256 token0Balance,
-        uint256 token1Balance,
-        uint256 debtShare,
-        uint256 timestamp
-    );
-    
-    event PauseStatusChanged(bool paused);
-    
-    event InterestRateModelUpdated(address indexed newModel);
+    // Precision constant (required by Margin.sol override)
+    function PRECISION() external view returns (uint256);
 
-    event ProtocolFeesProcessed(PoolId indexed poolId, uint256 feeShareValue);
+    // Events would typically be here or in a more specific event interface
+    // event VaultUpdated(...);
+    // event ETHClaimed(...);
+    // ... other events ...
 } 

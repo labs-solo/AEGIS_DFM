@@ -31,7 +31,6 @@ contract MarginTest is MarginTestBase {
     LinearInterestRateModel rateModel; // Real model for some tests
     MockLinearInterestRateModel mockRateModel; // Mock model for controlled tests
     MockPoolPolicyManager mockPolicyManager; // Re-add state variable
-    MarginManager marginManager; // Added from base class
     FeeReinvestmentManager feeManager; // Real fee manager
 
     // Test parameters
@@ -48,9 +47,6 @@ contract MarginTest is MarginTestBase {
     function setUp() public override {
         // Call base setup first
         MarginTestBase.setUp();
-
-        // Assign marginManager from base
-        marginManager = MarginTestBase.marginManager;
 
         // Deploy a mock Rate Model first
         mockRateModel = new MockLinearInterestRateModel();

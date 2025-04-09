@@ -70,9 +70,9 @@ contract GasBenchmarkTest is MarginTestBase, GasSnapshot {
 
         vm.startPrank(bob);
         token0.approve(address(fullRange), DEPOSIT_AMOUNT);
-        snap("ExecuteBatch: 1 Deposit (T0)");
+        snapStart("ExecuteBatch: 1 Deposit (T0)");
         fullRange.executeBatch(actions);
-        stopSnapshot();
+        snapEnd();
         vm.stopPrank();
     }
 
@@ -82,9 +82,9 @@ contract GasBenchmarkTest is MarginTestBase, GasSnapshot {
 
         vm.startPrank(bob);
         token1.approve(address(fullRange), DEPOSIT_AMOUNT);
-        snap("ExecuteBatch: 1 Deposit (T1)");
+        snapStart("ExecuteBatch: 1 Deposit (T1)");
         fullRange.executeBatch(actions);
-        stopSnapshot();
+        snapEnd();
         vm.stopPrank();
     }
 
@@ -96,9 +96,9 @@ contract GasBenchmarkTest is MarginTestBase, GasSnapshot {
         vm.startPrank(bob);
         token0.approve(address(fullRange), DEPOSIT_AMOUNT);
         token1.approve(address(fullRange), DEPOSIT_AMOUNT);
-        snap("ExecuteBatch: 2 Deposits (T0, T1)");
+        snapStart("ExecuteBatch: 2 Deposits (T0, T1)");
         fullRange.executeBatch(actions);
-        stopSnapshot();
+        snapEnd();
         vm.stopPrank();
     }
 
@@ -114,9 +114,9 @@ contract GasBenchmarkTest is MarginTestBase, GasSnapshot {
         vm.startPrank(bob);
         token0.approve(address(fullRange), DEPOSIT_AMOUNT);
         token1.approve(address(fullRange), DEPOSIT_AMOUNT);
-        snap("ExecuteBatch: 5 Deposits");
+        snapStart("ExecuteBatch: 5 Deposits");
         fullRange.executeBatch(actions);
-        stopSnapshot();
+        snapEnd();
         vm.stopPrank();
     }
 
@@ -126,9 +126,9 @@ contract GasBenchmarkTest is MarginTestBase, GasSnapshot {
 
         vm.startPrank(bob);
         // No approval needed for borrow
-        snap("ExecuteBatch: 1 Borrow");
+        snapStart("ExecuteBatch: 1 Borrow");
         fullRange.executeBatch(actions);
-        stopSnapshot();
+        snapEnd();
         vm.stopPrank();
     }
 
@@ -151,9 +151,9 @@ contract GasBenchmarkTest is MarginTestBase, GasSnapshot {
 
         vm.startPrank(bob);
         // No approval needed for repay from vault
-        snap("ExecuteBatch: 1 Repay (Vault)");
+        snapStart("ExecuteBatch: 1 Repay (Vault)");
         fullRange.executeBatch(repayActions);
-        stopSnapshot();
+        snapEnd();
         vm.stopPrank();
     }
 
@@ -177,9 +177,9 @@ contract GasBenchmarkTest is MarginTestBase, GasSnapshot {
         vm.startPrank(bob);
         token0.approve(address(fullRange), approxT0Needed);
         token1.approve(address(fullRange), approxT1Needed);
-        snap("ExecuteBatch: 1 Repay (External)");
+        snapStart("ExecuteBatch: 1 Repay (External)");
         fullRange.executeBatch(repayActions);
-        stopSnapshot();
+        snapEnd();
         vm.stopPrank();
     }
 
@@ -197,9 +197,9 @@ contract GasBenchmarkTest is MarginTestBase, GasSnapshot {
 
         vm.startPrank(bob);
         // No approval needed for withdraw
-        snap("ExecuteBatch: 1 Withdraw");
+        snapStart("ExecuteBatch: 1 Withdraw");
         fullRange.executeBatch(actions);
-        stopSnapshot();
+        snapEnd();
         vm.stopPrank();
     }
 
@@ -224,9 +224,9 @@ contract GasBenchmarkTest is MarginTestBase, GasSnapshot {
         vm.startPrank(bob);
         token0.approve(address(fullRange), DEPOSIT_AMOUNT + approxT0Needed);
         token1.approve(address(fullRange), approxT1Needed);
-        snap("ExecuteBatch: Complex (Dep, Bor, RepExt, Wdr)");
+        snapStart("ExecuteBatch: Complex (Dep, Bor, RepExt, Wdr)");
         fullRange.executeBatch(actions);
-        stopSnapshot();
+        snapEnd();
         vm.stopPrank();
     }
 

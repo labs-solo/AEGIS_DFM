@@ -26,6 +26,8 @@ import { CurrencyLibrary } from "lib/v4-core/src/types/Currency.sol";
 import { IFeeReinvestmentManager } from "./interfaces/IFeeReinvestmentManager.sol";
 import { TransferUtils } from "./utils/TransferUtils.sol";
 import "forge-std/console2.sol";
+import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
+import { BeforeSwapDelta, BeforeSwapDeltaLibrary } from "v4-core/src/types/BeforeSwapDelta.sol";
 
 /**
  * @title Margin
@@ -43,7 +45,7 @@ import "forge-std/console2.sol";
 contract Margin is ReentrancyGuard, Spot, IMargin {
     /// @inheritdoc IMargin
     /// @notice Precision constant (1e18).
-    uint256 public constant override PRECISION = 1e18;
+    uint256 public constant override(IMargin) PRECISION = 1e18;
 
     // Define event here
     event ETHClaimed(address indexed recipient, uint256 amount);
@@ -117,10 +119,11 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
 
             if (action.actionType == IMarginData.ActionType.DepositCollateral) {
                 if (action.amount > 0) { // Only process non-zero deposits
-                    address token0Addr = key.currency0.unwrap();
-                    address token1Addr = key.currency1.unwrap();
-                    bool isNativeToken0 = key.currency0.isNative();
-                    bool isNativeToken1 = key.currency1.isNative();
+                    address token0Addr = Currency.unwrap(key.currency0);
+                    address token1Addr = Currency.unwrap(key.currency1);
+                    // Use address(0) check for native currency
+                    bool isNativeToken0 = (Currency.unwrap(key.currency0) == address(0));
+                    bool isNativeToken1 = (Currency.unwrap(key.currency1) == address(0));
 
                     if ((isNativeToken0 && action.asset == address(0)) || (isNativeToken1 && action.asset == address(0)) ) {
                          // Native ETH Deposit
@@ -170,7 +173,7 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
      * @dev Delegates to MarginManager.
      * @inheritdoc IMargin
      */
-    function getVault(PoolId poolId, address user) external view returns (IMarginData.Vault memory) {
+    function getVault(PoolId poolId, address user) public view override(IMargin) returns (IMarginData.Vault memory) {
         return marginManager.vaults(poolId, user);
     }
 
@@ -209,11 +212,11 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
      * @dev Extends Spot._afterPoolInitialized to call MarginManager to initialize interest state.
      */
     function _afterPoolInitialized(
-        PoolId _poolId, // Use parameter name consistently
+        PoolId _poolId,
         PoolKey calldata key,
         uint160 sqrtPriceX96,
         int24 tick
-    ) internal override {
+    ) internal override(Spot) virtual {
         Spot._afterPoolInitialized(_poolId, key, sqrtPriceX96, tick);
 
         // Manager handles interest initialization
@@ -228,20 +231,21 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
     /**
      * @notice Hook called before adding or removing liquidity.
      * @dev Accrues pool interest before liquidity is modified.
+     *      Overrides IHooks function.
      */
     function beforeModifyLiquidity(
         address sender,
         PoolKey calldata key,
         IPoolManager.ModifyLiquidityParams calldata params,
         bytes calldata hookData
-    ) external override returns (bytes4) {
+    ) external override(IHooks) returns (bytes4) { // Override IHooks
         marginManager.accruePoolInterest(key.toId());
-        return Margin.beforeModifyLiquidity.selector;
+        return Margin.beforeModifyLiquidity.selector; // Selector of this contract's function
     }
 
     /**
      * @notice Hook called after adding liquidity to a pool
-     * @dev Updated for Phase 3 to handle internal operations like repaying
+     * @dev Overrides internal function from Spot.
      */
     function _afterAddLiquidity(
         address sender,
@@ -250,15 +254,15 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) internal override returns (bytes4, BalanceDelta) {
+    ) internal override(Spot) virtual returns (bytes4, BalanceDelta) {
         PoolId poolId = key.toId();
-
-        return (bytes4(0), BalanceDeltaLibrary.ZERO_DELTA);
+        // TODO: Add Margin-specific logic if needed
+        return (bytes4(0), BalanceDeltaLibrary.ZERO_DELTA); // Return default/no-op values
     }
 
     /**
      * @notice Hook called after removing liquidity from a pool
-     * @dev Updated for Phase 3 to handle internal operations like borrowing
+     * @dev Overrides internal function from Spot.
      */
     function _afterRemoveLiquidity(
         address sender,
@@ -267,29 +271,35 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) internal override returns (bytes4, BalanceDelta) {
+    ) internal override(Spot) virtual returns (bytes4, BalanceDelta) {
         PoolId poolId = key.toId();
-
-        return (bytes4(0), BalanceDeltaLibrary.ZERO_DELTA);
+        // TODO: Add Margin-specific logic if needed
+        return (bytes4(0), BalanceDeltaLibrary.ZERO_DELTA); // Return default/no-op values
     }
 
     /**
      * @notice Hook called before a swap.
      * @dev Accrues pool interest before the swap occurs.
+     *      Overrides function from Spot.
      */
     function beforeSwap(
         address sender,
         PoolKey calldata key,
         IPoolManager.SwapParams calldata params,
         bytes calldata hookData
-    ) external override returns (bytes4) {
+    ) external override(Spot) returns (bytes4, BeforeSwapDelta, uint24) {
         marginManager.accruePoolInterest(key.toId());
-        return Margin.beforeSwap.selector;
+        return (
+            Margin.beforeSwap.selector,
+            BeforeSwapDeltaLibrary.ZERO_DELTA,
+            uint24(dynamicFeeManager.getCurrentDynamicFee(key.toId()))
+        );
     }
 
     /**
      * @notice Hook called before donating tokens.
      * @dev Accrues pool interest before the donation occurs.
+     *      Overrides IHooks function.
      */
     function beforeDonate(
         address sender,
@@ -297,9 +307,9 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
         uint256 amount0,
         uint256 amount1,
         bytes calldata hookData
-    ) external override returns (bytes4) {
+    ) external override(IHooks) returns (bytes4) { // Override IHooks
         marginManager.accruePoolInterest(key.toId());
-        return Margin.beforeDonate.selector;
+        return Margin.beforeDonate.selector; // Selector of this contract's function
     }
 
     /**
@@ -307,7 +317,7 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
      * @param poolId The pool ID
      * @return rate The interest rate per second (scaled by PRECISION)
      */
-    function getInterestRatePerSecond(PoolId poolId) public view override returns (uint256 rate) {
+    function getInterestRatePerSecond(PoolId poolId) public view override(IMargin) returns (uint256 rate) {
         revert("Margin: Logic moved to MarginManager");
     }
 
@@ -421,6 +431,42 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
         pendingETHPayments[msg.sender] = 0;
         _safeTransferETH(msg.sender, amount); // Use internal function
         emit ETHClaimed(msg.sender, amount); // Emit the event
+    }
+
+    // --- Restored Delegating Functions --- 
+    
+    function isVaultSolvent(PoolId poolId, address user) external view override(IMargin) returns (bool) {
+        return marginManager.isVaultSolvent(poolId, user);
+    }
+    
+    function getVaultLTV(PoolId poolId, address user) external view override(IMargin) returns (uint256) {
+        return marginManager.getVaultLTV(poolId, user);
+    }
+    
+    function getPendingProtocolInterestTokens(PoolId poolId) 
+        external 
+        view 
+        override(IMargin) 
+        returns (uint256 amount0, uint256 amount1) 
+    {
+        return marginManager.getPendingProtocolInterestTokens(poolId);
+    }
+    
+    function accumulatedFees(PoolId poolId) external view override(IMargin) returns (uint256) {
+        return marginManager.accumulatedFees(poolId);
+    }
+    
+    function resetAccumulatedFees(PoolId poolId) external override(IMargin) returns (uint256 previousValue) {
+        return marginManager.resetAccumulatedFees(poolId);
+    }
+    
+    function reinvestProtocolFees(
+        PoolId poolId,
+        uint256 amount0ToWithdraw,
+        uint256 amount1ToWithdraw,
+        address recipient
+    ) external override(IMargin) returns (bool success) {
+        return marginManager.reinvestProtocolFees(poolId, amount0ToWithdraw, amount1ToWithdraw, recipient);
     }
 
     // --- Internal Helper Functions ---

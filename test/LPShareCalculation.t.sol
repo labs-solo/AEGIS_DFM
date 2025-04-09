@@ -92,7 +92,7 @@ contract MockPoolPolicy is IPoolPolicy {
 }
 
 // Harness contract to expose internal Margin functions for direct testing
-contract MarginHarness is Margin {
+abstract contract MarginHarness is Margin {
     using Hooks for IHooks; // Still needed internally if Margin uses it
 
     constructor(

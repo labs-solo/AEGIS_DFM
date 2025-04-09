@@ -40,11 +40,11 @@ interface IMarginManager {
     function marginContract() external view returns (address);
     function poolManager() external view returns (IPoolManager);
     function liquidityManager() external view returns (address);
-    function interestRateModel() external view returns (IInterestRateModel);
     function solvencyThresholdLiquidation() external view returns (uint256);
     function liquidationFee() external view returns (uint256);
     function accumulatedFees(PoolId poolId) external view returns (uint256);
     function governance() external view returns (address);
+    function interestRateModel() external view returns (IInterestRateModel);
 
     // --- State Modifying Functions ---
     function executeBatch(address user, PoolId poolId, PoolKey calldata key, IMarginData.BatchAction[] calldata actions) external;

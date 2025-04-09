@@ -24,7 +24,7 @@ remappings = [
     "v4-periphery/=lib/v4-periphery/",
     "solmate/=lib/solmate/",
     "uniswap-hooks/=lib/uniswap-hooks/", # Assuming this also follows the root pattern
-    "forge-gas-snapshot/=lib/forge-gas-snapshot/src/" # Added remapping for gas snapshot library
+    "forge-gas-snapshot/=lib/v4-periphery/lib/permit2/lib/forge-gas-snapshot/src/" # Corrected remapping for gas snapshot library
 ]
 
 # Sepolia configuration for integration testing

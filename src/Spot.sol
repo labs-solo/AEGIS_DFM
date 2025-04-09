@@ -1,38 +1,38 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import { ISpot, DepositParams, WithdrawParams } from "./interfaces/ISpot.sol";
-import { PoolId, PoolIdLibrary } from "v4-core/src/types/PoolId.sol";
+// --- V4 Core Imports (Using src) ---
+import { Hooks } from "v4-core/src/libraries/Hooks.sol";
+import { StateLibrary } from "v4-core/src/libraries/StateLibrary.sol";
+import { Currency } from "v4-core/src/types/Currency.sol";
 import { PoolKey } from "v4-core/src/types/PoolKey.sol";
-import { IPoolManager } from "v4-core/src/interfaces/IPoolManager.sol";
+import { PoolId, PoolIdLibrary } from "v4-core/src/types/PoolId.sol";
 import { BalanceDelta, BalanceDeltaLibrary } from "v4-core/src/types/BalanceDelta.sol";
-import { Currency as UniswapCurrency } from "v4-core/src/types/Currency.sol";
-import { SafeTransferLib } from "solmate/src/utils/SafeTransferLib.sol";
-import { ERC20 } from "solmate/src/tokens/ERC20.sol";
-import { IUnlockCallback } from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
+import { BeforeSwapDelta, BeforeSwapDeltaLibrary } from "v4-core/src/types/BeforeSwapDelta.sol";
+import { IPoolManager } from "v4-core/src/interfaces/IPoolManager.sol";
+import { TickMath } from "v4-core/src/libraries/TickMath.sol";
+import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
+
+// --- V4 Periphery Imports (Using Remappings) ---
+import { BaseHook } from "v4-periphery/src/utils/BaseHook.sol";
+import { IFeeReinvestmentManager } from "./interfaces/IFeeReinvestmentManager.sol";
+import { IPoolPolicy } from "./interfaces/IPoolPolicy.sol";
 import { FullRangeLiquidityManager } from "./FullRangeLiquidityManager.sol";
 import { FullRangeDynamicFeeManager } from "./FullRangeDynamicFeeManager.sol";
-import { FullRangeUtils } from "./utils/FullRangeUtils.sol";
-import { Errors } from "./errors/Errors.sol";
-import { TickMath } from "v4-core/src/libraries/TickMath.sol";
-import { Hooks } from "v4-core/src/libraries/Hooks.sol";
-import { BeforeSwapDelta, BeforeSwapDeltaLibrary } from "v4-core/src/types/BeforeSwapDelta.sol";
-import { IPoolPolicy } from "./interfaces/IPoolPolicy.sol";
-import { IFeeReinvestmentManager } from "./interfaces/IFeeReinvestmentManager.sol";
-import { ReentrancyGuard } from "solmate/src/utils/ReentrancyGuard.sol";
-import { StateLibrary } from "v4-core/src/libraries/StateLibrary.sol";
-import { PoolTokenIdUtils } from "./utils/PoolTokenIdUtils.sol";
-import { ISpotHooks } from "./interfaces/ISpotHooks.sol";
-import { Currency, CurrencyLibrary } from "v4-core/src/types/Currency.sol";
-import { IERC20Minimal } from "v4-core/src/interfaces/external/IERC20Minimal.sol";
-import { TruncGeoOracleMulti } from "./TruncGeoOracleMulti.sol";
-import { IFullRangeDynamicFeeManager } from "./interfaces/IFullRangeDynamicFeeManager.sol";
-import { IFullRangeLiquidityManager } from "./interfaces/IFullRangeLiquidityManager.sol";
 import { TruncatedOracle } from "./libraries/TruncatedOracle.sol";
-import { BaseHook } from "lib/v4-periphery/src/utils/BaseHook.sol";
-import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
-import { SafeCast } from "v4-core/src/libraries/SafeCast.sol";
-import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
+import { TruncGeoOracleMulti } from "./oracle/TruncGeoOracleMulti.sol";
+
+// --- OZ Imports (Using Remappings) ---
+import { ERC20 } from "solmate/src/tokens/ERC20.sol";
+import { SafeTransferLib } from "solmate/src/utils/SafeTransferLib.sol";
+import { ReentrancyGuard } from "solmate/src/utils/ReentrancyGuard.sol";
+
+// --- Project Imports ---
+import { ISpot, DepositParams, WithdrawParams } from "./interfaces/ISpot.sol";
+import { ISpotHooks } from "./interfaces/ISpotHooks.sol";
+import { IUnlockCallback } from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
+import { Errors } from "./errors/Errors.sol";
+import { ITruncGeoOracleMulti } from "./interfaces/ITruncGeoOracleMulti.sol";
 
 /**
  * @title Spot
@@ -42,6 +42,7 @@ import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
  */
 contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     using PoolIdLibrary for PoolKey;
+    using BalanceDeltaLibrary for BalanceDelta;
         
     // Immutable core contracts and managers
     IPoolPolicy public immutable policyManager;
@@ -140,7 +141,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     receive() external payable {}
 
     /**
-     * @notice Get hook permissions for Uniswap V4
+     * @notice Override `getHookPermissions` to specify which hooks `Spot` uses
      */
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
@@ -154,9 +155,10 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
             afterSwap: true,
             beforeDonate: false,
             afterDonate: false,
-            beforeSwapReturnDelta: false,
-            afterSwapReturnDelta: false,
-            afterAddLiquidityReturnDelta: false,
+            // Note: ISpotHooks requires these "returnDelta" hooks to be implemented (can be stubs)
+            beforeSwapReturnDelta: true, 
+            afterSwapReturnDelta: true,
+            afterAddLiquidityReturnDelta: true,
             afterRemoveLiquidityReturnDelta: true
         });
     }
@@ -275,6 +277,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         IFeeReinvestmentManager.OperationType opType,
         BalanceDelta feesAccrued
     ) internal {
+        // Restore fee processing logic
         // Skip if no fees to process
         if (feesAccrued.amount0() <= 0 && feesAccrued.amount1() <= 0) return;
         
@@ -385,204 +388,171 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
      * @notice Callback function for Uniswap V4 unlock pattern
      * @dev Called by the pool manager during deposit/withdraw operations
      */
-    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+    function unlockCallback(bytes calldata data) external override(IUnlockCallback) returns (bytes memory) {
         CallbackData memory cbData = abi.decode(data, (CallbackData));
-        PoolKey memory key = poolKeys[cbData.poolId];
+        PoolKey memory key = getPoolKey(cbData.poolId);
 
         if (cbData.callbackType == 1) {
-            // DEPOSIT
             IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
                 tickLower: TickMath.minUsableTick(key.tickSpacing),
                 tickUpper: TickMath.maxUsableTick(key.tickSpacing),
                 liquidityDelta: int256(uint256(cbData.shares)),
                 salt: bytes32(0)
             });
-            
             (BalanceDelta delta, ) = poolManager.modifyLiquidity(key, params, "");
-            liquidityManager.handlePoolDelta(key, delta);
-            
             return abi.encode(delta);
         } else if (cbData.callbackType == 2) {
-            // WITHDRAW
             IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
                 tickLower: TickMath.minUsableTick(key.tickSpacing),
                 tickUpper: TickMath.maxUsableTick(key.tickSpacing),
                 liquidityDelta: -int256(uint256(cbData.shares)),
                 salt: bytes32(0)
             });
-            
             (BalanceDelta delta, ) = poolManager.modifyLiquidity(key, params, "");
-            liquidityManager.handlePoolDelta(key, delta);
-            
             return abi.encode(delta);
         }
-        
-        return abi.encode("Unknown callback type");
+        revert("Unknown callback type");
     }
 
     /**
-     * @notice After initialize hook implementation
      * @dev Sets up the pool data and initializes the liquidity manager
+     * @notice Overrides IHooks function, calls internal logic.
      */
-    function _afterInitialize(
-        address sender, 
-        PoolKey calldata key, 
-        uint160 sqrtPriceX96, 
-        int24 tick
-    ) internal virtual override returns (bytes4) {
-        _afterInitializeInternal(sender, key, sqrtPriceX96, tick);
-        return this.afterInitialize.selector;
-    }
-
-    /**
-     * @notice Internal function containing the core logic for afterInitialize
-     * @dev Moved logic here to allow overriding contracts to call it without `super` on an external function.
-     */
-    function _afterInitializeInternal(
+    function afterInitialize(
         address sender,
         PoolKey calldata key,
         uint160 sqrtPriceX96,
         int24 tick
-    ) internal virtual {
+    ) external override(IHooks) returns (bytes4) {
+        return _afterInitialize(sender, key, sqrtPriceX96, tick);
+    }
+
+    /**
+     * @notice Internal function containing the core logic for afterInitialize
+     * @dev Overrides the internal virtual function from BaseHook.
+     */
+    function _afterInitialize(
+        address sender,
+        PoolKey calldata key,
+        uint160 sqrtPriceX96,
+        int24 tick
+    ) internal virtual override(BaseHook) returns (bytes4) {
         PoolId _poolId = key.toId();
 
-        // Validation
-        if (poolData[_poolId].initialized) {
-            revert Errors.PoolAlreadyInitialized(_poolId);
-        }
+        if (poolData[_poolId].initialized) revert Errors.PoolAlreadyInitialized(_poolId);
+        if (sqrtPriceX96 == 0) revert Errors.InvalidPrice(sqrtPriceX96);
 
-        if (sqrtPriceX96 == 0) {
-            revert Errors.InvalidPrice(sqrtPriceX96);
-        }
-
-        // Store pool data
         poolData[_poolId] = PoolData({
             initialized: true,
             emergencyState: false,
-            tokenId: PoolTokenIdUtils.toTokenId(_poolId)
+            tokenId: uint256(PoolId.unwrap(_poolId))
         });
-
         poolKeys[_poolId] = key;
 
-        // Register pool with liquidity manager
+        if (address(liquidityManager) == address(0)) revert Errors.NotInitialized("LiquidityManager");
         liquidityManager.registerPool(_poolId, key, sqrtPriceX96);
 
-        // --- RESTORED ORACLE INITIALIZATION LOGIC --- 
-        // Enhanced security: Only initialize oracle if:
-        // 1. We're using dynamic fee flag (0x800000) OR fee is 0
-        // 2. The actual hook address matches this contract
-        // 3. Oracle is set up
-        if ((key.fee == 0x800000 || key.fee == 0) &&
-            address(key.hooks) == address(this) &&
-            address(truncGeoOracle) != address(0)) {
-
-            // Get max tick move from policy if available, otherwise use TruncatedOracle's constant
-            int24 maxAbsTickMove = TruncatedOracle.MAX_ABS_TICK_MOVE; // Default from library
-
-            int24 scalingFactor = policyManager.getTickScalingFactor();
-            // Dynamic calculation based on policy scaling factor
-            if (scalingFactor > 0) {
-                // Calculate dynamic maxAbsTickMove based on policy
-                // Makes use of policy manager rather than hardcoding
-                // Add safety check for scalingFactor > 3000
-                 if (uint256(uint24(scalingFactor)) > 3000) { 
-                     maxAbsTickMove = 1; 
-                 } else {
-                    maxAbsTickMove = int24(uint24(3000 / uint256(uint24(scalingFactor))));
-                 }
-            } else {
-                // Handle case where scalingFactor is somehow <= 0, use default
-                 maxAbsTickMove = TruncatedOracle.MAX_ABS_TICK_MOVE;
-            }
-
-            // Initialize the oracle without try/catch
+        if (address(truncGeoOracle) != address(0) && address(key.hooks) == address(this)) {
+            int24 maxAbsTickMove = TruncatedOracle.MAX_ABS_TICK_MOVE;
             truncGeoOracle.enableOracleForPool(key, maxAbsTickMove);
             emit OracleInitialized(_poolId, tick, maxAbsTickMove);
         }
-        // --- END RESTORED BLOCK ---
 
-        // Initialize policies if required
         if (address(policyManager) != address(0)) {
             policyManager.handlePoolInitialization(_poolId, key, sqrtPriceX96, tick, address(this));
         }
 
-        // Call the internal hook for potential overrides in inheriting contracts
-        _afterPoolInitialized(_poolId, key, sqrtPriceX96, tick);
+        // Return IHooks selector
+        return IHooks.afterInitialize.selector;
     }
 
     /**
-     * @notice Implementation for beforeSwap hook
      * @dev Returns dynamic fee for the pool
+     * @notice Implements IHooks function.
      */
-    function _beforeSwap(address /*sender*/, PoolKey calldata key, IPoolManager.SwapParams calldata /*params*/, bytes calldata /*hookData*/)
-        internal
-        virtual
-        override
-        returns (bytes4, BeforeSwapDelta, uint24)
-    {
-        // Ensure dynamic fee manager has been set
-        if (address(dynamicFeeManager) == address(0)) {
-            revert Errors.NotInitialized("DynamicFeeManager");
-        }
-        
-        // Return dynamic fee and no delta
+    function beforeSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        bytes calldata hookData
+    ) external override(IHooks) virtual returns (bytes4, BeforeSwapDelta, uint24) {
+        return _beforeSwap(sender, key, params, hookData);
+    }
+
+    /**
+     * @notice Internal implementation for beforeSwap logic. Overrides BaseHook.
+     */
+    function _beforeSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        bytes calldata hookData
+    ) internal virtual override(BaseHook) returns (bytes4, BeforeSwapDelta, uint24) {
+        if (address(dynamicFeeManager) == address(0)) revert Errors.NotInitialized("DynamicFeeManager");
+
         return (
-            this.beforeSwap.selector,
+            IHooks.beforeSwap.selector, // Return IHooks selector
             BeforeSwapDeltaLibrary.ZERO_DELTA,
             uint24(dynamicFeeManager.getCurrentDynamicFee(key.toId()))
         );
     }
 
     /**
-     * @notice Implementation for afterSwap hook
-     * @dev Reverse Authorization Model: Stores oracle data locally and emits event
-     *      instead of calling into DynamicFeeManager, which eliminates validation overhead
-     *      and significantly reduces gas costs while maintaining security.
+     * @notice Implements IHooks function. Calls internal logic.
      */
-    function _afterSwap(address sender, PoolKey calldata key, IPoolManager.SwapParams calldata params, BalanceDelta delta, bytes calldata hookData)
-        internal
-        virtual
-        override
-        returns (bytes4, int128)
-    {
-        PoolId _poolId = key.toId();
-        
-        // Ensure dynamic fee manager is set before proceeding if oracle depends on it
-        // (Assuming truncGeoOracle might implicitly depend on dynamic fee setup)
-        if (address(dynamicFeeManager) == address(0)) {
-             revert Errors.NotInitialized("DynamicFeeManager");
-        }
-
-        // Security: Only process pools that are initialized in this contract
-        // This prevents oracle updates for unrelated pools
-        if (poolData[_poolId].initialized && address(truncGeoOracle) != address(0)) {
-            // Additional security: Verify the hook in the key is this contract
-            // This ensures we're updating the oracle for the correct pool
-            if (address(key.hooks) != address(this)) {
-                revert Errors.InvalidPoolKey();
-            }
-            
-            // Get current tick from pool manager
-            (, int24 currentTick, , ) = StateLibrary.getSlot0(poolManager, _poolId);
-            
-            // Gas optimization: Only attempt oracle update when needed
-            bool shouldUpdateOracle = truncGeoOracle.shouldUpdateOracle(_poolId);
-            
-            if (shouldUpdateOracle) {
-                // Update the oracle through TruncGeoOracleMulti without try/catch
-                // If this fails, the entire transaction will revert
-                truncGeoOracle.updateObservation(key);
-                emit OracleUpdated(_poolId, currentTick, uint32(block.timestamp));
-            }
-        }
-        
-        return (this.afterSwap.selector, 0);
+    function afterSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external override(IHooks) returns (bytes4, int128) {
+        return _afterSwap(sender, key, params, delta, hookData);
     }
 
     /**
-     * @notice After Add Liquidity hook
-     * @dev Reverse Authorization Model: Only handles fee processing logic directly
-     *      to reduce gas and remove DynamicFeeManager dependency.
+     * @notice Internal function containing the core logic for afterSwap. Overrides BaseHook.
+     */
+    function _afterSwap(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.SwapParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) internal virtual override(BaseHook) returns (bytes4, int128) {
+        PoolId _poolId = key.toId();
+
+        if (poolData[_poolId].initialized && address(truncGeoOracle) != address(0)) {
+            if (address(key.hooks) != address(this)) revert Errors.InvalidPoolKey();
+
+            (, int24 currentTick, , ) = StateLibrary.getSlot0(poolManager, _poolId);
+
+            bool shouldUpdateOracle = ITruncGeoOracleMulti(address(truncGeoOracle)).shouldUpdateOracle(_poolId);
+            if (shouldUpdateOracle) {
+                 truncGeoOracle.updateObservation(key);
+                 emit OracleUpdated(_poolId, currentTick, uint32(block.timestamp));
+            }
+        }
+        // Return IHooks selector and 0 kiss fee
+        return (IHooks.afterSwap.selector, 0);
+    }
+
+    /**
+     * @notice Implements IHooks function. Calls internal logic.
+     */
+    function afterAddLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external override(IHooks) returns (bytes4, BalanceDelta) {
+        return _afterAddLiquidity(sender, key, params, delta, feesAccrued, hookData);
+    }
+
+    /**
+     * @notice Internal function containing the core logic for afterAddLiquidity. Overrides BaseHook.
      */
     function _afterAddLiquidity(
         address sender,
@@ -591,16 +561,29 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) internal virtual override returns (bytes4, BalanceDelta) {
+    ) internal virtual override(BaseHook) returns (bytes4, BalanceDelta) {
         PoolId _poolId = key.toId();
-        // Reserves are calculated on demand, no need to update storage
-        return (this.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+
+        // Return IHooks selector and zero delta hook fee adjustment
+        return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     /**
-     * @notice After Remove Liquidity hook
-     * @dev Reverse Authorization Model: Only handles fee processing logic directly
-     *      to reduce gas and remove DynamicFeeManager dependency.
+     * @notice Implements IHooks function. Calls internal logic.
+     */
+    function afterRemoveLiquidity(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        BalanceDelta feesAccrued,
+        bytes calldata hookData
+    ) external override(IHooks) returns (bytes4, BalanceDelta) {
+        return _afterRemoveLiquidity(sender, key, params, delta, feesAccrued, hookData);
+    }
+
+     /**
+     * @notice Internal function containing the core logic for afterRemoveLiquidity. Overrides BaseHook.
      */
     function _afterRemoveLiquidity(
         address sender,
@@ -609,29 +592,35 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) internal virtual override returns (bytes4, BalanceDelta) {
+    ) internal virtual override(BaseHook) returns (bytes4, BalanceDelta) {
         PoolId _poolId = key.toId();
-        // Track fees reinvestment using the shared method
         _processRemoveLiquidityFees(_poolId, feesAccrued);
-        
-        return (this.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+
+        // Return IHooks selector and zero delta hook fee adjustment
+        return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     /**
-     * @notice Placeholder for beforeSwapReturnDelta hook (required by ISpotHooks)
+     * @notice Implementation for beforeSwapReturnDelta hook (required by ISpotHooks)
+     * @dev Calls the internal _beforeSwap logic and returns the delta (which is zero for Spot)
      */
     function beforeSwapReturnDelta(
         address sender,
         PoolKey calldata key,
         IPoolManager.SwapParams calldata params,
         bytes calldata hookData
-    ) external virtual override returns (bytes4, BeforeSwapDelta) {
-        // Return bytes4(0) as the hook is not implemented/used in base Spot
-        return (bytes4(0), BeforeSwapDeltaLibrary.ZERO_DELTA);
+    ) external override(ISpotHooks) returns (bytes4, BeforeSwapDelta) {
+        (, BeforeSwapDelta delta, ) = _beforeSwap(sender, key, params, hookData);
+
+        return (
+            ISpotHooks.beforeSwapReturnDelta.selector,
+            delta
+        );
     }
 
     /**
-     * @notice Placeholder for afterSwapReturnDelta hook (not implemented)
+     * @notice Implementation for afterSwapReturnDelta hook (required by ISpotHooks)
+     * @dev Calls internal _afterSwap logic.
      */
     function afterSwapReturnDelta(
         address sender,
@@ -639,13 +628,15 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         IPoolManager.SwapParams calldata params,
         BalanceDelta delta,
         bytes calldata hookData
-    ) external virtual override returns (bytes4, BalanceDelta) {
+    ) external override(ISpotHooks) returns (bytes4, BalanceDelta) {
+        _afterSwap(sender, key, params, delta, hookData);
+
         return (ISpotHooks.afterSwapReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     /**
-     * @notice Placeholder for afterRemoveLiquidityReturnDelta hook
-     * @dev Processes fees similar to afterRemoveLiquidity
+     * @notice Implementation for afterRemoveLiquidityReturnDelta hook (required by ISpotHooks)
+     * @dev Calls internal _afterRemoveLiquidity logic.
      */
     function afterRemoveLiquidityReturnDelta(
         address sender,
@@ -654,58 +645,45 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
-    ) external virtual override returns (bytes4, BalanceDelta) {
-        PoolId _poolId = key.toId();
-        // Track fees reinvestment using the shared method
-        _processRemoveLiquidityFees(_poolId, feesAccrued);
-        
+    ) external override(ISpotHooks) returns (bytes4, BalanceDelta) {
+        _afterRemoveLiquidity(sender, key, params, delta, feesAccrued, hookData);
+
         return (ISpotHooks.afterRemoveLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
     
     /**
-     * @notice Internal helper to process fees after liquidity removal
-     * @param _poolId The ID of the pool
-     * @param feesAccrued The fees accrued during the operation
+     * @notice Implementation for afterAddLiquidityReturnDelta hook (required by ISpotHooks)
+     * @dev Calls internal _afterAddLiquidity logic.
      */
-    function _processRemoveLiquidityFees(PoolId _poolId, BalanceDelta feesAccrued) internal {
-        // Track fees reinvestment
-        if (poolData[_poolId].initialized) {
-            // Process fees if any
-            if (feesAccrued.amount0() != 0 || feesAccrued.amount1() != 0) {
-                _processFees(_poolId, IFeeReinvestmentManager.OperationType.WITHDRAWAL, feesAccrued);
-            }
-        }
-    }
+    function afterAddLiquidityReturnDelta(
+        address sender,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        BalanceDelta delta,
+        bytes calldata hookData
+    ) external override(ISpotHooks) returns (bytes4, BalanceDelta) {
+        _afterAddLiquidity(sender, key, params, delta, BalanceDeltaLibrary.ZERO_DELTA, hookData);
 
-    /**
-     * @notice Placeholder for afterAddLiquidityReturnDelta hook (not implemented)
-     */
-    function afterAddLiquidityReturnDelta(address sender, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata params, BalanceDelta delta, bytes calldata hookData)
-        external
-        virtual
-        override
-        returns (bytes4, BalanceDelta)
-    {
-        // If this is a self-call from unlockCallback, process fees if needed
-        PoolId _poolId = key.toId();
-        if (poolData[_poolId].initialized) {
-            // Process fees if any
-            _processFees(_poolId, IFeeReinvestmentManager.OperationType.DEPOSIT, BalanceDeltaLibrary.ZERO_DELTA);
-        }
-        
         return (ISpotHooks.afterAddLiquidityReturnDelta.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     /**
-     * @notice Internal function called after a pool is initialized.
-     * @param _poolId The pool ID
-     * @param key PoolKey struct
-     * @param sqrtPriceX96 Initial price
-     * @param tick Initial tick
+     * @notice Internal helper to process fees after liquidity removal
      */
-    function _afterPoolInitialized(PoolId _poolId, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick) internal virtual {
-        // Placeholder for potential logic in inheriting contracts
-        // No base implementation needed here beyond what _afterInitializeInternal does
+    function _processRemoveLiquidityFees(PoolId _poolId, BalanceDelta feesAccrued) internal {
+        if (poolData[_poolId].initialized) {
+            if ((feesAccrued.amount0() != 0 || feesAccrued.amount1() != 0) && address(policyManager) != address(0)) {
+                 address reinvestPolicy = policyManager.getPolicy(_poolId, IPoolPolicy.PolicyType.REINVESTMENT);
+                 if (reinvestPolicy != address(0)) {
+                     (bool success, uint256 collected0, uint256 collected1) = IFeeReinvestmentManager(reinvestPolicy).collectFees(_poolId, IFeeReinvestmentManager.OperationType.WITHDRAWAL);
+                     if (success) {
+                         emit ReinvestmentSuccess(_poolId, collected0, collected1);
+                     } else {
+                         emit FeeExtractionFailed(_poolId, "Reinvestment manager returned false");
+                     }
+                 }
+            }
+        }
     }
 
     /**
@@ -715,20 +693,16 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
      * @return blockTimestamp The block timestamp when the tick was last updated
      */
     function getOracleData(PoolId _poolId) external view returns (int24 tick, uint32 blockTimestamp) {
-        // Check if oracle is set
         if (address(truncGeoOracle) == address(0)) {
             return (oracleTicks[_poolId], oracleBlocks[_poolId]);
         }
         
-        // Get data directly from oracle - this never reverts even if pool isn't initialized
-        (uint32 timestamp, int24 observedTick, , ) = truncGeoOracle.getLastObservation(_poolId);
+        (uint32 timestamp, int24 observedTick, , ) = ITruncGeoOracleMulti(address(truncGeoOracle)).getLastObservation(_poolId);
         
-        // If we get valid data, return it
         if (timestamp > 0) {
             return (observedTick, timestamp);
         }
         
-        // Otherwise fall back to local storage
         return (oracleTicks[_poolId], oracleBlocks[_poolId]);
     }
 
@@ -742,14 +716,12 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         truncGeoOracle = TruncGeoOracleMulti(_oracleAddress);
     }
 
-    // NEW FUNCTION: Setter for Dynamic Fee Manager
     /**
      * @notice Sets the dynamic fee manager address after deployment.
      * @dev Breaks circular dependency during initialization. Can only be called by governance.
      * @param _dynamicFeeManager The address of the deployed dynamic fee manager.
      */
     function setDynamicFeeManager(FullRangeDynamicFeeManager _dynamicFeeManager) external onlyGovernance {
-        // Prevent setting if already initialized
         if (address(dynamicFeeManager) != address(0)) revert Errors.AlreadyInitialized("DynamicFeeManager");
         if (address(_dynamicFeeManager) == address(0)) revert Errors.ZeroAddress();
         

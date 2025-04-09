@@ -3,7 +3,8 @@ pragma solidity 0.8.26;
 
 import { FullMath } from "v4-core/src/libraries/FullMath.sol";
 import { MathUtils } from "./MathUtils.sol"; // Assuming MathUtils is in the same directory
-import { IMargin } from "../interfaces/IMargin.sol"; // Import IMargin for Vault struct
+// import { IMargin } from "../interfaces/IMargin.sol"; // No longer needed just for Vault
+import { IMarginData } from "../interfaces/IMarginData.sol"; // Import IMarginData directly for Vault struct
 
 /**
  * @title SolvencyUtils
@@ -79,7 +80,7 @@ library SolvencyUtils {
      * @return currentDebtValue The debt value including accrued interest.
      */
     function calculateCurrentDebtValue(
-        IMargin.Vault memory vault,
+        IMarginData.Vault memory vault, // Changed from IMargin.Vault
         uint256 interestMultiplier,
         uint256 precision
     ) internal pure returns (uint256 currentDebtValue) {
@@ -107,7 +108,7 @@ library SolvencyUtils {
      * @return True if solvent, false otherwise.
      */
     function checkVaultSolvency(
-        IMargin.Vault memory vault,
+        IMarginData.Vault memory vault, // Changed from IMargin.Vault
         uint256 reserve0,
         uint256 reserve1,
         uint128 totalLiquidity,
@@ -143,7 +144,7 @@ library SolvencyUtils {
      * @return ltv LTV ratio scaled by precision.
      */
     function computeVaultLTV(
-        IMargin.Vault memory vault,
+        IMarginData.Vault memory vault, // Changed from IMargin.Vault
         uint256 reserve0,
         uint256 reserve1,
         uint128 totalLiquidity,

@@ -40,8 +40,9 @@ contract MarginManager is IMarginManager {
 
     /**
      * @notice Maps PoolId -> User Address -> User's Vault state.
+     * @dev Made private to avoid conflict with explicit getter
      */
-    mapping(PoolId => mapping(address => IMarginData.Vault)) public override vaults;
+    mapping(PoolId => mapping(address => IMarginData.Vault)) private _vaults;
 
     /**
      * @notice Maps PoolId -> Total amount of borrowed/rented liquidity in shares.
@@ -175,9 +176,14 @@ contract MarginManager is IMarginManager {
     // View Functions (Explicit implementations not needed for public state vars)
     // =========================================================================
     // Solidity auto-generates getters for public state variables like:
-    // vaults, rentedLiquidity, interestMultiplier, lastInterestAccrualTime,
+    // rentedLiquidity, interestMultiplier, lastInterestAccrualTime,
     // marginContract, poolManager, liquidityManager, solvencyThresholdLiquidation,
     // liquidationFee, PRECISION.
+
+    // Explicit getter for vaults needed to match interface signature exactly
+    function vaults(PoolId poolId, address user) external view override(IMarginManager) returns (IMarginData.Vault memory) {
+        return _vaults[poolId][user];
+    }
 
     // Explicit getter for interestRateModel is auto-generated if public override.
 
@@ -230,7 +236,7 @@ contract MarginManager is IMarginManager {
         uint256 _rented = rentedLiquidity[poolId]; // SLOAD
 
         // Vault State (load to memory)
-        IMarginData.Vault memory vaultMem = vaults[poolId][user];
+        IMarginData.Vault memory vaultMem = _vaults[poolId][user];
         uint256 startingDebt = vaultMem.debtShares; // Store starting debt if needed later
 
         // --- Accrue Interest (using cached values where possible) --- //
@@ -264,7 +270,7 @@ contract MarginManager is IMarginManager {
         }
 
         // --- Commit Vault State --- //
-        vaults[poolId][user] = vaultMem; // Commit memory state back to storage
+        _vaults[poolId][user] = vaultMem; // Commit memory state back to private storage
     }
 
     /**
@@ -915,25 +921,13 @@ contract MarginManager is IMarginManager {
     // Internal/Hook Functions (Called by Margin.sol)
     // =========================================================================
 
-     /**
-      * @notice Initializes interest parameters for a newly initialized pool.
-      * @param poolId The ID of the pool being initialized.
-      * @dev Called by Margin contract's _afterPoolInitialized hook. Requires caller to be Margin contract.
-      */
-     function initializePoolInterest(PoolId poolId) external override onlyMarginContract {
-         // Prevent re-initialization? Check if lastInterestAccrualTime is 0?
-         // if (lastInterestAccrualTime[poolId] != 0) return; // Already initialized
-
-         interestMultiplier[poolId] = PRECISION;
-         lastInterestAccrualTime[poolId] = uint64(block.timestamp); // SafeCast not needed block.timestamp -> uint64
-         // rentedLiquidity defaults to 0
-         // Emit event? (Maybe PoolInterestInitialized)
-     }
-
     // =========================================================================
     // Events
     // =========================================================================
 
+    // These events are already defined in IMarginManager
+    // Commented out to avoid duplication
+    /*
     // Phase 1/2 Events
     event DepositCollateralProcessed(PoolId indexed poolId, address indexed user, address asset, uint256 amount);
     event WithdrawCollateralProcessed(PoolId indexed poolId, address indexed user, address indexed recipient, address asset, uint256 amount);
@@ -947,8 +941,38 @@ contract MarginManager is IMarginManager {
     event SolvencyThresholdLiquidationSet(uint256 oldThreshold, uint256 newThreshold);
     event LiquidationFeeSet(uint256 oldFee, uint256 newFee);
     event InterestRateModelSet(address oldModel, address newModel);
+    */
 
     // Potential Future Events
     // event SwapProcessed(...);
     // event LiquidationProcessed(...);
+
+    // --- Restored Placeholder Functions --- 
+    
+    function getPendingProtocolInterestTokens(PoolId poolId) 
+        external 
+        view 
+        override(IMarginManager) 
+        returns (uint256 amount0, uint256 amount1) 
+    {
+        // Placeholder implementation
+        return (0, 0);
+    }
+    
+    function reinvestProtocolFees(
+        PoolId poolId, 
+        uint256 amount0ToWithdraw, 
+        uint256 amount1ToWithdraw, 
+        address recipient
+    ) external override(IMarginManager) returns (bool success) {
+        // Placeholder implementation
+        return true;
+    }
+    
+    function resetAccumulatedFees(PoolId poolId) external override(IMarginManager) returns (uint256 processedShares) {
+        // Placeholder implementation
+        uint256 prev = accumulatedFees[poolId];
+        accumulatedFees[poolId] = 0;
+        return prev;
+    }
 }
