@@ -19,6 +19,9 @@ import {CurrencyLibrary, Currency} from "v4-core/src/types/Currency.sol";
 import {IMargin} from "../src/interfaces/IMargin.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {MockPoolPolicyManager} from "./mocks/MockPoolPolicyManager.sol";
+import {IMarginManager} from "../src/interfaces/IMarginManager.sol";
+import {MarginManager} from "../src/MarginManager.sol";
+import {IMarginData} from "../src/interfaces/IMarginData.sol";
 
 contract MarginTest is MarginTestBase {
     using PoolIdLibrary for PoolKey;
@@ -28,6 +31,7 @@ contract MarginTest is MarginTestBase {
     LinearInterestRateModel rateModel; // Real model for some tests
     MockLinearInterestRateModel mockRateModel; // Mock model for controlled tests
     MockPoolPolicyManager mockPolicyManager; // Re-add state variable
+    MarginManager marginManager; // Added from base class
     FeeReinvestmentManager feeManager; // Real fee manager
 
     // Test parameters
@@ -44,6 +48,9 @@ contract MarginTest is MarginTestBase {
     function setUp() public override {
         // Call base setup first
         MarginTestBase.setUp();
+
+        // Assign marginManager from base
+        marginManager = MarginTestBase.marginManager;
 
         // Deploy a mock Rate Model first
         mockRateModel = new MockLinearInterestRateModel();
@@ -69,7 +76,7 @@ contract MarginTest is MarginTestBase {
         console2.log("MarginTest.setUp: governance address =", governance);
         console2.log("MarginTest.setUp: fullRange.policyManager() address =", spotPolicyManager);
         console2.log("MarginTest.setUp: soloGov from test policyManager =", soloGov);
-        fullRange.setInterestRateModel(address(rateModel));
+        marginManager.setInterestRateModel(address(rateModel));
         
         // Deploy FeeManager and set proper policies
         feeManager = new FeeReinvestmentManager(
@@ -89,10 +96,6 @@ contract MarginTest is MarginTestBase {
         vm.startPrank(governance);
         // Also set the margin contract in the fee manager
         feeManager.setMarginContract(address(fullRange));
-        // Log liquidityManager address before calling setter
-        // console2.log("[MarginTest Setup Debug] liquidityManager address:", address(liquidityManager));
-        // console2.log("[MarginTest Setup Debug] feeManager address:", address(feeManager));
-        // console2.log("[MarginTest Setup Debug] governance address:", address(governance));
         feeManager.setLiquidityManager(address(liquidityManager));
         vm.stopPrank(); // Stop governance prank
 
@@ -105,20 +108,23 @@ contract MarginTest is MarginTestBase {
         vm.startPrank(lender);
         token0.approve(address(fullRange), type(uint256).max);
         token1.approve(address(fullRange), type(uint256).max);
-        fullRange.depositCollateral(poolId, initialCollateral, initialCollateral);
+        IMarginData.BatchAction[] memory depositActions = new IMarginData.BatchAction[](2);
+        depositActions[0] = createDepositAction(address(token0), initialCollateral);
+        depositActions[1] = createDepositAction(address(token1), initialCollateral);
+        fullRange.executeBatch(depositActions);
         vm.stopPrank();
     }
 
     // --- Helper --- 
     function setupMockModel() internal {
         vm.startPrank(governance);
-        fullRange.setInterestRateModel(address(mockRateModel));
+        marginManager.setInterestRateModel(address(mockRateModel));
         vm.stopPrank();
     }
 
     function restoreRealModel() internal {
          vm.startPrank(governance);
-        fullRange.setInterestRateModel(address(rateModel));
+        marginManager.setInterestRateModel(address(rateModel));
         vm.stopPrank();
     }
 
@@ -127,7 +133,7 @@ contract MarginTest is MarginTestBase {
     // --- Accrual & Fees Tests ---
 
     function test_Accrual_UpdatesMultiplier() public {
-        uint256 initialMultiplier = fullRange.interestMultiplier(poolId);
+        uint256 initialMultiplier = marginManager.interestMultiplier(poolId);
         assertEq(initialMultiplier, PRECISION, "Initial multiplier should be PRECISION");
 
         // Deposit collateral for borrower first - INCREASED COLLATERAL
@@ -135,7 +141,10 @@ contract MarginTest is MarginTestBase {
         vm.startPrank(borrower);
         token0.approve(address(fullRange), type(uint256).max);
         token1.approve(address(fullRange), type(uint256).max);
-        fullRange.depositCollateral(poolId, borrowerCollateral, borrowerCollateral);
+        IMarginData.BatchAction[] memory depositActions = new IMarginData.BatchAction[](2);
+        depositActions[0] = createDepositAction(address(token0), borrowerCollateral);
+        depositActions[1] = createDepositAction(address(token1), borrowerCollateral);
+        fullRange.executeBatch(depositActions);
         vm.stopPrank();
 
         // Advance time and block to avoid reentrancy conflicts
@@ -143,24 +152,29 @@ contract MarginTest is MarginTestBase {
 
         uint256 borrowShares = 100 * 1e18;
         vm.startPrank(borrower);
-        fullRange.borrow(poolId, borrowShares);
+        IMarginData.BatchAction[] memory borrowActions = new IMarginData.BatchAction[](1);
+        borrowActions[0] = createBorrowAction(borrowShares, borrower);
+        fullRange.executeBatch(borrowActions);
         vm.stopPrank();
 
         uint256 timeToWarp = 30 days;
         vm.warp(block.timestamp + timeToWarp);
 
-        vm.prank(lender);
-        fullRange.depositCollateral(poolId, 1, 1);
+        vm.startPrank(lender);
+        IMarginData.BatchAction[] memory triggerActions = new IMarginData.BatchAction[](2);
+        triggerActions[0] = createDepositAction(address(token0), 1);
+        triggerActions[1] = createDepositAction(address(token1), 1);
+        fullRange.executeBatch(triggerActions);
         vm.stopPrank();
 
-        uint256 finalMultiplier = fullRange.interestMultiplier(poolId);
+        uint256 finalMultiplier = marginManager.interestMultiplier(poolId);
         console2.log("Initial Multiplier:", initialMultiplier);
         console2.log("Final Multiplier:", finalMultiplier);
 
         assertTrue(finalMultiplier > initialMultiplier, "Multiplier should increase");
 
         (uint256 reserve0, uint256 reserve1, uint128 totalShares) = fullRange.getPoolReservesAndShares(poolId);
-        uint256 rentedShares = fullRange.rentedLiquidity(poolId);
+        uint256 rentedShares = marginManager.rentedLiquidity(poolId);
         uint256 utilization = rateModel.getUtilizationRate(poolId, rentedShares, totalShares);
         uint256 ratePerSecond = rateModel.getBorrowRate(poolId, utilization);
         uint256 expectedMultiplier = FullMath.mulDiv(
@@ -173,7 +187,7 @@ contract MarginTest is MarginTestBase {
     }
 
     function test_Accrual_CalculatesProtocolFees() public {
-        uint256 initialFees = fullRange.accumulatedFees(poolId);
+        uint256 initialFees = marginManager.accumulatedFees(poolId);
         assertEq(initialFees, 0, "Initial fees should be 0");
 
         // INCREASED COLLATERAL for borrower first
@@ -181,34 +195,42 @@ contract MarginTest is MarginTestBase {
         vm.startPrank(borrower);
         token0.approve(address(fullRange), type(uint256).max);
         token1.approve(address(fullRange), type(uint256).max);
-        fullRange.depositCollateral(poolId, borrowerCollateral, borrowerCollateral);
+        IMarginData.BatchAction[] memory depositActions = new IMarginData.BatchAction[](2);
+        depositActions[0] = createDepositAction(address(token0), borrowerCollateral);
+        depositActions[1] = createDepositAction(address(token1), borrowerCollateral);
+        fullRange.executeBatch(depositActions);
         vm.stopPrank();
 
         // Borrow
         uint256 borrowShares = 100 * 1e18;
         vm.startPrank(borrower);
-        fullRange.borrow(poolId, borrowShares);
+        IMarginData.BatchAction[] memory borrowActions = new IMarginData.BatchAction[](1);
+        borrowActions[0] = createBorrowAction(borrowShares, borrower);
+        fullRange.executeBatch(borrowActions);
         vm.stopPrank();
 
         uint256 timeToWarp = 60 days;
         vm.warp(block.timestamp + timeToWarp);
         
-        uint256 currentMultiplierBeforeAccrual = fullRange.interestMultiplier(poolId);
+        uint256 currentMultiplierBeforeAccrual = marginManager.interestMultiplier(poolId);
 
-        vm.prank(lender);
-        fullRange.depositCollateral(poolId, 1, 1);
+        vm.startPrank(lender);
+        IMarginData.BatchAction[] memory triggerActions = new IMarginData.BatchAction[](2);
+        triggerActions[0] = createDepositAction(address(token0), 1);
+        triggerActions[1] = createDepositAction(address(token1), 1);
+        fullRange.executeBatch(triggerActions);
         vm.stopPrank();
 
-        uint256 finalFees = fullRange.accumulatedFees(poolId);
+        uint256 finalFees = marginManager.accumulatedFees(poolId);
         console2.log("Final Accumulated Fees (Shares):", finalFees);
         assertTrue(finalFees > initialFees, "Fees should increase");
 
         (uint256 reserve0, uint256 reserve1, uint128 totalShares) = fullRange.getPoolReservesAndShares(poolId);
-        uint256 rentedShares = fullRange.rentedLiquidity(poolId); // Rented shares don't change during pure accrual
+        uint256 rentedShares = marginManager.rentedLiquidity(poolId);
         uint256 utilization = rateModel.getUtilizationRate(poolId, rentedShares, totalShares);
         uint256 ratePerSecond = rateModel.getBorrowRate(poolId, utilization);
         
-        uint256 newMultiplier = fullRange.interestMultiplier(poolId); // Multiplier after accrual
+        uint256 newMultiplier = marginManager.interestMultiplier(poolId);
         
         uint256 interestAmountShares = FullMath.mulDiv(rentedShares, newMultiplier - currentMultiplierBeforeAccrual, currentMultiplierBeforeAccrual);
         uint256 expectedFeeShares = FullMath.mulDiv(interestAmountShares, protocolFeePercentage, PRECISION);
@@ -222,25 +244,38 @@ contract MarginTest is MarginTestBase {
         vm.startPrank(borrower);
         token0.approve(address(fullRange), type(uint256).max);
         token1.approve(address(fullRange), type(uint256).max);
-        fullRange.depositCollateral(poolId, borrowerCollateral, borrowerCollateral);
+        IMarginData.BatchAction[] memory depositActions = new IMarginData.BatchAction[](2);
+        depositActions[0] = createDepositAction(address(token0), borrowerCollateral);
+        depositActions[1] = createDepositAction(address(token1), borrowerCollateral);
+        fullRange.executeBatch(depositActions);
         vm.stopPrank();
         
          // Borrow 50% of initial liquidity
-        // uint256 borrowShares = 500 * 1e18; // This needs context of total liquidity
         (,, uint128 totalLPShares) = fullRange.getPoolReservesAndShares(poolId);
         uint256 borrowShares = uint256(totalLPShares) / 2; // Borrow 50% of current total shares
 
         vm.startPrank(borrower);
-        fullRange.borrow(poolId, borrowShares);
+        IMarginData.BatchAction[] memory borrowActions = new IMarginData.BatchAction[](1);
+        borrowActions[0] = createBorrowAction(borrowShares, borrower);
+        fullRange.executeBatch(borrowActions);
         vm.stopPrank();
 
         (,, uint128 totalShares) = fullRange.getPoolReservesAndShares(poolId);
-        uint256 rentedShares = fullRange.rentedLiquidity(poolId);
+        uint256 rentedShares = marginManager.rentedLiquidity(poolId);
         uint256 utilization = rateModel.getUtilizationRate(poolId, rentedShares, totalShares);
         uint256 expectedRate = rateModel.getBorrowRate(poolId, utilization);
 
-        uint256 actualRate = fullRange.getInterestRatePerSecond(poolId);
-        assertEq(actualRate, expectedRate, "Rate mismatch");
+        uint256 initialMultiplier = marginManager.interestMultiplier(poolId);
+        vm.warp(block.timestamp + 1 hours);
+        vm.startPrank(lender);
+        IMarginData.BatchAction[] memory triggerActions = new IMarginData.BatchAction[](2);
+        triggerActions[0] = createDepositAction(address(token0), 1);
+        triggerActions[1] = createDepositAction(address(token1), 1);
+        fullRange.executeBatch(triggerActions);
+        vm.stopPrank();
+        uint256 finalMultiplier = marginManager.interestMultiplier(poolId);
+        uint256 expectedFinalMultiplier = FullMath.mulDiv(initialMultiplier, PRECISION + (expectedRate * 3600), PRECISION);
+        assertApproxEqAbs(finalMultiplier, expectedFinalMultiplier, 10, "Multiplier change mismatch based on expected rate");
     }
 
     function test_FeeManagerInteraction_GetAndResetFees() public {
@@ -250,35 +285,38 @@ contract MarginTest is MarginTestBase {
         vm.startPrank(borrower);
         token0.approve(address(fullRange), type(uint256).max);
         token1.approve(address(fullRange), type(uint256).max);
-        fullRange.depositCollateral(poolId, borrowerCollateral, borrowerCollateral);
-        // Borrow some shares
+        IMarginData.BatchAction[] memory depositActions = new IMarginData.BatchAction[](2);
+        depositActions[0] = createDepositAction(address(token0), borrowerCollateral);
+        depositActions[1] = createDepositAction(address(token1), borrowerCollateral);
+        fullRange.executeBatch(depositActions);
         uint256 borrowShares = 100 * 1e18;
-        fullRange.borrow(poolId, borrowShares);
+        IMarginData.BatchAction[] memory borrowActions = new IMarginData.BatchAction[](1);
+        borrowActions[0] = createBorrowAction(borrowShares, borrower);
+        fullRange.executeBatch(borrowActions);
         vm.stopPrank();
         // Warp time
         uint256 timeToWarp = 10 days;
         vm.warp(block.timestamp + timeToWarp);
         // Trigger accrual
-        vm.prank(lender); // Use lender to trigger accrual
-        fullRange.depositCollateral(poolId, 1, 1);
+        vm.startPrank(lender); // Use lender to trigger accrual
+        IMarginData.BatchAction[] memory triggerActions = new IMarginData.BatchAction[](2);
+        triggerActions[0] = createDepositAction(address(token0), 1);
+        triggerActions[1] = createDepositAction(address(token1), 1);
+        fullRange.executeBatch(triggerActions);
         vm.stopPrank();
         // --- End Setup ---
 
-        uint256 accumulatedFeeSharesBefore = fullRange.accumulatedFees(poolId);
-        assertTrue(accumulatedFeeSharesBefore > 0, "Fees should exist after accrual"); // Updated revert string
+        uint256 accumulatedFeeSharesBefore = marginManager.accumulatedFees(poolId);
+        assertTrue(accumulatedFeeSharesBefore > 0, "Fees should exist after accrual");
 
-        // MODIFIED: Use feeManager.triggerInterestFeeProcessing instead of directly calling resetAccumulatedFees
         vm.startPrank(authorizedReinvestor);
         bool success = feeManager.triggerInterestFeeProcessing(poolId);
         vm.stopPrank();
 
-        // MODIFIED: Check processing was successful  
         assertTrue(success, "Fee processing should succeed");
         
-        // Verify fees are actually reset to zero
-        assertEq(fullRange.accumulatedFees(poolId), 0, "Fees not zero after reset");
+        assertEq(marginManager.accumulatedFees(poolId), 0, "Fees not zero after reset");
 
-        // Verify unauthorized access is rejected
         vm.startPrank(address(0xBAD));
         vm.expectRevert(abi.encodeWithSelector(Errors.FeeReinvestNotAuthorized.selector, address(0xBAD)));
         feeManager.triggerInterestFeeProcessing(poolId);
@@ -294,14 +332,13 @@ contract MarginTest is MarginTestBase {
         uint256 collateralAmount = 5000 * 1e18;
 
         vm.startPrank(borrower);
-        // Approve before depositing collateral
         token0.approve(address(fullRange), collateralAmount);
         token1.approve(address(fullRange), collateralAmount);
         fullRange.depositCollateral(poolId, collateralAmount, collateralAmount);
         fullRange.borrow(poolId, targetBorrowedNearMax);
         vm.stopPrank();
 
-        uint256 currentBorrowed = fullRange.rentedLiquidity(poolId);
+        uint256 currentBorrowed = marginManager.rentedLiquidity(poolId);
         uint256 currentUtil = rateModel.getUtilizationRate(poolId, currentBorrowed, totalShares);
         assertTrue(currentUtil < maxUtil, "Util below max");
 
@@ -311,7 +348,9 @@ contract MarginTest is MarginTestBase {
 
         vm.startPrank(borrower);
         vm.expectRevert(abi.encodeWithSelector(Errors.MaxPoolUtilizationExceeded.selector, finalUtil, maxUtil));
-        fullRange.borrow(poolId, sharesToExceedLimit);
+        IMarginData.BatchAction[] memory borrowActions = new IMarginData.BatchAction[](1);
+        borrowActions[0] = createBorrowAction(sharesToExceedLimit, borrower);
+        fullRange.executeBatch(borrowActions);
         vm.stopPrank();
     }
 
@@ -322,14 +361,13 @@ contract MarginTest is MarginTestBase {
         uint256 collateralAmount = 5000 * 1e18;
 
         vm.startPrank(borrower);
-        // Approve before depositing collateral
         token0.approve(address(fullRange), collateralAmount);
         token1.approve(address(fullRange), collateralAmount);
         fullRange.depositCollateral(poolId, collateralAmount, collateralAmount);
         fullRange.borrow(poolId, targetBorrowedAtMax);
         vm.stopPrank();
 
-        uint256 currentBorrowed = fullRange.rentedLiquidity(poolId);
+        uint256 currentBorrowed = marginManager.rentedLiquidity(poolId);
         uint256 currentUtil = rateModel.getUtilizationRate(poolId, currentBorrowed, totalShares);
 
         assertApproxEqAbs(currentUtil, maxUtil, 1, "Util not at max");
@@ -343,36 +381,43 @@ contract MarginTest is MarginTestBase {
         vm.startPrank(borrower);
         token0.approve(address(fullRange), type(uint256).max);
         token1.approve(address(fullRange), type(uint256).max);
-        fullRange.depositCollateral(poolId, borrowerCollateral, borrowerCollateral);
+        IMarginData.BatchAction[] memory depositActions = new IMarginData.BatchAction[](2);
+        depositActions[0] = createDepositAction(address(token0), borrowerCollateral);
+        depositActions[1] = createDepositAction(address(token1), borrowerCollateral);
+        fullRange.executeBatch(depositActions);
         vm.stopPrank();
 
         // --- Accrue some fees first ---
         uint256 borrowShares = 100 * 1e18;
         vm.startPrank(borrower);
-        fullRange.borrow(poolId, borrowShares);
+        IMarginData.BatchAction[] memory borrowActions = new IMarginData.BatchAction[](1);
+        borrowActions[0] = createBorrowAction(borrowShares, borrower);
+        fullRange.executeBatch(borrowActions);
         vm.stopPrank();
         uint256 timeToWarp = 10 days;
         vm.warp(block.timestamp + timeToWarp);
         vm.prank(lender);
-        fullRange.depositCollateral(poolId, 1, 1);
+        IMarginData.BatchAction[] memory triggerActions = new IMarginData.BatchAction[](2);
+        triggerActions[0] = createDepositAction(address(token0), 1);
+        triggerActions[1] = createDepositAction(address(token1), 1);
+        fullRange.executeBatch(triggerActions);
         vm.stopPrank();
 
-        uint256 accumulatedFeeSharesBefore = fullRange.accumulatedFees(poolId);
+        uint256 accumulatedFeeSharesBefore = marginManager.accumulatedFees(poolId);
         assertTrue(accumulatedFeeSharesBefore > 0, "Fees should exist");
 
         vm.startPrank(authorizedReinvestor);
-        // Call the function and check its return value
         bool success = feeManager.triggerInterestFeeProcessing(poolId);
         vm.stopPrank();
 
         assertTrue(success, "Trigger should succeed");
 
-        uint256 accumulatedFeeSharesAfter = fullRange.accumulatedFees(poolId);
+        uint256 accumulatedFeeSharesAfter = marginManager.accumulatedFees(poolId);
         assertEq(accumulatedFeeSharesAfter, 0, "Fees not zero after trigger");
     }
 
     function test_FeeManager_TriggerInterestFeeProcessing_NoFees() public {
-         uint256 accumulatedFeeSharesBefore = fullRange.accumulatedFees(poolId);
+         uint256 accumulatedFeeSharesBefore = marginManager.accumulatedFees(poolId);
          assertEq(accumulatedFeeSharesBefore, 0, "Fees not zero initially");
 
         vm.startPrank(authorizedReinvestor);
@@ -380,7 +425,7 @@ contract MarginTest is MarginTestBase {
         vm.stopPrank();
 
         assertTrue(success, "Trigger should succeed even if no fees");
-        uint256 accumulatedFeeSharesAfter = fullRange.accumulatedFees(poolId);
+        uint256 accumulatedFeeSharesAfter = marginManager.accumulatedFees(poolId);
         assertEq(accumulatedFeeSharesAfter, 0, "Fees not zero after trigger (no fees)");
     }
 
@@ -392,18 +437,15 @@ contract MarginTest is MarginTestBase {
     }
 
     function test_Revert_FeeManager_TriggerInterestFeeProcessing_MarginNotSet() public {
-        // Create a new fee manager that doesn't have the margin contract set
         FeeReinvestmentManager emptyFeeManager = new FeeReinvestmentManager(
             poolManager,
-            address(fullRange),
+            address(0),
             governance,
             policyManager
         );
         
-        // Don't set the margin contract - this will cause the expected revert
-        
         vm.startPrank(authorizedReinvestor);
-        vm.expectRevert(Errors.MarginContractNotSet.selector);
+        vm.expectRevert(abi.encodeWithSelector(Errors.MarginContractNotSet.selector));
         emptyFeeManager.triggerInterestFeeProcessing(poolId);
         vm.stopPrank();
     }

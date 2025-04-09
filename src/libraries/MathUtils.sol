@@ -9,6 +9,7 @@ import {FixedPoint128} from "v4-core/src/libraries/FixedPoint128.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {LiquidityAmounts} from "v4-core/test/utils/LiquidityAmounts.sol";
 import {Errors} from "../errors/Errors.sol";
+import { SafeCast } from "v4-core/src/libraries/SafeCast.sol";
 
 /**
  * @title MathUtils
@@ -214,46 +215,38 @@ library MathUtils {
         uint256 reserve1,
         bool highPrecision
     ) internal pure returns (uint256 shares) {
-        if (reserve0 == 0 || reserve1 == 0 || totalShares == 0) 
+        // Phase 3 Implementation:
+        // Note: `totalShares` here refers to the LP shares, equivalent to liquidity in some contexts.
+        // `highPrecision` flag is ignored for now, using FullMath for safety.
+
+        if (uint128(totalShares) == 0 || (reserve0 == 0 && reserve1 == 0)) {
+            // Cannot determine value if pool is empty or has no reserves.
             return 0;
-        
-        uint256 liquidityFromToken0;
-        uint256 liquidityFromToken1;
-        
-        if (highPrecision) {
-            uint256 scaleFactor = PRECISION;
-            unchecked {
-                liquidityFromToken0 = FullMath.mulDiv(amount0, totalShares * scaleFactor, reserve0);
-                liquidityFromToken1 = FullMath.mulDiv(amount1, totalShares * scaleFactor, reserve1);
-                
-                liquidityFromToken0 = liquidityFromToken0 / scaleFactor;
-                liquidityFromToken1 = liquidityFromToken1 / scaleFactor;
-            }
-        } else {
-            // Basic calculation with overflow protection
-            if (amount0 > 0) {
-                if (amount0 > type(uint256).max / totalShares) {
-                    liquidityFromToken0 = FullMath.mulDiv(amount0, totalShares, reserve0);
-                } else {
-                    unchecked {
-                        liquidityFromToken0 = (amount0 * totalShares) / reserve0;
-                    }
-                }
-            }
-            
-            if (amount1 > 0) {
-                if (amount1 > type(uint256).max / totalShares) {
-                    liquidityFromToken1 = FullMath.mulDiv(amount1, totalShares, reserve1);
-                } else {
-                    unchecked {
-                        liquidityFromToken1 = (amount1 * totalShares) / reserve1;
-                    }
-                }
-            }
         }
-        
-        // Take the minimum to maintain price invariant
-        shares = min(liquidityFromToken0, liquidityFromToken1);
+
+        uint256 shares0 = 0;
+        if (reserve0 > 0 && amount0 > 0) {
+            // shares0 = amount0 * totalLiquidity / reserve0;
+            shares0 = FullMath.mulDiv(amount0, totalShares, reserve0);
+        }
+
+        uint256 shares1 = 0;
+        if (reserve1 > 0 && amount1 > 0) {
+            // shares1 = amount1 * totalLiquidity / reserve1;
+            shares1 = FullMath.mulDiv(amount1, totalShares, reserve1);
+        }
+
+        // If only one token amount is provided (or reserve for the other is 0, or amount is 0),
+        // return the share value calculated from that one token.
+        // If both amounts/reserves allow calculation, return the minimum value to maintain ratio.
+        if (amount0 == 0 || shares0 == 0) {
+            shares = shares1;
+        } else if (amount1 == 0 || shares1 == 0) {
+            shares = shares0;
+        } else {
+            // Return the smaller value to ensure the collateral value isn't overestimated
+            shares = shares0 < shares1 ? shares0 : shares1;
+        }
     }
     
     /**
@@ -435,56 +428,29 @@ library MathUtils {
     /**
      * @notice Calculate withdrawal amounts based on shares to burn
      * @dev Handles both standard and high-precision calculations
-     * @param totalShares The current total shares
+     * @param totalLiquidity The current total liquidity
      * @param sharesToBurn The shares to burn
      * @param reserve0 The current reserve of token0
      * @param reserve1 The current reserve of token1
-     * @param highPrecision Whether to use high-precision calculations
      * @return amount0Out The amount of token0 to withdraw
      * @return amount1Out The amount of token1 to withdraw
      */
     function computeWithdrawAmounts(
-        uint128 totalShares,
+        uint128 totalLiquidity,
         uint256 sharesToBurn,
         uint256 reserve0,
         uint256 reserve1,
-        bool highPrecision
+        bool // highPrecision - ignored in Phase 4 basic implementation
     ) internal pure returns (uint256 amount0Out, uint256 amount1Out) {
-        if (totalShares == 0 || sharesToBurn == 0) 
+        if (totalLiquidity == 0 || sharesToBurn == 0) {
             return (0, 0);
-        
-        // Ensure sharesToBurn doesn't exceed totalShares
-        if (sharesToBurn > totalShares) 
-            sharesToBurn = totalShares;
-        
-        uint256 scaleFactor = highPrecision ? PRECISION : 1;
-        
-        // Calculate output amounts with improved precision
-        amount0Out = FullMath.mulDiv(reserve0, sharesToBurn, totalShares);
-        amount1Out = FullMath.mulDiv(reserve1, sharesToBurn, totalShares);
-        
-        // Handle rounding
-        if (amount0Out == 0 && reserve0 > 0 && sharesToBurn > 0) amount0Out = 1;
-        if (amount1Out == 0 && reserve1 > 0 && sharesToBurn > 0) amount1Out = 1;
-    }
-    
-    /**
-     * @notice Calculate withdrawal amounts with standard precision
-     * @dev Backward compatibility wrapper for computeWithdrawAmounts
-     * @param totalShares The current total shares
-     * @param sharesToBurn The shares to burn
-     * @param reserve0 The current reserve of token0
-     * @param reserve1 The current reserve of token1
-     * @return amount0Out The amount of token0 to withdraw
-     * @return amount1Out The amount of token1 to withdraw
-     */
-    function computeWithdrawAmounts(
-        uint128 totalShares,
-        uint256 sharesToBurn,
-        uint256 reserve0,
-        uint256 reserve1
-    ) internal pure returns (uint256 amount0Out, uint256 amount1Out) {
-        return computeWithdrawAmounts(totalShares, sharesToBurn, reserve0, reserve1, false);
+        }
+        // Ensure sharesToBurn doesn't exceed totalLiquidity? Typically handled by caller (e.g., cannot withdraw more than balance)
+        // If sharesToBurn > totalLiquidity, this calculation might yield more tokens than reserves,
+        // but the calling function should prevent this scenario.
+
+        amount0Out = FullMath.mulDiv(sharesToBurn, reserve0, totalLiquidity);
+        amount1Out = FullMath.mulDiv(sharesToBurn, reserve1, totalLiquidity);
     }
     
     /**

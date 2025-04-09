@@ -30,6 +30,9 @@ import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
 import {HookMiner} from "../src/utils/HookMiner.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
+import {MarginManager} from "../src/MarginManager.sol"; // Added
+import {IMarginManager} from "../src/interfaces/IMarginManager.sol"; // Added
+import {IMarginData} from "../src/interfaces/IMarginData.sol"; // Added
 
 // Token mocks
 import "../src/token/MockERC20.sol";
@@ -52,6 +55,7 @@ abstract contract MarginTestBase is Test { // Renamed contract
     PoolManager public poolManager;
     PoolPolicyManager public policyManager;
     FullRangeLiquidityManager public liquidityManager;
+    MarginManager public marginManager; // Added
     FullRangeDynamicFeeManager public dynamicFeeManager;
     // Spot public fullRange; // Changed type to Margin
     Margin public fullRange; // Changed type to Margin
@@ -145,8 +149,9 @@ abstract contract MarginTestBase is Test { // Renamed contract
         vm.stopPrank();
         vm.startPrank(governance);
         console2.log("[SETUP] Deploying Margin hook..."); // Updated log
-        fullRange = _deployFullRange(); // Deploys Margin now
+        (fullRange, marginManager) = _deployFullRangeAndManager(); // Deploys Margin & Manager now
         console2.log("[SETUP] Margin Deployed at:", address(fullRange)); // Updated log
+        console2.log("[SETUP] MarginManager Deployed at:", address(marginManager)); // Added log
         
         console2.log("[SETUP] Deploying DynamicFeeManager...");
         dynamicFeeManager = new FullRangeDynamicFeeManager(
@@ -216,57 +221,163 @@ abstract contract MarginTestBase is Test { // Renamed contract
     }
 
     /**
-     * @notice Deploy the Margin hook with proper permissions encoded in the address
+     * @notice Deploy the Margin hook and its associated MarginManager
      * @dev Uses CREATE2 with address mining to ensure the hook address has the correct permission bits
-     * @return hookAddress The deployed Margin hook address with correct permissions
+     * @return marginContract The deployed Margin hook contract
+     * @return managerContract The deployed MarginManager contract
      */
-    function _deployFullRange() internal virtual returns (Margin) { // Changed return type
-        // Calculate required hook flags for MARGIN based on its *actual* permissions
-        // which now inherit Spot's modified permissions.
+    function _deployFullRangeAndManager() internal virtual returns (Margin marginContract, MarginManager managerContract) { // Changed return type
+        // Calculate required hook flags (Inherited from Spot)
         uint160 flags = uint160(
-            // Hooks.BEFORE_INITIALIZE_FLAG | // Removed due to Spot change
             Hooks.AFTER_INITIALIZE_FLAG |
-            // Hooks.BEFORE_ADD_LIQUIDITY_FLAG | // Removed due to Spot change
             Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-            // Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | // Removed due to Spot change
             Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
             Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
             Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
-            // Note: Margin itself doesn't override getHookPermissions,
-            // so it directly inherits Spot's (modified) permissions.
         );
 
-        // Prepare constructor arguments for Margin (Ensure these match Margin's constructor)
-        bytes memory constructorArgs = abi.encode(
+        // Step 1: Prepare MarginManager constructor args (needs hook address later)
+        // Placeholder for now, we'll update it after mining the hook address.
+        address placeholderHookAddress = address(0);
+        uint256 initialSolvencyThreshold = 980000000000000000; // 0.98 * 1e18
+        uint256 initialLiquidationFee = 10000000000000000; // 0.01 * 1e18
+
+        // Deploy MarginManager *first* with a placeholder hook address
+        // We can't link it properly until Margin is deployed.
+        MarginManager tempManager = new MarginManager(
+            placeholderHookAddress, // Will be updated later
+            address(poolManager),
+            address(liquidityManager),
+            governance,
+            initialSolvencyThreshold,
+            initialLiquidationFee
+        );
+        console2.log("[BaseTest] Temporarily Deployed MarginManager Addr:", address(tempManager));
+
+
+        // Step 2: Prepare Margin constructor arguments including the *temporary* manager address
+        bytes memory constructorArgsMargin = abi.encode(
             address(poolManager),
             IPoolPolicy(address(policyManager)),
-            address(liquidityManager)
+            address(liquidityManager),
+            address(tempManager) // Use the temporarily deployed manager
         );
 
-        // Find salt using the correct deployer (governance, as per the setUp prank)
+        // Step 3: Find salt for Margin deployment using the governor
         (address hookAddress, bytes32 salt) = HookMiner.find(
-            governance, // Use the actual deployer address (governance)
+            governance, // Deployer is governance as per setUp prank
             flags,
-            // Use Margin creation code
-            abi.encodePacked(type(Margin).creationCode, constructorArgs),
+            abi.encodePacked(type(Margin).creationCode, constructorArgsMargin), // Use Margin creation code + args
             bytes("")
         );
-
         console2.log("[BaseTest] Calculated Hook Addr:", hookAddress);
         console2.logBytes32(salt);
 
-        // Deploy using Margin constructor with mined salt
+        // Step 4: Deploy Margin using the mined salt and correct arguments
         Margin hookContract = new Margin{salt: salt}(
             poolManager,
             IPoolPolicy(address(policyManager)),
-            liquidityManager
+            liquidityManager,
+            address(tempManager) // Use the temporary manager address
         );
 
+        // Verification
         require(address(hookContract) == hookAddress, "MarginTestBase: Hook address mismatch");
         console2.log("[BaseTest] Deployed Hook Addr:", address(hookContract));
 
-        return hookContract;
+        // Step 5: Update the MarginManager with the *actual* Margin address
+        // Note: This requires a setter in MarginManager (setMarginContract or similar)
+        // We assume governance deploys and can call this setter.
+        // IMPORTANT: MarginManager needs a `setMarginContract(address)` function callable by governance.
+        // This function is NOT standard and needs to be added for this test setup pattern.
+        // Alternatively, re-deploy MarginManager after Margin deployment if no such setter exists.
+        // Let's assume the setter is added for this example:
+        // tempManager.setMarginContract(address(hookContract)); // This would require a setter
+        // If no setter, you'd need to deploy MarginManager *after* mining the hookAddress:
+        MarginManager finalManager = new MarginManager(
+            hookAddress, // Use the calculated hook address
+            address(poolManager),
+            address(liquidityManager),
+            governance,
+            initialSolvencyThreshold,
+            initialLiquidationFee
+        );
+        // And update Margin to point to the final manager:
+        // This requires Margin's manager address to be mutable, which contradicts non-upgradeable core.
+        // WORKAROUND: The pattern where MarginManager is deployed first with placeholder
+        // and then Margin is deployed referencing it, and *then* the MarginManager's
+        // marginContract reference is updated requires MarginManager.marginContract to be mutable or have a setter.
+        // Let's stick to the original plan assuming MarginManager can be updated.
+        // IF MarginManager.marginContract IS IMMUTABLE:
+        // 1. Calculate hookAddress via HookMiner.find as above.
+        // 2. Deploy MarginManager *using* the calculated hookAddress.
+        // 3. Deploy Margin using the same salt and referencing the now deployed MarginManager.
+
+        // Assuming MarginManager *is* updatable via a setter for test setup convenience:
+        // We need to transfer ownership or use governance prank for the setter
+        // vm.prank(governance); // Assuming governance owns MarginManager
+        // tempManager.setMarginContract(address(hookContract)); // Call the setter
+        // vm.stopPrank();
+        // managerContract = tempManager; // Return the updated manager
+
+        // Let's proceed assuming the "calculate hook, deploy manager, deploy hook" pattern
+        // as it fits better with immutability.
+
+        // Re-calculate hook address (already done above, reusing hookAddress and salt)
+
+        // Deploy MarginManager using the *calculated* hook address
+        MarginManager managerForReal = new MarginManager(
+            hookAddress, // Use the calculated hook address
+            address(poolManager),
+            address(liquidityManager),
+            governance,
+            initialSolvencyThreshold,
+            initialLiquidationFee
+        );
+        console2.log("[BaseTest] Deployed REAL MarginManager Addr:", address(managerForReal));
+
+        // Re-encode Margin constructor args with the REAL manager address
+        constructorArgsMargin = abi.encode(
+            address(poolManager),
+            IPoolPolicy(address(policyManager)),
+            address(liquidityManager),
+            address(managerForReal) // Use the REAL manager address
+        );
+
+        // Deploy Margin using the *same salt* and the REAL manager address
+        // Note: This requires the creationCode + args hash to be the same for the salt.
+        // The manager address changing means the hash changes. HookMiner needs to target
+        // the final creation code hash.
+        // Let's recalculate salt based on final args.
+
+        (address finalHookAddress, bytes32 finalSalt) = HookMiner.find(
+            governance, // Deployer is governance as per setUp prank
+            flags,
+            abi.encodePacked(type(Margin).creationCode, constructorArgsMargin), // Use FINAL args
+            bytes("")
+        );
+        console2.log("[BaseTest] Recalculated Hook Addr:", finalHookAddress);
+        console2.logBytes32(finalSalt);
+
+        // Deploy Margin using the final salt and final manager address
+        hookContract = new Margin{salt: finalSalt}(
+            poolManager,
+            IPoolPolicy(address(policyManager)),
+            liquidityManager,
+            address(managerForReal) // Use the REAL manager address
+        );
+
+        require(address(hookContract) == finalHookAddress, "MarginTestBase: FINAL Hook address mismatch");
+        console2.log("[BaseTest] Deployed FINAL Hook Addr:", address(hookContract));
+
+        marginContract = hookContract;
+        managerContract = managerForReal;
+
+        // Destroy the temporary manager if created (only if using the update pattern)
+        // vm.prank(governance);
+        // tempManager.selfDestruct(governance); // Requires selfdestruct function
+        // vm.stopPrank();
     }
 
     /**
@@ -314,27 +425,28 @@ abstract contract MarginTestBase is Test { // Renamed contract
         vm.stopPrank(); // Stop any existing prank
         vm.startPrank(account);
         
-        // Approve tokens for the LiquidityManager to transfer
-        token0.approve(address(liquidityManager), type(uint256).max);
-        token1.approve(address(liquidityManager), type(uint256).max);
+        // Approve tokens for the Margin contract to pull (transfers go to MarginManager)
+        token0.approve(address(fullRange), type(uint256).max);
+        token1.approve(address(fullRange), type(uint256).max);
         
         // ======================= ACT =======================
-        // Use the proper deposit flow to add liquidity
-        DepositParams memory params = DepositParams({
-            poolId: poolId,
-            amount0Desired: liquidity,
-            amount1Desired: liquidity,
-            amount0Min: 0,  // No slippage protection for this test
-            amount1Min: 0,  // No slippage protection for this test
-            deadline: block.timestamp + 1 hours
-        });
+        // Use the batch execution flow for deposits
+        IMarginData.BatchAction[] memory actions = new IMarginData.BatchAction[](2);
+        actions[0] = createDepositAction(address(token0), liquidity);
+        actions[1] = createDepositAction(address(token1), liquidity);
+
+        // Call executeBatch
+        fullRange.executeBatch(actions);
         
-        // Call deposit which will pull tokens and add liquidity
-        (uint256 shares, uint256 amount0, uint256 amount1) = fullRange.deposit(params);
-        console2.log("Deposit successful - shares:", shares);
-        console2.log("Amount0 used:", amount0);
-        console2.log("Amount1 used:", amount1);
-        
+        // ======================= ASSERT =======================
+        // Get vault state to verify deposit (optional here, primarily for setup)
+        IMarginData.Vault memory vault = fullRange.getVault(poolId, account);
+        // Simple check: ensure balances increased (exact amounts depend on pool state)
+        assertGt(vault.token0Balance, 0, "Vault token0 should increase");
+        assertGt(vault.token1Balance, 0, "Vault token1 should increase");
+        console2.log("Full range liquidity added via executeBatch - T0 Balance:", vault.token0Balance);
+        console2.log("Full range liquidity added via executeBatch - T1 Balance:", vault.token1Balance);
+
         vm.stopPrank();
     }
     
@@ -407,6 +519,54 @@ abstract contract MarginTestBase is Test { // Renamed contract
         return (currentTick, liquidity);
     }
     
+    // =========================================================================
+    // Batch Action Helper Functions
+    // =========================================================================
+
+    function createDepositAction(address asset, uint256 amount) internal pure returns (IMarginData.BatchAction memory) {
+        return IMarginData.BatchAction({
+            actionType: IMarginData.ActionType.DepositCollateral,
+            asset: asset,
+            amount: amount,
+            recipient: address(0), // Not used for deposit
+            flags: 0,
+            data: ""
+        });
+    }
+
+    function createWithdrawAction(address asset, uint256 amount, address recipient) internal pure returns (IMarginData.BatchAction memory) {
+        return IMarginData.BatchAction({
+            actionType: IMarginData.ActionType.WithdrawCollateral,
+            asset: asset,
+            amount: amount,
+            recipient: recipient, // Use provided recipient or defaults in Margin contract
+            flags: 0,
+            data: ""
+        });
+    }
+
+    function createBorrowAction(uint256 shares, address recipient) internal pure returns (IMarginData.BatchAction memory) {
+        return IMarginData.BatchAction({
+            actionType: IMarginData.ActionType.Borrow,
+            asset: address(0), // Not used for borrow
+            amount: shares,
+            recipient: recipient, // Use provided recipient or defaults in Margin contract
+            flags: 0,
+            data: ""
+        });
+    }
+
+    function createRepayAction(uint256 shares, bool useVaultBalance) internal pure returns (IMarginData.BatchAction memory) {
+        return IMarginData.BatchAction({
+            actionType: IMarginData.ActionType.Repay,
+            asset: address(0), // Not used for repay
+            amount: shares,
+            recipient: address(0), // Not used for repay
+            flags: useVaultBalance ? IMarginData.FLAG_USE_VAULT_BALANCE_FOR_REPAY : 0,
+            data: ""
+        });
+    }
+
     // --- Test Functions Removed (Keep only setup and helpers in base) ---
     // Removed test_readCurrentTick, test_oracleTracksSinglePriceChange, 
     // test_oracleValidation, test_setup as they should be in specific test files.

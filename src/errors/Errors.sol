@@ -195,8 +195,24 @@ library Errors {
     error InitialDepositTooSmall(uint256 minSharesRequired, uint256 calculatedShares);
 
     // <<< PHASE 4 MARGIN/FEE ERRORS >>>
-    error MaxPoolUtilizationExceeded(uint256 utilization, uint256 maxUtilization);
     error MarginContractNotSet();
     error FeeReinvestNotAuthorized(address caller);
+    error RepayAmountExceedsDebt(uint256 sharesToRepay, uint256 currentDebtShares);
+    error DepositForRepayFailed();
     // <<< END PHASE 4 MARGIN/FEE ERRORS >>>
+
+    error InvalidAsset();
+    error CallerNotMarginContract();
+    error InvalidParameter(string parameterName, uint256 value);
+
+    error MaxPoolUtilizationExceeded(uint256 currentUtilization, uint256 maxUtilization);
+    error ExpiryTooSoon(uint256 expiry, uint256 requiredTime);
+    error ExpiryTooFar(uint256 expiry, uint256 requiredTime);
+    error CannotWithdrawProtocolFees();
+    error InternalError(string message);
+
+    // Phase 5 Errors (Example - Liquidation related)
+    error NotLiquidatable(uint256 currentRatio, uint256 threshold);
+    error LiquidationTooSmall(uint256 requestedAmount, uint256 minimumAmount);
+    error InvalidLiquidationParams();
 } 

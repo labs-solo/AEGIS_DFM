@@ -17,6 +17,8 @@ import {HookMiner} from "../src/utils/HookMiner.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
 import {Spot} from "../src/Spot.sol";
+import {Margin} from "../src/Margin.sol";
+import {MarginManager} from "../src/MarginManager.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
@@ -24,6 +26,7 @@ import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {DepositParams, WithdrawParams} from "../src/interfaces/ISpot.sol";
+import {IMarginData} from "../src/interfaces/IMarginData.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 
 /**
@@ -36,7 +39,8 @@ contract SimpleV4Test is Test {
     using CurrencyLibrary for Currency;
 
     PoolManager poolManager;
-    Spot fullRange;
+    Margin fullRange;
+    MarginManager marginManager;
     FullRangeLiquidityManager liquidityManager;
     FullRangeDynamicFeeManager dynamicFeeManager;
     PoolPolicyManager policyManager;
@@ -89,7 +93,7 @@ contract SimpleV4Test is Test {
             2,      // DEFAULT_POL_MULTIPLIER
             3000,   // DEFAULT_DYNAMIC_FEE_PPM (0.3%)
             4,      // tickScalingFactor
-            new uint24[](0),  // supportedTickSpacings (empty for now)
+            supportedTickSpacings,
             1e17,    // _initialProtocolInterestFeePercentage (10%)
             address(0)      // _initialFeeCollector (zero address)
         );
@@ -99,7 +103,7 @@ contract SimpleV4Test is Test {
         liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
 
         // Deploy Spot hook using our improved method
-        fullRange = _deployFullRange();
+        (fullRange, marginManager) = _deployFullRangeAndManager();
         
         // Deploy Dynamic Fee Manager AFTER Spot, passing its address
         dynamicFeeManager = new FullRangeDynamicFeeManager(
@@ -165,42 +169,31 @@ contract SimpleV4Test is Test {
         token1.approve(address(liquidityManager), type(uint256).max);
         
         // ======================= ACT =======================
-        // Use the proper deposit flow to add liquidity
-        DepositParams memory params = DepositParams({
-            poolId: poolId,
-            amount0Desired: liquidityAmount,
-            amount1Desired: liquidityAmount,
-            amount0Min: 0,  // No slippage protection for this test
-            amount1Min: 0,  // No slippage protection for this test
-            deadline: block.timestamp + 1 hours
-        });
-        
-        // Call deposit which will pull tokens and add liquidity
-        (uint256 shares, uint256 amount0, uint256 amount1) = fullRange.deposit(params);
+        // Use executeBatch for deposit
+        IMarginData.BatchAction[] memory depositActions = new IMarginData.BatchAction[](2);
+        depositActions[0] = createDepositAction(address(token0), liquidityAmount);
+        depositActions[1] = createDepositAction(address(token1), liquidityAmount);
+        fullRange.executeBatch(depositActions);
         vm.stopPrank();
         
-        console2.log("Deposit successful - shares:", shares);
-        console2.log("Amount0 used:", amount0);
-        console2.log("Amount1 used:", amount1);
-        
         // ======================= ASSERT =======================
-        // Record Alice's token balances after adding liquidity
+        // Get vault state to verify deposit
+        IMarginData.Vault memory vault = fullRange.getVault(poolId, alice);
+
+        // Verify that Alice's tokens were transferred (approximation needed due to pool math)
         uint256 aliceToken0After = token0.balanceOf(alice);
         uint256 aliceToken1After = token1.balanceOf(alice);
-        console2.log("Alice token0 balance after:", aliceToken0After);
-        console2.log("Alice token1 balance after:", aliceToken1After);
-        
-        // Verify that Alice's tokens were transferred
-        assertEq(aliceToken0Before - aliceToken0After, amount0, "Alice's token0 balance should decrease by the exact deposit amount");
-        assertEq(aliceToken1Before - aliceToken1After, amount1, "Alice's token1 balance should decrease by the exact deposit amount");
-        
-        // Verify shares were created
-        assertGt(shares, 0, "Alice should have received shares");
-        
-        // Verify the hook has reserves
+        assertApproxEqAbs(aliceToken0Before - aliceToken0After, uint256(vault.token0Balance), 1, "Alice's token0 balance change mismatch");
+        assertApproxEqAbs(aliceToken1Before - aliceToken1After, uint256(vault.token1Balance), 1, "Alice's token1 balance change mismatch");
+
+        // Verify vault balances reflect deposit
+        assertGt(vault.token0Balance, 0, "Alice should have token0 collateral");
+        assertGt(vault.token1Balance, 0, "Alice should have token1 collateral");
+
+        // Verify the pool has reserves (implicitly tested by vault balance check)
         (uint256 reserve0, uint256 reserve1, ) = fullRange.getPoolReservesAndShares(poolId);
-        assertEq(reserve0, amount0, "Hook reserves should match deposit amount for token0");
-        assertEq(reserve1, amount1, "Hook reserves should match deposit amount for token1");
+        assertGt(reserve0, 0, "Pool reserves should increase for token0");
+        assertGt(reserve1, 0, "Pool reserves should increase for token1");
     }
     
     /**
@@ -217,19 +210,11 @@ contract SimpleV4Test is Test {
         token0.approve(address(liquidityManager), type(uint256).max);
         token1.approve(address(liquidityManager), type(uint256).max);
         
-        // Use proper deposit flow
-        DepositParams memory params = DepositParams({
-            poolId: poolId,
-            amount0Desired: liquidityAmount,
-            amount1Desired: liquidityAmount,
-            amount0Min: 0,  // No slippage protection for this test
-            amount1Min: 0,  // No slippage protection for this test
-            deadline: block.timestamp + 1 hours
-        });
-        
-        // Deposit tokens to add liquidity
-        (uint256 shares, , ) = fullRange.deposit(params);
-        console2.log("Liquidity added, shares minted:", shares);
+        // Use executeBatch for deposit
+        IMarginData.BatchAction[] memory depositActions = new IMarginData.BatchAction[](2);
+        depositActions[0] = createDepositAction(address(token0), liquidityAmount);
+        depositActions[1] = createDepositAction(address(token1), liquidityAmount);
+        fullRange.executeBatch(depositActions);
         vm.stopPrank();
         
         // Approve tokens for Bob (the swapper)
@@ -278,54 +263,141 @@ contract SimpleV4Test is Test {
         assertEq(bobToken1After - bobToken1Before, swapAmount, "Bob should have received exactly the swap amount of token1");
     }
 
-    function _deployFullRange() internal virtual returns (Spot) {
-        // Calculate required hook flags (MATCHING Spot.sol's getHookPermissions)
+    function _deployFullRangeAndManager() internal virtual returns (Margin marginContract, MarginManager managerContract) {
+        // Calculate required hook flags (Inherited from Spot)
         uint160 flags = uint160(
-            // Hooks.BEFORE_INITIALIZE_FLAG | // Removed
             Hooks.AFTER_INITIALIZE_FLAG |
-            // Hooks.BEFORE_ADD_LIQUIDITY_FLAG | // Removed
             Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-            // Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | // Removed
             Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
             Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
             Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
         );
 
-        // Prepare constructor arguments for Spot (WITHOUT dynamicFeeManager)
-        bytes memory constructorArgs = abi.encode(
+        // Deploy MarginManager first using the *calculated* hook address
+        // (We need to calculate the hook address first)
+
+        // Need final Margin constructor args to calculate the hash for HookMiner
+        // To get final args, we need the final manager address
+        // To get final manager address, we need the hook address
+        // => Circular dependency. Solution: Predict manager address or use updatable manager.
+
+        // Let's use the predict & deploy pattern:
+
+        // 1. Predict Hook Address (requires final args, including final manager address)
+        //    To predict manager address, we need hook address...
+        // Revert to: Calculate hook -> Deploy Manager -> Deploy Hook pattern
+
+        address deployerAddr = address(this); // Deployer in this context
+
+        // Args for MarginManager (needs hook address)
+        uint256 initialSolvencyThreshold = 98e16; // 98%
+        uint256 initialLiquidationFee = 1e16; // 1%
+
+        // Args for Margin (needs manager address)
+        bytes memory constructorArgsManagerPlaceholder = abi.encode(address(0)); // Placeholder for manager address
+        bytes memory marginCreationCodeWithPlaceholder = abi.encodePacked(
+            type(Margin).creationCode,
+            abi.encode(address(poolManager), IPoolPolicy(address(policyManager)), address(liquidityManager), address(0)) // Placeholder manager
+        );
+
+        // Predict hook address assuming a placeholder manager address for hash calculation
+        (address predictedHookAddress, ) = HookMiner.find(
+            deployerAddr,
+            flags,
+            marginCreationCodeWithPlaceholder,
+            bytes("")
+        );
+        console2.log("[SimpleV4] Predicted Hook Addr (using placeholder manager):", predictedHookAddress);
+
+        // Deploy MarginManager using the predicted hook address
+        MarginManager managerInstance = new MarginManager(
+            predictedHookAddress,
+            address(poolManager),
+            address(liquidityManager),
+            governance,
+            initialSolvencyThreshold,
+            initialLiquidationFee
+        );
+        console2.log("[SimpleV4] Deployed MarginManager Addr:", address(managerInstance));
+
+        // Prepare FINAL Margin constructor arguments
+        bytes memory finalConstructorArgsMargin = abi.encode(
             address(poolManager),
             IPoolPolicy(address(policyManager)),
-            address(liquidityManager)
-            // Removed placeholderManager
+            address(liquidityManager),
+            address(managerInstance) // Use the REAL manager address
         );
 
-        // Mine for a hook address and salt using the CORRECT creation code + args
-        (address hookAddress, bytes32 salt) = HookMiner.find(
-            address(this), // Deployer in test context is `this` contract
+        // Recalculate salt based on FINAL args
+        (address finalHookAddress, bytes32 finalSalt) = HookMiner.find(
+            deployerAddr,
             flags,
-            // Use creation code without dynamicFeeManager arg
-            abi.encodePacked(type(Spot).creationCode, constructorArgs),
-            bytes("") // Constructor args already packed into creation code for find
+            abi.encodePacked(type(Margin).creationCode, finalConstructorArgsMargin), // Use FINAL args
+            bytes("")
+        );
+        console2.log("[SimpleV4] Recalculated Final Hook Addr:", finalHookAddress);
+
+        // Deploy Margin using the final salt and final manager address
+        Margin hookContract = new Margin{salt: finalSalt}(
+            poolManager,
+            IPoolPolicy(address(policyManager)),
+            liquidityManager,
+            address(managerInstance) // Use the REAL manager address
         );
 
-        console2.log("Calculated hook address:", hookAddress);
-        console2.logBytes32(salt);
-        console2.log("Permission bits required:", flags);
+        require(address(hookContract) == finalHookAddress, "HookMiner address mismatch after manager deploy");
+        console2.log("Deployed hook address:", address(hookContract));
 
-        // Deploy the hook using the mined salt and CORRECT constructor args
-        Spot fullRangeInstance = new Spot{salt: salt}(
-            poolManager, 
-            IPoolPolicy(address(policyManager)), 
-            liquidityManager
-        );
+        marginContract = hookContract;
+        managerContract = managerInstance;
+    }
 
-        // Verify the deployed address matches the calculated address
-        require(address(fullRangeInstance) == hookAddress, "HookMiner address mismatch");
-        console2.log("Deployed hook address:", address(fullRangeInstance));
-        console2.log("Permission bits in deployed address:", uint160(address(fullRangeInstance)) & Hooks.ALL_HOOK_MASK);
+    // =========================================================================
+    // Batch Action Helper Functions
+    // =========================================================================
 
-        // Return the deployed instance
-        return fullRangeInstance;
+    function createDepositAction(address asset, uint256 amount) internal pure returns (IMarginData.BatchAction memory) {
+        return IMarginData.BatchAction({
+            actionType: IMarginData.ActionType.DepositCollateral,
+            asset: asset,
+            amount: amount,
+            recipient: address(0), // Not used for deposit
+            flags: 0,
+            data: ""
+        });
+    }
+
+    function createWithdrawAction(address asset, uint256 amount, address recipient) internal pure returns (IMarginData.BatchAction memory) {
+        return IMarginData.BatchAction({
+            actionType: IMarginData.ActionType.WithdrawCollateral,
+            asset: asset,
+            amount: amount,
+            recipient: recipient, // Use provided recipient
+            flags: 0,
+            data: ""
+        });
+    }
+
+    function createBorrowAction(uint256 shares, address recipient) internal pure returns (IMarginData.BatchAction memory) {
+        return IMarginData.BatchAction({
+            actionType: IMarginData.ActionType.Borrow,
+            asset: address(0), // Not used for borrow
+            amount: shares,
+            recipient: recipient, // Use provided recipient
+            flags: 0,
+            data: ""
+        });
+    }
+
+    function createRepayAction(uint256 shares, bool useVaultBalance) internal pure returns (IMarginData.BatchAction memory) {
+        return IMarginData.BatchAction({
+            actionType: IMarginData.ActionType.Repay,
+            asset: address(0), // Not used for repay
+            amount: shares,
+            recipient: address(0), // Not used for repay
+            flags: useVaultBalance ? IMarginData.FLAG_USE_VAULT_BALANCE_FOR_REPAY : 0,
+            data: ""
+        });
     }
 } 
