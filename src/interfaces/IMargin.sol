@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import { PoolId } from "v4-core/src/types/PoolId.sol";
 import { IMarginData } from "./IMarginData.sol"; // Import needed for Vault
+import { IInterestRateModel } from "./IInterestRateModel.sol"; // Add import
 
 /**
  * @title IMargin
@@ -27,7 +28,7 @@ interface IMargin {
      * @param user The user address
      * @return True if the vault is solvent
      */
-    function isVaultSolvent(PoolId poolId, address user) external view returns (bool);
+    // function isVaultSolvent(PoolId poolId, address user) external view returns (bool);
     
     /**
      * @notice Get vault loan-to-value ratio (placeholder for Phase 2)
@@ -35,7 +36,7 @@ interface IMargin {
      * @param user The user address
      * @return LTV ratio (scaled by PRECISION)
      */
-    function getVaultLTV(PoolId poolId, address user) external view returns (uint256);
+    // function getVaultLTV(PoolId poolId, address user) external view returns (uint256);
 
     /**
      * @notice View function called by FeeReinvestmentManager to check pending interest fees.
@@ -87,6 +88,8 @@ interface IMargin {
 
     // Precision constant (required by Margin.sol override)
     function PRECISION() external view returns (uint256);
+
+    function getInterestRateModel() external view returns (IInterestRateModel);
 
     // Events would typically be here or in a more specific event interface
     // event VaultUpdated(...);

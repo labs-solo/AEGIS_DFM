@@ -156,11 +156,11 @@ contract FullRangeDynamicFeeManager is Owned {
      *      - Improves security by restricting write access to contract state
      * @param poolId The pool ID to get data for
      * @return tick The current tick value
-     * @return lastUpdateBlock The block number of the last update
+     * @return blockNumber The block number the oracle data was last updated
      */
-    function getOracleData(PoolId poolId) internal view returns (int24 tick, uint32 lastUpdateBlock) {
-        // Call Spot contract to get the latest oracle data
-        return ISpot(fullRangeAddress).getOracleData(poolId);
+    function getOracleData(PoolId poolId) external view returns (int24 tick, uint32 blockNumber) {
+        // Calls the ISpot interface on the associated FullRange/Spot hook address
+        return ISpot(fullRangeAddress).getOracleData(poolId); // Don't unwrap PoolId
     }
     
     /**
@@ -171,7 +171,7 @@ contract FullRangeDynamicFeeManager is Owned {
      */
     function processOracleData(PoolId poolId) internal returns (bool tickCapped) {
         // Retrieve data from Spot
-        (int24 tick, uint32 lastBlockUpdate) = getOracleData(poolId);
+        (int24 tick, uint32 lastBlockUpdate) = this.getOracleData(poolId);
         PoolState storage pool = poolStates[poolId];
         
         int24 lastTick = pool.lastOracleTick;

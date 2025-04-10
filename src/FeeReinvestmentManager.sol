@@ -15,7 +15,7 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
-import {ReentrancyGuard} from "oz-contracts/utils/ReentrancyGuard.sol";
+import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {ISpot} from "./interfaces/ISpot.sol";
 import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
@@ -488,7 +488,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         // Get pool key
         PoolKey memory key = _getPoolKey(poolId);
         if (key.tickSpacing == 0) {
-            revert Errors.PoolNotInitialized(poolId);
+            revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
         }
         
         // Prepare callback data

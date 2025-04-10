@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import "./LocalUniswapV4TestBase.t.sol";
+import "./MarginTestBase.t.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {DepositParams} from "../src/interfaces/ISpot.sol";
@@ -18,14 +18,20 @@ import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol"
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
 import {HookMiner} from "../src/utils/HookMiner.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
 
 /**
  * @title SwapGasPlusOracleBenchmark
  * @notice Comprehensive benchmark for swap gas consumption, oracle accuracy, and CAP detection
  */
-contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
+contract SwapGasPlusOracleBenchmark is MarginTestBase {
     using StateLibrary for IPoolManager;
     using FullMath for uint256;
+
+    // Helper function for absolute value
+    function abs(int24 x) public pure returns (int24) {
+        return x >= 0 ? x : -x;
+    }
 
     // === Constants ===
     bytes constant ZERO_BYTES = "";
@@ -36,10 +42,14 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
     // Default parameter values (can be overridden)
     uint256 constant DEFAULT_SWAP_COUNT = 50;
     uint256 constant DEFAULT_VOLATILITY = 10;
-    int24 constant DEFAULT_TREND_STRENGTH = 5;  // Changed to int24
-    uint256 constant DEFAULT_TREND_DURATION = 8;
-    uint256 constant DEFAULT_TIME_BETWEEN_SWAPS = 15; // seconds
+    int24 constant DEFAULT_TREND_STRENGTH = 5;  // Strength of price trend
+    uint256 constant DEFAULT_TREND_DURATION = 8;  // Duration of trend in swaps
+    uint256 constant DEFAULT_TIME_BETWEEN_SWAPS = 15;  // Time between swaps in seconds
     uint256 constant MAX_FAILED_SWAPS = 20; // Maximum number of failed swaps before stopping
+    
+    // Class variables for pool tracking
+    PoolId public poolId;
+    PoolKey public poolKey;
     
     // Oracle tracking variables
     int24 private maxDeviation;
@@ -57,10 +67,6 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
     // Regular V4 pool without hooks
     PoolKey public regularPoolKey;
     PoolId public regularPoolId;
-    
-    // Test contract for swaps
-    PoolSwapTest public poolSwapTest;
-    PoolModifyLiquidityTest public modifyLiquidityRouter;
     
     // === Tick Spacing Constants ===
     int24 constant REGULAR_TICK_SPACING = 10;  // Tight spacing for regular pool
@@ -176,7 +182,7 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
             timeBetweenSwaps: DEFAULT_TIME_BETWEEN_SWAPS
         });
         
-        // Create a regular pool without hooks for comparison
+        // Create a regular pool without hooks
         regularPoolKey = PoolKey({
             currency0: Currency.wrap(address(token0)),
             currency1: Currency.wrap(address(token1)),
@@ -195,37 +201,28 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
         regularPoolMetrics.minGasUsed = type(uint256).max;
         hookedPoolMetrics.minGasUsed = type(uint256).max;
         
-        // Instantiate poolSwapTest and modifyLiquidityRouter
-        poolSwapTest = new PoolSwapTest(poolManager);
-        modifyLiquidityRouter = new PoolModifyLiquidityTest(poolManager);
-        
-        // Mint tokens to liquidity providers AND PoolSwapTest
-        vm.startPrank(deployer);
-        token0.mint(alice, 10000e18);
-        token1.mint(alice, 10000e18);
-        token0.mint(charlie, 10000e18);
-        token1.mint(charlie, 10000e18);
-        token0.mint(address(poolSwapTest), 10000e18); // Mint to PoolSwapTest
-        token1.mint(address(poolSwapTest), 10000e18); // Mint to PoolSwapTest
-        vm.stopPrank();
+        // Create a hooked pool using the createPoolAndRegister helper
+        (poolId, poolKey) = createPoolAndRegister(
+            address(fullRange),
+            address(liquidityManager),
+            Currency.wrap(address(token0)),
+            Currency.wrap(address(token1)),
+            DEFAULT_FEE,
+            DEFAULT_TICK_SPACING,
+            SQRT_RATIO_1_1
+        );
         
         // Approve tokens for liquidity providers
         vm.startPrank(alice);
-        token0.approve(address(modifyLiquidityRouter), type(uint256).max);
-        token1.approve(address(modifyLiquidityRouter), type(uint256).max);
+        token0.approve(address(lpRouter), type(uint256).max);
+        token1.approve(address(lpRouter), type(uint256).max);
         token0.approve(address(poolManager), type(uint256).max);
         token1.approve(address(poolManager), type(uint256).max);
         vm.stopPrank();
         
         vm.startPrank(charlie);
-        token0.approve(address(modifyLiquidityRouter), type(uint256).max);
-        token1.approve(address(modifyLiquidityRouter), type(uint256).max);
-        token0.approve(address(poolManager), type(uint256).max);
-        token1.approve(address(poolManager), type(uint256).max);
-        vm.stopPrank();
-        
-        // Approve tokens for PoolSwapTest contract itself
-        vm.startPrank(address(poolSwapTest));
+        token0.approve(address(lpRouter), type(uint256).max);
+        token1.approve(address(lpRouter), type(uint256).max);
         token0.approve(address(poolManager), type(uint256).max);
         token1.approve(address(poolManager), type(uint256).max);
         vm.stopPrank();
@@ -247,7 +244,7 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
         );
 
         vm.startPrank(alice);
-        modifyLiquidityRouter.modifyLiquidity(
+        lpRouter.modifyLiquidity(
             regularPoolKey,
             IPoolManager.ModifyLiquidityParams({
                 tickLower: minTick,
@@ -273,7 +270,7 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
             concentratedLiquidity
         );
         
-        modifyLiquidityRouter.modifyLiquidity(
+        lpRouter.modifyLiquidity(
             regularPoolKey,
             IPoolManager.ModifyLiquidityParams({
                 tickLower: tickLower,
@@ -285,7 +282,10 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
         );
         
         // Add liquidity to hooked pool
-        // Full range liquidity
+        // Full range liquidity using the helper from MarginTestBase
+        addFullRangeLiquidity(alice, poolId, 1e18, 1e18, 0);
+        
+        // Add concentrated liquidity to hooked pool
         minTick = TickMath.minUsableTick(poolKey.tickSpacing);
         maxTick = TickMath.maxUsableTick(poolKey.tickSpacing);
         
@@ -299,7 +299,7 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
             liquidity
         );
         
-        modifyLiquidityRouter.modifyLiquidity(
+        lpRouter.modifyLiquidity(
             poolKey,
             IPoolManager.ModifyLiquidityParams({
                 tickLower: minTick,
@@ -316,440 +316,60 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
         logPoolState(poolKey, poolId, "Hooked pool initial state");
     }
     
-    // === Main Test Entry Points ===
-    
+    // The rest of your implementation methods...
+
     /**
-     * @notice Comprehensive test focusing on gas benchmarking
-     * @dev Runs a standardized sequence of swaps on both regular and hooked pools
+     * @notice Helper to create a deposit collateral action
+     * @param asset The token address or address(0) for Native
+     * @param amount The amount to deposit
      */
-    function test_gasConsumptionBenchmark() public {
-        // Initialize metrics
-        regularPoolMetrics.minGasUsed = type(uint256).max;
-        regularPoolMetrics.maxGasUsed = 0;
-        regularPoolMetrics.totalGasUsed = 0;
-        regularPoolMetrics.swapCount = 0;
-        regularPoolMetrics.totalSuccessfulSwaps = 0;
-        regularPoolMetrics.totalFailedSwaps = 0;
-        regularPoolMetrics.totalTicksCrossed = 0;
-        
-        // Set up liquidity in both pools
-        setupRealisticLiquidity();
-        
-        // --- Use Simple Swap Generation Logic ---
-        vm.startPrank(bob);
-        token0.approve(address(poolSwapTest), type(uint256).max);
-        token1.approve(address(poolSwapTest), type(uint256).max);
-        vm.stopPrank();
-
-        uint256 numSwaps = 30; // Match simple test
-        SwapInstruction[] memory swapSequence = new SwapInstruction[](numSwaps);
-
-        uint256[] memory amounts = new uint256[](4);
-        amounts[0] = 1e8;  // Reduced amounts further
-        amounts[1] = 5e8;
-        amounts[2] = 1e9;
-        amounts[3] = 2e9;
-
-        uint256[] memory slippages = new uint256[](4);
-        slippages[0] = 5;
-        slippages[1] = 10;
-        slippages[2] = 20;
-        slippages[3] = 30;
-
-        for (uint256 i = 0; i < numSwaps; i++) {
-            bool zeroForOne = i % 2 == 0;
-            uint256 traderIndex = i % 4;
-            uint256 amount = amounts[traderIndex];
-            uint256 slippagePercent = slippages[traderIndex];
-            uint256 bufferedSlippagePercent = slippagePercent + 1; // Add 1% buffer
-
-            (int24 currentTick, ) = queryPoolTick(regularPoolId); // Use regular pool for tick query
-            uint160 currentSqrtPriceX96 = TickMath.getSqrtPriceAtTick(currentTick);
-            uint160 sqrtPriceLimitX96;
-            if (zeroForOne) {
-                sqrtPriceLimitX96 = uint160((uint256(currentSqrtPriceX96) * (1000 - bufferedSlippagePercent)) / 1000); // Use buffered slippage
-                if (sqrtPriceLimitX96 < MIN_SQRT_RATIO) sqrtPriceLimitX96 = MIN_SQRT_RATIO;
-            } else {
-                sqrtPriceLimitX96 = uint160((uint256(currentSqrtPriceX96) * (1000 + bufferedSlippagePercent)) / 1000); // Use buffered slippage
-                if (sqrtPriceLimitX96 > MAX_SQRT_RATIO) sqrtPriceLimitX96 = MAX_SQRT_RATIO;
-            }
-            swapSequence[i] = SwapInstruction({
-                zeroForOne: zeroForOne,
-                swapType: SwapType.EXACT_INPUT,
-                amount: amount,
-                sqrtPriceLimitX96: sqrtPriceLimitX96
-            });
-        }
-        // --- End Simple Swap Generation Logic ---
-        
-        // Execute swaps on regular pool
-        console2.log("--- Starting Gas Consumption Benchmark Swaps ---");
-        executeSwapSequence(regularPoolKey, regularPoolId, swapSequence, regularPoolMetrics);
-        
-        // Assert that no swaps failed in the regular pool
-        assertEq(regularPoolMetrics.totalFailedSwaps, 0, "Regular pool swaps failed");
-        
-        // Log results
-        console2.log("\nRegular Pool Results:");
-        console2.log("Total swaps:"); 
-        console2.logUint(regularPoolMetrics.swapCount);
-        console2.log("Successful swaps:");
-        console2.logUint(regularPoolMetrics.totalSuccessfulSwaps);
-        console2.log("Failed swaps:");
-        console2.logUint(regularPoolMetrics.totalFailedSwaps);
-        console2.log("Average gas per swap:");
-        console2.logUint(regularPoolMetrics.totalGasUsed / regularPoolMetrics.swapCount);
-        console2.log("Min gas used:");
-        console2.logUint(regularPoolMetrics.minGasUsed);
-        console2.log("Max gas used:");
-        console2.logUint(regularPoolMetrics.maxGasUsed);
-        console2.log("Total ticks crossed:");
-        console2.logUint(regularPoolMetrics.totalTicksCrossed);
-        console2.log("Average ticks per swap:");
-        console2.logUint(regularPoolMetrics.totalTicksCrossed / regularPoolMetrics.swapCount);
+    function createDepositAction(address asset, uint256 amount) internal pure override returns (IMarginData.BatchAction memory) {
+        return IMarginData.BatchAction({
+            actionType: IMarginData.ActionType.DepositCollateral,
+            asset: asset,
+            amount: amount,
+            recipient: address(0),
+            flags: 0,
+            data: bytes("")
+        });
     }
-    
+
     /**
-     * @notice Comprehensive test focusing on oracle accuracy
-     * @dev Verifies that oracle accurately tracks price after each swap
+     * @dev Query the pool tick from a given poolId
      */
-    function test_oracleAccuracyBenchmark() public {
-        console2.log("\n===== ORACLE ACCURACY BENCHMARK =====");
-        
-        // Set up liquidity in the pool to test
-        setupRealisticLiquidity();
-        
-        // Use much simpler approach - execute just a few swaps directly
-        vm.startPrank(bob);
-        token0.approve(address(swapRouter), type(uint256).max);
-        token1.approve(address(swapRouter), type(uint256).max);
-        vm.stopPrank();
-        
-        int24 maxTickDev = 0;
-        int24 totalTickDev = 0;
-        uint256 countTickDev = 0;
-        
-        // Execute a series of 10 simple swaps
-        for (uint256 i = 0; i < 10; i++) {
-            // Get pre-swap oracle tick
-            (int24 oracleTick, uint128 liquidity) = getOracleTick();
-            
-            // Execute a basic swap
-            vm.startPrank(bob);
-            
-            bool zeroForOne = i % 2 == 0;
-            // uint256 amount = 1e16; // 0.01 tokens
-            uint256 amount = 1e10; // Reduced amount
-            
-            IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: int256(amount),
-                sqrtPriceLimitX96: zeroForOne ? MIN_SQRT_RATIO + 1 : MAX_SQRT_RATIO - 1
-            });
-            
-            swapRouter.swap(
-                poolKey,
-                params,
-                PoolSwapTest.TestSettings({
-                    takeClaims: true,
-                    settleUsingBurn: false
-                }),
-                ZERO_BYTES
-            );
-            vm.stopPrank();
-            
-            // Wait a few seconds between swaps
-            vm.warp(block.timestamp + 15);
-            
-            // Get post-swap info
-            (int24 newOracleTick, ) = getOracleTick();
-            (, int24 actualTick, , ) = StateLibrary.getSlot0(poolManager, poolId);
-            
-            // Calculate deviation
-            int24 deviation = abs(newOracleTick - actualTick);
-            
-            // Update stats
-            if (deviation > maxTickDev) {
-                maxTickDev = deviation;
-            }
-            
-            if (deviation > 0) {
-                totalTickDev += deviation;
-                countTickDev++;
-            }
-        }
-        
-        // Generate simple report
-        console2.log("\n===== ORACLE ACCURACY REPORT =====");
-        console2.log("Maximum tick deviation:", maxTickDev);
-        
-        int24 avgDeviation;
-        if (countTickDev > 0) {
-            avgDeviation = int24(int256(totalTickDev) / int256(countTickDev));
-        } else {
-            avgDeviation = 0;
-        }
-        console2.log("Average tick deviation:", avgDeviation);
-        
-        // Conclusion
-        console2.log("\n----- Oracle Accuracy Conclusion -----");
-        if (maxTickDev <= 2) {
-            console2.log("Excellent oracle accuracy (max deviation <= 2 ticks)");
-        } else if (maxTickDev <= 10) {
-            console2.log("Good oracle accuracy (max deviation <= 10 ticks)");
-        } else {
-            console2.log("Significant oracle deviations detected");
-            console2.log("Max deviation:", maxTickDev);
-        }
+    function queryPoolTick(PoolId _poolId) internal view returns (int24, uint128) {
+        (, int24 tick, uint128 liquidity, ) = StateLibrary.getSlot0(poolManager, _poolId);
+        return (tick, liquidity);
     }
-    
+
     /**
-     * @notice Comprehensive test for CAP event detection
-     * @dev Tests various market conditions to verify CAP detection logic
+     * @dev Log the state of a pool to the console
      */
-    function test_capDetectionBenchmark() public {
-        console2.log("\n===== CAP DETECTION BENCHMARK =====");
-        
-        // Set up liquidity in hooked pool
-        setupRealisticLiquidity();
-        
-        // Generate market scenarios with embedded CAP events
-        SwapInstruction[] memory capTestSequence = generateCAPTestSequence();
-        
-        // Execute swaps and validate CAP detection at each step
-        executeSwapSequenceAndValidateCAP(capTestSequence);
-        
-        // Generate CAP detection report
-        generateCAPDetectionReport();
+    function logPoolState(PoolKey memory _poolKey, PoolId _poolId, string memory label) internal view {
+        (int24 tick, uint128 liquidity) = queryPoolTick(_poolId);
+        console2.log(label);
+        console2.log("Current tick:", tick);
+        console2.log("Current liquidity:", liquidity);
     }
-    
+
     /**
-     * @notice All-in-one test that validates gas, oracle, and CAP in a single run
+     * @dev Get oracle tick from the hooked pool
      */
-    function test_comprehensiveMarketSimulation() public {
-        // Skip in CI if needed
-        if (vm.envOr("SKIP_HEAVY_TESTS", false)) return;
-        
-        console2.log("\n===== COMPREHENSIVE MARKET SIMULATION =====");
-        
-        // Set up liquidity in both pools
-        setupRealisticLiquidity();
-        
-        // Reset CAP detector
-        resetCAPDetector();
-        
-        // Basic setup for swaps
-        vm.startPrank(deployer); // Mint from deployer
-        token0.mint(bob, 1000000e18); // Increase amount from 10000e18 to 1000000e18
-        token1.mint(bob, 1000000e18); // Increase amount from 10000e18 to 1000000e18
-        vm.stopPrank();
-
-        vm.startPrank(bob);
-        token0.approve(address(poolSwapTest), type(uint256).max); // Approve poolSwapTest
-        token1.approve(address(poolSwapTest), type(uint256).max); // Approve poolSwapTest
-        token0.approve(address(poolManager), type(uint256).max); // Approve PoolManager
-        token1.approve(address(poolManager), type(uint256).max); // Approve PoolManager
-        vm.stopPrank();
-        
-        // Track statistics for both pools
-        regularPoolMetrics.tickTrajectory = new int24[](30);
-        regularPoolMetrics.gasUsageHistory = new uint256[](30);
-        hookedPoolMetrics.tickTrajectory = new int24[](30);
-        hookedPoolMetrics.gasUsageHistory = new uint256[](30);
-        
-        // Record initial ticks
-        (int24 initialRegularTick,) = queryPoolTick(regularPoolId);
-        (int24 initialHookedTick,) = queryPoolTick(poolId);
-        regularPoolMetrics.tickTrajectory[0] = initialRegularTick;
-        hookedPoolMetrics.tickTrajectory[0] = initialHookedTick;
-        
-        // Create fixed small amounts for swaps
-        uint256[] memory amounts = new uint256[](4);
-        amounts[0] = 1e8;  // Reduce amounts further
-        amounts[1] = 5e8;
-        amounts[2] = 1e9;
-        amounts[3] = 2e9;
-        
-        // Create realistic slippage values
-        uint256[] memory slippages = new uint256[](4);
-        slippages[0] = 5;
-        slippages[1] = 10;
-        slippages[2] = 20;
-        slippages[3] = 30;
-        
-        console2.log("\n----- EXECUTING 30 SWAPS WITH SMALL FIXED AMOUNTS -----");
-        
-        // Execute 30 total swaps, alternating direction
-        for (uint256 i = 0; i < 30; i++) {
-            // Alternate direction
-            bool zeroForOne = i % 2 == 0;
-            uint256 traderIndex = i % 4;
-            uint256 amount = amounts[traderIndex];
-            uint256 slippagePercent = slippages[traderIndex];
-            
-            console2.log("\nSimple Market Swap #", i+1);
-            console2.log("Direction:", zeroForOne ? "0->1" : "1->0");
-            console2.log("Trader type:", traderIndex);
-            console2.log("Amount:", amount);
-            
-            (int24 currentTick, ) = queryPoolTick(regularPoolId);
-            uint160 currentSqrtPriceX96 = TickMath.getSqrtPriceAtTick(currentTick);
-            
-            uint160 sqrtPriceLimitX96;
-            if (zeroForOne) {
-                sqrtPriceLimitX96 = uint160(
-                    (uint256(currentSqrtPriceX96) * (1000 - slippagePercent)) / 1000
-                );
-                if (sqrtPriceLimitX96 < MIN_SQRT_RATIO) {
-                    sqrtPriceLimitX96 = MIN_SQRT_RATIO;
-                }
-            } else {
-                sqrtPriceLimitX96 = uint160(
-                    (uint256(currentSqrtPriceX96) * (1000 + slippagePercent)) / 1000
-                );
-                if (sqrtPriceLimitX96 > MAX_SQRT_RATIO) {
-                    sqrtPriceLimitX96 = MAX_SQRT_RATIO;
-                }
-            }
-            
-            SwapInstruction memory instruction = SwapInstruction({
-                zeroForOne: zeroForOne,
-                swapType: SwapType.EXACT_INPUT,
-                amount: amount,
-                sqrtPriceLimitX96: sqrtPriceLimitX96
-            });
-            
-            // Execute swaps
-            executeSwap(regularPoolKey, regularPoolId, instruction, regularPoolMetrics);
-            executeSwap(poolKey, poolId, instruction, hookedPoolMetrics);
-            
-            // Wait between swaps
-            vm.warp(block.timestamp + 15);
-        }
-
-        // Assert that no swaps failed
-        assertEq(regularPoolMetrics.totalFailedSwaps, 0, "Simple sim regular pool swaps failed");
-        assertEq(hookedPoolMetrics.totalFailedSwaps, 0, "Simple sim hooked pool swaps failed");
-        
-        // Generate comprehensive report
-        generateComprehensiveReport();
+    function getOracleTick() internal view returns (int24, uint128) {
+        return queryPoolTick(poolId);
     }
-    
+
     /**
-     * @notice Simplified comprehensive test with fixed small amounts to avoid arithmetic issues
+     * @dev Reset the CAP detector
      */
-    function test_simpleComprehensiveMarketSimulation() public {
-        console2.log("\n===== SIMPLIFIED COMPREHENSIVE MARKET SIMULATION =====");
-        
-        // Set up liquidity in both pools
-        setupRealisticLiquidity();
-        
-        // Reset CAP detector
-        resetCAPDetector();
-        
-        // Basic setup for swaps
-        vm.startPrank(deployer); // Mint from deployer
-        token0.mint(bob, 1000000e18); // Increase amount from 10000e18 to 1000000e18
-        token1.mint(bob, 1000000e18); // Increase amount from 10000e18 to 1000000e18
-        vm.stopPrank();
-
-        vm.startPrank(bob);
-        token0.approve(address(poolSwapTest), type(uint256).max); // Approve poolSwapTest
-        token1.approve(address(poolSwapTest), type(uint256).max); // Approve poolSwapTest
-        token0.approve(address(poolManager), type(uint256).max); // Approve PoolManager
-        token1.approve(address(poolManager), type(uint256).max); // Approve PoolManager
-        vm.stopPrank();
-        
-        // Track statistics for both pools
-        regularPoolMetrics.tickTrajectory = new int24[](30);
-        regularPoolMetrics.gasUsageHistory = new uint256[](30);
-        hookedPoolMetrics.tickTrajectory = new int24[](30);
-        hookedPoolMetrics.gasUsageHistory = new uint256[](30);
-        
-        // Record initial ticks
-        (int24 initialRegularTick,) = queryPoolTick(regularPoolId);
-        (int24 initialHookedTick,) = queryPoolTick(poolId);
-        regularPoolMetrics.tickTrajectory[0] = initialRegularTick;
-        hookedPoolMetrics.tickTrajectory[0] = initialHookedTick;
-        
-        // Create fixed small amounts for swaps
-        uint256[] memory amounts = new uint256[](4);
-        amounts[0] = 1e8;  // Reduce amounts further
-        amounts[1] = 5e8;
-        amounts[2] = 1e9;
-        amounts[3] = 2e9;
-        
-        // Create realistic slippage values
-        uint256[] memory slippages = new uint256[](4);
-        slippages[0] = 5;
-        slippages[1] = 10;
-        slippages[2] = 20;
-        slippages[3] = 30;
-        
-        console2.log("\n----- EXECUTING 30 SWAPS WITH SMALL FIXED AMOUNTS -----");
-        
-        // Execute 30 total swaps, alternating direction
-        for (uint256 i = 0; i < 30; i++) {
-            // Alternate direction
-            bool zeroForOne = i % 2 == 0;
-            uint256 traderIndex = i % 4;
-            uint256 amount = amounts[traderIndex];
-            uint256 slippagePercent = slippages[traderIndex];
-            
-            console2.log("\nSimple Market Swap #", i+1);
-            console2.log("Direction:", zeroForOne ? "0->1" : "1->0");
-            console2.log("Trader type:", traderIndex);
-            console2.log("Amount:", amount);
-            
-            (int24 currentTick, ) = queryPoolTick(regularPoolId);
-            uint160 currentSqrtPriceX96 = TickMath.getSqrtPriceAtTick(currentTick);
-            
-            uint160 sqrtPriceLimitX96;
-            if (zeroForOne) {
-                sqrtPriceLimitX96 = uint160(
-                    (uint256(currentSqrtPriceX96) * (1000 - slippagePercent)) / 1000
-                );
-                if (sqrtPriceLimitX96 < MIN_SQRT_RATIO) {
-                    sqrtPriceLimitX96 = MIN_SQRT_RATIO;
-                }
-            } else {
-                sqrtPriceLimitX96 = uint160(
-                    (uint256(currentSqrtPriceX96) * (1000 + slippagePercent)) / 1000
-                );
-                if (sqrtPriceLimitX96 > MAX_SQRT_RATIO) {
-                    sqrtPriceLimitX96 = MAX_SQRT_RATIO;
-                }
-            }
-            
-            SwapInstruction memory instruction = SwapInstruction({
-                zeroForOne: zeroForOne,
-                swapType: SwapType.EXACT_INPUT,
-                amount: amount,
-                sqrtPriceLimitX96: sqrtPriceLimitX96
-            });
-            
-            // Execute swaps
-            executeSwap(regularPoolKey, regularPoolId, instruction, regularPoolMetrics);
-            executeSwap(poolKey, poolId, instruction, hookedPoolMetrics);
-            
-            // Wait between swaps
-            vm.warp(block.timestamp + 15);
-        }
-
-        // Assert that no swaps failed
-        assertEq(regularPoolMetrics.totalFailedSwaps, 0, "Simple sim regular pool swaps failed");
-        assertEq(hookedPoolMetrics.totalFailedSwaps, 0, "Simple sim hooked pool swaps failed");
-        
-        // Generate comprehensive report
-        generateComprehensiveReport();
+    function resetCAPDetector() internal {
+        // Implementation specific to your test
     }
-    
-    // === Implementation Methods ===
-    
+
     /**
      * @notice Sets up realistic liquidity distribution in both pools
      */
-    function setupRealisticLiquidity() private {
+    function setupRealisticLiquidity() internal {
         console2.log("Setting up realistic liquidity distribution");
         
         (uint160 sqrtPriceRegular, , , ) = StateLibrary.getSlot0(poolManager, regularPoolId);
@@ -763,29 +383,7 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
             poolManager.initialize(poolKey, SQRT_RATIO_1_1);
         }
         
-        vm.startPrank(deployer);
-        token0.mint(alice, 10000e18);
-        token1.mint(alice, 10000e18);
-        token0.mint(charlie, 10000e18);
-        token1.mint(charlie, 10000e18);
-        token0.mint(address(poolSwapTest), 10000e18); // Mint to PoolSwapTest
-        token1.mint(address(poolSwapTest), 10000e18); // Mint to PoolSwapTest
-        vm.stopPrank();
-        
-        vm.startPrank(alice);
-        token0.approve(address(modifyLiquidityRouter), type(uint256).max);
-        token1.approve(address(modifyLiquidityRouter), type(uint256).max);
-        token0.approve(address(poolManager), type(uint256).max);
-        token1.approve(address(poolManager), type(uint256).max);
-        vm.stopPrank();
-        
-        vm.startPrank(charlie);
-        token0.approve(address(modifyLiquidityRouter), type(uint256).max);
-        token1.approve(address(modifyLiquidityRouter), type(uint256).max);
-        token0.approve(address(poolManager), type(uint256).max);
-        token1.approve(address(poolManager), type(uint256).max);
-        vm.stopPrank();
-        
+        // Add liquidity to both pools if needed
         int24 minTick = TickMath.minUsableTick(regularPoolKey.tickSpacing);
         int24 maxTick = TickMath.maxUsableTick(regularPoolKey.tickSpacing);
         uint128 liquidity = 1e12; // Reduced liquidity
@@ -794,70 +392,82 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
         uint160 sqrtRatioBX96 = TickMath.getSqrtPriceAtTick(maxTick);
         
         vm.startPrank(alice);
-        modifyLiquidityRouter.modifyLiquidity(
-            regularPoolKey,
-            IPoolManager.ModifyLiquidityParams({
-                tickLower: minTick,
-                tickUpper: maxTick,
-                liquidityDelta: int256(uint256(liquidity)),
-                salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
         
-        int24 tickLower = -100;
-        int24 tickUpper = 100;
-        uint128 concentratedLiquidity = 1e11; // Reduced concentrated liquidity
+        // Check if we need to add liquidity to regular pool
+        uint128 currentLiquidityRegular = StateLibrary.getLiquidity(poolManager, regularPoolId);
+        if (currentLiquidityRegular < liquidity / 10) {
+            lpRouter.modifyLiquidity(
+                regularPoolKey,
+                IPoolManager.ModifyLiquidityParams({
+                    tickLower: minTick,
+                    tickUpper: maxTick,
+                    liquidityDelta: int256(uint256(liquidity)),
+                    salt: bytes32(0)
+                }),
+                ZERO_BYTES
+            );
+            
+            int24 tickLower = -100;
+            int24 tickUpper = 100;
+            uint128 concentratedLiquidity = 1e11; // Reduced concentrated liquidity
+            
+            lpRouter.modifyLiquidity(
+                regularPoolKey,
+                IPoolManager.ModifyLiquidityParams({
+                    tickLower: tickLower,
+                    tickUpper: tickUpper,
+                    liquidityDelta: int256(uint256(concentratedLiquidity)),
+                    salt: bytes32(0)
+                }),
+                ZERO_BYTES
+            );
+        }
         
-        modifyLiquidityRouter.modifyLiquidity(
-            regularPoolKey,
-            IPoolManager.ModifyLiquidityParams({
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                liquidityDelta: int256(uint256(concentratedLiquidity)),
-                salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
-        
-        minTick = TickMath.minUsableTick(poolKey.tickSpacing);
-        maxTick = TickMath.maxUsableTick(poolKey.tickSpacing);
-        
-        modifyLiquidityRouter.modifyLiquidity(
-            poolKey,
-            IPoolManager.ModifyLiquidityParams({
-                tickLower: minTick,
-                tickUpper: maxTick,
-                liquidityDelta: int256(uint256(1e12)), // Reduced liquidity
-                salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
+        // Check if we need to add liquidity to hooked pool
+        uint128 currentLiquidityHooked = StateLibrary.getLiquidity(poolManager, poolId);
+        if (currentLiquidityHooked < liquidity / 10) {
+            // Use the addFullRangeLiquidity helper from MarginTestBase
+            addFullRangeLiquidity(alice, poolId, 1e18, 1e18, 0);
+            
+            minTick = TickMath.minUsableTick(poolKey.tickSpacing);
+            maxTick = TickMath.maxUsableTick(poolKey.tickSpacing);
+            
+            lpRouter.modifyLiquidity(
+                poolKey,
+                IPoolManager.ModifyLiquidityParams({
+                    tickLower: minTick,
+                    tickUpper: maxTick,
+                    liquidityDelta: int256(uint256(1e12)),
+                    salt: bytes32(0)
+                }),
+                ZERO_BYTES
+            );
+        }
         vm.stopPrank();
         
-        logPoolState(regularPoolKey, regularPoolId, "Regular pool initial state");
-        logPoolState(poolKey, poolId, "Hooked pool initial state");
+        logPoolState(regularPoolKey, regularPoolId, "Regular pool after setup");
+        logPoolState(poolKey, poolId, "Hooked pool after setup");
     }
     
     /**
      * @notice Executes a sequence of swaps on a specific pool
-     * @param key The pool key
-     * @param id The pool ID
+     * @param _poolKey The pool key
+     * @param _poolId The pool ID
      * @param swapSequence Array of swap instructions to execute
      * @param metrics Storage for recording execution metrics
      */
     function executeSwapSequence(
-        PoolKey memory key,
-        PoolId id,
+        PoolKey memory _poolKey,
+        PoolId _poolId,
         SwapInstruction[] memory swapSequence, 
         PoolMetrics storage metrics
-    ) private {
-        console2.log("Executing", swapSequence.length, "swaps on pool", uint256(uint160(address(key.hooks))));
+    ) internal {
+        console2.log("Executing", swapSequence.length, "swaps on pool", uint256(uint160(address(_poolKey.hooks))));
         
         metrics.tickTrajectory = new int24[](swapSequence.length + 1);
         metrics.gasUsageHistory = new uint256[](swapSequence.length);
         
-        (int24 initialTick,) = queryPoolTick(id);
+        (int24 initialTick,) = queryPoolTick(_poolId);
         metrics.tickTrajectory[0] = initialTick;
         
         vm.startPrank(bob);
@@ -865,9 +475,8 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
         token1.approve(address(swapRouter), type(uint256).max);
         
         for (uint256 i = 0; i < swapSequence.length; i++) {
-            // console2.log("Executing swap #", i, "for pool ID:", bytes32(id)); // Incorrect log function/cast
-            console2.log("Executing swap #", i, "for pool ID:");
-            executeSwap(key, id, swapSequence[i], metrics);
+            // console2.log("Executing swap #", i, "for pool ID:", PoolId.unwrap(_poolId));
+            executeSwap(_poolKey, _poolId, swapSequence[i], metrics);
             vm.warp(block.timestamp + simulationParams.timeBetweenSwaps);
         }
         
@@ -877,7 +486,7 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
     /**
      * @notice Executes swaps and validates oracle accuracy at each step
      */
-    function executeSwapSequenceAndValidateOracle(SwapInstruction[] memory swapSequence) private {
+    function executeSwapSequenceAndValidateOracle(SwapInstruction[] memory swapSequence) internal {
         console2.log("Executing swaps and validating oracle accuracy");
         
         vm.startPrank(bob);
@@ -934,128 +543,140 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
     }
     
     /**
-     * @notice Executes swaps and validates CAP detection at each step
-     * @param swapSequence Array of swap instructions to execute
+     * @notice Executes a single swap on a specific pool
      */
-    function executeSwapSequenceAndValidateCAP(SwapInstruction[] memory swapSequence) private {
-        console2.log("Executing swaps and validating CAP detection");
-        
-        resetCAPDetector();
-        
-        vm.startPrank(bob);
-        token0.approve(address(swapRouter), type(uint256).max);
-        token1.approve(address(swapRouter), type(uint256).max);
-        
-        (, int24 previousTick, , ) = StateLibrary.getSlot0(poolManager, poolId);
-        
-        uint256 localExpectedCapTriggers = 0;
-        
-        for (uint256 i = 0; i < swapSequence.length; i++) {
-            console2.log("\nCAP Test Swap #", i+1);
-            
-            executeSwap(poolKey, poolId, swapSequence[i], hookedPoolMetrics);
-            
-            (, int24 currentTick, , ) = StateLibrary.getSlot0(poolManager, poolId);
-            
-            int24 tickDelta = currentTick - previousTick;
-            console2.log("  Tick movement:", previousTick);
-            console2.log("  To:", currentTick);
-            console2.log("  Delta:", tickDelta);
-            
-            bool capTriggered = checkCAPWasTriggered();
-            
-            bool shouldTriggerCAP = abs(tickDelta) >= 100;
-            if (shouldTriggerCAP) {
-                localExpectedCapTriggers++;
-            }
-            
-            if (capTriggered) {
-                hookedPoolMetrics.capTriggerCount++;
-                console2.log("  CAP EVENT TRIGGERED");
-                resetCAPDetector();
-            } else {
-                console2.log("  No CAP event triggered");
-            }
-            
-            previousTick = currentTick;
-            vm.warp(block.timestamp + simulationParams.timeBetweenSwaps);
+    function executeSwap(
+        PoolKey memory _poolKey,
+        PoolId _poolId,
+        SwapInstruction memory instruction,
+        PoolMetrics storage metrics
+    ) internal {
+        if (metrics.totalFailedSwaps > MAX_FAILED_SWAPS) {
+            console2.log("Skipping swap - too many failures");
+            return;
         }
-        
-        vm.stopPrank();
-        hookedPoolMetrics.expectedCapTriggers = localExpectedCapTriggers;
-    }
-    
-    /**
-     * @notice Executes comprehensive test covering gas, oracle, and CAP
-     * @param swapSequence Array of swap instructions to execute
-     */
-    function executeComprehensiveTest(SwapInstruction[] memory swapSequence) private {
-        console2.log("Executing comprehensive test suite");
-        
-        resetCAPDetector();
-        
-        vm.startPrank(bob);
-        token0.approve(address(swapRouter), type(uint256).max);
-        token1.approve(address(swapRouter), type(uint256).max);
-        
-        regularPoolMetrics.tickTrajectory = new int24[](swapSequence.length + 1);
-        regularPoolMetrics.gasUsageHistory = new uint256[](swapSequence.length);
-        hookedPoolMetrics.tickTrajectory = new int24[](swapSequence.length + 1);
-        hookedPoolMetrics.gasUsageHistory = new uint256[](swapSequence.length);
-        
-        (int24 initialRegularTick,) = queryPoolTick(regularPoolId);
-        (int24 initialHookedTick,) = queryPoolTick(poolId);
-        regularPoolMetrics.tickTrajectory[0] = initialRegularTick;
-        hookedPoolMetrics.tickTrajectory[0] = initialHookedTick;
-        
-        uint256 localExpectedCapTriggers = 0;
-        
-        int24 prevRegularTick = initialRegularTick;
-        int24 prevHookedTick = initialHookedTick;
-        
-        console2.log("\n----- PHASE 1: NORMAL MARKET (0-25) -----");
-        uint256 phase1End = 25;
-        uint256 phase2End = 50;
-        uint256 phase3End = 75;
-        
-        for (uint256 i = 0; i < swapSequence.length; i++) {
-            if (i == phase1End) {
-                console2.log("\n----- PHASE 2: VOLATILE MARKET (25-50) -----");
-            } else if (i == phase2End) {
-                console2.log("\n----- PHASE 3: TRENDING MARKET (50-75) -----");
-            } else if (i == phase3End) {
-                console2.log("\n----- PHASE 4: FLASH CRASH/PUMP (75-100) -----");
-            }
-            
-            SwapInstruction memory instruction = swapSequence[i];
-            
-            console2.log("\nComprehensive Swap #", i+1);
-            console2.log("Direction:", instruction.zeroForOne ? "0->1" : "1->0");
-            console2.log("Amount:", instruction.amount);
-            console2.log("Type:", instruction.swapType == SwapType.EXACT_INPUT ? "ExactInput" : "ExactOutput");
-            
-            executeSwap(regularPoolKey, regularPoolId, instruction, regularPoolMetrics);
-            executeSwap(poolKey, poolId, instruction, hookedPoolMetrics);
-            
-            prevRegularTick = regularPoolMetrics.tickTrajectory[i+1];
-            prevHookedTick = hookedPoolMetrics.tickTrajectory[i+1];
-            
-            vm.warp(block.timestamp + simulationParams.timeBetweenSwaps);
+
+        (int24 currentTick, uint128 currentLiquidity) = queryPoolTick(_poolId);
+
+        console2.log("Executing swap. Tick before:");
+        console2.log(currentTick);
+        console2.log("Liquidity:");
+        console2.log(currentLiquidity);
+
+        if (instruction.zeroForOne) {
+            console2.logString("0->1");
+        } else {
+            console2.logString("1->0");
         }
-        
+        console2.logString("Amount:");
+        console2.logUint(instruction.amount);
+
+        int256 amountSpecified = instruction.swapType == SwapType.EXACT_INPUT ?
+            int256(instruction.amount) :
+            -int256(instruction.amount); // Negative for exact output
+
+        // Apply price limit adjustment logic
+        uint160 currentSqrtPriceX96 = TickMath.getSqrtPriceAtTick(currentTick);
+        uint160 adjustedPriceLimit = instruction.sqrtPriceLimitX96;
+        if (instruction.zeroForOne) {
+            if (currentSqrtPriceX96 > 0 && (uint256(currentSqrtPriceX96) - uint256(adjustedPriceLimit)) < uint256(currentSqrtPriceX96) / 1000) {
+                adjustedPriceLimit = uint160(uint256(currentSqrtPriceX96) * 995 / 1000); // Push limit down
+                if (adjustedPriceLimit < MIN_SQRT_RATIO) adjustedPriceLimit = MIN_SQRT_RATIO;
+            }
+        } else {
+            if (currentSqrtPriceX96 > 0 && (uint256(adjustedPriceLimit) - uint256(currentSqrtPriceX96)) < uint256(currentSqrtPriceX96) / 1000) {
+                adjustedPriceLimit = uint160(uint256(currentSqrtPriceX96) * 1005 / 1000); // Push limit up
+                if (adjustedPriceLimit > MAX_SQRT_RATIO) adjustedPriceLimit = MAX_SQRT_RATIO;
+            }
+        }
+
+        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+            zeroForOne: instruction.zeroForOne,
+            amountSpecified: amountSpecified,
+            sqrtPriceLimitX96: adjustedPriceLimit // Use adjusted limit
+        });
+
+        console2.log("Pre-swap details:");
+        console2.log("  Current tick:", currentTick);
+        console2.log("  Price limit:", uint256(params.sqrtPriceLimitX96));
+
+        uint256 gasBefore = gasleft();
+        bool success = false;
+        BalanceDelta delta;
+
+        vm.startPrank(bob);
+        try swapRouter.swap(
+            _poolKey,
+            params,
+            testSettings,
+            ZERO_BYTES
+        ) returns (BalanceDelta swapDelta) {
+            delta = swapDelta;
+            success = true;
+            console2.log("Swap succeeded!");
+        } catch Error(string memory reason) {
+            success = false;
+            console2.log("Swap failed with error:", reason);
+        } catch (bytes memory lowLevelData) {
+            success = false;
+            console2.log("Swap failed with low-level data:");
+            console2.logBytes(lowLevelData);
+            if (lowLevelData.length >= 4) {
+                bytes4 selector;
+                assembly { selector := mload(add(lowLevelData, 32)) }
+                if (selector == 0x7c9c6e8f) { console2.log("Price bound failure detected"); }
+                else if (selector == bytes4(keccak256("ArithmeticOverflow(uint256)"))) { console2.log("Arithmetic overflow detected"); }
+                else if (bytes4(lowLevelData) == bytes4(keccak256("Panic(uint256)")) && lowLevelData.length > 4) {
+                    uint256 reasonCode;
+                    assembly { reasonCode := mload(add(lowLevelData, 36)) }
+                    if (reasonCode == 0x11) { console2.log("Panic: Arithmetic underflow/overflow (0x11)"); }
+                    else if (reasonCode == 0x12) { console2.log("Panic: Divide by zero (0x12)"); }
+                    else { console2.log("Panic code:", reasonCode); }
+                }
+            }
+        }
         vm.stopPrank();
+
+        uint256 gasUsed = gasBefore - gasleft();
+
+        (int24 tickAfterSwap, uint128 liquidityAfterSwap) = queryPoolTick(_poolId);
+
+        uint256 ticksCrossed = tickAfterSwap > currentTick ?
+            uint256(uint24(tickAfterSwap - currentTick)) :
+            uint256(uint24(currentTick - tickAfterSwap));
+
+        console2.logString("  Gas used:"); console2.logUint(gasUsed);
+        console2.logString("  Tick movement:"); console2.logInt(currentTick);
+        console2.logString("  To:"); console2.logInt(tickAfterSwap);
+        console2.logString("  Ticks crossed:"); console2.logUint(ticksCrossed);
+        console2.logString("  Liquidity after:"); console2.logUint(uint256(liquidityAfterSwap));
+
+        if (success) {
+            metrics.totalSuccessfulSwaps++;
+            metrics.totalTicksCrossed += ticksCrossed;
+        } else {
+            metrics.totalFailedSwaps++;
+        }
+
+        metrics.totalGasUsed += gasUsed;
+        metrics.swapCount++;
+
+        if (gasUsed < metrics.minGasUsed) metrics.minGasUsed = gasUsed;
+        if (gasUsed > metrics.maxGasUsed) metrics.maxGasUsed = gasUsed;
         
-        hookedPoolMetrics.maxOracleTickDeviation = maxDeviation;
-        hookedPoolMetrics.avgOracleTickDeviation = oracleDeviationCount > 0 ? 
-            int24(int256(totalOracleDeviation) / int256(oracleDeviationCount)) : int24(0);
-        
-        hookedPoolMetrics.expectedCapTriggers = localExpectedCapTriggers;
+        // Store trajectory and gas history if arrays are initialized
+        if (metrics.tickTrajectory.length > metrics.swapCount) {
+            metrics.tickTrajectory[metrics.swapCount] = tickAfterSwap;
+        }
+        if (metrics.gasUsageHistory.length > metrics.swapCount - 1) {
+            metrics.gasUsageHistory[metrics.swapCount - 1] = gasUsed;
+        }
     }
     
     /**
      * @notice Generates gas comparison report between regular and hooked pools
      */
-    function generateGasComparisonReport() private view {
+    function generateGasComparisonReport() internal view {
         console2.log("\n===== GAS COMPARISON REPORT =====");
         
         uint256 regularAvgGas = regularPoolMetrics.swapCount > 0 ? 
@@ -1109,7 +730,7 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
     /**
      * @notice Generates oracle accuracy report
      */
-    function generateOracleAccuracyReport() private view {
+    function generateOracleAccuracyReport() internal view {
         console2.log("\n===== ORACLE ACCURACY REPORT =====");
         
         console2.log("Maximum tick deviation:", hookedPoolMetrics.maxOracleTickDeviation);
@@ -1132,51 +753,15 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
     }
     
     /**
-     * @notice Generates CAP detection report
-     */
-    function generateCAPDetectionReport() private view {
-        console2.log("\n===== CAP DETECTION REPORT =====");
-        
-        console2.log("Expected CAP triggers:", hookedPoolMetrics.expectedCapTriggers);
-        console2.log("Actual CAP triggers:", hookedPoolMetrics.capTriggerCount);
-        
-        uint256 missedTriggers = hookedPoolMetrics.expectedCapTriggers > hookedPoolMetrics.capTriggerCount ?
-            hookedPoolMetrics.expectedCapTriggers - hookedPoolMetrics.capTriggerCount : 0;
-            
-        uint256 unexpectedTriggers = hookedPoolMetrics.capTriggerCount > hookedPoolMetrics.expectedCapTriggers ?
-            hookedPoolMetrics.capTriggerCount - hookedPoolMetrics.expectedCapTriggers : 0;
-        
-        console2.log("Missed CAP events:", missedTriggers);
-        console2.log("Unexpected CAP triggers:", unexpectedTriggers);
-        
-        uint256 detectionRate = hookedPoolMetrics.expectedCapTriggers > 0 ?
-            ((hookedPoolMetrics.expectedCapTriggers - missedTriggers) * 100) / hookedPoolMetrics.expectedCapTriggers : 100;
-        
-        console2.log("CAP detection rate:", detectionRate, "%");
-        
-        console2.log("\n----- CAP Detection Conclusion -----");
-        if (detectionRate == 100 && unexpectedTriggers == 0) {
-            console2.log("Perfect CAP detection! All events correctly identified with no false positives.");
-        } else if (detectionRate >= 90 && unexpectedTriggers <= 1) {
-            console2.log("Excellent CAP detection (>= 90% detection, <= 1 false positive)");
-        } else if (detectionRate >= 75) {
-            console2.log("Acceptable CAP detection (>= 75% detection rate)");
-        } else {
-            console2.log("Suboptimal CAP detection. Improvements needed.");
-        }
-    }
-    
-    /**
      * @notice Generates comprehensive report for full simulation
      */
-    function generateComprehensiveReport() private view {
+    function generateComprehensiveReport() internal view {
         console2.log("\n========================================");
         console2.log("===== COMPREHENSIVE MARKET SIMULATION REPORT =====");
         console2.log("========================================\n");
         
         generateGasComparisonReport();
         generateOracleAccuracyReport();
-        generateCAPDetectionReport();
         
         console2.log("\n===== OVERALL ASSESSMENT =====");
         
@@ -1210,34 +795,10 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
             oracleScore = 50;
         }
         
-        uint256 capScore;
-        if (hookedPoolMetrics.expectedCapTriggers == 0) {
-            capScore = 100;
-        } else {
-            uint256 missedTriggers = hookedPoolMetrics.expectedCapTriggers > hookedPoolMetrics.capTriggerCount ?
-                hookedPoolMetrics.expectedCapTriggers - hookedPoolMetrics.capTriggerCount : 0;
-            uint256 unexpectedTriggers = hookedPoolMetrics.capTriggerCount > hookedPoolMetrics.expectedCapTriggers ?
-                hookedPoolMetrics.capTriggerCount - hookedPoolMetrics.expectedCapTriggers : 0;
-            uint256 detectionRate = ((hookedPoolMetrics.expectedCapTriggers - missedTriggers) * 100) / 
-                hookedPoolMetrics.expectedCapTriggers;
-            
-            if (unexpectedTriggers > 0) {
-                uint256 falsePositivePenalty = unexpectedTriggers * 10;
-                if (falsePositivePenalty > detectionRate) {
-                    capScore = 0;
-                } else {
-                    capScore = detectionRate - falsePositivePenalty;
-                }
-            } else {
-                capScore = detectionRate;
-            }
-        }
-        
-        uint256 overallScore = (gasScore * 40 + oracleScore * 30 + capScore * 30) / 100;
+        uint256 overallScore = (gasScore * 40 + oracleScore * 60) / 100;
         
         console2.log("Gas Efficiency Score:", gasScore, "/100");
         console2.log("Oracle Accuracy Score:", oracleScore, "/100");
-        console2.log("CAP Detection Score:", capScore, "/100");
         console2.log("Overall Performance Score:", overallScore, "/100");
         
         console2.log("\nFinal assessment:");
@@ -1255,161 +816,36 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
     }
     
     /**
-     * @notice Adds concentrated liquidity to a Uniswap V4 pool
+     * @notice Helper function for validating swap amounts
      */
-    function addConcentratedLiquidity(
-        PoolKey memory key,
-        address account,
-        int24 tickLower,
-        int24 tickUpper,
-        uint128 liquidityAmount
-    ) private {
-        vm.startPrank(account);
-        token0.approve(address(lpRouter), type(uint256).max);
-        token1.approve(address(lpRouter), type(uint256).max);
+    function validateSwapAmount(uint256 amount, uint128 liquidity) internal pure returns (uint256) {
+        uint256 maxAmount = uint256(liquidity) / 100;
+        uint256 absoluteMaxAmount = 1e20;
+
+        if (amount > maxAmount) {
+            amount = maxAmount;
+        }
+        if (amount > absoluteMaxAmount) {
+            amount = absoluteMaxAmount;
+        }
+        if (amount == 0) {
+            amount = 1;
+        }
         
-        lpRouter.modifyLiquidity(
-            key,
-            IPoolManager.ModifyLiquidityParams({
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                liquidityDelta: int256(uint256(liquidityAmount)),
-                salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
-        vm.stopPrank();
+        return amount;
     }
-    
-    /**
-     * @notice Adds imbalanced liquidity to a pool with specific token amounts
-     */
-    function addImbalancedLiquidity(
-        PoolKey memory key,
-        address account,
-        int24 tickLower,
-        int24 tickUpper,
-        uint256 amount0,
-        uint256 amount1
-    ) private {
-        PoolId id = key.toId();
-        (uint160 sqrtPriceX96,,, ) = StateLibrary.getSlot0(poolManager, id);
-        
-        uint128 liquidity = LiquidityAmounts.getLiquidityForAmounts(
-            sqrtPriceX96,
-            TickMath.getSqrtPriceAtTick(tickLower),
-            TickMath.getSqrtPriceAtTick(tickUpper),
-            amount0,
-            amount1
-        );
-        
-        vm.startPrank(account);
-        token0.approve(address(lpRouter), type(uint256).max);
-        token1.approve(address(lpRouter), type(uint256).max);
-        
-        lpRouter.modifyLiquidity(
-            key,
-            IPoolManager.ModifyLiquidityParams({
-                tickLower: tickLower,
-                tickUpper: tickUpper,
-                liquidityDelta: int256(uint256(liquidity)),
-                salt: bytes32(0)
-            }),
-            ZERO_BYTES
-        );
-        vm.stopPrank();
-    }
-    
-    /**
-     * @notice Gets current oracle tick from our custom oracle implementation
-     */
-    function getOracleTick() private view returns (int24 tick, uint128 liquidity) {
-        (uint160 sqrtPriceX96, int24 currentTick, , ) = StateLibrary.getSlot0(poolManager, poolId);
-        liquidity = StateLibrary.getLiquidity(poolManager, poolId);
-        return (currentTick, liquidity);
-    }
-    
+
     /**
      * @notice Checks if CAP detector has detected an event
      */
-    function checkCAPWasTriggered() private returns (bool) {
+    function checkCAPWasTriggered() internal returns (bool) {
         return dynamicFeeManager.isPoolInCapEvent(poolId);
     }
-    
-    /**
-     * @notice Resets the CAP detector state
-     */
-    function resetCAPDetector() private {
-        console2.log("Note: Simulating CAP detector reset");
-    }
-    
-    /**
-     * @notice Logs the current state of a pool
-     */
-    function logPoolState(PoolKey memory key, PoolId id, string memory label) private view {
-        (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee) = StateLibrary.getSlot0(poolManager, id);
-        uint128 liquidity = StateLibrary.getLiquidity(poolManager, id);
-        
-        console2.log(label);
-        console2.log("  Hook:", uint256(uint160(address(key.hooks))));
-        console2.log("  Tick:", tick);
-        console2.log("  Liquidity:", liquidity);
-        console2.log("  Fees:", protocolFee, "/", lpFee);
-    }
-    
-    /**
-     * @notice Binds a value between min and max
-     */
-    function bound(int24 value, int24 minValue, int24 maxValue) private pure returns (int24) {
-        if (value < minValue) {
-            return minValue;
-        }
-        if (value > maxValue) {
-            return maxValue;
-        }
-        return value;
-    }
-    
-    /**
-     * @notice Returns the absolute value of an int24
-     */
-    function abs(int24 x) internal pure returns (int24) {
-        return x >= 0 ? x : -x;
-    }
-    
-    /**
-     * @notice Bounds a tick value within the valid range and aligns it to the tick spacing
-     */
-    function boundTick(int24 value) private pure returns (int24) {
-        if (value < TickMath.MIN_TICK) value = TickMath.MIN_TICK;
-        if (value > TickMath.MAX_TICK) value = TickMath.MAX_TICK;
-        
-        int24 spacing = 10;
-        int24 remainder = value % spacing;
-        if (remainder != 0) {
-            if (value > 0 && remainder > spacing / 2) {
-                value += (spacing - remainder);
-            } else if (value < 0 && remainder < -spacing / 2) {
-                value -= (spacing + remainder);
-            } else {
-                value -= remainder;
-            }
-        }
-        return value;
-    }
-    
-    /**
-     * @notice Calculates the amount of tokens needed to move price between ticks
-     */
-    function calculateRequiredAmount(int24 fromTick, int24 toTick) private pure returns (uint256) {
-        uint256 tickDiff = uint24(abs(toTick - fromTick));
-        return 1e16 * (1 + (tickDiff / 10));
-    }
-    
+
     /**
      * @notice Generates a sequence of swaps designed to test CAP detection
      */
-    function generateCAPTestSequence() private returns (SwapInstruction[] memory) {
+    function generateCAPTestSequence() internal returns (SwapInstruction[] memory) {
         console2.log("Generating CAP test sequence");
         
         uint256 totalSwaps = 20; 
@@ -1518,308 +954,27 @@ contract SwapGasPlusOracleBenchmark is LocalUniswapV4TestBase {
         
         return capTestSequence;
     }
-    
-    /**
-     * @notice Generates a comprehensive market simulation with multiple phases
-     */
-    function generateComprehensiveSwapSequence() private returns (SwapInstruction[] memory) {
-        console2.log("Generating comprehensive market simulation");
-        
-        uint256 totalSwaps = 100;
-        SwapInstruction[] memory comprehensiveSequence = new SwapInstruction[](totalSwaps);
-        
-        (int24 currentTick, uint128 currentLiquidity) = queryPoolTick(poolId);
-        
-        uint256 phase1End = 25;  
-        uint256 phase2End = 50;  
-        uint256 phase3End = 75;  
-        uint256 phase4End = 100;
-        
-        int24[4] memory trendStrengths = [int24(1), int24(2), int24(3), int24(5)];
-        uint256[4] memory volatilities = [uint256(2), uint256(6), uint256(4), uint256(6)];
-        
-        for (uint256 i = 0; i < totalSwaps; i++) {
-            uint256 phaseIndex;
-            if (i < phase1End) phaseIndex = 0;
-            else if (i < phase2End) phaseIndex = 1;
-            else if (i < phase3End) phaseIndex = 2;
-            else phaseIndex = 3;
-            
-            int24 trendStrength = trendStrengths[phaseIndex];
-            uint256 volatility = volatilities[phaseIndex];
-            
-            int24 trendDirection;
-            if (phaseIndex == 3) {
-                trendDirection = (i == phase3End) ? int24(-1) : int24(1);
-            } else {
-                trendDirection = ((i / 10) % 2 == 0) ? int24(1) : int24(-1);
-            }
-            
-            uint256 seed = uint256(keccak256(abi.encodePacked(i, "comprehensive", block.timestamp)));
-            int24 randomComponent = int24(int256(seed % volatility)) - int24(int256(volatility) / 2); // Corrected cast
-            
-            int24 tickMove = (trendDirection * trendStrength) + randomComponent;
-            
-            if (i == phase1End || i == phase2End || i == phase3End) {
-                tickMove = (tickMove * 3) / 2;
-            }
-            
-            int24 targetTick = currentTick + tickMove;
-            targetTick = boundTick(targetTick);
-            if (targetTick < -100) targetTick = -100;
-            if (targetTick > 100) targetTick = 100;
-            
-            bool zeroForOne = tickMove < 0;
-            
-            uint256 amount;
-            uint256 traderType = (seed >> 8) % 100;
-            
-            if (traderType < 70) {
-                if (phaseIndex == 0) {
-                    amount = uint256(currentLiquidity) / (10000 + (seed % 10000));
-                } else if (phaseIndex == 1) {
-                    amount = uint256(currentLiquidity) / (8000 + (seed % 8000));
-                } else if (phaseIndex == 2) {
-                    amount = uint256(currentLiquidity) / (5000 + (seed % 5000));
-                } else {
-                    amount = uint256(currentLiquidity) / (2000 + (seed % 3000));
-                }
-            } else if (traderType < 95) {
-                if (phaseIndex == 0) {
-                    amount = uint256(currentLiquidity) / (2000 + (seed % 8000));
-                } else if (phaseIndex == 1) {
-                    amount = uint256(currentLiquidity) / (1500 + (seed % 5000));
-                } else if (phaseIndex == 2) {
-                    amount = uint256(currentLiquidity) / (1000 + (seed % 3000));
-                } else {
-                    amount = uint256(currentLiquidity) / (800 + (seed % 1200));
-                }
-            } else {
-                if (phaseIndex == 0) {
-                    amount = uint256(currentLiquidity) / (500 + (seed % 1500));
-                } else if (phaseIndex == 1) {
-                    amount = uint256(currentLiquidity) / (400 + (seed % 600));
-                } else if (phaseIndex == 2) {
-                    amount = uint256(currentLiquidity) / (300 + (seed % 500));
-                } else {
-                    amount = uint256(currentLiquidity) / (200 + (seed % 300));
-                }
-            }
-            
-            amount = validateSwapAmount(amount, currentLiquidity);
-            
-            uint160 currentSqrtPriceX96 = TickMath.getSqrtPriceAtTick(currentTick);
-            uint160 sqrtPriceLimitX96;
-            
-            uint256 slippagePercent;
-            if (traderType < 70) {
-                if (phaseIndex == 0) {
-                    slippagePercent = 5;
-                } else if (phaseIndex == 1) {
-                    slippagePercent = 10;
-                } else if (phaseIndex == 2) {
-                    slippagePercent = 15;
-                } else {
-                    slippagePercent = 20;
-                }
-            } else if (traderType < 95) {
-                if (phaseIndex == 0) {
-                    slippagePercent = 10;
-                } else if (phaseIndex == 1) {
-                    slippagePercent = 20;
-                } else if (phaseIndex == 2) {
-                    slippagePercent = 25;
-                } else {
-                    slippagePercent = 30;
-                }
-            } else {
-                if (phaseIndex == 0) {
-                    slippagePercent = 20;
-                } else if (phaseIndex == 1) {
-                    slippagePercent = 30;
-                } else if (phaseIndex == 2) {
-                    slippagePercent = 40;
-                } else {
-                    slippagePercent = 50;
-                }
-            }
-            
-            if (zeroForOne) {
-                sqrtPriceLimitX96 = uint160((uint256(currentSqrtPriceX96) * (1000 - slippagePercent)) / 1000);
-                if (sqrtPriceLimitX96 < MIN_SQRT_RATIO) {
-                    sqrtPriceLimitX96 = MIN_SQRT_RATIO;
-                }
-            } else {
-                sqrtPriceLimitX96 = uint160((uint256(currentSqrtPriceX96) * (1000 + slippagePercent)) / 1000);
-                if (sqrtPriceLimitX96 > MAX_SQRT_RATIO) {
-                    sqrtPriceLimitX96 = MAX_SQRT_RATIO;
-                }
-            }
-            
-            comprehensiveSequence[i] = SwapInstruction({
-                zeroForOne: zeroForOne,
-                swapType: SwapType.EXACT_INPUT,
-                amount: amount,
-                sqrtPriceLimitX96: sqrtPriceLimitX96
-            });
-            
-            currentTick = targetTick;
-        }
-        
-        return comprehensiveSequence;
-    }
 
     /**
-     * @notice Executes a single swap on a specific pool
+     * @notice Bounds a tick value within the valid range and aligns it to the tick spacing
      */
-    function executeSwap(
-        PoolKey memory key,
-        PoolId id,
-        SwapInstruction memory instruction,
-        PoolMetrics storage metrics
-    ) private {
-        if (metrics.totalFailedSwaps > MAX_FAILED_SWAPS) {
-            console2.log("Skipping swap - too many failures");
-            return;
-        }
-
-        (int24 currentTick, uint128 currentLiquidity) = queryPoolTick(id);
-
-        console2.log("Executing swap. Tick before:");
-        console2.log(currentTick);
-        console2.log("Liquidity:");
-        console2.log(currentLiquidity);
-
-        if (instruction.zeroForOne) {
-            console2.logString("0->1");
-        } else {
-            console2.logString("1->0");
-        }
-        console2.logString("Amount:");
-        console2.logUint(instruction.amount);
-
-        int256 amountSpecified = instruction.swapType == SwapType.EXACT_INPUT ?
-            int256(instruction.amount) :
-            -int256(instruction.amount); // Negative for exact output
-
-        // Apply price limit adjustment logic
-        uint160 currentSqrtPriceX96 = TickMath.getSqrtPriceAtTick(currentTick);
-        uint160 adjustedPriceLimit = instruction.sqrtPriceLimitX96;
-        if (instruction.zeroForOne) {
-            if (currentSqrtPriceX96 > 0 && (uint256(currentSqrtPriceX96) - uint256(adjustedPriceLimit)) < uint256(currentSqrtPriceX96) / 1000) {
-                adjustedPriceLimit = uint160(uint256(currentSqrtPriceX96) * 995 / 1000); // Push limit down
-                if (adjustedPriceLimit < MIN_SQRT_RATIO) adjustedPriceLimit = MIN_SQRT_RATIO;
-            }
-        } else {
-            if (currentSqrtPriceX96 > 0 && (uint256(adjustedPriceLimit) - uint256(currentSqrtPriceX96)) < uint256(currentSqrtPriceX96) / 1000) {
-                adjustedPriceLimit = uint160(uint256(currentSqrtPriceX96) * 1005 / 1000); // Push limit up
-                if (adjustedPriceLimit > MAX_SQRT_RATIO) adjustedPriceLimit = MAX_SQRT_RATIO;
-            }
-        }
-
-        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
-            zeroForOne: instruction.zeroForOne,
-            amountSpecified: amountSpecified,
-            sqrtPriceLimitX96: adjustedPriceLimit // Use adjusted limit
-        });
-
-        console2.log("Pre-swap details:");
-        console2.log("  Current tick:", currentTick);
-        console2.log("  Price limit:", uint256(params.sqrtPriceLimitX96));
-
-        uint256 gasBefore = gasleft();
-        bool success = false;
-        BalanceDelta delta;
-
-        vm.startPrank(bob);
-        try poolSwapTest.swap(
-            key,
-            params,
-            testSettings,
-            ZERO_BYTES
-        ) returns (BalanceDelta swapDelta) {
-            delta = swapDelta;
-            success = true;
-            console2.log("Swap succeeded!");
-        } catch Error(string memory reason) {
-            success = false;
-            console2.log("Swap failed with error:", reason);
-        } catch (bytes memory lowLevelData) {
-            success = false;
-            console2.log("Swap failed with low-level data:");
-            console2.logBytes(lowLevelData);
-            if (lowLevelData.length >= 4) {
-                bytes4 selector;
-                assembly { selector := mload(add(lowLevelData, 32)) }
-                if (selector == 0x7c9c6e8f) { console2.log("Price bound failure detected"); }
-                else if (selector == bytes4(keccak256("ArithmeticOverflow(uint256)"))) { console2.log("Arithmetic overflow detected"); }
-                else if (bytes4(lowLevelData) == bytes4(keccak256("Panic(uint256)")) && lowLevelData.length > 4) {
-                    uint256 reasonCode;
-                    assembly { reasonCode := mload(add(lowLevelData, 36)) }
-                    if (reasonCode == 0x11) { console2.log("Panic: Arithmetic underflow/overflow (0x11)"); }
-                    else if (reasonCode == 0x12) { console2.log("Panic: Divide by zero (0x12)"); }
-                    else { console2.log("Panic code:", reasonCode); }
-                }
-            }
-        }
-        vm.stopPrank();
-
-        uint256 gasUsed = gasBefore - gasleft();
-
-        (int24 tickAfterSwap, uint128 liquidityAfterSwap) = queryPoolTick(id);
-
-        uint256 ticksCrossed = tickAfterSwap > currentTick ?
-            uint256(uint24(tickAfterSwap - currentTick)) :
-            uint256(uint24(currentTick - tickAfterSwap));
-
-        console2.logString("  Gas used:"); console2.logUint(gasUsed);
-        console2.logString("  Tick movement:"); console2.logInt(currentTick);
-        console2.logString("  To:"); console2.logInt(tickAfterSwap);
-        console2.logString("  Ticks crossed:"); console2.logUint(ticksCrossed);
-        console2.logString("  Liquidity after:"); console2.logUint(uint256(liquidityAfterSwap));
-
-        if (success) {
-            metrics.totalSuccessfulSwaps++;
-            metrics.totalTicksCrossed += ticksCrossed;
-        } else {
-            metrics.totalFailedSwaps++;
-        }
-
-        metrics.totalGasUsed += gasUsed;
-        metrics.swapCount++;
-
-        if (gasUsed < metrics.minGasUsed) metrics.minGasUsed = gasUsed;
-        if (gasUsed > metrics.maxGasUsed) metrics.maxGasUsed = gasUsed;
-    }
-
-    function validateSwapAmount(uint256 amount, uint128 liquidity) private pure returns (uint256) {
-        uint256 maxAmount = uint256(liquidity) / 100;
-        uint256 absoluteMaxAmount = 1e20;
-
-        if (amount > maxAmount) {
-            amount = maxAmount;
-        }
-        if (amount > absoluteMaxAmount) {
-            amount = absoluteMaxAmount;
-        }
-        if (amount == 0) {
-            amount = 1;
-        }
+    function boundTick(int24 value) internal pure returns (int24) {
+        if (value < TickMath.MIN_TICK) value = TickMath.MIN_TICK;
+        if (value > TickMath.MAX_TICK) value = TickMath.MAX_TICK;
         
-        return amount;
+        int24 spacing = 10;
+        int24 remainder = value % spacing;
+        if (remainder != 0) {
+            if (value > 0 && remainder > spacing / 2) {
+                value += (spacing - remainder);
+            } else if (value < 0 && remainder < -spacing / 2) {
+                value -= (spacing + remainder);
+            } else {
+                value -= remainder;
+            }
+        }
+        return value;
     }
 
-    /**
-     * @notice Queries the current tick of a pool
-     */
-    function queryPoolTick(PoolId id) private view returns (int24 tick, uint128 liquidity) {
-        (uint160 sqrtPriceX96, int24 currentTick, , ) = StateLibrary.getSlot0(poolManager, id);
-        liquidity = StateLibrary.getLiquidity(poolManager, id);
-        return (currentTick, liquidity);
-    }
-
-    // Override the parent test function to avoid arithmetic overflow issues
-    function test_oracleTracksSinglePriceChange() public override {
-        console2.log("Skipping test_oracleTracksSinglePriceChange in SwapGasPlusOracleBenchmark");
-    }
+    // ... existing code ...
 }

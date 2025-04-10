@@ -2,8 +2,8 @@
 pragma solidity 0.8.26;
 
 // Use direct imports from lib/v4-core/src based on remappings
-import { PoolId } from "v4-core/src/types/PoolId.sol";
 import { PoolKey } from "v4-core/src/types/PoolKey.sol";
+import { PoolId } from "v4-core/src/types/PoolId.sol";
 import { IPoolManager } from "v4-core/src/interfaces/IPoolManager.sol";
 import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
 import { BalanceDelta } from "v4-core/src/types/BalanceDelta.sol";
@@ -13,11 +13,12 @@ import { BeforeSwapDelta } from "v4-core/src/types/BeforeSwapDelta.sol";
  * @title ISpot
  * @notice Interface for the Spot Uniswap V4 hook.
  * @dev Defines core data structures and functions for interacting with Spot liquidity positions.
+ *      Uses PoolId for consistent typing across the system.
  */
 
 /**
  * @notice Parameters for depositing liquidity into a pool
- * @param poolId The identifier of the pool to deposit into
+ * @param poolId The identifier (PoolId) of the pool to deposit into
  * @param amount0Desired The desired amount of token0 to deposit
  * @param amount1Desired The desired amount of token1 to deposit
  * @param amount0Min The minimum amount of token0 to deposit (slippage protection)
@@ -35,7 +36,7 @@ struct DepositParams {
 
 /**
  * @notice Parameters for withdrawing liquidity from a pool
- * @param poolId The identifier of the pool to withdraw from
+ * @param poolId The identifier (PoolId) of the pool to withdraw from
  * @param sharesToBurn The amount of LP shares to burn
  * @param amount0Min The minimum amount of token0 to receive (slippage protection)
  * @param amount1Min The minimum amount of token1 to receive (slippage protection)
@@ -47,34 +48,6 @@ struct WithdrawParams {
     uint256 amount0Min;
     uint256 amount1Min;
     uint256 deadline;
-}
-
-/**
- * @notice Data for hook callbacks
- * @param sender The original sender of the transaction
- * @param key The pool key for the operation
- * @param params The liquidity modification parameters
- * @param isHookOp Whether this is a hook operation
- */
-struct CallbackData {
-    address sender;
-    PoolKey key;
-    ModifyLiquidityParams params;
-    bool isHookOp;
-}
-
-/**
- * @notice Parameters for modifying liquidity
- * @param tickLower The lower tick of the position
- * @param tickUpper The upper tick of the position
- * @param liquidityDelta The change in liquidity
- * @param salt A unique salt for the operation
- */
-struct ModifyLiquidityParams {
-    int24 tickLower;
-    int24 tickUpper;
-    int256 liquidityDelta;
-    bytes32 salt;
 }
 
 /**

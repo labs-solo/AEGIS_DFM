@@ -80,11 +80,11 @@ library SolvencyUtils {
      * @return currentDebtValue The debt value including accrued interest.
      */
     function calculateCurrentDebtValue(
-        IMarginData.Vault memory vault, // Changed from IMargin.Vault
+        IMarginData.Vault memory vault,
         uint256 interestMultiplier,
         uint256 precision
     ) internal pure returns (uint256 currentDebtValue) {
-        uint128 baseDebtShare = vault.debtShare;
+        uint128 baseDebtShare = uint128(vault.debtShares);
         if (baseDebtShare == 0) {
             return 0;
         }

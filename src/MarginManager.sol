@@ -5,6 +5,7 @@ import { PoolId, PoolIdLibrary } from "v4-core/src/types/PoolId.sol";
 import { IPoolManager } from "v4-core/src/interfaces/IPoolManager.sol";
 import { SafeCast } from "v4-core/src/libraries/SafeCast.sol";
 import { FullMath } from "v4-core/src/libraries/FullMath.sol"; // Might be needed later
+import { Currency, CurrencyLibrary } from "v4-core/src/types/Currency.sol"; // Import CurrencyLibrary
 import { IMarginManager } from "./interfaces/IMarginManager.sol";
 import { IMarginData } from "./interfaces/IMarginData.sol";
 import { IInterestRateModel } from "./interfaces/IInterestRateModel.sol";
@@ -15,10 +16,11 @@ import { Errors } from "./errors/Errors.sol";
 import { PoolKey } from "v4-core/src/types/PoolKey.sol"; // Added for Phase 2
 import { SafeTransferLib } from "solmate/src/utils/SafeTransferLib.sol"; // Added for Phase 2
 import { Margin } from "./Margin.sol"; // Added for Phase 2
-import { IERC20 } from "oz-contracts/token/ERC20/IERC20.sol"; // Use new remapping
-import { SafeERC20 } from "oz-contracts/token/ERC20/utils/SafeERC20.sol"; // Use new remapping
+import { ERC20 } from "solmate/src/tokens/ERC20.sol"; // Import only ERC20 from Solmate
+import { IERC20 } from "forge-std/interfaces/IERC20.sol"; // Import IERC20 from forge-std
 import { TickMath } from "v4-core/src/libraries/TickMath.sol"; // Added src back
 import { FixedPoint128 } from "v4-core/src/libraries/FixedPoint128.sol"; // Added src back
+import "./interfaces/IMarginData.sol";
 
 /**
  * @title MarginManager
@@ -30,6 +32,7 @@ import { FixedPoint128 } from "v4-core/src/libraries/FixedPoint128.sol"; // Adde
  */
 contract MarginManager is IMarginManager {
     using SafeCast for uint256;
+    using CurrencyLibrary for Currency; // Add using directive
 
     /// @inheritdoc IMarginManager
     uint256 public constant override PRECISION = 1e18;
@@ -185,6 +188,17 @@ contract MarginManager is IMarginManager {
         return _vaults[poolId][user];
     }
 
+    /**
+     * @notice Checks if a user has a vault with any balance or debt
+     * @param poolId The ID of the pool
+     * @param user The user address to check
+     * @return True if the user has a vault with any assets or debt
+     */
+    function hasVault(PoolId poolId, address user) external view override returns (bool) {
+        IMarginData.Vault memory vault = _vaults[poolId][user];
+        return vault.token0Balance > 0 || vault.token1Balance > 0 || vault.debtShares > 0;
+    }
+
     // Explicit getter for interestRateModel is auto-generated if public override.
 
     // =========================================================================
@@ -200,7 +214,7 @@ contract MarginManager is IMarginManager {
      */
     function initializePoolInterest(PoolId poolId) external override onlyMarginContract {
         if (lastInterestAccrualTime[poolId] != 0) {
-            revert Errors.PoolAlreadyInitialized(poolId); // Prevent re-initialization
+            revert Errors.PoolAlreadyInitialized(PoolId.unwrap(poolId)); // Prevent re-initialization
         }
         interestMultiplier[poolId] = PRECISION;
         lastInterestAccrualTime[poolId] = uint64(block.timestamp); // Safe cast
@@ -224,11 +238,11 @@ contract MarginManager is IMarginManager {
         // Parameters (read once)
         uint256 _threshold = solvencyThresholdLiquidation; // SLOAD
         IInterestRateModel _rateModel = interestRateModel; // SLOAD
-        IPoolPolicy _policyMgr = IPoolPolicy(Margin(marginContract).policyManager()); // External call
+        IPoolPolicy _policyMgr = IPoolPolicy(Margin(payable(marginContract)).policyManager()); // External call + payable cast
 
         // Pool State (read once initially)
         (uint256 initialReserve0, uint256 initialReserve1, uint128 initialTotalShares) = 
-            Margin(marginContract).getPoolReservesAndShares(poolId); // External call via facade
+            Margin(payable(marginContract)).getPoolReservesAndShares(poolId); // External call via facade + payable cast
         
         // Interest State (read once initially)
         uint256 _currentMultiplier = interestMultiplier[poolId]; // SLOAD
@@ -259,7 +273,7 @@ contract MarginManager is IMarginManager {
         // --- Final Solvency Check --- //
         // Fetch final pool state *after* actions have modified vaultMem
         (uint256 finalReserve0, uint256 finalReserve1, uint128 finalTotalShares) = 
-            Margin(marginContract).getPoolReservesAndShares(poolId); 
+            Margin(payable(marginContract)).getPoolReservesAndShares(poolId); // + payable cast
 
         // Check solvency of the proposed final state in vaultMem using current multiplier
         if (!_isSolvent(poolId, vaultMem, finalReserve0, finalReserve1, finalTotalShares, _threshold, _currentMultiplier)) {
@@ -292,7 +306,6 @@ contract MarginManager is IMarginManager {
 
     /**
      * @notice Processes a single action within a batch.
-     * @inheritdoc IMarginManager
      * @dev Internal function called by executeBatch. Uses cached initial state where appropriate.
      * @param poolId The ID of the pool.
      * @param user The end user performing the action.
@@ -337,7 +350,6 @@ contract MarginManager is IMarginManager {
 
     /**
      * @notice Checks if a vault is solvent.
-     * @inheritdoc IMarginManager
      * @dev Implementation deferred.
      */
     function _isSolvent(
@@ -478,9 +490,9 @@ contract MarginManager is IMarginManager {
             lastInterestAccrualTime[poolId],
             interestMultiplier[poolId],
             rentedLiquidity[poolId],
-            FullRangeLiquidityManager(liquidityManager).poolTotalShares(poolId),
+            FullRangeLiquidityManager(payable(liquidityManager)).poolTotalShares(poolId), // + payable cast
             interestRateModel,
-            IPoolPolicy(Margin(marginContract).policyManager()) // Get policy manager via facade
+            IPoolPolicy(Margin(payable(marginContract)).policyManager()) // Get policy manager via facade + payable cast
         );
     }
 
@@ -601,16 +613,16 @@ contract MarginManager is IMarginManager {
 
         // Determine which token balance to update based on action.asset and PoolKey
         // address(0) asset signifies native currency
-        if (key.currency0.isNative()) {
+        if (key.currency0.isAddressZero()) { // Use CurrencyLibrary
             if (action.asset != address(0)) revert Errors.InvalidAsset();
             isToken0 = true;
-        } else if (key.currency1.isNative()) {
+        } else if (key.currency1.isAddressZero()) { // Use CurrencyLibrary
             if (action.asset != address(0)) revert Errors.InvalidAsset();
             isToken0 = false;
         } else {
             // Both are ERC20
-            address token0Addr = key.currency0.unwrap();
-            address token1Addr = key.currency1.unwrap();
+            address token0Addr = Currency.unwrap(key.currency0);
+            address token1Addr = Currency.unwrap(key.currency1);
             if (action.asset == token0Addr) {
                 isToken0 = true;
             } else if (action.asset == token1Addr) {
@@ -654,18 +666,18 @@ contract MarginManager is IMarginManager {
         bool isNativeTransfer = false;
 
         // Determine which token, check balance, and decrement
-        address currency0Addr = key.currency0.unwrap();
-        address currency1Addr = key.currency1.unwrap();
+        address currency0Addr = Currency.unwrap(key.currency0);
+        address currency1Addr = Currency.unwrap(key.currency1);
 
-        if ((key.currency0.isNative() && action.asset == address(0)) || currency0Addr == action.asset) {
+        if ((key.currency0.isAddressZero() && action.asset == address(0)) || currency0Addr == action.asset) {
             if (vaultMem.token0Balance < amount128) revert Errors.InsufficientBalance(amount128, vaultMem.token0Balance);
             vaultMem.token0Balance -= amount128;
-            isNativeTransfer = key.currency0.isNative();
+            isNativeTransfer = key.currency0.isAddressZero(); // Use CurrencyLibrary
             tokenAddress = currency0Addr; // Will be address(0) if native
-        } else if ((key.currency1.isNative() && action.asset == address(0)) || currency1Addr == action.asset) {
+        } else if ((key.currency1.isAddressZero() && action.asset == address(0)) || currency1Addr == action.asset) { // Use CurrencyLibrary
             if (vaultMem.token1Balance < amount128) revert Errors.InsufficientBalance(amount128, vaultMem.token1Balance);
             vaultMem.token1Balance -= amount128;
-            isNativeTransfer = key.currency1.isNative();
+            isNativeTransfer = key.currency1.isAddressZero(); // Use CurrencyLibrary
             tokenAddress = currency1Addr; // Will be address(0) if native
         } else {
             revert Errors.InvalidAsset();
@@ -674,7 +686,7 @@ contract MarginManager is IMarginManager {
         // Perform transfer out
         if (isNativeTransfer) {
             // Call Margin.sol to send ETH. Margin.sol verifies caller is this contract.
-            Margin(marginContract).sendETH(recipient, action.amount);
+            Margin(payable(marginContract)).sendETH(recipient, action.amount); // + payable cast
         } else {
             // Transfer ERC20 from this contract (MarginManager)
             _safeTransferOut(tokenAddress, recipient, action.amount);
@@ -723,21 +735,21 @@ contract MarginManager is IMarginManager {
         // --- Call Liquidity Manager to get tokens --- //
         // The LM removes liquidity equivalent to sharesToBorrow and sends tokens to this contract.
         (uint256 amount0Received, uint256 amount1Received) = 
-            FullRangeLiquidityManager(liquidityManager).borrowImpl(poolId, sharesToBorrow, address(this));
+            FullRangeLiquidityManager(payable(liquidityManager)).borrowImpl(poolId, sharesToBorrow, address(this));
 
         // --- Transfer Tokens Out --- //
         if (amount0Received > 0) {
-            if (key.currency0.isNative()) {
-                Margin(marginContract).sendETH(recipient, amount0Received);
+            if (key.currency0.isAddressZero()) { // Use CurrencyLibrary
+                Margin(payable(marginContract)).sendETH(recipient, amount0Received); // + payable cast
             } else {
-                _safeTransferOut(key.currency0.unwrap(), recipient, amount0Received);
+                _safeTransferOut(Currency.unwrap(key.currency0), recipient, amount0Received);
             }
         }
         if (amount1Received > 0) {
-            if (key.currency1.isNative()) {
-                Margin(marginContract).sendETH(recipient, amount1Received);
+            if (key.currency1.isAddressZero()) { // Use CurrencyLibrary
+                Margin(payable(marginContract)).sendETH(recipient, amount1Received); // + payable cast
             } else {
-                _safeTransferOut(key.currency1.unwrap(), recipient, amount1Received);
+                _safeTransferOut(Currency.unwrap(key.currency1), recipient, amount1Received);
             }
         }
 
@@ -747,7 +759,6 @@ contract MarginManager is IMarginManager {
 
     /**
      * @notice Internal handler for repaying debt using vault collateral.
-     * @inheritdoc IMarginManager
      * @param poolId The ID of the pool.
      * @param user The user performing the action.
      * @param key The PoolKey for the pool.
@@ -791,7 +802,7 @@ contract MarginManager is IMarginManager {
         }
 
         // Phase 4 Simplification: Only handle repay from vault balance
-        bool useVaultBalance = (action.flags & IMarginData.FLAG_USE_VAULT_BALANCE_FOR_REPAY) > 0;
+        bool useVaultBalance = (action.flags & MarginDataLibrary.FLAG_USE_VAULT_BALANCE_FOR_REPAY) > 0;
         // if (!useVaultBalance) revert("Repay from external funds not yet supported"); // Enforce if needed
 
         // Check vault balance and deduct needed amounts
@@ -804,31 +815,32 @@ contract MarginManager is IMarginManager {
         vaultMem.token1Balance -= amount1Needed128;
 
         // --- Approve LM to spend tokens from this contract --- //
-        if (amount0Needed > 0 && !key.currency0.isNative()) {
-            _safeApprove(key.currency0.unwrap(), liquidityManager, amount0Needed);
+        if (amount0Needed > 0 && !key.currency0.isAddressZero()) {
+            _safeApprove(Currency.unwrap(key.currency0), payable(liquidityManager), amount0Needed);
         }
-        if (amount1Needed > 0 && !key.currency1.isNative()) {
-            _safeApprove(key.currency1.unwrap(), liquidityManager, amount1Needed);
+        if (amount1Needed > 0 && !key.currency1.isAddressZero()) {
+            _safeApprove(Currency.unwrap(key.currency1), payable(liquidityManager), amount1Needed);
         }
 
         // --- Deposit into Liquidity Manager --- //
         // Handle ETH separately if needed (assuming LM's deposit handles msg.value if one token is native)
         uint256 msgValueForDeposit = 0;
-        if (key.currency0.isNative() && amount0Needed > 0) {
+        if (key.currency0.isAddressZero() && amount0Needed > 0) {
             msgValueForDeposit = amount0Needed;
-        } else if (key.currency1.isNative() && amount1Needed > 0) {
+        } else if (key.currency1.isAddressZero() && amount1Needed > 0) {
             msgValueForDeposit = amount1Needed;
         }
         // Call deposit on LM. It will pull ERC20s and use msg.value if needed.
         // This returns the *actual* shares minted, which might differ from target due to state changes.
         // We use the actual shares minted to reduce debt accurately.
         (uint256 actualSharesMinted, /*uint256 actualAmount0Deposited*/, /*uint256 actualAmount1Deposited*/) = 
-            FullRangeLiquidityManager(liquidityManager).deposit{value: msgValueForDeposit}(
-                PoolIdLibrary.toKey(poolId), // Requires PoolIdLibrary if not available
+            FullRangeLiquidityManager(payable(liquidityManager)).deposit{value: msgValueForDeposit}(
+                poolId,
                 amount0Needed,
                 amount1Needed,
-                0, // minSharesReceiver - not used in repay flow
-                address(this) // Recipient of shares is this contract (but they cancel debt)
+                0, // amount0Min
+                0, // amount1Min
+                address(this) // recipient
             );
 
         // --- Update Debt State --- //
@@ -859,7 +871,7 @@ contract MarginManager is IMarginManager {
     function _safeTransferOut(address token, address recipient, uint256 amount) internal {
         if (amount == 0) return; // Don't attempt zero transfers
         // Use safeTransfer; reverts if transfer fails or token contract is invalid.
-        SafeTransferLib.safeTransfer(token, recipient, amount);
+        SafeTransferLib.safeTransfer(ERC20(token), recipient, amount);
     }
 
     /**
@@ -870,8 +882,8 @@ contract MarginManager is IMarginManager {
      * @param amount The amount of tokens to approve.
      */
     function _safeApprove(address token, address spender, uint256 amount) internal {
-        SafeTransferLib.safeApprove(token, spender, 0); // Reset approval first
-        SafeTransferLib.safeApprove(token, spender, amount);
+        SafeTransferLib.safeApprove(ERC20(token), spender, 0); // Reset approval first
+        SafeTransferLib.safeApprove(ERC20(token), spender, amount);
     }
 
     // =========================================================================

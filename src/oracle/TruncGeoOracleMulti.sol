@@ -157,4 +157,31 @@ contract TruncGeoOracleMulti {
     function _blockTimestamp() internal view returns (uint32) {
         return uint32(block.timestamp);
     }
+    
+    /**
+     * @notice Checks if oracle is enabled for a pool
+     * @param poolId The ID of the pool
+     * @return True if the oracle is enabled for this pool
+     */
+    function isOracleEnabled(PoolId poolId) external view returns (bool) {
+        bytes32 id = PoolId.unwrap(poolId);
+        return states[id].cardinality > 0;
+    }
+    
+    /**
+     * @notice Gets the latest observation for a pool
+     * @param poolId The ID of the pool
+     * @return _tick The latest observed tick
+     * @return blockTimestampResult The block timestamp of the observation
+     */
+    function getLatestObservation(PoolId poolId) external view returns (int24 _tick, uint32 blockTimestampResult) {
+        bytes32 id = PoolId.unwrap(poolId);
+        if (states[id].cardinality == 0) {
+            revert Errors.OracleOperationFailed("getLatestObservation", "Pool not enabled in oracle");
+        }
+        
+        // Get the most recent observation
+        TruncatedOracle.Observation memory observation = observations[id][states[id].index];
+        return (observation.prevTick, observation.blockTimestamp);
+    }
 } 

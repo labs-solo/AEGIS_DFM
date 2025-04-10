@@ -61,11 +61,13 @@ interface IMarginData {
         uint256 debtShares;           // Debt balance denominated in ERC6909 shares of the managed position
         uint64 lastAccrualTimestamp; // Timestamp of the last interest accrual affecting this vault (relative to global multiplier)
     }
+}
 
-    // =========================================================================
-    // Constants
-    // =========================================================================
-
+/**
+ * @title MarginDataLibrary
+ * @notice Library containing constants and helper functions for margin data.
+ */
+library MarginDataLibrary {
     /**
      * @notice Flag for the `repay` action indicating funds should be taken from the vault balance.
      */

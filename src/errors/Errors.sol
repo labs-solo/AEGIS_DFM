@@ -15,6 +15,7 @@ library Errors {
     error AccessNotAuthorized(address caller);
     error AccessOnlyEmergencyAdmin(address caller);
     error Unauthorized();
+    error CallerNotPoolManager(address caller);
     
     // Validation and input errors
     error ValidationDeadlinePassed(uint32 deadline, uint32 blockTime);
@@ -75,19 +76,19 @@ library Errors {
     error InvalidCallbackType(uint8 callbackType);
     
     // Pool errors
-    error PoolNotInitialized(PoolId poolId);
-    error PoolAlreadyInitialized(PoolId poolId);
-    error PoolNotFound(PoolId poolId);
-    error PoolPaused(PoolId poolId);
-    error PoolLocked(PoolId poolId);
-    error PoolInvalidState(PoolId poolId);
-    error PoolInvalidOperation(PoolId poolId);
-    error PoolInvalidParameter(PoolId poolId);
+    error PoolNotInitialized(bytes32 poolId);
+    error PoolAlreadyInitialized(bytes32 poolId);
+    error PoolNotFound(bytes32 poolId);
+    error PoolPaused(bytes32 poolId);
+    error PoolLocked(bytes32 poolId);
+    error PoolInvalidState(bytes32 poolId);
+    error PoolInvalidOperation(bytes32 poolId);
+    error PoolInvalidParameter(bytes32 poolId);
     error PoolUnsupportedFee(uint24 fee);
     error PoolUnsupportedTickSpacing(int24 tickSpacing);
     error PoolInvalidFeeOrTickSpacing(uint24 fee, int24 tickSpacing);
     error PoolTickOutOfRange(int24 tick, int24 minTick, int24 maxTick);
-    error PoolInEmergencyState(PoolId poolId);
+    error PoolInEmergencyState(bytes32 poolId);
     error OnlyDynamicFeePoolAllowed();
     
     // Liquidity errors

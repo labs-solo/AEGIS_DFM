@@ -45,6 +45,7 @@ interface IMarginManager {
     function accumulatedFees(PoolId poolId) external view returns (uint256);
     function governance() external view returns (address);
     function interestRateModel() external view returns (IInterestRateModel);
+    function hasVault(PoolId poolId, address user) external view returns (bool);
 
     // --- State Modifying Functions ---
     function executeBatch(address user, PoolId poolId, PoolKey calldata key, IMarginData.BatchAction[] calldata actions) external;

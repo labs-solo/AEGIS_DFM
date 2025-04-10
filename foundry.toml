@@ -12,19 +12,12 @@ optimizer_runs = 1_000_000
 dotenv = true  # Enable .env file loading
 exclude_paths = ["test/old-tests"]
 remappings = [
-    # Use a unique prefix to avoid conflicts
-    "oz-contracts/=lib/v4-core/lib/openzeppelin-contracts/contracts/",
-
-    # Remove V3 remapping - Use V4 Core libraries directly
-    # "@uniswap/v3-core/contracts/=lib/v4-core/src/",
-
-    # Standard library remappings (point to root, not src)
-    "forge-std/=lib/forge-std/src/", # forge-std typically points to src
-    "v4-core/=lib/v4-core/",
-    "v4-periphery/=lib/v4-periphery/",
-    "solmate/=lib/solmate/",
-    "uniswap-hooks/=lib/uniswap-hooks/", # Assuming this also follows the root pattern
-    "forge-gas-snapshot/=lib/v4-periphery/lib/permit2/lib/forge-gas-snapshot/src/" # Corrected remapping for gas snapshot library
+    "forge-std/=lib/forge-std/src/",
+    "v4-core/=lib/v4-core/src/",
+    "v4-periphery/=lib/v4-periphery/src/",
+    "solmate/=lib/solmate/src/",
+    "openzeppelin-contracts/=lib/openzeppelin-contracts/contracts/", # Assuming standard OZ path
+    "uniswap-hooks/=lib/uniswap-hooks/src/"
 ]
 
 # Sepolia configuration for integration testing
