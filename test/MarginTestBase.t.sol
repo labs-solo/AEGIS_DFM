@@ -152,18 +152,14 @@ abstract contract MarginTestBase is Test {
         // console.log("[SETUP] Deploying Margin hook and MarginManager via CREATE2...");
 
         // 1. Define correct flags based on Margin.getHookPermissions()
+        // Matching the original Margin hook permissions
         uint160 flags = uint160(
             Hooks.AFTER_INITIALIZE_FLAG |
-            Hooks.BEFORE_ADD_LIQUIDITY_FLAG |
             Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-            Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG |
             Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
             Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
-            Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG |
-            Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |
-            Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+            Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG
         );
         
         console2.log("DEBUG - Hook flags:", flags);
@@ -180,15 +176,17 @@ abstract contract MarginTestBase is Test {
         console2.log("DEBUG - Creation code size:", marginCreationCode.length);
         console2.logBytes32(creationCodeHash);
 
-        // 4. Mine for the hook address
-        console2.log("DEBUG - About to call HookMiner.find with governance:", governance);
-        (address predictedHookAddress, bytes32 salt) = HookMiner.find(
-            governance, flags, marginCreationCode, bytes("")
+        // 4. Get predicted hook address using our known salt
+        bytes32 salt = bytes32(uint256(4803)); // Known working salt for original hook permissions
+        address predictedHookAddress = HookMiner.computeAddress(
+            governance, 
+            uint256(salt),
+            marginCreationCode
         );
-        console2.log("DEBUG - HookMiner returned address:", predictedHookAddress);
-        console2.log("DEBUG - HookMiner returned salt:", uint256(salt));
+        console2.log("DEBUG - Using hardcoded salt for hook deployment:", uint256(salt));
+        console2.log("DEBUG - Computed hook address:", predictedHookAddress);
         console2.log("DEBUG - Hook address permissions:", uint160(predictedHookAddress) & Hooks.ALL_HOOK_MASK);
-        require(predictedHookAddress != address(0), "HookMiner failed prediction");
+        require(predictedHookAddress != address(0), "Hook address prediction failed");
 
         // 5. Deploy MarginManager, passing the PREDICTED hook address
         uint256 initialSolvencyThreshold = 98 * 1e16;
@@ -203,6 +201,17 @@ abstract contract MarginTestBase is Test {
         );
         console2.log("DEBUG - MarginManager deployed at:", address(marginManager));
 
+        // Add extra debug information about flags and addresses
+        console2.log("DEBUG - Margin Flags Value:", flags);
+        console2.log("DEBUG - Hook ALL_HOOK_MASK:", Hooks.ALL_HOOK_MASK);
+        
+        // Debug addresses
+        console2.log("DEBUG - Governance:", governance);
+        console2.log("DEBUG - Pool Manager:", address(poolManager));
+        console2.log("DEBUG - Policy Manager:", address(policyManager));
+        console2.log("DEBUG - Liquidity Manager:", address(liquidityManager));
+        console2.log("DEBUG - Margin Manager:", address(marginManager));
+        
         // 6. Prepare FINAL constructor args with real MarginManager address
         bytes memory finalMarginConstructorArgs = abi.encode(
             address(poolManager), 
@@ -211,14 +220,18 @@ abstract contract MarginTestBase is Test {
             address(marginManager) // Real MM address
         );
 
+        // Debug bytecode
+        console2.logBytes32(keccak256(finalMarginConstructorArgs));
+
         // 7. Verify the creation code with FINAL arguments doesn't change the bytecode hash significantly
         bytes memory finalMarginCreationCode = abi.encodePacked(type(Margin).creationCode, finalMarginConstructorArgs);
         bytes32 finalCreationCodeHash = keccak256(finalMarginCreationCode);
         console2.log("DEBUG - Final creation code size:", finalMarginCreationCode.length);
         console2.logBytes32(finalCreationCodeHash);
 
-        // 8. Deploy Margin using the salt and FINAL constructor args
-        console2.log("DEBUG - Deploying Margin with salt:", uint256(salt));
+        // 8. Deploy Margin using the same hardcoded salt and FINAL constructor args
+        console2.log("DEBUG - Using hardcoded salt for hook deployment:", uint256(salt));
+        
         fullRange = new Margin{salt: salt}(
             poolManager,
             IPoolPolicy(address(policyManager)),

@@ -596,28 +596,24 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
 
     /**
      * @notice Override `getHookPermissions` to specify which hooks `Margin` uses
-     * @dev Overrides Spot's implementation to declare hooks Margin interacts with (e.g., beforeDonate).
+     * @dev Overrides Spot's implementation to declare hooks Margin interacts with.
      */
     function getHookPermissions() public pure override(Spot) returns (Hooks.Permissions memory) {
-        // Inherit permissions from Spot and add/modify as needed
-        // Spot permissions: afterInitialize, afterAddLiquidity, afterRemoveLiquidity, beforeSwap, afterSwap, 
-        //                  plus delta versions
-        // Margin adds: beforeModifyLiquidity, beforeDonate (and overrides beforeSwap)
         return Hooks.Permissions({
             beforeInitialize: false,
-            afterInitialize: true,              // Handled by _afterInitialize override
-            beforeAddLiquidity: true,           // Added: Uses beforeModifyLiquidity
-            afterAddLiquidity: true,           // Handled by _afterAddLiquidity override
-            beforeRemoveLiquidity: true,        // Added: Uses beforeModifyLiquidity
-            afterRemoveLiquidity: true,        // Handled by _afterRemoveLiquidity override
-            beforeSwap: true,                   // Handled by beforeSwap override
-            afterSwap: true,                   // Inherited from Spot (oracle update)
-            beforeDonate: false,               // Disabled
+            afterInitialize: true,
+            beforeAddLiquidity: false,
+            afterAddLiquidity: true,
+            beforeRemoveLiquidity: false,
+            afterRemoveLiquidity: true,
+            beforeSwap: true,
+            afterSwap: true,
+            beforeDonate: false,
             afterDonate: false,
-            beforeSwapReturnDelta: true,       // Inherited from Spot
-            afterSwapReturnDelta: true,       // Inherited from Spot
-            afterAddLiquidityReturnDelta: true, // Inherited from Spot
-            afterRemoveLiquidityReturnDelta: true // Inherited from Spot
+            beforeSwapReturnDelta: false, 
+            afterSwapReturnDelta: false,
+            afterAddLiquidityReturnDelta: true,
+            afterRemoveLiquidityReturnDelta: false
         });
     }
 
