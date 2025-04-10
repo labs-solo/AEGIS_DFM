@@ -12,6 +12,7 @@ import { IInterestRateModel } from "./interfaces/IInterestRateModel.sol";
 import { IPoolPolicy } from "./interfaces/IPoolPolicy.sol"; // Added for Phase 4
 import { FullRangeLiquidityManager } from "./FullRangeLiquidityManager.sol"; // Added for Phase 3
 import { MathUtils } from "./libraries/MathUtils.sol"; // Added for Phase 3
+import { SolvencyUtils } from "./libraries/SolvencyUtils.sol"; // Added for Math Cleanup
 import { Errors } from "./errors/Errors.sol";
 import { PoolKey } from "v4-core/src/types/PoolKey.sol"; // Added for Phase 2
 import { SafeTransferLib } from "solmate/src/utils/SafeTransferLib.sol"; // Added for Phase 2
@@ -279,7 +280,7 @@ contract MarginManager is IMarginManager {
         if (!_isSolvent(poolId, vaultMem, finalReserve0, finalReserve1, finalTotalShares, _threshold, _currentMultiplier)) {
             // Calculate values needed for the error parameters
             uint256 collateralValueInShares = _calculateCollateralValueInShares(poolId, vaultMem, finalReserve0, finalReserve1, finalTotalShares);
-            uint256 debtValueInShares = FullMath.mulDiv(vaultMem.debtShares, _currentMultiplier, PRECISION);
+            uint256 debtValueInShares = SolvencyUtils.calculateCurrentDebtValue(vaultMem.debtShares, _currentMultiplier, PRECISION);
             revert Errors.InsufficientCollateral(debtValueInShares, collateralValueInShares, _threshold); 
         }
 
@@ -350,7 +351,7 @@ contract MarginManager is IMarginManager {
 
     /**
      * @notice Checks if a vault is solvent.
-     * @dev Implementation deferred.
+     * @dev Uses SolvencyUtils for core solvency logic.
      */
     function _isSolvent(
         /// @notice Checks if a vault's state (in memory) is solvent against current pool conditions.
@@ -377,21 +378,15 @@ contract MarginManager is IMarginManager {
         );
 
         // Calculate the value of the vault's debt in terms of LP shares, applying interest
-        uint256 debtValueInShares = FullMath.mulDiv(
-            vaultMem.debtShares,
-            currentInterestMultiplier,
-            PRECISION
-        );
+        uint256 debtValueInShares = SolvencyUtils.calculateCurrentDebtValue(vaultMem.debtShares, currentInterestMultiplier, PRECISION);
 
-        // Apply solvency threshold - collateral must exceed debt * threshold/PRECISION
-        uint256 requiredCollateral = FullMath.mulDiv(
+        // Use SolvencyUtils to check solvency
+        return SolvencyUtils.isSolvent(
+            collateralValueInShares,
             debtValueInShares,
             threshold,
             PRECISION
         );
-
-        // Vault is solvent if collateral value >= required collateral
-        return collateralValueInShares >= requiredCollateral;
     }
 
     /**
@@ -416,30 +411,15 @@ contract MarginManager is IMarginManager {
             return 0;
         }
 
-        // Calculate share value based on both token0 and token1 balances
-        // For each token: sharesForToken = tokenBalance * totalShares / tokenReserve
-
-        uint256 sharesFromToken0 = 0;
-        if (reserve0 > 0 && vaultMem.token0Balance > 0) {
-            sharesFromToken0 = FullMath.mulDiv(
-                uint256(vaultMem.token0Balance),
-                totalShares,
-                reserve0
-            );
-        }
-
-        uint256 sharesFromToken1 = 0;
-        if (reserve1 > 0 && vaultMem.token1Balance > 0) {
-            sharesFromToken1 = FullMath.mulDiv(
-                uint256(vaultMem.token1Balance),
-                totalShares,
-                reserve1
-            );
-        }
-
-        // Take the smaller of the two share values to ensure conservative valuation
-        // This prevents manipulation by depositing only the less valuable token
-        return sharesFromToken0 < sharesFromToken1 ? sharesFromToken0 : sharesFromToken1;
+        // Use MathUtils.calculateProportionalShares to determine the collateral value
+        return MathUtils.calculateProportionalShares(
+            vaultMem.token0Balance,
+            vaultMem.token1Balance,
+            totalShares,
+            reserve0,
+            reserve1,
+            false // Standard precision assumed
+        );
     }
 
     /**

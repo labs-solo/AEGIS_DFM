@@ -460,16 +460,20 @@ contract FullRangeDynamicFeeManager is Owned {
      * @return The maximum tick change allowed
      */
     function _calculateMaxTickChange(uint256 currentFeePpm, int24 tickScalingFactor) internal pure returns (int24) {
-        // Calculate the max tick change based on the fee and scaling factor
-        // Ensure the result is clamped to prevent overflow/underflow
-        int256 maxChangeScaled = int256(currentFeePpm) * int256(tickScalingFactor) / 1e6; // Assuming PPM
+        // Calculate the max tick change based on the fee and scaling factor using MathUtils for consistency
+        // Use MathUtils.calculateFeeWithScale for better precision and overflow protection
+        uint256 maxChangeUint = MathUtils.calculateFeeWithScale(
+            currentFeePpm, 
+            uint256(uint24(tickScalingFactor)), // Safe conversion to uint256
+            1e6 // PPM denominator
+        );
+        
+        int256 maxChangeScaled = int256(maxChangeUint);
 
         // Clamp to int24 bounds
         if (maxChangeScaled > type(int24).max) return type(int24).max;
         if (maxChangeScaled < type(int24).min) return type(int24).min; // Should be positive anyway
         
-        // Ensure it's at least some minimum value if needed, e.g., 1
-        // return int24(max(1, maxChangeScaled)); // Example: ensure at least 1
         return int24(maxChangeScaled);
     }
     

@@ -10,21 +10,49 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {LiquidityAmounts} from "v4-core/test/utils/LiquidityAmounts.sol";
 import {Errors} from "../errors/Errors.sol";
 import { SafeCast } from "v4-core/src/libraries/SafeCast.sol";
+import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
+import {PrecisionConstants} from "./PrecisionConstants.sol";
 
 /**
  * @title MathUtils
  * @notice Consolidated mathematical utilities for the protocol
  * @dev Version 1.0.0 - Optimized implementation with gas efficiency improvements
+ * 
+ * ===== MATH LIBRARY USAGE GUIDE =====
+ * 
+ * 1. FullMath (Uniswap V4): Use for overflow-safe multiplication and division operations
+ *    - FullMath.mulDiv: For multiplication followed by division with overflow protection
+ *    - FullMath.mulDivRoundingUp: Same as mulDiv but rounds up
+ * 
+ * 2. FixedPointMathLib (Solmate): Use for standard math operations with proven implementations
+ *    - FixedPointMathLib.sqrt: For square root calculations (more gas efficient than our implementation)
+ *    - Also provides wad math and other fixed-point operations if needed
+ * 
+ * 3. MathUtils (This library): Use for protocol-specific operations and convenience wrappers
+ *    - calculateProportional: For calculating proportional values (amount * shares / denominator)
+ *    - absDiff: For calculating absolute difference between int24 tick values
+ *    - min/max: Simple comparison utilities
+ *    - Specialized functions for share calculation, deposit/withdraw amount computation
+ * 
+ * 4. Tick/Price Math (Uniswap V4): Use for Uniswap-specific calculations
+ *    - TickMath: For tick-related calculations and conversions
+ *    - SqrtPriceMath: For price-related calculations
+ *
+ * 5. PrecisionConstants: Use for standardized precision constants
+ *    - PRECISION (1e18): For high-precision calculations like interest rates
+ *    - PPM_SCALE (1e6): For percentage-based calculations in parts-per-million
  */
 library MathUtils {
     /** 
      * @dev Constants 
      */
-    uint256 internal constant PRECISION = 1e18;
-    uint256 internal constant PPM_SCALE = 1e6; // 100% in PPM
-    uint256 internal constant PPM_DENOMINATOR = 1e6; 
-    uint256 internal constant ONE_HUNDRED_PERCENT = 1e6; // 100% in PPM
+    // Import precision constants from central library
+    using PrecisionConstants for uint256;
     uint256 internal constant MINIMUM_LIQUIDITY = 1000;
+    
+    // For backward compatibility, expose the precision constants directly
+    function PRECISION() internal pure returns (uint256) { return PrecisionConstants.PRECISION; }
+    function PPM_SCALE() internal pure returns (uint256) { return PrecisionConstants.PPM_SCALE; }
     
     /**
      * @notice Clamps a tick value to the valid Uniswap tick range
@@ -40,26 +68,13 @@ library MathUtils {
     }
     
     /**
-     * @notice Calculate square root using the Babylonian method with optimizations
-     * @dev Uses unchecked blocks where operations cannot overflow
+     * @notice Calculate square root using Solmate's FixedPointMathLib
+     * @dev Efficient implementation with optimized assembly code from Solmate
      * @param x The value to calculate the square root of
      * @return y The square root of x
      */
     function sqrt(uint256 x) internal pure returns (uint256 y) {
-        if (x == 0) return 0;
-        
-        // Initial estimate
-        y = x;
-        uint256 z = (x + 1) / 2;
-        
-        // Use unchecked for gas optimization since this loop
-        // cannot overflow and is bounded
-        unchecked {
-            while (z < y) {
-                y = z;
-                z = (x / z + z) / 2;
-            }
-        }
+        return FixedPointMathLib.sqrt(x);
     }
     
     /**
@@ -88,7 +103,7 @@ library MathUtils {
     
     /**
      * @notice Calculates geometric mean (sqrt(a * b)) with overflow protection
-     * @dev Uses unchecked blocks for gas optimization
+     * @dev Uses overflow protection for large numbers and calls sqrt internally
      * @param a First value
      * @param b Second value
      * @return The geometric mean of a and b
@@ -182,21 +197,6 @@ library MathUtils {
     }
     
     /**
-     * @notice Calculates initial shares for first deposit
-     * @dev Wrapper for geometric shares with minimum liquidity
-     * @param amount0 The amount of token0
-     * @param amount1 The amount of token1
-     * @return shares The calculated shares
-     * @return lockedShares The amount of shares permanently locked
-     */
-    function calculateInitialShares(
-        uint256 amount0, 
-        uint256 amount1
-    ) internal pure returns (uint256 shares, uint256 lockedShares) {
-        return calculateGeometricShares(amount0, amount1, true);
-    }
-    
-    /**
      * @notice Calculates proportional shares for subsequent deposits
      * @dev Handles both standard and high-precision calculations
      * @param amount0 The amount of token0
@@ -227,13 +227,13 @@ library MathUtils {
         uint256 shares0 = 0;
         if (reserve0 > 0 && amount0 > 0) {
             // shares0 = amount0 * totalLiquidity / reserve0;
-            shares0 = FullMath.mulDiv(amount0, totalShares, reserve0);
+            shares0 = calculateProportional(amount0, totalShares, reserve0, false);
         }
 
         uint256 shares1 = 0;
         if (reserve1 > 0 && amount1 > 0) {
             // shares1 = amount1 * totalLiquidity / reserve1;
-            shares1 = FullMath.mulDiv(amount1, totalShares, reserve1);
+            shares1 = calculateProportional(amount1, totalShares, reserve1, false);
         }
 
         // If only one token amount is provided (or reserve for the other is 0, or amount is 0),
@@ -269,7 +269,31 @@ library MathUtils {
             revert Errors.ValidationZeroAmount("totalValue");
         }
         
-        return FullMath.mulDiv(amount, totalShares, totalValue);
+        return calculateProportional(amount, totalShares, totalValue, false);
+    }
+    
+    /**
+     * @notice General-purpose function for proportional calculations
+     * @dev Core implementation for calculating proportional values using the formula: (numerator * shares) / denominator
+     * @param numerator The value to be scaled (e.g., amount, reserve)
+     * @param shares The shares to use for calculation
+     * @param denominator The total value to divide by (e.g., totalShares, totalValue)
+     * @param roundUp Whether to round up the result
+     * @return The calculated proportional value
+     */
+    function calculateProportional(
+        uint256 numerator,
+        uint256 shares, 
+        uint256 denominator,
+        bool roundUp
+    ) internal pure returns (uint256) {
+        if (denominator == 0) return 0;
+        
+        if (roundUp) {
+            return FullMath.mulDivRoundingUp(numerator, shares, denominator);
+        } else {
+            return FullMath.mulDiv(numerator, shares, denominator);
+        }
     }
     
     /**
@@ -317,7 +341,7 @@ library MathUtils {
             
             actual0 = amount0Desired;
             actual1 = amount1Desired;
-            (sharesMinted, lockedShares) = calculateInitialShares(actual0, actual1);
+            (sharesMinted, lockedShares) = calculateGeometricShares(actual0, actual1, true);
             return (actual0, actual1, sharesMinted, lockedShares);
         }
         
@@ -339,9 +363,9 @@ library MathUtils {
         // Calculate token amounts based on shares
         if (sharesMinted > 0) {
             if (highPrecision) {
-                uint256 scaleFactor = PRECISION;
-                actual0 = FullMath.mulDiv(sharesMinted, reserve0, totalShares);
-                actual1 = FullMath.mulDiv(sharesMinted, reserve1, totalShares);
+                uint256 scaleFactor = PRECISION();
+                actual0 = calculateProportional(reserve0, sharesMinted, totalShares, false);
+                actual1 = calculateProportional(reserve1, sharesMinted, totalShares, false);
             } else {
                 unchecked {
                     actual0 = (sharesMinted * reserve0) / totalShares;
@@ -449,51 +473,8 @@ library MathUtils {
         // If sharesToBurn > totalLiquidity, this calculation might yield more tokens than reserves,
         // but the calling function should prevent this scenario.
 
-        amount0Out = FullMath.mulDiv(sharesToBurn, reserve0, totalLiquidity);
-        amount1Out = FullMath.mulDiv(sharesToBurn, reserve1, totalLiquidity);
-    }
-    
-    /**
-     * @notice Calculate fee with custom scaling factor
-     * @dev Base implementation for fee calculations
-     * @param amount The amount to calculate fee for
-     * @param feeRate The fee rate
-     * @param scale The scale factor
-     * @return The calculated fee
-     */
-    function calculateFeeWithScale(
-        uint256 amount, 
-        uint256 feeRate, 
-        uint256 scale
-    ) internal pure returns (uint256) {
-        if (amount == 0 || feeRate == 0) 
-            return 0;
-        
-        unchecked {
-            return FullMath.mulDiv(amount, feeRate, scale);
-        }
-    }
-    
-    /**
-     * @notice Calculate fee with standard scale (1e18)
-     * @dev Wrapper for calculateFeeWithScale with PRECISION scale
-     * @param amount The amount to calculate fee for
-     * @param feeRate The fee rate
-     * @return The calculated fee
-     */
-    function calculateFee(uint256 amount, uint256 feeRate) internal pure returns (uint256) {
-        return calculateFeeWithScale(amount, feeRate, PRECISION);
-    }
-    
-    /**
-     * @notice Calculate fee in PPM (parts per million)
-     * @dev Wrapper for calculateFeeWithScale with PPM scale
-     * @param amount The amount to calculate fee for
-     * @param feePpm The fee rate in PPM
-     * @return The calculated fee
-     */
-    function calculateFeePpm(uint256 amount, uint256 feePpm) internal pure returns (uint256) {
-        return calculateFeeWithScale(amount, feePpm, PPM_SCALE);
+        amount0Out = calculateProportional(reserve0, sharesToBurn, totalLiquidity, false);
+        amount1Out = calculateProportional(reserve1, sharesToBurn, totalLiquidity, false);
     }
     
     /**
@@ -506,7 +487,7 @@ library MathUtils {
     function calculateSurgeFee(uint256 baseFee, uint256 multiplier) internal pure returns (uint256) {
         // Surge fee calculation cannot overflow as both values are bounded
         unchecked {
-            return (baseFee * multiplier) / PPM_SCALE;
+            return (baseFee * multiplier) / PPM_SCALE();
         }
     }
     
@@ -524,20 +505,20 @@ library MathUtils {
         uint256 decayFactor
     ) internal pure returns (uint256 surgeFee) {
         // Quick return for no surge case
-        if (surgeMultiplierPpm <= PPM_SCALE || decayFactor == 0) {
+        if (surgeMultiplierPpm <= PPM_SCALE() || decayFactor == 0) {
             return baseFeePpm;
         }
         
         // Calculate surge amount (amount above base fee)
         uint256 surgeAmount = FullMath.mulDiv(
             baseFeePpm,
-            surgeMultiplierPpm - PPM_SCALE,
-            PPM_SCALE
+            surgeMultiplierPpm - PPM_SCALE(),
+            PPM_SCALE()
         );
         
         // Apply decay factor
-        if (decayFactor < PRECISION) {
-            surgeAmount = FullMath.mulDiv(surgeAmount, decayFactor, PRECISION);
+        if (decayFactor < PRECISION()) {
+            surgeAmount = FullMath.mulDiv(surgeAmount, decayFactor, PRECISION());
         }
         
         // Return base fee plus (potentially decayed) surge amount
@@ -560,9 +541,9 @@ library MathUtils {
         }
         
         // Calculate linear decay: 1 - (elapsed/total)
-        return PRECISION - FullMath.mulDiv(
+        return PRECISION() - FullMath.mulDiv(
             secondsElapsed,
-            PRECISION,
+            PRECISION(),
             totalDuration
         );
     }
@@ -616,7 +597,7 @@ library MathUtils {
         bool extraSafetyChecks = (options & 0x4) != 0;
         
         // Use optimal scaling factor based on precision mode
-        uint256 scaleFactor = highPrecision ? PRECISION : PPM_SCALE;
+        uint256 scaleFactor = highPrecision ? PRECISION() : PPM_SCALE();
         
         // Calculate target ratio with safety checks
         uint256 targetRatio;
@@ -820,41 +801,7 @@ library MathUtils {
         uint256 dynamicFeePpm,
         uint256 polMultiplier
     ) internal pure returns (uint256 polTarget) {
-        return FullMath.mulDiv(dynamicFeePpm * polMultiplier, totalLiquidity, PPM_SCALE);
-    }
-    
-    /**
-     * @notice Calculate minimum POL target with default multiplier
-     * @dev Backward compatibility wrapper
-     * @param totalLiquidity Current total pool liquidity
-     * @param dynamicFeePpm Current dynamic fee in PPM
-     * @return Minimum required protocol-owned liquidity amount
-     */
-    function calculateMinimumPOLTarget(
-        uint256 totalLiquidity, 
-        uint256 dynamicFeePpm
-    ) internal pure returns (uint256) {
-        // Higher dynamic fees require more POL
-        uint256 polPercentage = 5 + (dynamicFeePpm / 10000); // Base 5% + scaling
-        if (polPercentage > 25) polPercentage = 25; // Cap at 25%
-        
-        return (totalLiquidity * polPercentage) / 100;
-    }
-    
-    /**
-     * @notice Calculate extra liquidity for a pool
-     * @dev Used for liquidity calculations
-     * @param amount0 Amount of token0
-     * @param amount1 Amount of token1
-     * @param poolIdBytes Pool ID
-     * @return The calculated extra liquidity
-     */
-    function calculateExtraLiquidity(
-        uint256 amount0,
-        uint256 amount1,
-        bytes32 poolIdBytes
-    ) internal pure returns (uint256) {
-        return calculateGeometricMean(amount0, amount1);
+        return FullMath.mulDiv(dynamicFeePpm * polMultiplier, totalLiquidity, PPM_SCALE());
     }
     
     /**
@@ -888,7 +835,7 @@ library MathUtils {
     ) {
         // Validate shares sum to 100%
         uint256 totalShares = polSharePpm + fullRangeSharePpm + lpSharePpm;
-        if (totalShares != PPM_SCALE) {
+        if (totalShares != PPM_SCALE()) {
             revert Errors.InvalidInput();
         }
         
@@ -941,7 +888,7 @@ library MathUtils {
         }
         
         // Volatility as percentage of older price (in PPM)
-        volatilityPpm = FullMath.mulDiv(priceDiffAbs, PPM_SCALE, oldPrice);
+        volatilityPpm = FullMath.mulDiv(priceDiffAbs, PPM_SCALE(), oldPrice);
         
         return volatilityPpm;
     }
@@ -1110,58 +1057,34 @@ library MathUtils {
     }
 
     /**
-     * @notice External view function for testing computeLiquidityFromAmounts
+     * @notice Calculate fee with custom scaling factor
+     * @dev Base implementation for fee calculations
+     * @param amount The amount to calculate fee for
+     * @param feeRate The fee rate
+     * @param scale The scale factor
+     * @return The calculated fee
      */
-    /* // Removing unused test wrapper
-    function testComputeLiquidityFromAmounts(
-        uint160 sqrtPriceX96,
-        uint160 sqrtPriceAX96,
-        uint160 sqrtPriceBX96,
-        uint256 amount0,
-        uint256 amount1
-    ) external pure returns (uint128) {
-        // Assumptions to avoid trivial reverts (e.g., zero price)
-        vm.assume(sqrtPriceX96 != 0 && sqrtPriceAX96 != 0 && sqrtPriceBX96 != 0);
-
-        // Heuristic: If amounts are extremely large, expect potential overflow revert from LiquidityAmounts
-        uint256 overflowThreshold = (type(uint256).max / 10**6); // Threshold likely to cause V4 overflow
-        bool expectOverflow = (amount0 > overflowThreshold || amount1 > overflowThreshold);
-
-        if (expectOverflow) {
-            // Expect the specific revert string from the underlying V4 library.
-            vm.expectRevert("liquidity overflow");
+    function calculateFeeWithScale(
+        uint256 amount, 
+        uint256 feeRate, 
+        uint256 scale
+    ) internal pure returns (uint256) {
+        if (amount == 0 || feeRate == 0) 
+            return 0;
+        
+        unchecked {
+            return FullMath.mulDiv(amount, feeRate, scale);
         }
-
-        // Call the internal function. Test passes if it succeeds (and no revert expected)
-        // or if it reverts with the expected message (and revert *was* expected).
-        return computeLiquidityFromAmounts(
-            sqrtPriceX96, 
-            sqrtPriceAX96, 
-            sqrtPriceBX96, 
-            amount0, 
-            amount1
-        );
     }
-    */
-
+    
     /**
-     * @notice External view function for testing computeAmountsFromLiquidity
+     * @notice Calculate fee in PPM (parts per million)
+     * @dev Wrapper for calculateFeeWithScale with PPM scale
+     * @param amount The amount to calculate fee for
+     * @param feePpm The fee rate in PPM
+     * @return The calculated fee
      */
-    /* // Removing unused test wrapper
-    function testComputeAmountsFromLiquidity(
-        uint160 sqrtPriceX96,
-        uint160 sqrtPriceAX96,
-        uint160 sqrtPriceBX96,
-        uint128 liquidity,
-        bool roundUp
-    ) external pure returns (uint256, uint256) {
-        return computeAmountsFromLiquidity(
-            sqrtPriceX96, 
-            sqrtPriceAX96, 
-            sqrtPriceBX96, 
-            liquidity, 
-            roundUp
-        );
+    function calculateFeePpm(uint256 amount, uint256 feePpm) internal pure returns (uint256) {
+        return calculateFeeWithScale(amount, feePpm, PPM_SCALE());
     }
-    */
 } 

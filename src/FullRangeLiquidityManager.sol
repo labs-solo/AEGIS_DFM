@@ -36,6 +36,7 @@ import "forge-std/console2.sol";
 import {LiquidityMath} from "v4-core/src/libraries/LiquidityMath.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {TransferUtils} from "./utils/TransferUtils.sol";
+import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 
 using SafeCast for uint256;
 using SafeCast for int256;
@@ -49,23 +50,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
     
-    // Constants for deposit/withdraw actions
-    uint8 internal constant ACTION_DEPOSIT = 1;
-    uint8 internal constant ACTION_WITHDRAW = 2;
-    uint8 internal constant ACTION_BORROW = 3;
-    uint8 internal constant ACTION_REINVEST_PROTOCOL_FEES = 4;
+    // Using the CallbackType enum from the interface instead of constants
     
-    // Callback data structure for unlock pattern
-    struct CallbackData {
-        PoolId poolId;
-        uint8 callbackType; // 1 for deposit, 2 for withdraw, 3 for borrow, 4 for reinvestProtocolFees
-        uint128 shares;
-        uint128 oldTotalShares;
-        uint256 amount0;
-        uint256 amount1;
-        address recipient;
-    }
-        
     /// @dev The Uniswap V4 PoolManager reference
     IPoolManager public immutable manager;
     
@@ -100,72 +86,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     
     // Constants
     uint256 private constant MIN_VIABLE_RESERVE = 100;
-    uint256 private constant PRECISION = 1_000_000; // 10^6 precision for percentage calculations
+    uint256 private constant PERCENTAGE_PRECISION = 1_000_000; // 10^6 precision for percentage calculations
     
     // Events for pool management
     event PoolKeyStored(PoolId indexed poolId, PoolKey key);
-    event TotalLiquidityUpdated(PoolId indexed poolId, uint128 oldLiquidity, uint128 newLiquidity);
-    
-    // Events for liquidity operations
-    event LiquidityAdded(
-        PoolId indexed poolId,
-        address indexed user,
-        uint256 amount0,
-        uint256 amount1,
-        uint128 sharesTotal,
-        uint128 sharesMinted,
-        uint256 timestamp
-    );
-    event LiquidityRemoved(
-        PoolId indexed poolId,
-        address indexed user,
-        uint256 amount0,
-        uint256 amount1,
-        uint128 sharesTotal,
-        uint128 sharesBurned,
-        uint256 timestamp
-    );
-    event ReserveCapped(PoolId indexed poolId, uint256 amount0Excess, uint256 amount1Excess);
-    event MinimumLiquidityLocked(PoolId indexed poolId, uint256 amount);
-    
-    // Emergency events
-    event EmergencyStateActivated(PoolId indexed poolId, address indexed activator, string reason);
-    event EmergencyStateDeactivated(PoolId indexed poolId, address indexed deactivator);
-    event GlobalEmergencyStateChanged(bool enabled, address indexed changedBy);
-    event EmergencyWithdrawalCompleted(
-        PoolId indexed poolId,
-        address indexed user,
-        uint256 amount0Out,
-        uint256 amount1Out,
-        uint256 sharesBurned
-    );
+    // Using events from the interface
         
-    /**
-     * @notice Consolidated event for reinvestment operations
-     * @dev Reduces gas costs by combining multiple events
-     */
-    event ReinvestmentProcessed(
-        PoolId indexed poolId, 
-        uint256 amount0, 
-        uint256 amount1, 
-        uint256 shares,
-        uint128 oldTotalShares,
-        uint128 newTotalShares
-    );
-    
-    /**
-     * @notice Simplified event for pool state updates
-     * @dev Operation types: 1=deposit, 2=withdraw, 3=reinvest
-     */
-    event PoolStateUpdated(
-        PoolId indexed poolId,
-        uint128 totalShares,
-        uint8 operationType
-    );
-            
-    // These are kept for backward compatibility but will be no-ops
-    event PositionCacheUpdated(PoolId indexed poolId, uint128 liquidity, uint160 sqrtPriceX96);
-    
     // Storage slot constants for V4 state access
     bytes32 private constant POOLS_SLOT = bytes32(uint256(6));
     uint256 private constant POSITIONS_OFFSET = 6;
@@ -361,7 +287,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Prepare callback data
         CallbackData memory callbackData = CallbackData({
             poolId: poolId, // Use poolId
-            callbackType: ACTION_DEPOSIT, 
+            callbackType: CallbackType.DEPOSIT, 
             shares: sharesToAdd,
             oldTotalShares: oldTotalSharesInternal,
             amount0: amount0,
@@ -386,7 +312,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             uint128(usableShares),
             block.timestamp
         );
-        emit PoolStateUpdated(poolId, newTotalSharesInternal, ACTION_DEPOSIT); // Use poolId
+        emit PoolStateUpdated(poolId, newTotalSharesInternal, uint8(CallbackType.DEPOSIT)); // Use poolId
         
         return (usableShares, amount0, amount1);
     }
@@ -453,7 +379,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Prepare callback data
         CallbackData memory callbackData = CallbackData({
             poolId: poolId, // Use poolId
-            callbackType: ACTION_WITHDRAW, 
+            callbackType: CallbackType.WITHDRAW, 
             shares: sharesToBurn128,
             oldTotalShares: oldTotalSharesInternal,
             amount0: amount0,
@@ -481,7 +407,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             sharesToBurn128,
             block.timestamp
         );
-        emit PoolStateUpdated(poolId, newTotalSharesInternal, ACTION_WITHDRAW); // Use poolId
+        emit PoolStateUpdated(poolId, newTotalSharesInternal, uint8(CallbackType.WITHDRAW)); // Use poolId
         
         return (amount0, amount1);
     }
@@ -588,7 +514,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // CallbackData setup uses poolId correctly
         CallbackData memory callbackData = CallbackData({
             poolId: poolId, 
-            callbackType: ACTION_WITHDRAW, 
+            callbackType: CallbackType.WITHDRAW, 
             shares: sharesToBurn.toUint128(),
             oldTotalShares: oldTotalShares,
             amount0: amount0Out,
@@ -613,7 +539,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         
         emit EmergencyWithdrawalCompleted(poolId, user, amount0Out, amount1Out, sharesToBurn);
         emit LiquidityRemoved(poolId, user, amount0Out, amount1Out, oldTotalShares, sharesToBurn.toUint128(), block.timestamp);
-        emit PoolStateUpdated(poolId, newTotalShares, ACTION_WITHDRAW);
+        emit PoolStateUpdated(poolId, newTotalShares, uint8(CallbackType.WITHDRAW));
         
         return (delta, amount0Out, amount1Out);
     }
@@ -710,15 +636,15 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             // Subsequent deposits - calculate liquidity (shares) based on one amount and reserves ratio
             if (reserve0 == 0 || reserve1 == 0) revert Errors.ValidationInvalidInput("Reserves are zero");
             
-            uint256 shares0 = FullMath.mulDivRoundingUp(amount0Desired, totalSharesInternal, reserve0);
-            uint256 shares1 = FullMath.mulDivRoundingUp(amount1Desired, totalSharesInternal, reserve1);
+            uint256 shares0 = MathUtils.calculateProportional(amount0Desired, totalSharesInternal, reserve0, true);
+            uint256 shares1 = MathUtils.calculateProportional(amount1Desired, totalSharesInternal, reserve1, true);
             uint256 optimalShares = shares0 < shares1 ? shares0 : shares1;
             shares = optimalShares.toUint128();
             if (shares == 0) revert Errors.ZeroAmount();
 
             // Calculate actual amounts based on the determined shares and reserves ratio
-            actual0 = FullMath.mulDivRoundingUp(uint256(shares), reserve0, totalSharesInternal);
-            actual1 = FullMath.mulDivRoundingUp(uint256(shares), reserve1, totalSharesInternal);
+            actual0 = MathUtils.calculateProportional(reserve0, uint256(shares), totalSharesInternal, true);
+            actual1 = MathUtils.calculateProportional(reserve1, uint256(shares), totalSharesInternal, true);
             
             lockedSharesAmount = 0;
         }
@@ -746,9 +672,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (totalSharesInternal == 0) revert Errors.PoolNotInitialized(bytes32(0));
         if (sharesToBurn == 0) return (0, 0);
 
-        // Calculate amounts proportionally
-        amount0 = FullMath.mulDiv(reserve0, sharesToBurn, totalSharesInternal);
-        amount1 = FullMath.mulDiv(reserve1, sharesToBurn, totalSharesInternal);
+        // Calculate amounts proportionally using MathUtils utility
+        amount0 = MathUtils.calculateProportional(reserve0, sharesToBurn, totalSharesInternal, false);
+        amount1 = MathUtils.calculateProportional(reserve1, sharesToBurn, totalSharesInternal, false);
     }
 
     /**
@@ -951,13 +877,13 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId);
         
         // Calculate amounts based on shares
-        amount0 = FullMath.mulDiv(reserve0, sharesToBorrow, totalSharesInternal);
-        amount1 = FullMath.mulDiv(reserve1, sharesToBorrow, totalSharesInternal);
+        amount0 = MathUtils.calculateProportional(reserve0, sharesToBorrow, totalSharesInternal, false);
+        amount1 = MathUtils.calculateProportional(reserve1, sharesToBorrow, totalSharesInternal, false);
         
         // Prepare callback data
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
-            callbackType: ACTION_BORROW,
+            callbackType: CallbackType.BORROW,
             shares: sharesToBorrow.toUint128(),
             oldTotalShares: totalSharesInternal,
             amount0: amount0,
@@ -995,8 +921,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId);
         
         // Calculate shares based on the ratio of provided amounts to current reserves
-        uint256 shares0 = reserve0 > 0 ? FullMath.mulDivRoundingUp(polAmount0, totalSharesInternal, reserve0) : 0;
-        uint256 shares1 = reserve1 > 0 ? FullMath.mulDivRoundingUp(polAmount1, totalSharesInternal, reserve1) : 0;
+        uint256 shares0 = reserve0 > 0 ? MathUtils.calculateProportional(polAmount0, totalSharesInternal, reserve0, true) : 0;
+        uint256 shares1 = reserve1 > 0 ? MathUtils.calculateProportional(polAmount1, totalSharesInternal, reserve1, true) : 0;
         
         // Use the smaller share amount to maintain ratio
         shares = shares0 < shares1 ? shares0 : shares1;
@@ -1005,7 +931,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Prepare callback data
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
-            callbackType: ACTION_REINVEST_PROTOCOL_FEES,
+            callbackType: CallbackType.REINVEST_PROTOCOL_FEES,
             shares: shares.toUint128(),
             oldTotalShares: totalSharesInternal,
             amount0: polAmount0,
@@ -1031,8 +957,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (totalShares == 0) return (0, 0);
         
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId);
-        amount0 = (reserve0 * shares) / totalShares;
-        amount1 = (reserve1 * shares) / totalShares;
+        amount0 = MathUtils.calculateProportional(reserve0, shares, totalShares, false);
+        amount1 = MathUtils.calculateProportional(reserve1, shares, totalShares, false);
     }
 
     /**
