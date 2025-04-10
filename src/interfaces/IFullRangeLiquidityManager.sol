@@ -10,6 +10,35 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
  * @notice Interface for the FullRangeLiquidityManager contract
  */
 interface IFullRangeLiquidityManager {
+    /**
+     * @notice Constants for deposit/withdraw actions
+     */
+    enum CallbackType {
+        NONE,           // 0 - Not used, as 0 could be a default uninitialized value
+        DEPOSIT,        // 1
+        WITHDRAW,       // 2 
+        BORROW,         // 3
+        REINVEST_PROTOCOL_FEES,  // 4
+        REBALANCE       // 5
+    }
+
+    // User position information
+    struct AccountPosition {
+        bool initialized;     // Whether the position has been initialized
+        uint256 shares;       // User's share balance
+    }
+
+    // Callback data structure for unlock pattern
+    struct CallbackData {
+        PoolId poolId;
+        CallbackType callbackType;  // Changed from uint8 to enum
+        uint128 shares;
+        uint128 oldTotalShares;
+        uint256 amount0;
+        uint256 amount1;
+        address recipient;
+    }
+
     struct DepositParams {
         PoolId poolId;
         uint256 amount0Desired;
@@ -27,6 +56,66 @@ interface IFullRangeLiquidityManager {
         uint256 deadline;
     }
     
+    // Events for pool management
+    event PoolInitialized(PoolId indexed poolId, PoolKey key, uint160 sqrtPrice, uint24 fee);
+    event TotalLiquidityUpdated(PoolId indexed poolId, uint128 oldLiquidity, uint128 newLiquidity);
+
+    // Events for liquidity operations
+    event LiquidityAdded(
+        PoolId indexed poolId,
+        address indexed user,
+        uint256 amount0,
+        uint256 amount1,
+        uint128 sharesTotal,
+        uint128 sharesMinted,
+        uint256 timestamp
+    );
+    event LiquidityRemoved(
+        PoolId indexed poolId,
+        address indexed user,
+        uint256 amount0,
+        uint256 amount1,
+        uint128 sharesTotal,
+        uint128 sharesBurned,
+        uint256 timestamp
+    );
+    event MinimumLiquidityLocked(PoolId indexed poolId, uint256 amount);
+    
+    // Emergency events
+    event EmergencyStateActivated(PoolId indexed poolId, address indexed activator, string reason);
+    event EmergencyStateDeactivated(PoolId indexed poolId, address indexed deactivator);
+    event GlobalEmergencyStateChanged(bool enabled, address indexed changedBy);
+    event EmergencyWithdrawalCompleted(
+        PoolId indexed poolId,
+        address indexed user,
+        uint256 amount0Out,
+        uint256 amount1Out,
+        uint256 sharesBurned
+    );
+        
+    /**
+     * @notice Consolidated event for reinvestment operations
+     * @dev Reduces gas costs by combining multiple events
+     */
+    event ReinvestmentProcessed(
+        PoolId indexed poolId, 
+        uint256 amount0, 
+        uint256 amount1, 
+        uint256 shares,
+        uint128 oldTotalShares,
+        uint128 newTotalShares
+    );
+    
+    /**
+     * @notice Simplified event for pool state updates
+     * @dev Operation types: 1=deposit, 2=withdraw, 3=reinvest
+     */
+    event PoolStateUpdated(
+        PoolId indexed poolId,
+        uint128 totalShares,
+        uint8 operationType
+    );
+
     // Events for share accounting operations
     event UserSharesAdded(PoolId indexed poolId, address indexed user, uint256 shares);
     event UserSharesRemoved(PoolId indexed poolId, address indexed user, uint256 shares);
@@ -135,13 +224,6 @@ interface IFullRangeLiquidityManager {
      * @return reserve1 The amount of token1 in the pool
      */
     function getPoolReserves(PoolId poolId) external view returns (uint256 reserve0, uint256 reserve1);
-
-    /**
-     * @notice Updates the position cache for a pool
-     * @param poolId The pool ID
-     * @return success Whether the update was successful
-     */
-    function updatePositionCache(PoolId poolId) external returns (bool success);
 
     /**
      * @notice Gets the total shares for a pool

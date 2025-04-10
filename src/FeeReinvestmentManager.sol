@@ -377,17 +377,6 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
                 uint256(extract0), 
                 uint256(extract1)
             );
-            
-            // After successful fee extraction, update position cache
-            try liquidityManager.updatePositionCache(poolId) returns (bool success) {
-                // Cache update attempt completed
-                if (!success) {
-                    emit CacheUpdateFailed(poolId);
-                }
-            } catch {
-                // Cache update failed but continue with extraction
-                emit CacheUpdateFailed(poolId);
-            }
         }
         
         return extractDelta;
