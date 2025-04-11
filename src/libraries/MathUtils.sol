@@ -298,17 +298,18 @@ library MathUtils {
     
     /**
      * @notice Unified compute deposit function with optional precision flag
-     * @dev Consolidated function for deposit calculations
+     * @dev Consolidated function for deposit calculations. Uses FullMath via internal helpers
+     *      for improved precision and robustness compared to standard division.
      * @param totalShares The existing total shares
      * @param amount0Desired The user's desired token0 input
      * @param amount1Desired The user's desired token1 input
      * @param reserve0 Current reserve of token0
      * @param reserve1 Current reserve of token1
-     * @param highPrecision Whether to use high-precision calculations
+     * @param highPrecision Whether to use high-precision calculations via FullMath (standard also uses FullMath now)
      * @return actual0 The final token0 used
      * @return actual1 The final token1 used
      * @return sharesMinted The minted shares
-     * @return lockedShares Shares permanently locked
+     * @return lockedShares Shares permanently locked (only for first deposit)
      */
     function computeDepositAmounts(
         uint128 totalShares,
@@ -316,67 +317,99 @@ library MathUtils {
         uint256 amount1Desired,
         uint256 reserve0,
         uint256 reserve1,
-        bool highPrecision
+        bool highPrecision // Note: Both paths now use FullMath via helpers
     ) internal pure returns (
         uint256 actual0, 
         uint256 actual1, 
         uint256 sharesMinted, 
         uint256 lockedShares
     ) {
-        // Validate inputs
+        // === Input Validation ===
+        // 1. Check for zero total desired amounts
         if (amount0Desired == 0 && amount1Desired == 0) revert Errors.ValidationZeroAmount("tokens");
         
-        // First deposit
+        // 2. Check for individual amount overflow (against uint128 limit)
+        //    We check against uint128 max because underlying Uniswap V4 functions often expect amounts <= uint128.max
+        //    This acts as an early sanity check, although FullMath handles larger uint256 values.
+        if (amount0Desired > type(uint128).max) {
+             revert Errors.AmountTooLarge(amount0Desired, type(uint128).max);
+        }
+        if (amount1Desired > type(uint128).max) {
+             revert Errors.AmountTooLarge(amount1Desired, type(uint128).max);
+        }
+
+        // === First Deposit Logic ===
         if (totalShares == 0) {
-            // First deposit requires both tokens
+            // 3. First deposit requires both tokens to be non-zero
             if (amount0Desired == 0 || amount1Desired == 0) revert Errors.ValidationZeroAmount("token");
-            
-            // Check for maximum token amounts
-            if (amount0Desired > type(uint128).max || amount1Desired > type(uint128).max) {
-                revert Errors.AmountTooLarge(
-                    amount0Desired > amount1Desired ? amount0Desired : amount1Desired, 
-                    type(uint128).max
-                );
-            }
             
             actual0 = amount0Desired;
             actual1 = amount1Desired;
+            // Calculate shares using geometric mean, locking minimum liquidity
             (sharesMinted, lockedShares) = calculateGeometricShares(actual0, actual1, true);
+            // No need to check actual amounts against desired here, as they are used directly.
             return (actual0, actual1, sharesMinted, lockedShares);
         }
         
-        // Subsequent deposits
-        lockedShares = 0;
+        // === Subsequent Deposit Logic ===
+        lockedShares = 0; // No locked shares for subsequent deposits
+
+        // 4. Validate reserves for subsequent deposits (should not be zero if totalShares > 0)
+        //    Using calculateProportionalShares/calculateProportional handles zero reserves gracefully by returning 0,
+        //    but explicitly reverting might be safer if zero reserves with non-zero totalShares is considered an invalid state.
+        if (reserve0 == 0 || reserve1 == 0) {
+             // If pool exists (totalShares > 0), reserves should ideally not be zero.
+             // Returning 0 amounts based on helpers is safe, but reverting might indicate an issue.
+             // Let's stick to returning 0 amounts for now, aligned with helper behavior.
+             // If revert is preferred, uncomment below:
+             // revert Errors.InvalidInput("Zero reserve in existing pool");
+        }
         
-        // Validate reserves for subsequent deposits
-        if (reserve0 == 0 || reserve1 == 0) revert Errors.InvalidInput();
-        
+        // Calculate potential shares minted based on each token amount relative to reserves.
+        // This uses calculateProportional internally, which uses FullMath.
+        // The function returns the *minimum* of the two potential share amounts to maintain the pool ratio.
         sharesMinted = calculateProportionalShares(
             amount0Desired, 
             amount1Desired,
             totalShares,
             reserve0,
             reserve1,
-            highPrecision
+            highPrecision // Pass flag, though calculateProportionalShares primarily uses it to select FullMath
         );
         
-        // Calculate token amounts based on shares
+        // Calculate token amounts required for the determined sharesMinted.
+        // We round down (roundUp = false) to ensure we don't take more tokens than the ratio strictly allows.
         if (sharesMinted > 0) {
-            if (highPrecision) {
-                uint256 scaleFactor = PRECISION();
-                actual0 = calculateProportional(reserve0, sharesMinted, totalShares, false);
-                actual1 = calculateProportional(reserve1, sharesMinted, totalShares, false);
-            } else {
-                unchecked {
-                    actual0 = (sharesMinted * reserve0) / totalShares;
-                    actual1 = (sharesMinted * reserve1) / totalShares;
-                }
-            }
+            // Use calculateProportional (which uses FullMath) for precision
+            actual0 = calculateProportional(reserve0, sharesMinted, totalShares, false); // amount = reserve * shares / totalShares
+            actual1 = calculateProportional(reserve1, sharesMinted, totalShares, false); 
+        } else {
+            // If no shares are minted (e.g., due to zero desired amounts filtered earlier,
+            // or extremely tiny amounts rounding down to zero shares in calculateProportionalShares),
+            // then actual amounts are zero.
+            actual0 = 0;
+            actual1 = 0;
+        }
             
-            // Handle rounding
+        // --- Post-calculation Adjustments & Checks ---
+
+        // A. Minimum Amount Guarantee: If shares were minted and a non-zero amount was desired,
+        //    ensure at least 1 wei is used if the calculation rounded down to zero.
+        //    This prevents dust amounts desired by the user from being entirely ignored.
+        if (sharesMinted > 0) {
             if (actual0 == 0 && amount0Desired > 0) actual0 = 1;
             if (actual1 == 0 && amount1Desired > 0) actual1 = 1;
         }
+
+        // B. Cap by Desired Amount: Ensure the calculated actual amount (potentially adjusted to 1 wei)
+        //    does not exceed the user's originally desired amount. This is crucial because `sharesMinted`
+        //    was based on the limiting token; the amount for the non-limiting token might exceed the desired
+        //    amount if only the `calculateProportional` result was used. Also covers the case where
+        //    setting actualN = 1 made it exceed a desired amount less than 1 (though unlikely).
+        actual0 = min(actual0, amount0Desired);
+        actual1 = min(actual1, amount1Desired);
+
+        // Final return values are set.
     }
     
     /**

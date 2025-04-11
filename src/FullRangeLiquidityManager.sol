@@ -424,45 +424,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
 
     /**
-     * @notice Handles delta settlement from FullRange's unlockCallback
-     * @dev Uses CurrencySettlerExtension for efficient settlement
-     */
-    function handlePoolDelta(PoolKey memory key, BalanceDelta delta) public override {
-        // Only callable by the associated PoolManager instance
-        if (msg.sender != address(manager)) revert Errors.CallerNotPoolManager(msg.sender);
-        
-        // Verify this LM knows the PoolKey (implicitly validates PoolId)
-        PoolId poolId = key.toId();
-        if (_poolKeys[poolId].tickSpacing == 0) {
-             revert Errors.PoolNotInitialized(PoolId.unwrap(poolId)); // Or PoolKeyNotStored
-        }
-        
-        int128 amount0Delta = delta.amount0();
-        int128 amount1Delta = delta.amount1();
-        
-        address token0 = Currency.unwrap(key.currency0);
-        address token1 = Currency.unwrap(key.currency1);
-        
-        // Pull tokens owed TO this contract from the pool
-        if (amount0Delta < 0) {
-            uint256 pullAmount0 = uint256(uint128(-amount0Delta)); 
-            _pullTokens(token0, pullAmount0);
-        }
-        if (amount1Delta < 0) {
-            uint256 pullAmount1 = uint256(uint128(-amount1Delta)); 
-            _pullTokens(token1, pullAmount1);
-        }
-        
-        // Send tokens owed FROM this contract to the pool
-        if (amount0Delta > 0) {
-             _safeTransferToken(token0, address(manager), uint256(uint128(amount0Delta)));
-        }
-        if (amount1Delta > 0) {
-             _safeTransferToken(token1, address(manager), uint256(uint128(amount1Delta)));
-        }
-    }
-
-    /**
      * @notice Emergency withdraw function, available only when emergency mode is enabled
      * @param params Withdrawal parameters
      * @param user The user withdrawing liquidity
@@ -527,7 +488,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         delta = abi.decode(result, (BalanceDelta));
         
         // Handle delta - Pull tokens owed to this contract
-        handlePoolDelta(key, delta); // Use handlePoolDelta logic
+        CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, address(this));
         
         // Transfer final tokens to user
         if (amount0Out > 0) {
@@ -987,5 +948,57 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     function updateTotalShares(PoolId poolId, uint128 newTotalShares) external {
         // Implementation specific to your needs
         revert("Not implemented");
+    }
+
+    /**
+     * @notice Callback function called by PoolManager during unlock operations
+     * @param data Encoded callback data containing operation details
+     * @return bytes The encoded BalanceDelta from the operation
+     */
+    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+        // Only allow calls from the pool manager
+        if (msg.sender != address(manager)) {
+            revert Errors.AccessNotAuthorized(msg.sender);
+        }
+
+        // Decode the callback data
+        CallbackData memory cbData = abi.decode(data, (CallbackData));
+
+        // Verify the pool ID exists
+        PoolKey memory key = _poolKeys[cbData.poolId];
+        if (key.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(cbData.poolId));
+
+        BalanceDelta delta;
+
+        // Create ModifyLiquidityParams based on callback type
+        int256 liquidityDelta;
+        address recipient;
+
+        if (cbData.callbackType == CallbackType.DEPOSIT) {
+            liquidityDelta = int256(uint256(cbData.shares));
+            recipient = address(this); // For deposits, tokens stay in this contract
+        } else if (cbData.callbackType == CallbackType.WITHDRAW ||
+                  cbData.callbackType == CallbackType.BORROW ||
+                  cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES) {
+            liquidityDelta = -int256(uint256(cbData.shares));
+            recipient = cbData.recipient; // For withdrawals/borrows/reinvests, send to recipient
+        } else {
+            revert Errors.InvalidCallbackType(uint8(cbData.callbackType));
+        }
+
+        // Modify liquidity in the pool
+        IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
+            tickLower: TickMath.minUsableTick(key.tickSpacing),
+            tickUpper: TickMath.maxUsableTick(key.tickSpacing),
+            liquidityDelta: liquidityDelta,
+            salt: bytes32(0)
+        });
+        
+        (delta,) = manager.modifyLiquidity(key, params, "");
+
+        // Handle settlement using CurrencySettlerExtension
+        CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, recipient);
+
+        return abi.encode(delta);
     }
 } 

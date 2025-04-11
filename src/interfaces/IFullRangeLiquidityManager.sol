@@ -174,13 +174,6 @@ interface IFullRangeLiquidityManager {
     );
     
     /**
-     * @notice Handles delta settlement from Spot's unlockCallback
-     * @param key The pool key
-     * @param delta The balance delta to settle
-     */
-    function handlePoolDelta(PoolKey memory key, BalanceDelta delta) external;
-        
-    /**
      * @notice Retrieves user share balance
      * @param poolId The pool ID
      * @param user The user address
