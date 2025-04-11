@@ -129,6 +129,15 @@ interface IFullRangeLiquidityManager {
 
     /**
      * @notice Deposit tokens into a pool with native ETH support
+     * @param poolId The ID of the pool to deposit into
+     * @param amount0Desired Desired amount of token0
+     * @param amount1Desired Desired amount of token1
+     * @param amount0Min Minimum amount of token0
+     * @param amount1Min Minimum amount of token1
+     * @param recipient Address to receive the LP shares
+     * @return shares The amount of LP shares minted
+     * @return amount0 The actual amount of token0 deposited
+     * @return amount1 The actual amount of token1 deposited
      */
     function deposit(
         PoolId poolId,
@@ -143,6 +152,16 @@ interface IFullRangeLiquidityManager {
         uint256 amount1
     );
 
+    /**
+     * @notice Withdraw tokens from a pool
+     * @param poolId The ID of the pool to withdraw from
+     * @param sharesToBurn The amount of LP shares to burn
+     * @param amount0Min Minimum amount of token0 to receive
+     * @param amount1Min Minimum amount of token1 to receive
+     * @param recipient Address to receive the withdrawn tokens
+     * @return amount0 The actual amount of token0 withdrawn
+     * @return amount1 The actual amount of token1 withdrawn
+     */
     function withdraw(
         PoolId poolId,
         uint256 sharesToBurn,
@@ -154,29 +173,6 @@ interface IFullRangeLiquidityManager {
         uint256 amount1
     );
     
-    /**
-     * @notice Handles delta settlement from Spot's unlockCallback
-     * @param key The pool key
-     * @param delta The balance delta to settle
-     */
-    function handlePoolDelta(PoolKey memory key, BalanceDelta delta) external;
-        
-    /**
-     * @notice Adds user share accounting (no token transfers)
-     * @param poolId The pool ID
-     * @param user The user address
-     * @param shares Amount of shares to add
-     */
-    function addUserShares(PoolId poolId, address user, uint256 shares) external;
-
-    /**
-     * @notice Removes user share accounting (no token transfers)
-     * @param poolId The pool ID
-     * @param user The user address
-     * @param shares Amount of shares to remove
-     */
-    function removeUserShares(PoolId poolId, address user, uint256 shares) external;
-
     /**
      * @notice Retrieves user share balance
      * @param poolId The pool ID
@@ -191,38 +187,6 @@ interface IFullRangeLiquidityManager {
      * @param newTotalShares The new total shares amount
      */
     function updateTotalShares(PoolId poolId, uint128 newTotalShares) external;
-    
-    /**
-     * @notice Atomic operation for processing withdrawal share accounting
-     * @dev Combines share burning and total share update in one call for atomicity
-     * @param poolId The pool ID
-     * @param user The user address
-     * @param sharesToBurn Shares to burn
-     * @param currentTotalShares Current total shares (for validation)
-     * @return newTotalShares The new total shares amount
-     */
-    function processWithdrawShares(
-        PoolId poolId, 
-        address user, 
-        uint256 sharesToBurn, 
-        uint128 currentTotalShares
-    ) external returns (uint128 newTotalShares);
-    
-    /**
-    //  * @notice Atomic operation for processing deposit share accounting
-    //  * @dev Combines share minting and total share update in one call for atomicity
-    //  * @param poolId The pool ID
-    //  * @param user The user address
-    //  * @param sharesToMint Shares to mint
-    //  * @param currentTotalShares Current total shares (for validation)
-    //  * @return newTotalShares The new total shares amount
-    //  */
-    // function processDepositShares(
-    //     PoolId poolId, 
-    //     address user, 
-    //     uint256 sharesToMint, 
-    //     uint128 currentTotalShares
-    // ) external returns (uint128 newTotalShares);
 
     /**
      * @notice Reinvests fees for protocol-owned liquidity
@@ -277,19 +241,12 @@ interface IFullRangeLiquidityManager {
         uint256 amount0,
         uint256 amount1
     );
-    
+
     /**
-     * @notice Extract protocol fees from the pool and prepare to reinvest them as protocol-owned liquidity
-     * @param poolId The pool ID to extract and reinvest fees for
-     * @param amount0 Amount of token0 to extract for reinvestment
-     * @param amount1 Amount of token1 to extract for reinvestment
-     * @param recipient Address to receive the extracted fees (typically the FeeReinvestmentManager)
-     * @return success Whether the extraction for reinvestment was successful
+     * @notice Stores the PoolKey associated with a PoolId.
+     * @dev Typically called by the hook during its afterInitialize phase.
+     * @param poolId The Pool ID.
+     * @param key The PoolKey corresponding to the Pool ID.
      */
-    function reinvestProtocolFees(
-        PoolId poolId,
-        uint256 amount0,
-        uint256 amount1,
-        address recipient
-    ) external returns (bool success);
+    function storePoolKey(PoolId poolId, PoolKey calldata key) external;
 } 

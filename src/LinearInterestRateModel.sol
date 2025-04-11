@@ -6,8 +6,9 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 // TODO: Uncomment when Errors.sol is updated or confirm it exists
 // import {Errors} from "./errors/Errors.sol";
-import {SafeCast} from "v4-core/src/libraries/SafeCast.sol"; // Assuming SafeCast exists
-import {FullMath} from "v4-core/src/libraries/FullMath.sol"; // Assuming FullMath exists for calculations
+import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 
 /**
  * @title LinearInterestRateModel
@@ -18,7 +19,6 @@ contract LinearInterestRateModel is IInterestRateModel, Owned {
     using SafeCast for uint256;
 
     // Constants for rate calculations
-    uint256 public constant PRECISION = 1e18;
     uint256 public constant SECONDS_PER_YEAR = 365 days;
 
     // Interest rate parameters (scaled by PRECISION)
@@ -107,11 +107,11 @@ contract LinearInterestRateModel is IInterestRateModel, Owned {
                     // Calculate slope carefully to maintain precision
                     uint256 slope1 = FullMath.mulDiv(
                         currentKinkRate - currentBaseRate,
-                        PRECISION,
+                        PrecisionConstants.PRECISION,
                         currentKinkUtilization
                     );
                     // ratePerYear = baseRate + (slope1 * utilization) / PRECISION
-                    ratePerYear = currentBaseRate + FullMath.mulDiv(slope1, utilization, PRECISION);
+                    ratePerYear = currentBaseRate + FullMath.mulDiv(slope1, utilization, PrecisionConstants.PRECISION);
                 }
             }
         } else {
@@ -135,7 +135,7 @@ contract LinearInterestRateModel is IInterestRateModel, Owned {
                     // Calculate base slope after kink
                     uint256 slope2_base = FullMath.mulDiv(
                         currentMaxRate - currentKinkRate,
-                        PRECISION,
+                        PrecisionConstants.PRECISION,
                         maxExcessUtil // Safe from div by zero due to check above
                     );
 
@@ -144,11 +144,11 @@ contract LinearInterestRateModel is IInterestRateModel, Owned {
                     uint256 slope2_actual = FullMath.mulDiv(
                         slope2_base,
                         kinkMultiplier, // Use the stored kinkMultiplier directly
-                        PRECISION
+                        PrecisionConstants.PRECISION
                     );
 
                     // Calculate rate
-                    ratePerYear = currentKinkRate + FullMath.mulDiv(slope2_actual, excessUtil, PRECISION);
+                    ratePerYear = currentKinkRate + FullMath.mulDiv(slope2_actual, excessUtil, PrecisionConstants.PRECISION);
                 }
             }
         }
@@ -183,7 +183,7 @@ contract LinearInterestRateModel is IInterestRateModel, Owned {
 
         // Utilization = Borrowed / Supplied
         // Use SafeMath from FullMath for safety, although SafeCast might suffice
-        utilization = FullMath.mulDiv(totalBorrowed, PRECISION, totalSupplied);
+        utilization = FullMath.mulDiv(totalBorrowed, PrecisionConstants.PRECISION, totalSupplied);
     }
 
     /**
@@ -254,10 +254,10 @@ contract LinearInterestRateModel is IInterestRateModel, Owned {
     ) internal {
         // Basic Validations
         // TODO: Use specific Errors from Errors.sol once available/updated
-        require(__maxUtilizationRate <= PRECISION, "IRM: Max util <= 100%");
+        require(__maxUtilizationRate <= PrecisionConstants.PRECISION, "IRM: Max util <= 100%");
         require(_kinkUtilizationRate <= __maxUtilizationRate, "IRM: Kink util <= max util");
         // Multiplier represents a factor, 1x = PRECISION
-        require(_kinkMultiplier >= PRECISION, "IRM: Kink mult >= 1x");
+        require(_kinkMultiplier >= PrecisionConstants.PRECISION, "IRM: Kink mult >= 1x");
         require(_kinkRatePerYear >= _baseRatePerYear, "IRM: Kink rate >= base rate");
         require(_maxRatePerYear >= _kinkRatePerYear, "IRM: Max rate >= kink rate");
         // Add check: base rate cannot exceed max rate (implicitly covered but good to be explicit)

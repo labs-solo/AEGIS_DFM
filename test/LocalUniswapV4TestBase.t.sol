@@ -163,9 +163,9 @@ abstract contract LocalUniswapV4TestBase is Test {
         console2.log("[SETUP] DynamicFeeManager Deployed.");
         
         console2.log("[SETUP] Setting LM.FullRangeAddress...");
-        liquidityManager.setFullRangeAddress(address(fullRange));
+        liquidityManager.setAuthorizedHookAddress(address(fullRange));
         console2.log("[SETUP] Setting FR.DynamicFeeManager...");
-        fullRange.setDynamicFeeManager(dynamicFeeManager);
+        fullRange.setDynamicFeeManager(address(dynamicFeeManager));
         console2.log("[SETUP] Setting FR.OracleAddress...");
         fullRange.setOracleAddress(address(truncGeoOracle));
         console2.log("[SETUP] Setting Oracle.FullRangeHook...");

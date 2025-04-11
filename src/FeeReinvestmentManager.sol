@@ -10,8 +10,9 @@ import {IFullRangeLiquidityManager} from "./interfaces/IFullRangeLiquidityManage
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {BalanceDelta, BalanceDeltaLibrary, toBalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {MathUtils} from "./libraries/MathUtils.sol";
+import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 import {Errors} from "./errors/Errors.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
@@ -105,8 +106,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
     /// @notice Default POL share
     uint256 private constant DEFAULT_POL_SHARE_PPM = 100000; // 10%
     
-    /// @notice PPM denominator (100%)
-    uint256 private constant PPM_DENOMINATOR = 1000000;
+    // Using PrecisionConstants.PPM_SCALE instead of defining our own PPM_DENOMINATOR
     
     // ================ EVENTS ================
     
@@ -345,8 +345,11 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         int256 fee0 = int256(feesAccrued.amount0());
         int256 fee1 = int256(feesAccrued.amount1());
         
-        int256 extract0 = (fee0 * int256(polSharePpm)) / int256(PPM_DENOMINATOR);
-        int256 extract1 = (fee1 * int256(polSharePpm)) / int256(PPM_DENOMINATOR);
+        // Use MathUtils library for consistent fee calculation and overflow protection
+        uint256 extract0Uint = fee0 > 0 ? MathUtils.calculateFeePpm(uint256(fee0), polSharePpm) : 0;
+        uint256 extract1Uint = fee1 > 0 ? MathUtils.calculateFeePpm(uint256(fee1), polSharePpm) : 0;
+        int256 extract0 = int256(extract0Uint);
+        int256 extract1 = int256(extract1Uint);
         
         // Validate calculated values for sanity check
         if (extract0 > fee0 || extract1 > fee1) {
@@ -477,7 +480,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         // Get pool key
         PoolKey memory key = _getPoolKey(poolId);
         if (key.tickSpacing == 0) {
-            revert Errors.PoolNotInitialized(poolId);
+            revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
         }
         
         // Prepare callback data
@@ -908,7 +911,7 @@ contract FeeReinvestmentManager is IFeeReinvestmentManager, ReentrancyGuard, IUn
         if (feeState.accumulatedFee0 == 0 && feeState.accumulatedFee1 == 0) {
             return 1e18; // No fees accumulated yet
         }
-        return 1e18 + ((feeState.accumulatedFee0 + feeState.accumulatedFee1) * 1e18) / PPM_DENOMINATOR;
+        return 1e18 + ((feeState.accumulatedFee0 + feeState.accumulatedFee1) * 1e18) / PrecisionConstants.PPM_SCALE;
     }
     
     /**

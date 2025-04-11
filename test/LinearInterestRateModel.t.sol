@@ -10,12 +10,13 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {CurrencyLibrary, Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Errors} from "../src/errors/Errors.sol";
+import "./MarginTestBase.t.sol";
 
-contract LinearInterestRateModelTest is Test {
+contract LinearInterestRateModelTest is MarginTestBase {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
 
-    LinearInterestRateModel model;
+    LinearInterestRateModel localModel;
     address owner = address(this);
     address nonOwner = address(0xDEAD);
 
@@ -30,10 +31,14 @@ contract LinearInterestRateModelTest is Test {
     uint256 maxRateYear = 1 * PRECISION; // 1.00 * PRECISION; // 100%
 
     // Helper poolId
-    PoolId poolId;
+    PoolId testPoolId;
 
-    function setUp() public {
-        model = new LinearInterestRateModel(
+    function setUp() public override {
+        // Call parent setup to initialize the shared infrastructure
+        super.setUp();
+        
+        // Setup a local model instance for testing
+        localModel = new LinearInterestRateModel(
             owner,
             baseRateYear,
             kinkRateYear,
@@ -43,28 +48,29 @@ contract LinearInterestRateModelTest is Test {
             maxRateYear
         );
 
-        // Setup a dummy poolId
-        PoolKey memory key = PoolKey({
-            currency0: Currency.wrap(address(0x1)),
-            currency1: Currency.wrap(address(0x2)),
-            fee: 3000,
-            tickSpacing: 60,
-            hooks: IHooks(address(0))
-        });
-        poolId = key.toId();
+        // Create a test pool
+        (testPoolId, ) = createPoolAndRegister(
+            address(fullRange),
+            address(liquidityManager),
+            Currency.wrap(address(token0)),
+            Currency.wrap(address(token1)),
+            DEFAULT_FEE,
+            DEFAULT_TICK_SPACING,
+            1 << 96 // SQRT_RATIO_1_1
+        );
     }
 
     // --- Constructor Tests ---
 
     function test_Constructor_SetsParameters() public {
-        (uint256 _base, uint256 _kinkR, uint256 _kinkU, uint256 _maxR, uint256 _kinkM) = model.getModelParameters();
+        (uint256 _base, uint256 _kinkR, uint256 _kinkU, uint256 _maxR, uint256 _kinkM) = localModel.getModelParameters();
         assertEq(_base, baseRateYear, "Base rate mismatch");
         assertEq(_kinkR, kinkRateYear, "Kink rate mismatch");
         assertEq(_kinkU, kinkUtil, "Kink util mismatch");
         assertEq(_maxR, maxRateYear, "Max rate mismatch");
         assertEq(_kinkM, kinkMultiplier, "Kink multiplier mismatch");
-        assertEq(model.maxUtilizationRate(), maxUtil, "Max util mismatch");
-        assertEq(model.owner(), owner, "Owner mismatch");
+        assertEq(localModel.maxUtilizationRate(), maxUtil, "Max util mismatch");
+        assertEq(localModel.owner(), owner, "Owner mismatch");
     }
 
     function test_Revert_Constructor_InvalidMaxUtil() public {
@@ -95,24 +101,24 @@ contract LinearInterestRateModelTest is Test {
     // --- getUtilizationRate Tests ---
 
     function test_GetUtilization_ZeroSupply() public {
-        assertEq(model.getUtilizationRate(poolId, 100, 0), 0);
+        assertEq(localModel.getUtilizationRate(testPoolId, 100, 0), 0);
     }
 
      function test_GetUtilization_ZeroBorrowed() public {
-        assertEq(model.getUtilizationRate(poolId, 0, 1000), 0);
+        assertEq(localModel.getUtilizationRate(testPoolId, 0, 1000), 0);
     }
 
     function test_GetUtilization_Half() public {
-        assertEq(model.getUtilizationRate(poolId, 500, 1000), (50 * PRECISION) / 100); // 0.5 * PRECISION);
+        assertEq(localModel.getUtilizationRate(testPoolId, 500, 1000), (50 * PRECISION) / 100); // 0.5 * PRECISION);
     }
 
     function test_GetUtilization_Full() public {
-        assertEq(model.getUtilizationRate(poolId, 1000, 1000), PRECISION);
+        assertEq(localModel.getUtilizationRate(testPoolId, 1000, 1000), PRECISION);
     }
 
      function test_GetUtilization_Over() public {
         // Should still calculate correctly, capping happens in getBorrowRate
-        assertEq(model.getUtilizationRate(poolId, 1200, 1000), (120 * PRECISION) / 100); // 1.2 * PRECISION);
+        assertEq(localModel.getUtilizationRate(testPoolId, 1200, 1000), (120 * PRECISION) / 100); // 1.2 * PRECISION);
     }
 
     // --- getBorrowRate Tests ---
@@ -155,13 +161,13 @@ contract LinearInterestRateModelTest is Test {
     function test_GetBorrowRate_ZeroUtil() public {
         uint256 util = 0;
         uint256 expectedRate = calculateExpectedRate(util);
-        assertEq(model.getBorrowRate(poolId, util), expectedRate, "Rate at 0% util");
+        assertEq(localModel.getBorrowRate(testPoolId, util), expectedRate, "Rate at 0% util");
     }
 
     function test_GetBorrowRate_BelowKink() public {
         uint256 util = (40 * PRECISION) / 100; // 0.4 * PRECISION; // 40%
         uint256 expectedRate = calculateExpectedRate(util);
-        assertEq(model.getBorrowRate(poolId, util), expectedRate, "Rate at 40% util");
+        assertEq(localModel.getBorrowRate(testPoolId, util), expectedRate, "Rate at 40% util");
     }
 
      function test_GetBorrowRate_AtKink() public {
@@ -169,27 +175,27 @@ contract LinearInterestRateModelTest is Test {
         uint256 expectedRate = calculateExpectedRate(util);
         // Expect rate to be exactly kinkRateYear / SECONDS_PER_YEAR
         uint256 expectedKinkRateSec = kinkRateYear / SECONDS_PER_YEAR;
-        assertEq(model.getBorrowRate(poolId, util), expectedKinkRateSec, "Rate at kink util (direct calc)");
-        assertEq(model.getBorrowRate(poolId, util), expectedRate, "Rate at kink util (helper func)");
+        assertEq(localModel.getBorrowRate(testPoolId, util), expectedKinkRateSec, "Rate at kink util (direct calc)");
+        assertEq(localModel.getBorrowRate(testPoolId, util), expectedRate, "Rate at kink util (helper func)");
     }
 
     function test_GetBorrowRate_AboveKink() public {
         uint256 util = (90 * PRECISION) / 100; // 0.9 * PRECISION; // 90%
         uint256 expectedRate = calculateExpectedRate(util);
-        assertEq(model.getBorrowRate(poolId, util), expectedRate, "Rate at 90% util");
+        assertEq(localModel.getBorrowRate(testPoolId, util), expectedRate, "Rate at 90% util");
     }
 
     function test_GetBorrowRate_AtMaxUtil() public {
         uint256 util = maxUtil; // 95%
         uint256 expectedRate = calculateExpectedRate(util);
-         assertEq(model.getBorrowRate(poolId, util), expectedRate, "Rate at max util (95%)");
+         assertEq(localModel.getBorrowRate(testPoolId, util), expectedRate, "Rate at max util (95%)");
     }
 
      function test_GetBorrowRate_AboveMaxUtil() public {
         // Should be capped at the rate corresponding to maxUtil
         uint256 util = (98 * PRECISION) / 100; // 0.98 * PRECISION; // 98%
         uint256 expectedRateAtMaxUtil = calculateExpectedRate(maxUtil); // Calculate expected rate AT maxUtil
-        assertEq(model.getBorrowRate(poolId, util), expectedRateAtMaxUtil, "Rate above max util (should be capped)");
+        assertEq(localModel.getBorrowRate(testPoolId, util), expectedRateAtMaxUtil, "Rate above max util (should be capped)");
     }
 
     function test_GetBorrowRate_AtMaxRateLimit() public {
@@ -200,7 +206,7 @@ contract LinearInterestRateModelTest is Test {
          );
          uint256 util = (85 * PRECISION) / 100; // 0.85 * PRECISION; // Should hit max rate before 95% util
          uint256 expectedRate = maxRateYear / SECONDS_PER_YEAR;
-         assertEq(tempModel.getBorrowRate(poolId, util), expectedRate, "Rate capped by maxRateYear");
+         assertEq(tempModel.getBorrowRate(testPoolId, util), expectedRate, "Rate capped by maxRateYear");
     }
 
     // --- Governance Tests ---
@@ -218,27 +224,52 @@ contract LinearInterestRateModelTest is Test {
             newBase, newKinkR, newKinkU, newKinkM, newMaxU, newMaxR
         );
 
-        model.updateParameters(newBase, newKinkR, newKinkU, newKinkM, newMaxU, newMaxR);
+        localModel.updateParameters(newBase, newKinkR, newKinkU, newKinkM, newMaxU, newMaxR);
 
-        (uint256 _base, uint256 _kinkR, uint256 _kinkU, uint256 _maxR, uint256 _kinkM) = model.getModelParameters();
+        (uint256 _base, uint256 _kinkR, uint256 _kinkU, uint256 _maxR, uint256 _kinkM) = localModel.getModelParameters();
         assertEq(_base, newBase, "Updated Base rate mismatch");
         assertEq(_kinkR, newKinkR, "Updated Kink rate mismatch");
         assertEq(_kinkU, newKinkU, "Updated Kink util mismatch");
         assertEq(_maxR, newMaxR, "Updated Max rate mismatch");
         assertEq(_kinkM, newKinkM, "Updated Kink multiplier mismatch");
-        assertEq(model.maxUtilizationRate(), newMaxU, "Updated Max util mismatch");
+        assertEq(localModel.maxUtilizationRate(), newMaxU, "Updated Max util mismatch");
     }
 
     function test_Revert_UpdateParameters_NotOwner() public {
          vm.prank(nonOwner);
          vm.expectRevert(bytes("UNAUTHORIZED"));
-         model.updateParameters(baseRateYear, kinkRateYear, kinkUtil, kinkMultiplier, maxUtil, maxRateYear);
+         localModel.updateParameters(baseRateYear, kinkRateYear, kinkUtil, kinkMultiplier, maxUtil, maxRateYear);
     }
 
      function test_Revert_UpdateParameters_InvalidParams() public {
         // Example: kink rate < base rate
         vm.expectRevert(bytes("IRM: Kink rate >= base rate"));
-        model.updateParameters((5 * PRECISION) / 100, (4 * PRECISION) / 100, kinkUtil, kinkMultiplier, maxUtil, maxRateYear);
+        localModel.updateParameters((5 * PRECISION) / 100, (4 * PRECISION) / 100, kinkUtil, kinkMultiplier, maxUtil, maxRateYear);
     }
 
+    // --- Test shared model from MarginTestBase ---
+    
+    function test_SharedModel_Parameters() public {
+        // Verify the shared model from MarginTestBase has proper parameters
+        (uint256 _base, uint256 _kinkR, uint256 _kinkU, uint256 _maxR, uint256 _kinkM) = interestRateModel.getModelParameters();
+        assertEq(_kinkU, 80 * 1e16, "Shared model kink util");
+        assertEq(_base, 2 * 1e16, "Shared model base rate");
+        assertEq(_kinkR, 10 * 1e16, "Shared model kink rate"); 
+        assertEq(_kinkM, 5 * 1e18, "Shared model kink multiplier");
+        assertEq(_maxR, 1 * 1e18, "Shared model max rate");
+        assertEq(interestRateModel.maxUtilizationRate(), 95 * 1e16, "Shared model max util");
+    }
+
+    function test_SharedModel_GetBorrowRate() public {
+        // Test that the shared model works with poolId
+        uint256 util = (50 * PRECISION) / 100; // 50%
+        uint256 rate = interestRateModel.getBorrowRate(testPoolId, util);
+        assertGt(rate, 0, "Shared model rate should be > 0");
+        
+        // Simple sanity check - rate should be between base and kink rates
+        uint256 baseSec = (2 * 1e16) / SECONDS_PER_YEAR;
+        uint256 kinkSec = (10 * 1e16) / SECONDS_PER_YEAR;
+        assertGt(rate, baseSec, "Rate should be > base rate");
+        assertLt(rate, kinkSec, "Rate should be < kink rate");
+    }
 }

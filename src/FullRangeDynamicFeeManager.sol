@@ -7,6 +7,7 @@ import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {SortTokens} from "v4-core/test/utils/SortTokens.sol";
+import { Currency, CurrencyLibrary } from "v4-core/src/types/Currency.sol";
 
 // Project imports
 import {IFullRangeDynamicFeeManager} from "./interfaces/IFullRangeDynamicFeeManager.sol";
@@ -18,7 +19,6 @@ import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {MathUtils} from "./libraries/MathUtils.sol";
 import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
 import { Hooks } from "v4-core/src/libraries/Hooks.sol";
-import { Currency } from "v4-core/src/types/Currency.sol";
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 
 /**
@@ -156,11 +156,11 @@ contract FullRangeDynamicFeeManager is Owned {
      *      - Improves security by restricting write access to contract state
      * @param poolId The pool ID to get data for
      * @return tick The current tick value
-     * @return lastUpdateBlock The block number of the last update
+     * @return blockNumber The block number the oracle data was last updated
      */
-    function getOracleData(PoolId poolId) internal view returns (int24 tick, uint32 lastUpdateBlock) {
-        // Call Spot contract to get the latest oracle data
-        return ISpot(fullRangeAddress).getOracleData(poolId);
+    function getOracleData(PoolId poolId) external view returns (int24 tick, uint32 blockNumber) {
+        // Calls the ISpot interface on the associated FullRange/Spot hook address
+        return ISpot(fullRangeAddress).getOracleData(poolId); // Don't unwrap PoolId
     }
     
     /**
@@ -171,7 +171,7 @@ contract FullRangeDynamicFeeManager is Owned {
      */
     function processOracleData(PoolId poolId) internal returns (bool tickCapped) {
         // Retrieve data from Spot
-        (int24 tick, uint32 lastBlockUpdate) = getOracleData(poolId);
+        (int24 tick, uint32 lastBlockUpdate) = this.getOracleData(poolId);
         PoolState storage pool = poolStates[poolId];
         
         int24 lastTick = pool.lastOracleTick;
@@ -460,16 +460,20 @@ contract FullRangeDynamicFeeManager is Owned {
      * @return The maximum tick change allowed
      */
     function _calculateMaxTickChange(uint256 currentFeePpm, int24 tickScalingFactor) internal pure returns (int24) {
-        // Calculate the max tick change based on the fee and scaling factor
-        // Ensure the result is clamped to prevent overflow/underflow
-        int256 maxChangeScaled = int256(currentFeePpm) * int256(tickScalingFactor) / 1e6; // Assuming PPM
+        // Calculate the max tick change based on the fee and scaling factor using MathUtils for consistency
+        // Use MathUtils.calculateFeeWithScale for better precision and overflow protection
+        uint256 maxChangeUint = MathUtils.calculateFeeWithScale(
+            currentFeePpm, 
+            uint256(uint24(tickScalingFactor)), // Safe conversion to uint256
+            1e6 // PPM denominator
+        );
+        
+        int256 maxChangeScaled = int256(maxChangeUint);
 
         // Clamp to int24 bounds
         if (maxChangeScaled > type(int24).max) return type(int24).max;
         if (maxChangeScaled < type(int24).min) return type(int24).min; // Should be positive anyway
         
-        // Ensure it's at least some minimum value if needed, e.g., 1
-        // return int24(max(1, maxChangeScaled)); // Example: ensure at least 1
         return int24(maxChangeScaled);
     }
     
