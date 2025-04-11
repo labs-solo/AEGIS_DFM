@@ -346,15 +346,12 @@ contract Margin is ReentrancyGuard, Spot, IMargin {
      * @dev Accrues pool interest via MarginManager and gets dynamic fee from Spot.
      *      Overrides function from Spot.
      */
-    function beforeSwap(
+    function _beforeSwap(
         address sender,
         PoolKey calldata key,
         IPoolManager.SwapParams calldata params,
         bytes calldata hookData
-    ) external override(Spot) returns (bytes4, BeforeSwapDelta, uint24) {
-        // Basic validation
-        if (msg.sender != address(poolManager)) revert Errors.CallerNotPoolManager(msg.sender);
-
+    ) internal override returns (bytes4, BeforeSwapDelta, uint24) {
         bytes32 _poolId = PoolId.unwrap(key.toId());
         
         // 1. Accrue interest for the specific pool via the manager

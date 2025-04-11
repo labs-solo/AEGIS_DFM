@@ -11,7 +11,6 @@ import { BalanceDelta, BalanceDeltaLibrary } from "v4-core/src/types/BalanceDelt
 import { BeforeSwapDelta, BeforeSwapDeltaLibrary } from "v4-core/src/types/BeforeSwapDelta.sol";
 import { IPoolManager } from "v4-core/src/interfaces/IPoolManager.sol";
 import { TickMath } from "v4-core/src/libraries/TickMath.sol";
-import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
 
 // --- V4 Periphery Imports (Using Remappings) ---
 import { BaseHook } from "v4-periphery/src/utils/BaseHook.sol";
@@ -482,21 +481,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
     // --- Hook Implementations ---
 
     /**
-     * @dev Sets up the pool data within this hook instance when PoolManager initializes a pool using this hook.
-     * @notice Overrides IHooks function, calls internal logic.
-     */
-    function afterInitialize(
-        address sender, // Expected to be PoolManager
-        PoolKey calldata key,
-        uint160 sqrtPriceX96,
-        int24 tick
-    ) external override(BaseHook, IHooks) returns (bytes4) {
-         // Basic validation - ensure caller is the configured PoolManager
-        if (msg.sender != address(poolManager)) revert Errors.CallerNotPoolManager(msg.sender);
-        return _afterInitialize(sender, key, sqrtPriceX96, tick);
-    }
-
-    /**
      * @notice Internal function containing the core logic for afterInitialize.
      * @dev Initializes pool-specific state within this hook instance's mappings. Overrides BaseHook.
      */
@@ -505,7 +489,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         PoolKey calldata key,
         uint160 sqrtPriceX96,
         int24 tick
-    ) internal virtual override(BaseHook) returns (bytes4) {
+    ) internal virtual override returns (bytes4) {
         bytes32 _poolId = PoolId.unwrap(key.toId());
 
         // Prevent re-initialization *for this hook instance*
@@ -559,27 +543,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         }
 
         // Return the required selector
-        return IHooks.afterInitialize.selector;
-    }
-
-    /**
-     * @dev Provides dynamic fee before a swap.
-     * @notice Implements IHooks function. Calls internal logic.
-     */
-    function beforeSwap(
-        address sender, // User initiating swap
-        PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        bytes calldata hookData // Optional data from user
-    ) external override(BaseHook, IHooks) virtual returns (bytes4, BeforeSwapDelta, uint24) {
-        // Basic validation
-        if (msg.sender != address(poolManager)) revert Errors.CallerNotPoolManager(msg.sender);
-        
-        // Check if pool is managed by this hook (optional, PoolManager should handle routing)
-        // bytes32 _poolId = PoolId.unwrap(key.toId()); // Convert to bytes32
-        // if (!poolData[_poolId].initialized) revert Errors.PoolNotInitialized(_poolId);
-
-        return _beforeSwap(sender, key, params, hookData);
+        return BaseHook.afterInitialize.selector;
     }
 
     /**
@@ -591,7 +555,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         PoolKey calldata key,
         IPoolManager.SwapParams calldata params,
         bytes calldata hookData
-    ) internal virtual override(BaseHook) returns (bytes4, BeforeSwapDelta, uint24) {
+    ) internal virtual override returns (bytes4, BeforeSwapDelta, uint24) {
         // Ensure dynamic fee manager is set
         if (address(dynamicFeeManager) == address(0)) revert Errors.NotInitialized("DynamicFeeManager");
 
@@ -600,31 +564,10 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
 
         // Return selector, zero delta adjustment, and the dynamic fee
         return (
-            IHooks.beforeSwap.selector, 
+            BaseHook.beforeSwap.selector, 
             BeforeSwapDeltaLibrary.ZERO_DELTA, // Spot hook doesn't adjust balances before swap
             dynamicFee
         );
-    }
-
-    /**
-     * @notice Hook called after a swap. Updates oracle if configured.
-     * @notice Implements IHooks function. Calls internal logic.
-     */
-    function afterSwap(
-        address sender, // User initiating swap
-        PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
-        BalanceDelta delta, // Net balance change from swap
-        bytes calldata hookData // Optional data from user
-    ) external override(BaseHook, IHooks) returns (bytes4, int128) {
-         // Basic validation
-        if (msg.sender != address(poolManager)) revert Errors.CallerNotPoolManager(msg.sender); // Pass caller address
-
-        // Check if pool is managed by this hook (optional, PoolManager should handle routing)
-        // bytes32 _poolId = key.toId();
-        // if (!poolData[_poolId].initialized) revert Errors.PoolNotInitialized(_poolId);
-
-        return _afterSwap(sender, key, params, delta, hookData);
     }
 
     /**
@@ -637,7 +580,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         IPoolManager.SwapParams calldata params,
         BalanceDelta delta,
         bytes calldata hookData
-    ) internal virtual override(BaseHook) returns (bytes4, int128) {
+    ) internal virtual override returns (bytes4, int128) {
         bytes32 _poolId = PoolId.unwrap(key.toId());
 
         // Check if oracle exists, pool is managed here, and this hook is the registered hook for the pool
@@ -659,29 +602,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
             }
         }
         // Return selector and 0 kiss fee (hook takes no fee percentage from swap)
-        return (IHooks.afterSwap.selector, 0);
-    }
-
-    /**
-     * @notice Hook called after adding liquidity. Potentially processes fees.
-     * @notice Implements IHooks function. Calls internal logic.
-     */
-    function afterAddLiquidity(
-        address sender, // User adding liquidity (via LM)
-        PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
-        BalanceDelta delta, // Net balance change (should match amounts deposited)
-        BalanceDelta feesAccrued, // Fees accrued to the position (typically 0 on fresh add)
-        bytes calldata hookData // Optional data from user/LM
-    ) external override(BaseHook, IHooks) returns (bytes4, BalanceDelta) {
-        // Basic validation
-        if (msg.sender != address(poolManager)) revert Errors.CallerNotPoolManager(msg.sender); // Pass caller address
-        
-        // Check if pool is managed by this hook (optional, PoolManager should handle routing)
-        // bytes32 _poolId = key.toId();
-        // if (!poolData[_poolId].initialized) revert Errors.PoolNotInitialized(_poolId);
-
-        return _afterAddLiquidity(sender, key, params, delta, feesAccrued, hookData);
+        return (BaseHook.afterSwap.selector, 0);
     }
 
     /**
@@ -695,36 +616,14 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         BalanceDelta delta,
         BalanceDelta feesAccrued, // Likely zero on initial add
         bytes calldata hookData
-    ) internal virtual override(BaseHook) returns (bytes4, BalanceDelta) {
+    ) internal virtual override returns (bytes4, BalanceDelta) {
         bytes32 _poolId = PoolId.unwrap(key.toId());
 
         // Optional: Process fees accrued during add liquidity (uncommon for standard full-range add)
         // _processFees(_poolId, IFeeReinvestmentManager.OperationType.DEPOSIT, feesAccrued);
 
         // Return selector and zero delta hook fee adjustment
-        return (IHooks.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
-    }
-
-    /**
-     * @notice Hook called after removing liquidity. Processes fees accrued.
-     * @notice Implements IHooks function. Calls internal logic.
-     */
-    function afterRemoveLiquidity(
-        address sender, // User removing liquidity (via LM)
-        PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
-        BalanceDelta delta, // Net balance change (should match amounts withdrawn)
-        BalanceDelta feesAccrued, // Fees accrued to the position being removed
-        bytes calldata hookData // Optional data from user/LM
-    ) external override(BaseHook, IHooks) returns (bytes4, BalanceDelta) {
-         // Basic validation
-        if (msg.sender != address(poolManager)) revert Errors.CallerNotPoolManager(msg.sender); // Pass caller address
-
-        // Check if pool is managed by this hook (optional, PoolManager should handle routing)
-        // bytes32 _poolId = key.toId();
-        // if (!poolData[_poolId].initialized) revert Errors.PoolNotInitialized(_poolId);
-
-        return _afterRemoveLiquidity(sender, key, params, delta, feesAccrued, hookData);
+        return (BaseHook.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
      /**
@@ -738,14 +637,14 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
         BalanceDelta delta,
         BalanceDelta feesAccrued, // Fees collected by this LP position
         bytes calldata hookData
-    ) internal virtual override(BaseHook) returns (bytes4, BalanceDelta) {
+    ) internal virtual override returns (bytes4, BalanceDelta) {
         bytes32 _poolId = PoolId.unwrap(key.toId());
 
         // Process any fees collected by the liquidity being removed
         _processRemoveLiquidityFees(_poolId, feesAccrued);
 
         // Return selector and zero delta hook fee adjustment
-        return (IHooks.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
+        return (BaseHook.afterRemoveLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     // --- ISpotHooks Delta-Returning Implementations ---
