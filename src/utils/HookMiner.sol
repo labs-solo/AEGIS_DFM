@@ -14,8 +14,11 @@ library HookMiner {
     uint256 constant MAX_LOOP = 200_000;
 
     // Fixed salts that are known to work with Spot and Margin contracts with most common configurations
-    bytes32 constant SPOT_DEFAULT_SALT = bytes32(uint256(0x6318));
+    bytes32 constant SPOT_DEFAULT_SALT = bytes32(uint256(0x2aa)); // For flags 4549 (full set)
     bytes32 constant MARGIN_DEFAULT_SALT = bytes32(uint256(0x1956));
+
+    // Additional known working salts for specific use cases
+    // Currently none needed
 
     /// @notice Find a salt that produces a hook address with the desired `flags`
     /// @param deployer The address that will deploy the hook. In `forge test`, this will be the test contract `address(this)` or the pranking address
@@ -34,8 +37,8 @@ library HookMiner {
         
         // Try hardcoded salts
         bytes32[] memory knownSalts = new bytes32[](6);
-        knownSalts[0] = MARGIN_DEFAULT_SALT; // Try Margin salt first
-        knownSalts[1] = SPOT_DEFAULT_SALT; // Then Spot salt 
+        knownSalts[0] = SPOT_DEFAULT_SALT; // Then default Spot salt
+        knownSalts[1] = MARGIN_DEFAULT_SALT; // Margin salt
         knownSalts[2] = bytes32(uint256(0x1)); // Fallback salts
         knownSalts[3] = bytes32(uint256(0x1234));
         knownSalts[4] = bytes32(uint256(0x12345));

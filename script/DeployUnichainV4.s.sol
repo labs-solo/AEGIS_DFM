@@ -2,59 +2,52 @@
 pragma solidity 0.8.26;
 
 import "forge-std/Script.sol";
-import "forge-std/console2.sol"; // Import console2
+import "forge-std/console2.sol";
 
 // Uniswap V4 Core
-import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
 
-// FullRange Contracts
-import {Spot} from "../src/Spot.sol";
+// Deployed Contracts (Dependencies Only)
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
-import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
-import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
-import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
+
+// Interfaces and Libraries (Needed for Types)
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 
-// For IERC20 interface
-import {IERC20} from "forge-std/interfaces/IERC20.sol";
+// Unused imports removed: Spot, FullRangeDynamicFeeManager, DefaultPoolCreationPolicy, HookMiner, Hooks, IERC20
 
 /**
- * @title DeployUnichainV4
- * @notice Deployment script for Unichain Mainnet that integrates with the existing PoolManager
+ * @title DeployUnichainV4 Dependencies Only
+ * @notice Deployment script for Unichain Mainnet - DEPLOYS DEPENDENCIES ONLY.
+ *         Hook, DynamicFeeManager deployment, configuration, and pool initialization
+ *         are expected to happen externally (e.g., in test setup).
  * This script sets up:
  * 1. Uses the existing PoolManager on Unichain mainnet
- * 2. All FullRange components
- * 3. FullRange hook with the correct address for callback permissions
- * 4. Test utility routers for liquidity and swaps
- * 5. Creates a pool with existing tokens on Unichain
+ * 2. Deploys TruncGeoOracleMulti, PoolPolicyManager, FullRangeLiquidityManager
+ * 3. Deploys test utility routers for liquidity, swaps, and donations
  */
 contract DeployUnichainV4 is Script {
     // Deployed contract references
-    IPoolManager public poolManager;
-    PoolPolicyManager public policyManager;
-    FullRangeLiquidityManager public liquidityManager;
-    FullRangeDynamicFeeManager public dynamicFeeManager;
-    Spot public fullRange;
-    TruncGeoOracleMulti public truncGeoOracle;
+    IPoolManager public poolManager;         // Reference to existing manager
+    PoolPolicyManager public policyManager; // Deployed
+    FullRangeLiquidityManager public liquidityManager; // Deployed
+    TruncGeoOracleMulti public truncGeoOracle; // Deployed
+    // Removed: dynamicFeeManager, fullRange
     
     // Test contract references
-    PoolModifyLiquidityTest public lpRouter;
-    PoolSwapTest public swapRouter;
-    PoolDonateTest public donateRouter;
+    PoolModifyLiquidityTest public lpRouter; // Deployed
+    PoolSwapTest public swapRouter;       // Deployed
+    PoolDonateTest public donateRouter;     // Deployed
     
-    // Deployment parameters
-    uint256 public constant HOOK_FEE = 30; // 0.30% hook fee
+    // Deployment parameters (Constants remain, used by external setup)
     uint24 public constant FEE = 3000; // Pool fee (0.3%)
     int24 public constant TICK_SPACING = 60; // Tick spacing
     uint160 public constant INITIAL_SQRT_PRICE_X96 = 79228162514264337593543950336; // 1:1 price
@@ -62,7 +55,7 @@ contract DeployUnichainV4 is Script {
     // Unichain Mainnet-specific addresses
     address public constant UNICHAIN_POOL_MANAGER = 0x1F98400000000000000000000000000000000004; // Official Unichain PoolManager
     
-    // Official tokens on Unichain Mainnet
+    // Official tokens (Constants remain, used by external setup)
     address public constant WETH = 0x4200000000000000000000000000000000000006; // WETH9 on Unichain
     address public constant USDC = 0x078D782b760474a361dDA0AF3839290b0EF57AD6; // Circle USDC on Unichain
 
@@ -71,157 +64,71 @@ contract DeployUnichainV4 is Script {
         address deployerAddress = vm.addr(deployerPrivateKey);
         address governance = deployerAddress; // Use deployer as governance for this deployment
 
+        console2.log("=== Dependency Deployment Script Starting ===");
+        console2.log("Running on chain ID:", block.chainid);
+        console2.log("Deployer address:", deployerAddress);
+        console2.log("==========================================");
+
+        // Step 1: Use existing PoolManager
+        console2.log("Using Unichain PoolManager at:", UNICHAIN_POOL_MANAGER);
+        poolManager = IPoolManager(UNICHAIN_POOL_MANAGER);
+
+        // --- Broadcast: Deploy Dependencies & Test Routers --- 
+        console2.log("\n--- Starting Broadcast: Dependencies & Test Routers ---");
         vm.startBroadcast(deployerPrivateKey);
         
-        // Step 1: Use existing PoolManager on Unichain
-        console.log("Using Unichain PoolManager at:", UNICHAIN_POOL_MANAGER);
-        poolManager = IPoolManager(UNICHAIN_POOL_MANAGER);
-        
-        // Create Pool Key using existing tokens - make sure to order them correctly
-        address token0;
-        address token1;
-        if (uint160(WETH) < uint160(USDC)) {
-            token0 = WETH;
-            token1 = USDC;
-        } else {
-            token0 = USDC;
-            token1 = WETH;
-        }
-        console.log("Using token0:", token0);
-        console.log("Using token1:", token1);
-
-        PoolKey memory key = PoolKey({
-            currency0: Currency.wrap(token0),
-            currency1: Currency.wrap(token1),
-            fee: FEE,
-            tickSpacing: TICK_SPACING,
-            hooks: IHooks(address(0)) // Placeholder hook address initially
-        });
-        PoolId poolId = PoolIdLibrary.toId(key);
-        
         // Step 1.5: Deploy Oracle
-        console.log("Deploying TruncGeoOracleMulti...");
+        console2.log("Deploying TruncGeoOracleMulti...");
         truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance);
-        console.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
+        console2.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
         
         // Step 2: Deploy Policy Manager
-        console.log("Deploying PolicyManager...");
-        uint24[] memory supportedTickSpacings_ = new uint24[](3); // Use different name
+        console2.log("Deploying PolicyManager...");
+        uint24[] memory supportedTickSpacings_ = new uint24[](3);
         supportedTickSpacings_[0] = 10;
         supportedTickSpacings_[1] = 60;
         supportedTickSpacings_[2] = 200;
 
         policyManager = new PoolPolicyManager(
             governance,
-            250000, // POL_SHARE_PPM (25%)
-            250000, // FULLRANGE_SHARE_PPM (25%)
-            500000, // LP_SHARE_PPM (50%)
-            1000,   // MIN_TRADING_FEE_PPM (0.1%)
-            10000,  // FEE_CLAIM_THRESHOLD_PPM (1%)
-            10,     // DEFAULT_POL_MULTIPLIER
-            3000,   // DEFAULT_DYNAMIC_FEE_PPM (0.3%)
-            2,      // TICK_SCALING_FACTOR
+            250000, 250000, 500000, // Shares PPM
+            1000, 10000, // Fee PPMs
+            10, 3000, 2, // Multipliers & Factors
             supportedTickSpacings_,
-            1e17,   // Protocol Interest Fee Percentage (10%)
+            1e17, // Interest Fee
             address(0) // Fee Collector
         );
-        console.log("PoolPolicyManager Deployed at:", address(policyManager));
+        console2.log("PoolPolicyManager Deployed at:", address(policyManager));
                  
-        // Step 3: Deploy FullRange components
-        console.log("Deploying FullRange components...");
-        
-        // Deploy Liquidity Manager
+        // Step 3: Deploy Liquidity Manager
+        console2.log("Deploying Liquidity Manager...");
         liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
-        console.log("LiquidityManager deployed at:", address(liquidityManager));
+        console2.log("LiquidityManager deployed at:", address(liquidityManager));
         
-        // Deploy Spot hook
-        fullRange = _deployFullRange(deployerAddress, poolId, key); // Use helper function
-        console.log("FullRange hook deployed at:", address(fullRange));
-        
-        // Deploy DynamicFeeManager AFTER FullRange
-        dynamicFeeManager = new FullRangeDynamicFeeManager(
-            governance,
-            IPoolPolicy(address(policyManager)),
-            poolManager,
-            address(fullRange)
-        );
-        console.log("DynamicFeeManager deployed at:", address(dynamicFeeManager));
-        
-        // Step 4: Configure deployed contracts
-        console.log("Configuring contracts...");
-        liquidityManager.setAuthorizedHookAddress(address(fullRange));
-        fullRange.setDynamicFeeManager(address(dynamicFeeManager));
-
-        // Initialize Pool (requires hook address in key now)
-        key.hooks = IHooks(address(fullRange));
-        poolManager.initialize(key, INITIAL_SQRT_PRICE_X96);
-
-        // Step 5: Deploy test routers
-        console.log("Deploying test routers...");
+        // Step 4: Deploy test routers
+        console2.log("Deploying test routers...");
         lpRouter = new PoolModifyLiquidityTest(poolManager);
         swapRouter = new PoolSwapTest(poolManager);
         donateRouter = new PoolDonateTest(poolManager);
-        console.log("LiquidityRouter deployed at:", address(lpRouter));
-        console.log("SwapRouter deployed at:", address(swapRouter));
-        console.log("Test Donate Router:", address(donateRouter));
+        console2.log("Test LiquidityRouter deployed at:", address(lpRouter));
+        console2.log("Test SwapRouter deployed at:", address(swapRouter));
+        console2.log("Test Donate Router deployed at:", address(donateRouter));
+
+        // Removed: Hook deployment, Dynamic Fee Manager deployment, configurations, pool initialization
         
         vm.stopBroadcast();
+        console2.log("--- Broadcast Complete ---");
         
         // Output summary
-        console.log("\n=== Deployment Complete ===");
-        console.log("Unichain PoolManager:", address(poolManager));
-        console.log("FullRange Hook:", address(fullRange));
-        console.log("PolicyManager:", address(policyManager));
-        console.log("LiquidityManager:", address(liquidityManager));
-        console.log("DynamicFeeManager:", address(dynamicFeeManager));
-        console.log("Test LP Router:", address(lpRouter));
-        console.log("Test Swap Router:", address(swapRouter));
-        console.log("Test Donate Router:", address(donateRouter));
+        console2.log("\n=== Dependency Deployment Complete ===");
+        console2.log("Using Unichain PoolManager:", address(poolManager));
+        console2.log("Deployed PolicyManager:", address(policyManager));
+        console2.log("Deployed LiquidityManager:", address(liquidityManager));
+        console2.log("Deployed TruncGeoOracleMulti:", address(truncGeoOracle));
+        console2.log("Deployed Test LP Router:", address(lpRouter));
+        console2.log("Deployed Test Swap Router:", address(swapRouter));
+        console2.log("Deployed Test Donate Router:", address(donateRouter));
     }
 
-    // Helper function to deploy Spot hook using CREATE2
-    function _deployFullRange(address _deployer, PoolId _poolId, PoolKey memory _key) internal returns (Spot) {
-        // Prepare constructor arguments for Spot
-        bytes memory constructorArgs = abi.encode(
-            poolManager,
-            IPoolPolicy(address(policyManager)),
-            liquidityManager
-        );
-        
-        bytes32 salt = bytes32(uint256(1)); // Use the same salt as before
-        console.logBytes32(salt);
-
-        // Calculate the expected hook address using EOA
-        bytes memory creationCode = abi.encodePacked(type(Spot).creationCode, constructorArgs);
-        // address hookAddress = HookMiner.computeAddress(
-        //     _deployer, // Use EOA (_deployer) for calculation
-        //     uint256(salt),
-        //     creationCode
-        // ); 
-        // Let Create2Deployer handle address calculation implicitly if needed, or calculate for logging:
-        address expectedHookAddress = HookMiner.computeAddress(
-            _deployer, // Use EOA (_deployer) for calculation
-            uint256(salt),
-            creationCode
-        );
-        
-        console.log("Deployer address (EOA):", _deployer);
-        console.log("Actual msg.sender (script contract):", address(this));
-        console.log("Calculated hook address (using EOA):", expectedHookAddress);
-
-        console.log("Attempting to deploy Spot hook with HookMiner...");
-        Spot spot = new Spot{salt: salt}(
-            poolManager,
-            IPoolPolicy(address(policyManager)),
-            liquidityManager
-        );
-        
-        console.log("Spot hook deployed via HookMiner. Actual address:", address(spot));
-
-        // Verify the deployed address matches the calculated address
-        console.log("Verifying deployed address matches calculated address (using EOA)... ");
-        require(address(spot) == expectedHookAddress, "Hook address mismatch");
-        
-        return spot;
-    }
+    // Removed: _getHookSaltConfig function (no longer needed here)
 } 

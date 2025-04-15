@@ -4,276 +4,379 @@ pragma solidity 0.8.26;
 import "forge-std/Test.sol";
 import "forge-std/console.sol";
 
-// Core Contract Interfaces
+// Core Contract Interfaces & Libraries
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol"; // Needed for Permissions
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 
-// Project-Specific Interfaces (Paths determined from src/interfaces)
+// Project Interfaces & Implementations
 import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
-import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
-import {IFullRangeDynamicFeeManager} from "src/interfaces/IFullRangeDynamicFeeManager.sol";
-import {ISpot} from "src/interfaces/ISpot.sol";
-import {ITruncGeoOracleMulti} from "src/interfaces/ITruncGeoOracleMulti.sol";
-
-// Project-Specific Implementations
+// Removed IFullRangeLiquidityManager, IFullRangeDynamicFeeManager, ISpot, ITruncGeoOracleMulti - using implementations directly
 import {FullRangeDynamicFeeManager} from "src/FullRangeDynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
 import {PoolPolicyManager} from "src/PoolPolicyManager.sol";
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {Spot} from "src/Spot.sol";
+import {HookMiner} from "src/utils/HookMiner.sol";
 
-// Deployment Script
-import {DeployUnichainV4} from "script/DeployUnichainV4.s.sol";
+// Removed Deployment Script Import
+// import {DeployUnichainV4} from "script/DeployUnichainV4.s.sol";
+
+// Test Routers
+import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
+import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
+import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
 
 /**
  * @title ForkSetup
  * @notice Establishes a consistent baseline state for integration tests on a forked Unichain environment.
- * @dev Handles environment setup, contract deployment via DeployUnichainV4, state variable population,
- *      and basic sanity checks using a specific fork RPC and private key from environment variables.
+ * @dev Handles environment setup and FULL deployment (dependencies, hook, dynamic fee manager, 
+ *      configuration, pool init, test routers) within the test setup using vm.prank.
  */
 contract ForkSetup is Test {
     using CurrencyLibrary for Currency;
     using PoolIdLibrary for PoolKey;
 
-    // --- Deployment Script Instance ---
-    DeployUnichainV4 internal deployer;
+    // Removed Deployment Script Instance
+    // DeployUnichainV4 internal deployerScript;
 
-    // --- Deployed Contract Instances ---
-    IPoolManager internal poolManager;
-    PoolPolicyManager internal policyManager;
-    FullRangeLiquidityManager internal liquidityManager;
-    FullRangeDynamicFeeManager internal dynamicFeeManager;
-    Spot internal spotHook;
-    TruncGeoOracleMulti internal oracle;
+    // --- Deployed/Referenced Contract Instances ---
+    IPoolManager internal poolManager; // From Unichain
+    PoolPolicyManager internal policyManager; // Deployed in setup
+    FullRangeLiquidityManager internal liquidityManager; // Deployed in setup
+    TruncGeoOracleMulti internal oracle; // Deployed in setup
+    Spot internal fullRange; // Deployed in setup via CREATE2
+    FullRangeDynamicFeeManager internal dynamicFeeManager; // Deployed in setup
+    
+    // --- Test Routers --- (Deployed in setup)
+    PoolModifyLiquidityTest internal lpRouter;
+    PoolSwapTest internal swapRouter;
+    PoolDonateTest internal donateRouter;
 
     // --- Core V4 & Pool Identifiers ---
     PoolKey internal poolKey;
     PoolId internal poolId;
 
     // --- Token Addresses & Instances ---
-    // Using Unichain Mainnet addresses
-    address internal constant WETH_ADDRESS = 0x4200000000000000000000000000000000000006; // WETH9 on Unichain
-    address internal constant USDC_ADDRESS = 0x078D782b760474a361dDA0AF3839290b0EF57AD6; // Circle USDC on Unichain - corrected checksum
+    address internal constant UNICHAIN_POOL_MANAGER = 0x1F98400000000000000000000000000000000004;
+    address internal constant WETH_ADDRESS = 0x4200000000000000000000000000000000000006;
+    address internal constant USDC_ADDRESS = 0x078D782b760474a361dDA0AF3839290b0EF57AD6;
     IERC20Minimal internal weth = IERC20Minimal(WETH_ADDRESS);
     IERC20Minimal internal usdc = IERC20Minimal(USDC_ADDRESS);
 
-    // --- Test User ---
+    // --- Test User & Deployer EOA ---
     address internal testUser;
+    address internal deployerEOA;
+    uint256 internal deployerPrivateKey;
 
     // --- Funding Constants ---
     uint256 internal constant FUND_ETH_AMOUNT = 1000 ether;
-    uint256 internal constant FUND_WETH_AMOUNT = 1000e18; // 1000 WETH
-    uint256 internal constant FUND_USDC_AMOUNT = 1_000_000e6; // 1M USDC
+
+    // --- Deployment Constants ---
+    uint24 internal constant FEE = LPFeeLibrary.DYNAMIC_FEE_FLAG;
+    int24 internal constant TICK_SPACING = 60;
+    uint160 internal constant INITIAL_SQRT_PRICE_X96 = 79228162514264337593543950336;
+    // We'll use the mined salt, not a hardcoded one
+    // bytes32 internal constant HOOK_SALT = bytes32(uint256(31099));
+    // address internal constant EXPECTED_HOOK_ADDRESS = 0xc44C98d506E7d347399a4310d74C267aa705dE08;
+    
+    // Variable to track the actual hook address used
+    address internal actualHookAddress;
 
     function setUp() public virtual {
-        // Fallback to local test if fork doesn't work
-        bool useLocalTest = false;
-        
-        // Select Fork
-        string memory forkUrl;
-        try vm.envString("UNICHAIN_MAINNET_RPC_URL") returns (string memory result) {
-            forkUrl = result;
-            emit log_string(string.concat("Selected fork: ", forkUrl));
+        // 1. Create Fork & Basic Env Setup
+        string memory forkUrl = vm.envString("UNICHAIN_MAINNET_RPC_URL");
+        uint256 blockNumber = vm.envUint("FORK_BLOCK_NUMBER"); // Read block number from .env
+        require(blockNumber > 0, "FORK_BLOCK_NUMBER not set or zero in .env"); // Add basic check
+        emit log_named_uint("Forking from block", blockNumber);
+        uint256 forkId = vm.createFork(forkUrl, blockNumber);
+        vm.selectFork(forkId);
+        emit log_named_uint("Fork created and selected. Current block in fork:", block.number);
 
-            // Get the latest block number and use a more recent block
-            emit log_string("Fetching latest block number...");
-            vm.rpcUrl(forkUrl);
-            
-            // Try to fork at a recent block, adjustable to find a working block
-            uint256 blockNumber = 13990000; // Hardcoded recent block number
-            emit log_named_uint("Using block number", blockNumber);
-            
-            try vm.createSelectFork(forkUrl, blockNumber) {
-                emit log_string("Fork successful");
-            } catch {
-                emit log_string("Fork failed, falling back to local test");
-                useLocalTest = true;
-            }
-        } catch {
-            emit log_string("UNICHAIN_MAINNET_RPC_URL not set or invalid, using local test");
-            useLocalTest = true;
-        }
-
-        // 2. Define Test User
-        testUser = vm.addr(1); // Simple test user address
-        emit log_named_address("Test User Address", testUser);
+        // 2. Setup Test User & Deployer EOA (Using PK=1 for CREATE2 consistency)
+        testUser = vm.addr(2); // Use PK 2 for test user
         vm.deal(testUser, FUND_ETH_AMOUNT);
-        emit log_named_uint("ETH Balance (wei)", testUser.balance);
+        emit log_named_address("Test User", testUser);
 
-        // Use a mock private key for development
-        uint256 deployerPrivateKey = 1; // Use a simple key for testing
-        address deployerAddress = vm.addr(deployerPrivateKey);
-        vm.deal(deployerAddress, 100 ether); // Fund deployer
+        deployerPrivateKey = 1; // Force PK=1 for deployer
+        deployerEOA = vm.addr(deployerPrivateKey);
+        vm.deal(deployerEOA, FUND_ETH_AMOUNT);
+        emit log_named_address("Deployer EOA (PK=1)", deployerEOA);
+        emit log_named_uint("Deployer EOA ETH Balance", deployerEOA.balance);
+
+        // 3. Get PoolManager Instance
+        poolManager = IPoolManager(UNICHAIN_POOL_MANAGER);
+        emit log_named_address("Using PoolManager", address(poolManager));
+
+        // 4. Deploy All Contracts, Configure, Initialize (within vm.prank)
+        emit log_string("\n--- Starting Full Deployment & Configuration (Pranked) ---");
+        vm.startPrank(deployerEOA);
+
+        // Deploy Oracle
+        emit log_string("Deploying TruncGeoOracleMulti...");
+        oracle = new TruncGeoOracleMulti(poolManager, deployerEOA); // Governance = deployer
+        emit log_named_address("Oracle deployed at", address(oracle));
+        require(address(oracle) != address(0), "Oracle deployment failed");
+
+        // Deploy PolicyManager
+        emit log_string("Deploying PolicyManager...");
+        uint24[] memory supportedTickSpacings_ = new uint24[](3);
+        supportedTickSpacings_[0] = 10; supportedTickSpacings_[1] = 60; supportedTickSpacings_[2] = 200;
+        policyManager = new PoolPolicyManager(
+            deployerEOA, // Governance = deployer
+            250000, 250000, 500000, // Shares
+            1000, 10000, // Fees
+            10, 3000, 2, // Multipliers
+            supportedTickSpacings_,
+            1e17, // Interest Fee
+            address(0) // Fee Collector
+        );
+        emit log_named_address("PolicyManager deployed at", address(policyManager));
+        require(address(policyManager) != address(0), "PolicyManager deployment failed");
+
+        // Deploy LiquidityManager
+        emit log_string("Deploying LiquidityManager...");
+        liquidityManager = new FullRangeLiquidityManager(poolManager, deployerEOA); // Governance = deployer
+        emit log_named_address("LiquidityManager deployed at", address(liquidityManager));
+        require(address(liquidityManager) != address(0), "LiquidityManager deployment failed");
+
+        // Deploy Spot Hook via CREATE2 with HookMiner
+        emit log_string("Deploying Spot hook via CREATE2 with HookMiner...");
         
-        // Set PRIVATE_KEY environment variable for the deployment script
-        vm.setEnv("PRIVATE_KEY", vm.toString(deployerPrivateKey));
+        // Define the required hook flags - exactly match Spot.sol's getHookPermissions
+        uint160 requiredHookFlags = uint160(
+            Hooks.AFTER_INITIALIZE_FLAG |
+            Hooks.BEFORE_SWAP_FLAG |
+            Hooks.AFTER_SWAP_FLAG |
+            Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+        );
         
-        if (useLocalTest) {
-            // Skip complex setup for local tests
-            emit log_string("Using local test setup - minimal contract setup");
-            
-            // If we're in a local test, do some minimal mocking
-            // Create mock tokens and fund the user
-            weth = IERC20Minimal(address(0x1111)); // Mock WETH address
-            usdc = IERC20Minimal(address(0x2222)); // Mock USDC address
-            
-            // For local test, we'll just verify that the test itself runs
-            emit log_string("--- Local Setup complete ---");
-            return;
-        }
+        // Get constructor arguments
+        bytes memory constructorArgs = abi.encode(
+            poolManager,
+            IPoolPolicy(address(policyManager)),
+            liquidityManager
+        );
         
-        // 3. Instantiate Deployment Script
-        deployer = new DeployUnichainV4();
-        emit log_string("Deployment script instantiated.");
+        // Log which hook flags are being used
+        emit log_string("\n=== Hook Permissions Needed ===");
+        emit log_named_string("beforeInitialize", requiredHookFlags & Hooks.BEFORE_INITIALIZE_FLAG != 0 ? "true" : "false");
+        emit log_named_string("afterInitialize", requiredHookFlags & Hooks.AFTER_INITIALIZE_FLAG != 0 ? "true" : "false");
+        emit log_named_string("beforeAddLiquidity", requiredHookFlags & Hooks.BEFORE_ADD_LIQUIDITY_FLAG != 0 ? "true" : "false");
+        emit log_named_string("afterAddLiquidity", requiredHookFlags & Hooks.AFTER_ADD_LIQUIDITY_FLAG != 0 ? "true" : "false");
+        emit log_named_string("beforeRemoveLiquidity", requiredHookFlags & Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG != 0 ? "true" : "false");
+        emit log_named_string("afterRemoveLiquidity", requiredHookFlags & Hooks.AFTER_REMOVE_LIQUIDITY_FLAG != 0 ? "true" : "false");
+        emit log_named_string("beforeSwap", requiredHookFlags & Hooks.BEFORE_SWAP_FLAG != 0 ? "true" : "false");
+        emit log_named_string("afterSwap", requiredHookFlags & Hooks.AFTER_SWAP_FLAG != 0 ? "true" : "false");
+        emit log_named_string("beforeDonate", requiredHookFlags & Hooks.BEFORE_DONATE_FLAG != 0 ? "true" : "false");
+        emit log_named_string("afterDonate", requiredHookFlags & Hooks.AFTER_DONATE_FLAG != 0 ? "true" : "false");
+        emit log_named_string("beforeSwapReturnDelta", requiredHookFlags & Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG != 0 ? "true" : "false");
+        emit log_named_string("afterSwapReturnDelta", requiredHookFlags & Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG != 0 ? "true" : "false");
+        emit log_named_string("afterAddLiquidityReturnDelta", requiredHookFlags & Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG != 0 ? "true" : "false");
+        emit log_named_string("afterRemoveLiquidityReturnDelta", requiredHookFlags & Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG != 0 ? "true" : "false");
+        emit log_string("===========================\n");
+        
+        // Use HookMiner to find a valid salt
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            deployerEOA,
+            requiredHookFlags,
+            type(Spot).creationCode,
+            constructorArgs
+        );
+        
+        emit log_named_bytes32("Mined salt", salt);
+        emit log_named_address("Predicted hook address", hookAddress);
+        
+        // Deploy the Spot hook with the mined salt
+        fullRange = new Spot{salt: salt}(
+            poolManager,
+            IPoolPolicy(address(policyManager)),
+            liquidityManager
+        );
+        
+        // Verify the deployment
+        actualHookAddress = address(fullRange);
+        require(actualHookAddress == hookAddress, "Deployed hook address does not match predicted!");
+        emit log_named_address("Spot Hook deployed successfully at", actualHookAddress);
+        
+        // Debug hook flags and validation
+        debugHookFlags();
+        
+        // Deploy DynamicFeeManager
+        emit log_string("Deploying DynamicFeeManager...");
+        dynamicFeeManager = new FullRangeDynamicFeeManager(
+            deployerEOA, // Governance = deployer
+            IPoolPolicy(address(policyManager)),
+            poolManager,
+            address(fullRange)
+        );
+        emit log_named_address("DynamicFeeManager deployed at", address(dynamicFeeManager));
+        require(address(dynamicFeeManager) != address(0), "DynamicFeeManager deployment failed");
 
-        // 4. Execute Deployment
-        emit log_string("Starting deployment...");
-        deployer.run();
-        emit log_string("Deployment finished.");
+        // Configure Contracts
+        emit log_string("Configuring contracts...");
+        liquidityManager.setAuthorizedHookAddress(actualHookAddress);
+        fullRange.setDynamicFeeManager(address(dynamicFeeManager));
+        emit log_string("LiquidityManager and Hook configured.");
 
-        // 5. Get Deployed Contract Addresses & Instantiate
-        emit log_string("Retrieving deployed contract addresses from script state...");
-        // Access public state variables from the deployer script instance
-        poolManager = deployer.poolManager();
-        policyManager = deployer.policyManager();
-        liquidityManager = deployer.liquidityManager();
-        dynamicFeeManager = deployer.dynamicFeeManager();
-        spotHook = deployer.fullRange(); // The script names the hook instance 'fullRange'
-        oracle = deployer.truncGeoOracle(); // The script names the oracle instance 'truncGeoOracle'
-
-        emit log_string("Deployed Contracts (Ensure these are non-zero):");
-        emit log_named_address("PoolManager", address(poolManager));
-        emit log_named_address("PolicyManager", address(policyManager));
-        emit log_named_address("LiquidityManager", address(liquidityManager));
-        emit log_named_address("DynamicFeeManager", address(dynamicFeeManager));
-        emit log_named_address("SpotHook (FullRange)", address(spotHook));
-        emit log_named_address("Oracle (TruncGeo)", address(oracle));
-
-        require(address(poolManager) != address(0), "PoolManager address is zero");
-        require(address(policyManager) != address(0), "PolicyManager address is zero");
-        require(address(liquidityManager) != address(0), "LiquidityManager address is zero");
-        require(address(dynamicFeeManager) != address(0), "DynamicFeeManager address is zero");
-        require(address(spotHook) != address(0), "SpotHook (FullRange) address is zero");
-        require(address(oracle) != address(0), "Oracle (TruncGeo) address is zero");
-
-        // 5b. Basic Sanity Checks (Optional but Recommended)
-        address expectedOwner = vm.addr(deployerPrivateKey);
-        // Note: The deploy script sets governance, not owner directly on some contracts.
-        if (policyManager.getSoloGovernance() != expectedOwner) {
-             emit log_string("Warning: PolicyManager governance mismatch.");
-             emit log_named_address("Expected", expectedOwner);
-             emit log_named_address("Got", policyManager.getSoloGovernance());
-        }
-
-        // 6. Determine PoolKey & PoolId for WETH/USDC
-        emit log_string("Determining WETH/USDC PoolKey and PoolId...");
+        // Initialize Pool
+        emit log_string("Initializing pool...");
         address token0;
         address token1;
-        
-        // Sort tokens by address value
-        if (uint160(WETH_ADDRESS) < uint160(USDC_ADDRESS)) {
-            token0 = WETH_ADDRESS;
-            token1 = USDC_ADDRESS;
-        } else {
-            token0 = USDC_ADDRESS;
-            token1 = WETH_ADDRESS;
-        }
-        
-        Currency currency0 = Currency.wrap(token0);
-        Currency currency1 = Currency.wrap(token1);
-
-        // Use DYNAMIC_FEE_FLAG for dynamic fees as required
-        uint24 dynamicFee = LPFeeLibrary.DYNAMIC_FEE_FLAG; // 0x800000
-        int24 requiredTickSpacing = 100; // Set tick spacing to 100 as required
-        
-        emit log_named_uint("Dynamic Fee Flag", uint256(dynamicFee));
-        emit log_named_int("TickSpacing", int256(requiredTickSpacing));
-        emit log_named_address("Token0", token0);
-        emit log_named_address("Token1", token1);
-
+        (token0, token1) = WETH_ADDRESS < USDC_ADDRESS ? (WETH_ADDRESS, USDC_ADDRESS) : (USDC_ADDRESS, WETH_ADDRESS);
         poolKey = PoolKey({
-            currency0: currency0,
-            currency1: currency1,
-            fee: dynamicFee,
-            tickSpacing: requiredTickSpacing,
-            hooks: IHooks(address(spotHook)) // Use the deployed hook address
+            currency0: Currency.wrap(token0),
+            currency1: Currency.wrap(token1),
+            fee: FEE,
+            tickSpacing: TICK_SPACING,
+            hooks: IHooks(address(fullRange))
         });
-        poolId = poolKey.toId(); // Use the correct function name
-        emit log_named_bytes32("Calculated PoolId", PoolId.unwrap(poolId));
+        poolId = poolKey.toId();
 
-        // 6b. Initialize the pool
-        // Since we're using a custom pool configuration with dynamicFee and tickSpacing:100,
-        // the pool might not exist after deployment. Let's initialize it.
-        emit log_string("Initializing the pool...");
-        uint160 initialSqrtPriceX96 = 79228162514264337593543950336; // 1:1 initial price
-        
-        try poolManager.initialize(poolKey, initialSqrtPriceX96) {
-            emit log_string("Pool initialized successfully");
+        try poolManager.initialize(poolKey, INITIAL_SQRT_PRICE_X96) {
+             emit log_string("Pool initialized successfully.");
+             emit log_named_bytes32("Pool ID", PoolId.unwrap(poolId));
         } catch Error(string memory reason) {
-            // If pool already exists, this is fine
-            if (keccak256(bytes(reason)) == keccak256(bytes("PoolAlreadyInitialized()"))) {
-                emit log_string("Pool already initialized");
-            } else {
-                emit log_string(string.concat("Pool initialization failed. Reason: ", reason));
-                // Continue instead of reverting - pool might be initialized elsewhere
-            }
+             // Check if the error is 'PoolAlreadyInitialized'
+             // This check is unreliable with strings. Catch raw error instead.
+             emit log_string(string.concat("Pool initialization failed with string: ", reason));
+             revert(string.concat("Pool initialization failed: ", reason));
+        } catch (bytes memory rawError) {
+             // Check if the raw error data matches PoolAlreadyInitialized()
+             bytes4 poolAlreadyInitializedSelector = bytes4(hex"3cd2493a");
+             if (rawError.length >= 4 && bytes4(rawError) == poolAlreadyInitializedSelector) {
+                 emit log_string("Pool already initialized on fork, skipping initialization.");
+             } else {
+                  emit log_named_bytes("Pool initialization failed raw data", rawError);
+                  revert("Pool initialization failed with raw error");
+             }
         }
+        
+        // Deploy Test Routers
+        emit log_string("Deploying test routers...");
+        lpRouter = new PoolModifyLiquidityTest(poolManager);
+        swapRouter = new PoolSwapTest(poolManager);
+        donateRouter = new PoolDonateTest(poolManager);
+        emit log_named_address("Test LiquidityRouter deployed at", address(lpRouter));
+        emit log_named_address("Test SwapRouter deployed at", address(swapRouter));
+        emit log_named_address("Test Donate Router deployed at", address(donateRouter));
+        require(address(lpRouter) != address(0), "lpRouter deployment failed");
+        require(address(swapRouter) != address(0), "swapRouter deployment failed");
+        require(address(donateRouter) != address(0), "donateRouter deployment failed");
 
-        // 7. Fund Test User with token mints
-        emit log_string("Funding test user with tokens...");
-        
-        // For WETH - special handling since we need to use the proper minting functions
-        // First check if we can mint WETH - if not, just log the info
-        try vm.store(WETH_ADDRESS, bytes32(uint256(1)), bytes32(uint256(type(uint256).max))) {
-            emit log_string("Set up WETH balance for test user");
-            emit log_named_uint("WETH Balance for user", weth.balanceOf(testUser));
-        } catch {
-            emit log_string("Could not set up WETH balance - check manually");
-        }
-        
-        // For USDC - special handling since we need to use the proper minting functions
-        // First check if we can mint USDC - if not, just log the info
-        try vm.store(USDC_ADDRESS, bytes32(uint256(1)), bytes32(uint256(type(uint256).max))) {
-            emit log_string("Set up USDC balance for test user");
-            emit log_named_uint("USDC Balance for user", usdc.balanceOf(testUser));
-        } catch {
-            emit log_string("Could not set up USDC balance - check manually");
-        }
-        
-        emit log_named_uint("ETH Balance (ether)", testUser.balance / 1 ether);
-        emit log_string("--- ForkSetup complete ---");
+        vm.stopPrank();
+        emit log_string("--- Full Deployment & Configuration Complete ---");
+
+        // 5. Final Sanity Checks (Optional, covered by testForkSetupComplete)
+        emit log_string("ForkSetup complete.");
     }
     
-    // Simple test to verify the ForkSetup works
+    // Test that validates the full setup
     function testForkSetupComplete() public {
-        // This test simply verifies that the setup completes successfully
-        // Verify contracts are deployed - if we're using local test these will be skipped
-        if (address(poolManager) != address(0)) {
-            assertTrue(address(poolManager) != address(0), "PoolManager not deployed");
-            assertTrue(address(policyManager) != address(0), "PolicyManager not deployed");
-            assertTrue(address(liquidityManager) != address(0), "LiquidityManager not deployed");
-            assertTrue(address(dynamicFeeManager) != address(0), "DynamicFeeManager not deployed");
-            assertTrue(address(spotHook) != address(0), "SpotHook not deployed");
+        assertTrue(address(poolManager) != address(0), "PoolManager not set");
+        assertTrue(address(policyManager) != address(0), "PolicyManager not deployed");
+        assertTrue(address(liquidityManager) != address(0), "LiquidityManager not deployed");
+        assertTrue(address(oracle) != address(0), "Oracle not deployed");
+        assertEq(address(fullRange), actualHookAddress, "FullRange hook not deployed correctly");
+        assertTrue(address(dynamicFeeManager) != address(0), "DynamicFeeManager not deployed");
+        assertTrue(address(lpRouter) != address(0), "LpRouter not deployed");
+        assertTrue(address(swapRouter) != address(0), "SwapRouter not deployed");
+        assertTrue(address(donateRouter) != address(0), "DonateRouter not deployed");
+        assertTrue(testUser.balance >= FUND_ETH_AMOUNT, "TestUser ETH balance incorrect");
         
-            // Verify pool exists
-            bytes32 poolIdBytes = PoolId.unwrap(poolId);
-            assertTrue(poolIdBytes != bytes32(0), "PoolId is zero");
-        } else {
-            // In local test mode, just check that test user is set up
-            emit log_string("Running in local test mode - skipping contract checks");
-        }
-        
-        // ETH balance check
-        // In local test, for some reason the balance is 100 ETH instead of 1000 ETH
-        // Let's add an explicit balance check that works in both modes
-        assertTrue(testUser.balance > 0, "TestUser ETH balance should be positive");
+        address authorizedHook = liquidityManager.authorizedHookAddress();
+        assertEq(authorizedHook, actualHookAddress, "LM authorized hook mismatch");
+
+        // Check if pool exists (commented out - IPoolManager doesn't have getSlot0)
+        // try poolManager.getSlot0(poolId) returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 feeProtocol) {
+        //     assertTrue(sqrtPriceX96 > 0, "Pool slot0 sqrtPrice is zero");
+        // } catch {
+        //     assertTrue(false, "Failed to get pool slot0");
+        // }
+
+        emit log_string("testForkSetupComplete checks passed!");
     }
 
     // --- Helper Functions ---
-    // Add common helpers used across multiple test files here.
+
+    // Add a helper function for string manipulation
+    function substring(string memory str, uint startIndex, uint endIndex) internal pure returns (string memory) {
+        bytes memory strBytes = bytes(str);
+        require(startIndex <= endIndex, "Invalid indices");
+        require(endIndex <= strBytes.length, "End index out of bounds");
+        
+        bytes memory result = new bytes(endIndex - startIndex);
+        for (uint i = startIndex; i < endIndex; i++) {
+            result[i - startIndex] = strBytes[i];
+        }
+        
+        return string(result);
+    }
+
+    // Helper function to check hook address validity using Hooks library
+    function checkHookAddressValidity(address hookAddress, uint24 fee) public pure returns (bool) {
+        return Hooks.isValidHookAddress(IHooks(hookAddress), fee);
+    }
+
+    // Helper function to debug hook flags
+    function debugHookFlags() public {
+        uint160 requiredFlags = uint160(
+            Hooks.AFTER_INITIALIZE_FLAG |
+            Hooks.BEFORE_SWAP_FLAG |
+            Hooks.AFTER_SWAP_FLAG |
+            Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+        );
+        
+        emit log_named_uint("Hooks.AFTER_INITIALIZE_FLAG", uint256(Hooks.AFTER_INITIALIZE_FLAG));
+        emit log_named_uint("Hooks.BEFORE_SWAP_FLAG", uint256(Hooks.BEFORE_SWAP_FLAG));
+        emit log_named_uint("Hooks.AFTER_SWAP_FLAG", uint256(Hooks.AFTER_SWAP_FLAG));
+        emit log_named_uint("Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG", uint256(Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG));
+        emit log_named_uint("Hooks.AFTER_REMOVE_LIQUIDITY_FLAG", uint256(Hooks.AFTER_REMOVE_LIQUIDITY_FLAG));
+        emit log_named_uint("Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG", uint256(Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG));
+        emit log_named_uint("Required flags", uint256(requiredFlags));
+        emit log_named_uint("DYNAMIC_FEE_FLAG", uint256(LPFeeLibrary.DYNAMIC_FEE_FLAG));
+        
+        if (address(fullRange) != address(0)) {
+            emit log_named_address("Hook Address", address(fullRange));
+            emit log_named_uint("Hook address (as uint)", uint256(uint160(address(fullRange))));
+            uint160 hookFlags = uint160(address(fullRange)) & uint160(Hooks.ALL_HOOK_MASK);
+            emit log_named_uint("Hook flags", uint256(hookFlags));
+            emit log_named_string("Valid with normal fee (3000)", Hooks.isValidHookAddress(IHooks(address(fullRange)), 3000) ? "true" : "false");
+            emit log_named_string("Valid with dynamic fee", Hooks.isValidHookAddress(IHooks(address(fullRange)), LPFeeLibrary.DYNAMIC_FEE_FLAG) ? "true" : "false");
+            
+            // Check why the hook address is invalid
+            // 1. Check if the hook has proper permission dependencies
+            bool dependency1 = !((hookFlags & Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG > 0) && (hookFlags & Hooks.BEFORE_SWAP_FLAG == 0));
+            bool dependency2 = !((hookFlags & Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG > 0) && (hookFlags & Hooks.AFTER_SWAP_FLAG == 0));
+            bool dependency3 = !((hookFlags & Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG > 0) && (hookFlags & Hooks.AFTER_ADD_LIQUIDITY_FLAG == 0));
+            bool dependency4 = !((hookFlags & Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG > 0) && (hookFlags & Hooks.AFTER_REMOVE_LIQUIDITY_FLAG == 0));
+            
+            emit log_named_string("Flag dependency check 1", dependency1 ? "pass" : "fail");
+            emit log_named_string("Flag dependency check 2", dependency2 ? "pass" : "fail");
+            emit log_named_string("Flag dependency check 3", dependency3 ? "pass" : "fail");
+            emit log_named_string("Flag dependency check 4", dependency4 ? "pass" : "fail");
+            
+            // 2. Check the last part of isValidHookAddress
+            bool hasAtLeastOneFlag = uint160(address(fullRange)) & Hooks.ALL_HOOK_MASK > 0;
+            emit log_named_string("Has at least one flag", hasAtLeastOneFlag ? "true" : "false");
+        }
+        
+        // Create a fake hook address with the correct flags to illustrate what we need
+        address correctHookAddr = address(
+            uint160(0xfc00000000000000000000000000000000000000) | requiredFlags
+        );
+        emit log_named_address("Example correct hook address", correctHookAddr);
+        emit log_named_uint("Example hook flags", uint256(uint160(correctHookAddr) & uint160(Hooks.ALL_HOOK_MASK)));
+        emit log_named_string("Example valid with normal fee", Hooks.isValidHookAddress(IHooks(correctHookAddr), 3000) ? "true" : "false");
+        emit log_named_string("Example valid with dynamic fee", Hooks.isValidHookAddress(IHooks(correctHookAddr), LPFeeLibrary.DYNAMIC_FEE_FLAG) ? "true" : "false");
+    }
 } 

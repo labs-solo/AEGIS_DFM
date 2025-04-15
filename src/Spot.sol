@@ -149,9 +149,9 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
             beforeAddLiquidity: false,
             afterAddLiquidity: false,
             beforeRemoveLiquidity: false,
-            afterRemoveLiquidity: false,
+            afterRemoveLiquidity: true,  // ENABLED - Required for afterRemoveLiquidityReturnDelta to work
             beforeSwap: true,  // ENABLED
-            afterSwap: false,
+            afterSwap: true,  // ENABLED - Required for afterSwapReturnDelta to work
             beforeDonate: false,
             afterDonate: false,
             beforeSwapReturnDelta: false,
