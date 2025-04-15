@@ -38,19 +38,26 @@ contract CapEventLifecycle is ForkSetup {
     
     function setUp() public override {
         super.setUp();
+        console.log("Parent setup completed");
         
-        // Create a test user with funds
-        tester = address(0x1);
+        // Create test user - using the same address that ForkSetup should fund
+        console.log("a");
+        console.log("WETH balance: ", weth.balanceOf(address(0)));
+        console.log("b");
+        console.log("USDC balance: ", usdc.balanceOf(testUser));
+                
+        // Now approve tokens for swapping
         vm.startPrank(tester);
-        
+        console.log("b");
         // Fund the tester with tokens
         deal(WETH_ADDRESS, tester, 1000e18);
         deal(USDC_ADDRESS, tester, 1_000_000e6);
+        console.log("c");
         
         // Approve tokens for swapping
         IERC20Minimal(WETH_ADDRESS).approve(address(poolManager), type(uint256).max);
-        IERC20Minimal(USDC_ADDRESS).approve(address(poolManager), type(uint256).max);
-        
+        IERC20Minimal(USDC_ADDRESS).approve(address(poolManager), type(uint256).max);   
+        console.log("d");
         vm.stopPrank();
         
         // Add initial liquidity to the pool to enable swapping
