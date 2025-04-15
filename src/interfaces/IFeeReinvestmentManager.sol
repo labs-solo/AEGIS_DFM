@@ -129,11 +129,4 @@ interface IFeeReinvestmentManager {
      * @return leftover1 Leftover token1 amount
      */
     function getLeftoverTokens(PoolId poolId) external view returns (uint256 leftover0, uint256 leftover1);
-
-    /**
-     * @notice Triggers the processing and reinvestment of accrued protocol interest fees.
-     * @param poolId The pool ID for which to process interest fees.
-     * @return success Boolean indicating if processing was successful (or if there were fees to process).
-     */
-    function triggerInterestFeeProcessing(PoolId poolId) external returns (bool success);
 } 

@@ -11,7 +11,7 @@ library HookMiner {
 
     // Maximum number of iterations to find a salt, avoid infinite loops or MemoryOOG
     // (arbitrarily set)
-    uint256 constant MAX_LOOP = 20_000;
+    uint256 constant MAX_LOOP = 200_000;
 
     // Fixed salts that are known to work with Spot and Margin contracts with most common configurations
     bytes32 constant SPOT_DEFAULT_SALT = bytes32(uint256(0x6318));

@@ -143,22 +143,21 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard {
      * @notice Override `getHookPermissions` to specify which hooks `Spot` uses
      */
     function getHookPermissions() public pure virtual override returns (Hooks.Permissions memory) {
-        // Permissions remain the same
         return Hooks.Permissions({
             beforeInitialize: false,
-            afterInitialize: true,
+            afterInitialize: true,  // ENABLED
             beforeAddLiquidity: false,
-            afterAddLiquidity: true,
+            afterAddLiquidity: false,
             beforeRemoveLiquidity: false,
-            afterRemoveLiquidity: true,
-            beforeSwap: true,
-            afterSwap: true,
+            afterRemoveLiquidity: false,
+            beforeSwap: true,  // ENABLED
+            afterSwap: false,
             beforeDonate: false,
             afterDonate: false,
-            beforeSwapReturnDelta: false, 
-            afterSwapReturnDelta: false,
-            afterAddLiquidityReturnDelta: true,
-            afterRemoveLiquidityReturnDelta: false
+            beforeSwapReturnDelta: false,
+            afterSwapReturnDelta: true,  // ENABLED
+            afterAddLiquidityReturnDelta: false,
+            afterRemoveLiquidityReturnDelta: true  // ENABLED
         });
     }
 

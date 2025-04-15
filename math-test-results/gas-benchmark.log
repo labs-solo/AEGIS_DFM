@@ -1,0 +1,15 @@
+Compiler run failed:
+Error (9429): This looks like an address but has an invalid checksum. Correct checksummed address: "0x1F98400000000000000000000000000000000004". If this is not used as an address, please prepend '00'. For more information please see https://docs.soliditylang.org/en/develop/types.html#address-literals
+SyntaxError: This looks like an address but has an invalid checksum. Correct checksummed address: "0x1F98400000000000000000000000000000000004". If this is not used as an address, please prepend '00'. For more information please see https://docs.soliditylang.org/en/develop/types.html#address-literals
+  --> script/DeployUnichainV4.s.sol:62:53:
+   |
+62 |     address public constant UNICHAIN_POOL_MANAGER = 0x1f98400000000000000000000000000000000004; // Official Unichain PoolManager
+   |                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Error (9429): This looks like an address but has an invalid checksum. Correct checksummed address: "0x078D782b760474a361dDA0AF3839290b0EF57AD6". If this is not used as an address, please prepend '00'. For more information please see https://docs.soliditylang.org/en/develop/types.html#address-literals
+SyntaxError: This looks like an address but has an invalid checksum. Correct checksummed address: "0x078D782b760474a361dDA0AF3839290b0EF57AD6". If this is not used as an address, please prepend '00'. For more information please see https://docs.soliditylang.org/en/develop/types.html#address-literals
+  --> script/DeployUnichainV4.s.sol:66:36:
+   |
+66 |     address public constant USDC = 0x078d782b760474a361dda0af3839290b0ef57ad6; // Circle USDC on Unichain
+   |                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+

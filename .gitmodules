@@ -12,4 +12,4 @@
 	url = https://github.com/openzeppelin/uniswap-hooks
 [submodule "lib/solmate"]
 	path = lib/solmate
-	url = https://github.com/foundry-rs/solmate
+	url = https://github.com/transmissions11/solmate

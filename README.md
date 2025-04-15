@@ -1,10 +1,10 @@
-# FullRange: Full Range Liquidity Manager for Uniswap V4
+# VENM: Dynamic Fee Hook for Uniswap V4
 
-FullRange is a comprehensive, optimized system for providing and managing full-range (min tick to max tick) liquidity in Uniswap V4. It enables capital-efficient liquidity provision with advanced fee management, CAP event detection, and protocol-owned liquidity (POL) features.
+VENM is a comprehensive, optimized system for providing and managing full-range (min tick to max tick) liquidity in Uniswap V4. It enables capital-efficient liquidity provision with advanced fee management, CAP event detection, and protocol-owned liquidity (POL) features.
 
 ## Overview
 
-FullRange reimagines full-range liquidity provision for Uniswap V4's hook-based architecture. The system allows users to deposit tokens into a pool spanning the entire tick range, receiving share tokens that represent proportional ownership of the pooled liquidity. The protocol implements dynamic fee adjustment based on price volatility, automatic fee reinvestment, and sophisticated risk management features.
+VENM reimagines full-range liquidity provision for Uniswap V4's hook-based architecture. The system allows users to deposit tokens into a pool spanning the entire tick range, receiving share tokens that represent proportional ownership of the pooled liquidity. The protocol implements dynamic fee adjustment based on price volatility, automatic fee reinvestment, and sophisticated risk management features.
 
 ## Key Features
 
@@ -19,11 +19,11 @@ FullRange reimagines full-range liquidity provision for Uniswap V4's hook-based 
 
 ## Architecture
 
-FullRange follows a modular architecture with specialized components:
+VENM follows a modular architecture with specialized components:
 
 ### Core Components
 
-- **FullRange.sol**: The main hook contract that implements the full range liquidity management strategy
+- **Spot.sol**: The main hook contract that implements the dynamic fee and liquidity management strategy
 - **FullRangeLiquidityManager.sol**: Manages liquidity positions and handles deposits/withdrawals
 - **FullRangeDynamicFeeManager.sol**: Manages dynamic fees and CAP events based on oracle price movements
 - **PoolPolicyManager.sol**: Manages pool policies and fee distribution
@@ -35,11 +35,11 @@ FullRange follows a modular architecture with specialized components:
 - **MathUtils.sol**: Mathematical utilities for liquidity calculations
 - **FullRangePositions.sol**: ERC6909Claims token implementation for position accounting
 - **SettlementUtils.sol**: Utilities for Uniswap V4 settlement operations
-- **FullRangeUtils.sol**: Helper functions for the FullRange contract
+- **FullRangeUtils.sol**: Helper functions for the hook contracts
 
 ## Dynamic Fee System
 
-FullRange implements a two-tiered fee adjustment mechanism:
+VENM implements a two-tiered fee adjustment mechanism:
 
 1. **Base Fee Adjustments**: Gradual fee changes based on long-term market conditions
 2. **Surge Fees**: Immediate fee multipliers activated during periods of extreme volatility
@@ -88,7 +88,7 @@ function withdraw(
 
 ### Creating a New Pool
 
-Pools are created using Uniswap V4's standard pool initialization flow. The FullRange hook will be activated during pool creation.
+Pools are created using Uniswap V4's standard pool initialization flow. The VENM hook will be activated during pool creation.
 
 ## Getting Started
 
@@ -102,8 +102,8 @@ Pools are created using Uniswap V4's standard pool initialization flow. The Full
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/fullrange.git
-cd fullrange
+git clone https://github.com/venm-project/venm.git
+cd venm
 ```
 
 2. Install dependencies:
@@ -137,7 +137,7 @@ anvil
 
 1. Deploy the core contracts:
 ```bash
-forge script script/Deploy.s.sol:DeployScript --rpc-url [your-rpc-url] --broadcast --verify --use solc:0.8.26
+forge script script/DirectDeploy.s.sol --rpc-url [your-rpc-url] --broadcast --verify --use solc:0.8.26
 ```
 
 2. Initialize the system:
@@ -195,6 +195,75 @@ The protocol maintains its own liquidity position in each pool to:
 3. Establish minimum liquidity thresholds
 
 POL is managed through dedicated reinvestment mechanisms with governance controls.
+
+## Unichain Mainnet Deployment
+
+This section provides instructions for deploying the VENM Dynamic Fee Hook to Unichain Mainnet.
+
+### Setting Up Unichain Network
+
+1. Add Unichain Mainnet to your wallet:
+   - Network Name: Unichain Mainnet
+   - RPC URL: https://mainnet.unichain.org
+   - Chain ID: 130
+   - Currency Symbol: UNI
+   - Block Explorer: https://mainnet-explorer.unichain.org
+
+2. Configure Environment Variables:
+   - Copy `.env.example` to `.env`:
+     ```bash
+     cp .env.example .env
+     ```
+   - Edit `.env` with your configuration:
+     ```
+     UNICHAIN_MAINNET_RPC_URL=https://mainnet.unichain.org
+     FORK_BLOCK_NUMBER=13932475  # Use a recent block number
+     PRIVATE_KEY=your_private_key_here  # Add your private key (without 0x prefix)
+     ```
+
+### Deployment Scripts
+
+The deployment process uses Foundry scripts to deploy and configure all components:
+
+1. **DirectDeploy Script**: Deploys all core components with proper hook permissions
+   ```bash
+   # Simulate the deployment (dry-run)
+   forge script script/DirectDeploy.s.sol --rpc-url $(grep UNICHAIN_MAINNET_RPC_URL .env | cut -d= -f2) -vvv
+   
+   # Broadcast the transactions to the network
+   forge script script/DirectDeploy.s.sol --rpc-url $(grep UNICHAIN_MAINNET_RPC_URL .env | cut -d= -f2) --broadcast
+   ```
+
+2. The DirectDeploy script:
+   - Deploys TruncGeoOracleMulti
+   - Deploys PoolPolicyManager with optimized fee parameters
+   - Deploys FullRangeLiquidityManager
+   - Mines a suitable address for the Spot hook with specific permissions:
+     - afterInitialize
+     - beforeSwap
+     - afterSwapReturnDelta
+     - afterRemoveLiquidityReturnDelta
+   - Deploys the Spot hook
+   - Deploys and configures FullRangeDynamicFeeManager
+   - Grants necessary permissions between components
+
+### Troubleshooting
+
+- **HookMiner Salt Issue**: If the script fails with "HookMiner: could not find salt", you may need to increase the MAX_LOOP constant in src/utils/HookMiner.sol (default is 200,000)
+- **Contract Size Issues**: If contracts exceed size limits, verify optimization settings in foundry.toml
+- **Connection Issues**: Ensure your RPC URL is correct and the network is accessible
+- **Permission Errors**: Verify that your account has sufficient funds for deployment
+
+### Post-Deployment Verification
+
+After successful deployment, verify your contracts on the Unichain explorer:
+
+```bash
+forge verify-contract --chain 130 \
+  --constructor-args $(cast abi-encode "constructor(address)" "<pool_manager_address>") \
+  <deployed_address> src/TruncGeoOracleMulti.sol:TruncGeoOracleMulti \
+  --etherscan-api-key <your_api_key>
+```
 
 ## Contributing
 
