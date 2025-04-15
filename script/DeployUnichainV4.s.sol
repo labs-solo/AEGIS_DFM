@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import "forge-std/Script.sol";
+import "forge-std/console2.sol"; // Import console2
 
 // Uniswap V4 Core
 import {PoolManager} from "v4-core/src/PoolManager.sol";
@@ -105,10 +106,10 @@ contract DeployUnichainV4 is Script {
         
         // Step 2: Deploy Policy Manager
         console.log("Deploying PolicyManager...");
-        uint24[] memory supportedTickSpacings = new uint24[](3);
-        supportedTickSpacings[0] = 10;
-        supportedTickSpacings[1] = 60;
-        supportedTickSpacings[2] = 200;
+        uint24[] memory supportedTickSpacings_ = new uint24[](3); // Use different name
+        supportedTickSpacings_[0] = 10;
+        supportedTickSpacings_[1] = 60;
+        supportedTickSpacings_[2] = 200;
 
         policyManager = new PoolPolicyManager(
             governance,
@@ -120,12 +121,12 @@ contract DeployUnichainV4 is Script {
             10,     // DEFAULT_POL_MULTIPLIER
             3000,   // DEFAULT_DYNAMIC_FEE_PPM (0.3%)
             2,      // TICK_SCALING_FACTOR
-            supportedTickSpacings,
+            supportedTickSpacings_,
             1e17,   // Protocol Interest Fee Percentage (10%)
             address(0) // Fee Collector
         );
         console.log("PoolPolicyManager Deployed at:", address(policyManager));
-                
+                 
         // Step 3: Deploy FullRange components
         console.log("Deploying FullRange components...");
         
@@ -134,7 +135,7 @@ contract DeployUnichainV4 is Script {
         console.log("LiquidityManager deployed at:", address(liquidityManager));
         
         // Deploy Spot hook
-        fullRange = _deployFullRange(deployerAddress, poolId, key);
+        fullRange = _deployFullRange(deployerAddress, poolId, key); // Use helper function
         console.log("FullRange hook deployed at:", address(fullRange));
         
         // Deploy DynamicFeeManager AFTER FullRange
@@ -162,7 +163,7 @@ contract DeployUnichainV4 is Script {
         donateRouter = new PoolDonateTest(poolManager);
         console.log("LiquidityRouter deployed at:", address(lpRouter));
         console.log("SwapRouter deployed at:", address(swapRouter));
-        console.log("DonateRouter deployed at:", address(donateRouter));
+        console.log("Test Donate Router:", address(donateRouter));
         
         vm.stopBroadcast();
         
@@ -178,17 +179,8 @@ contract DeployUnichainV4 is Script {
         console.log("Test Donate Router:", address(donateRouter));
     }
 
+    // Helper function to deploy Spot hook using CREATE2
     function _deployFullRange(address _deployer, PoolId _poolId, PoolKey memory _key) internal returns (Spot) {
-        // Calculate required hook flags
-        uint160 flags = uint160(
-            Hooks.AFTER_INITIALIZE_FLAG |
-            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
-            Hooks.BEFORE_SWAP_FLAG |
-            Hooks.AFTER_SWAP_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
-        );
-
         // Prepare constructor arguments for Spot
         bytes memory constructorArgs = abi.encode(
             poolManager,
@@ -196,28 +188,39 @@ contract DeployUnichainV4 is Script {
             liquidityManager
         );
         
-        // Use a fixed, known-working salt to ensure deterministic deployment
-        bytes32 salt = 0x00000000000000000000000000000000000000000000000000000000000048bd;
-        
-        // Calculate the expected hook address
-        address hookAddress = HookMiner.computeAddress(
-            _deployer,
-            uint256(salt),
-            abi.encodePacked(type(Spot).creationCode, constructorArgs)
-        );
-        
-        console.log("Calculated hook address:", hookAddress);
+        bytes32 salt = bytes32(uint256(1)); // Use the same salt as before
         console.logBytes32(salt);
 
-        // Deploy Spot with the salt
+        // Calculate the expected hook address using EOA
+        bytes memory creationCode = abi.encodePacked(type(Spot).creationCode, constructorArgs);
+        // address hookAddress = HookMiner.computeAddress(
+        //     _deployer, // Use EOA (_deployer) for calculation
+        //     uint256(salt),
+        //     creationCode
+        // ); 
+        // Let Create2Deployer handle address calculation implicitly if needed, or calculate for logging:
+        address expectedHookAddress = HookMiner.computeAddress(
+            _deployer, // Use EOA (_deployer) for calculation
+            uint256(salt),
+            creationCode
+        );
+        
+        console.log("Deployer address (EOA):", _deployer);
+        console.log("Actual msg.sender (script contract):", address(this));
+        console.log("Calculated hook address (using EOA):", expectedHookAddress);
+
+        console.log("Attempting to deploy Spot hook with HookMiner...");
         Spot spot = new Spot{salt: salt}(
             poolManager,
             IPoolPolicy(address(policyManager)),
             liquidityManager
         );
+        
+        console.log("Spot hook deployed via HookMiner. Actual address:", address(spot));
 
         // Verify the deployed address matches the calculated address
-        require(address(spot) == hookAddress, "Hook address mismatch");
+        console.log("Verifying deployed address matches calculated address (using EOA)... ");
+        require(address(spot) == expectedHookAddress, "Hook address mismatch");
         
         return spot;
     }

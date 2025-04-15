@@ -26,7 +26,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 
 // Test Tokens
-import { MockERC20 as TestERC20 } from "forge-std/mocks/MockERC20.sol";
+import { MockERC20 } from "../src/token/MockERC20.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -73,8 +73,8 @@ contract DeployLocalUniswapV4 is Script {
 
         // Deploy Test Tokens Here
         console.log("Deploying Test Tokens...");
-        TestERC20 localToken0 = new TestERC20();
-        TestERC20 localToken1 = new TestERC20();
+        MockERC20 localToken0 = new MockERC20("Token0", "TKN0", 18);
+        MockERC20 localToken1 = new MockERC20("Token1", "TKN1", 18);
         if (address(localToken0) > address(localToken1)) {
             (localToken0, localToken1) = (localToken1, localToken0);
         }
