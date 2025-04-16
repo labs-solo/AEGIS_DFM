@@ -129,9 +129,9 @@ contract ForkSetup is Test {
         supportedTickSpacings_[0] = 10; supportedTickSpacings_[1] = 60; supportedTickSpacings_[2] = 200;
         policyManager = new PoolPolicyManager(
             deployerEOA, // Governance = deployer
-            250000, 250000, 500000, // Shares
-            1000, 10000, // Fees
-            10, 3000, 2, // Multipliers
+            100000, 250000, 650000, // Shares: Updated POL=10%, FR=25%, LP=65%
+            100, 10000, // Fees: Updated Min Trading Fee=0.01%
+            10, 3000, 2, // Multipliers, Default Dynamic Fee, Tick Scaling Factor
             supportedTickSpacings_,
             1e17, // Interest Fee
             address(0) // Fee Collector
