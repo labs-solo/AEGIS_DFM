@@ -26,7 +26,7 @@ contract CapEventLifecycle is ForkSetup {
 
     // Test user
     address tester;
-    
+        
     // Helper variables
     uint160 internal constant MIN_SQRT_PRICE = TickMath.MIN_SQRT_PRICE + 1;
     uint160 internal constant MAX_SQRT_PRICE = TickMath.MAX_SQRT_PRICE - 1;
@@ -40,65 +40,30 @@ contract CapEventLifecycle is ForkSetup {
         super.setUp();
         console.log("Parent setup completed");
         
-        // Create test user - using the same address that ForkSetup should fund
-        console.log("a");
-        console.log("WETH balance: ", weth.balanceOf(address(0)));
-        console.log("b");
-        console.log("USDC balance: ", usdc.balanceOf(testUser));
-                
+        // Use testUser from ForkSetup instead of creating a new one
+        tester = testUser;
+        console.log("Test user address:", tester);
+        
         // Now approve tokens for swapping
         vm.startPrank(tester);
-        console.log("b");
-        // Fund the tester with tokens
+        console.log("Started pranking as tester");
+        
+        // The tokens should already be funded in ForkSetup, so we don't need the deal calls
+        // Remove these:
         deal(WETH_ADDRESS, tester, 1000e18);
         deal(USDC_ADDRESS, tester, 1_000_000e6);
-        console.log("c");
+
+        // Check token balances for the proper user
+        console.log("WETH balance:", weth.balanceOf(tester));
+        console.log("USDC balance:", usdc.balanceOf(tester));
         
         // Approve tokens for swapping
         IERC20Minimal(WETH_ADDRESS).approve(address(poolManager), type(uint256).max);
         IERC20Minimal(USDC_ADDRESS).approve(address(poolManager), type(uint256).max);   
-        console.log("d");
-        vm.stopPrank();
-        
-        // Add initial liquidity to the pool to enable swapping
-        _addInitialLiquidity();
-    }
-    
-    /**
-     * @notice Helper to add initial liquidity to the pool
-     */
-    function _addInitialLiquidity() internal {
-        vm.startPrank(tester);
-        
-        // Add liquidity across the full range
-        int24 tickLower = TickMath.minUsableTick(poolKey.tickSpacing);
-        int24 tickUpper = TickMath.maxUsableTick(poolKey.tickSpacing);
-        
-        // Get the current price
-        (uint160 sqrtPriceX96, , , ) = StateLibrary.getSlot0(poolManager, poolId);
-        
-        // Calculate amount of liquidity to add
-        uint128 liquidity = LiquidityAmounts.getLiquidityForAmounts(
-            sqrtPriceX96,
-            TickMath.getSqrtPriceAtTick(tickLower),
-            TickMath.getSqrtPriceAtTick(tickUpper),
-            100e18, // 100 ETH
-            100_000e6 // 100,000 USDC
-        );
-        
-        // Add liquidity
-        liquidityManager.deposit{value: 100e18}(
-            poolId,
-            100e18, // amount0Desired
-            100_000e6, // amount1Desired
-            0, // amount0Min
-            0, // amount1Min
-            tester // recipient
-        );
-        
+        console.log("Tokens approved for poolManager");
         vm.stopPrank();
     }
-    
+        
     /**
      * @notice Helper to perform a swap
      * @param zeroForOne True if swapping token0 for token1, false otherwise
@@ -112,9 +77,10 @@ contract CapEventLifecycle is ForkSetup {
     ) internal returns (BalanceDelta delta) {
         // First, we need to create a swap router
         PoolSwapTest swapRouter = new PoolSwapTest(poolManager);
-        
+        console.log("swapping");
         vm.startPrank(tester);
         
+        console.log("approvals for swap");
         // Approve tokens for the new swap router if needed
         IERC20Minimal(WETH_ADDRESS).approve(address(swapRouter), type(uint256).max);
         IERC20Minimal(USDC_ADDRESS).approve(address(swapRouter), type(uint256).max);
@@ -125,6 +91,7 @@ contract CapEventLifecycle is ForkSetup {
             settleUsingBurn: false
         });
         
+        console.log("executing swap");
         // Execute swap
         delta = swapRouter.swap(
             poolKey,
@@ -136,7 +103,13 @@ contract CapEventLifecycle is ForkSetup {
             testSettings,
             ""
         );
-        
+
+        // log the deltas
+        console.log("delta0: ", delta.delta0);
+        console.log("delta1: ", delta.delta1);
+
+        console.log("swap completed");
+
         vm.stopPrank();
     }
     
