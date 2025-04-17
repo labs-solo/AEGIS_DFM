@@ -23,6 +23,7 @@ import {PoolPolicyManager} from "src/PoolPolicyManager.sol";
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {Spot} from "src/Spot.sol";
 import {HookMiner} from "src/utils/HookMiner.sol";
+import {FeeReinvestmentManager} from "src/FeeReinvestmentManager.sol";
 
 // Removed Deployment Script Import
 // import {DeployUnichainV4} from "script/DeployUnichainV4.s.sol";
@@ -46,12 +47,13 @@ contract ForkSetup is Test {
     // DeployUnichainV4 internal deployerScript;
 
     // --- Deployed/Referenced Contract Instances ---
-    IPoolManager internal poolManager; // From Unichain
-    PoolPolicyManager internal policyManager; // Deployed in setup
-    FullRangeLiquidityManager internal liquidityManager; // Deployed in setup
-    TruncGeoOracleMulti internal oracle; // Deployed in setup
-    Spot internal fullRange; // Deployed in setup via CREATE2
-    FullRangeDynamicFeeManager internal dynamicFeeManager; // Deployed in setup
+    IPoolManager public poolManager; // From Unichain
+    PoolPolicyManager public policyManager; // Deployed in setup
+    FullRangeLiquidityManager public liquidityManager; // Deployed in setup
+    TruncGeoOracleMulti public oracle; // Deployed in setup
+    Spot public fullRange; // Deployed in setup via CREATE2 (Renamed from spot to fullRange)
+    FullRangeDynamicFeeManager public dynamicFeeManager; // Deployed in setup
+    FeeReinvestmentManager public feeReinvestmentManager;
     
     // --- Test Routers --- (Deployed in setup)
     PoolModifyLiquidityTest internal lpRouter;
@@ -71,7 +73,7 @@ contract ForkSetup is Test {
 
     // --- Test User & Deployer EOA ---
     address internal testUser;
-    address internal deployerEOA;
+    address public deployerEOA; // Public access for admin role
     uint256 internal deployerPrivateKey;
 
     // --- Funding Constants ---
@@ -80,13 +82,20 @@ contract ForkSetup is Test {
     // --- Deployment Constants ---
     uint24 internal constant FEE = LPFeeLibrary.DYNAMIC_FEE_FLAG;
     int24 internal constant TICK_SPACING = 60;
-    uint160 internal constant INITIAL_SQRT_PRICE_X96 = 79228162514264337593543950336;
+    // Updated: Price for ~3000 USDC/WETH, adjusted for decimal places (6 vs 18)
+    // For sqrtPriceX96, we need sqrt(price) * 2^96
+    // USDC is token0, WETH is token1, so price = WETH/USDC = 1/3000 * 10^12 = 0.0000000003333...
+    // This is approximately tick -85176 in Uniswap V3 terms
+    uint160 internal constant INITIAL_SQRT_PRICE_X96 = 1459148524590520702994002341445; 
     // We'll use the mined salt, not a hardcoded one
     // bytes32 internal constant HOOK_SALT = bytes32(uint256(31099));
     // address internal constant EXPECTED_HOOK_ADDRESS = 0xc44C98d506E7d347399a4310d74C267aa705dE08;
     
     // Variable to track the actual hook address used
     address internal actualHookAddress;
+
+    // --- Constants ---
+    bytes public constant ZERO_BYTES = bytes("");
 
     function setUp() public virtual {
         // 1. Create Fork & Basic Env Setup
@@ -220,6 +229,17 @@ contract ForkSetup is Test {
         emit log_named_address("DynamicFeeManager deployed at", address(dynamicFeeManager));
         require(address(dynamicFeeManager) != address(0), "DynamicFeeManager deployment failed");
 
+        // Deploy FeeReinvestmentManager
+        emit log_string("Deploying FeeReinvestmentManager...");
+        feeReinvestmentManager = new FeeReinvestmentManager(
+            poolManager,         // IPoolManager instance
+            actualHookAddress,   // Deployed Spot hook address
+            deployerEOA,         // Governance = deployer
+            policyManager        // IPoolPolicy instance
+        );
+        emit log_named_address("FeeReinvestmentManager deployed at", address(feeReinvestmentManager));
+        require(address(feeReinvestmentManager) != address(0), "FeeReinvestmentManager deployment failed");
+
         // Configure Contracts
         emit log_string("Configuring contracts...");
         liquidityManager.setAuthorizedHookAddress(actualHookAddress);
@@ -258,7 +278,11 @@ contract ForkSetup is Test {
                   revert("Pool initialization failed with raw error");
              }
         }
-        
+
+        // Set the FeeReinvestmentManager as the reinvestment policy for the specific pool
+        policyManager.setPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT, address(feeReinvestmentManager));
+        emit log_string("Reinvestment Policy configured.");
+
         // Deploy Test Routers
         emit log_string("Deploying test routers...");
         lpRouter = new PoolModifyLiquidityTest(poolManager);
@@ -293,6 +317,10 @@ contract ForkSetup is Test {
         
         address authorizedHook = liquidityManager.authorizedHookAddress();
         assertEq(authorizedHook, actualHookAddress, "LM authorized hook mismatch");
+
+        // Check Reinvestment Policy is set
+        address reinvestmentPolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
+        assertEq(reinvestmentPolicy, address(feeReinvestmentManager), "Reinvestment policy mismatch");
 
         // Check if pool exists (commented out - IPoolManager doesn't have getSlot0)
         // try poolManager.getSlot0(poolId) returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 feeProtocol) {

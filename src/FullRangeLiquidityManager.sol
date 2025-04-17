@@ -37,6 +37,7 @@ import {LiquidityMath} from "v4-core/src/libraries/LiquidityMath.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {TransferUtils} from "./utils/TransferUtils.sol";
 import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 using SafeCast for uint256;
 using SafeCast for int256;
@@ -50,7 +51,14 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
     
-    // Using the CallbackType enum from the interface instead of constants
+    // Struct for deposit calculation results
+    struct DepositCalculationResult {
+        uint256 actual0;
+        uint256 actual1;
+        uint128 sharesToAdd;      // V2-based shares for ERC6909
+        uint128 lockedAmount;     // V2-based locked amount (MIN_LIQUIDITY)
+        uint128 v4LiquidityForCallback; // V4 liquidity for PoolManager interaction
+    }
     
     /// @dev The Uniswap V4 PoolManager reference
     IPoolManager public immutable manager;
@@ -73,7 +81,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     
     // Constants for minimum liquidity locking
     uint256 private constant MIN_LOCKED_SHARES = 1000; // e.g., 1000 wei, adjust as needed
-    uint128 private constant MIN_LIQUIDITY = 1000; // Mimics Uniswap V3 Minimum Liquidity
+    uint128 private constant MIN_LIQUIDITY = 1000; // Mimics Uniswap V2/V3 Minimum Liquidity
     uint128 private constant MIN_LOCKED_LIQUIDITY = 1000; // Lock 1000 units of liquidity
     
     // Emergency controls
@@ -227,24 +235,58 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
                 
         bool hasToken0Native = key.currency0.isAddressZero();
         bool hasToken1Native = key.currency1.isAddressZero();
-        
-        // Use internal share count for calculations
-        (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId); // Use poolId
+        console2.log("[_deposit] After initial state reads & checks"); // ADDED LOG
+        console2.log("[_deposit] sqrtPriceX96:", sqrtPriceX96); // ADDED LOG
+        console2.log("[_deposit] totalSharesInternal:", totalSharesInternal); // ADDED LOG
+        console2.log("[_deposit] hasToken0Native:", hasToken0Native); // ADDED LOG
+        console2.log("[_deposit] hasToken1Native:", hasToken1Native); // ADDED LOG
 
-        // Calculate shares and amounts
-        (uint256 actual0, uint256 actual1, uint128 sharesToAdd, uint128 lockedSharesAmount) = 
-            _calculateDepositShares( // Renamed function
-                totalSharesInternal, 
-                sqrtPriceX96,
-                key.tickSpacing,
-                amount0Desired,
-                amount1Desired,
-                reserve0,
-                reserve1
-            );
-        
-        amount0 = actual0; 
-        amount1 = actual1;
+        // Use internal share count for calculations
+        (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId); // Line 234 - Calls getPositionData again
+        console2.log("[_deposit] After getPoolReserves"); // ADDED LOG
+        console2.log("[_deposit] reserve0:", reserve0); // ADDED LOG
+        console2.log("[_deposit] reserve1:", reserve1); // ADDED LOG
+
+        // Add new logging here
+        console2.log("[_deposit] About to calculate deposit shares");
+        console2.log("[_deposit] amount0Desired:", amount0Desired);
+        console2.log("[_deposit] amount1Desired:", amount1Desired);
+        console2.log("[_deposit] Before calling _calculateDepositShares or _handleFirstDeposit");
+
+        // MODIFIED: Create a struct and populate it instead of having function return a struct
+        DepositCalculationResult memory calcResult = DepositCalculationResult({
+            actual0: 0,
+            actual1: 0,
+            sharesToAdd: 0,
+            lockedAmount: 0,
+            v4LiquidityForCallback: 0
+        });
+
+        // MODIFIED: Call the function to fill the struct (pass by reference)
+        _calculateDepositSharesInternal(
+            totalSharesInternal,
+            sqrtPriceX96,
+            key.tickSpacing,
+            amount0Desired,
+            amount1Desired,
+            reserve0,
+            reserve1,
+            calcResult // Pass the struct to be filled
+        );
+
+        console2.log("[_deposit] After _calculateDepositShares - reached here");
+
+        // Assign to output variables from struct
+        amount0 = calcResult.actual0;
+        amount1 = calcResult.actual1;
+        uint128 sharesToAdd = calcResult.sharesToAdd; // V2 shares
+        uint128 lockedAmount = calcResult.lockedAmount; // V2 locked
+        uint128 v4LiquidityForPM = calcResult.v4LiquidityForCallback; // V4 liquidity
+
+        // Calculate total liquidity based on V4 for PM interaction
+        // uint128 totalV2Liquidity = sharesToAdd + lockedAmount; 
+        // console2.log("[_deposit] Total V2 Liquidity for callback:", uint256(totalV2Liquidity));
+        console2.log("[_deposit] V4 Liquidity for callback:", uint256(v4LiquidityForPM));
 
         if (amount0 < amount0Min || amount1 < amount1Min) {
             revert Errors.SlippageExceeded(
@@ -262,15 +304,17 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
         
         uint128 oldTotalSharesInternal = totalSharesInternal;
-        uint128 newTotalSharesInternal = oldTotalSharesInternal + sharesToAdd;
+        // The internal tracking should track V4 liquidity for consistency with PoolManager
+        uint128 newTotalSharesInternal = oldTotalSharesInternal + v4LiquidityForPM; 
         poolTotalShares[poolId] = newTotalSharesInternal; // Update internal share count using poolId
         
-        if (lockedSharesAmount > 0 && lockedLiquidity[poolId] == 0) { // Use poolId
-            lockedLiquidity[poolId] = lockedSharesAmount; // Use poolId
-            emit MinimumLiquidityLocked(poolId, lockedSharesAmount); // Use poolId
+        // Lock minimum liquidity based on V4 liquidity?
+        if (v4LiquidityForPM > MIN_LOCKED_LIQUIDITY && lockedLiquidity[poolId] == 0) { // Use poolId
+            lockedLiquidity[poolId] = MIN_LOCKED_LIQUIDITY; // Use poolId
+            emit MinimumLiquidityLocked(poolId, MIN_LOCKED_LIQUIDITY); // Use poolId
         }
         
-        usableShares = uint256(sharesToAdd - lockedSharesAmount);
+        usableShares = uint256(sharesToAdd);
         if (usableShares > 0) { // Only mint if there are usable shares
             uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId); // Use poolId
             positions.mint(recipient, tokenId, usableShares);
@@ -278,17 +322,26 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
                 
         // Transfer non-native tokens from msg.sender
         if (amount0 > 0 && !hasToken0Native) {
+            console2.log("[_deposit] Transferring actual0 (USDC):", amount0);
+            console2.log("[_deposit] From:", msg.sender, "To:", address(this));
+            console2.log("[_deposit] Token0 Address:", Currency.unwrap(key.currency0));
             SafeTransferLib.safeTransferFrom(ERC20(Currency.unwrap(key.currency0)), msg.sender, address(this), amount0);
         }
+        // Uncomment the second transfer
+        // /*
         if (amount1 > 0 && !hasToken1Native) {
+            console2.log("[_deposit] Transferring actual1 (WETH):", amount1);
+            console2.log("[_deposit] From:", msg.sender, "To:", address(this));
+            console2.log("[_deposit] Token1 Address:", Currency.unwrap(key.currency1));
             SafeTransferLib.safeTransferFrom(ERC20(Currency.unwrap(key.currency1)), msg.sender, address(this), amount1);
         }
+        // */
                 
         // Prepare callback data
         CallbackData memory callbackData = CallbackData({
             poolId: poolId, // Use poolId
             callbackType: CallbackType.DEPOSIT, 
-            shares: sharesToAdd,
+            shares: v4LiquidityForPM, // Pass the V4 calculated total liquidity
             oldTotalShares: oldTotalSharesInternal,
             amount0: amount0,
             amount1: amount1,
@@ -318,6 +371,134 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
     
     /**
+     * @notice Calculates deposit shares based on desired amounts and pool state, filling the provided result struct.
+     * @param totalSharesInternal Current total shares tracked internally.
+     * @param sqrtPriceX96 Current sqrt price of the pool.
+     * @param tickSpacing Tick spacing.
+     * @param amount0Desired Desired amount of token0.
+     * @param amount1Desired Desired amount of token1.
+     * @param reserve0 Current token0 reserves (read from pool state).
+     * @param reserve1 Current token1 reserves (read from pool state).
+     * @param result The struct to be filled with calculation results.
+     */
+    function _calculateDepositSharesInternal(
+        uint128 totalSharesInternal,
+        uint160 sqrtPriceX96,
+        int24 tickSpacing,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 reserve0,
+        uint256 reserve1,
+        DepositCalculationResult memory result
+    ) internal pure {
+        if (totalSharesInternal == 0) {
+            // First deposit logic moved to helper
+            _handleFirstDepositInternal(
+                sqrtPriceX96,
+                tickSpacing,
+                amount0Desired,
+                amount1Desired,
+                result
+            );
+        } else {
+            // Subsequent deposits - calculate liquidity (shares) based on one amount and reserves ratio
+            // if (reserve0 == 0 || reserve1 == 0) revert Errors.ValidationInvalidInput("Reserves are zero"); // Commented out - Reserves can be zero initially
+            
+            uint256 shares0 = MathUtils.calculateProportional(amount0Desired, totalSharesInternal, reserve0, true);
+            uint256 shares1 = MathUtils.calculateProportional(amount1Desired, totalSharesInternal, reserve1, true);
+            uint256 optimalShares = shares0 < shares1 ? shares0 : shares1;
+            uint128 shares = optimalShares.toUint128(); // Assign to 'shares'
+            if (shares == 0) revert Errors.ZeroAmount();
+
+            // Calculate actual amounts based on the determined shares and reserves ratio
+            uint256 actual0 = MathUtils.calculateProportional(reserve0, uint256(shares), totalSharesInternal, true);
+            uint256 actual1 = MathUtils.calculateProportional(reserve1, uint256(shares), totalSharesInternal, true);
+            
+            uint128 lockedSharesAmount = 0; // No locking for subsequent deposits
+
+            // Cap amounts at MAX_RESERVE if needed
+            if (actual0 > MAX_RESERVE) actual0 = MAX_RESERVE;
+            if (actual1 > MAX_RESERVE) actual1 = MAX_RESERVE;
+
+            // Assign to struct fields
+            result.actual0 = actual0;
+            result.actual1 = actual1;
+            result.sharesToAdd = shares; // Use the calculated 'shares' variable
+            result.lockedAmount = lockedSharesAmount;
+            result.v4LiquidityForCallback = LiquidityAmounts.getLiquidityForAmounts(
+                sqrtPriceX96,
+                TickMath.getSqrtPriceAtTick(TickMath.minUsableTick(tickSpacing)),
+                TickMath.getSqrtPriceAtTick(TickMath.maxUsableTick(tickSpacing)),
+                actual0,
+                actual1
+            );
+        }
+    }
+
+    /**
+     * @dev Helper function to handle the logic for the first deposit into the pool.
+     * @param sqrtPriceX96 Current sqrt price of the pool.
+     * @param tickSpacing Tick spacing of the pool.
+     * @param amount0Desired Desired amount of token0.
+     * @param amount1Desired Desired amount of token1.
+     * @param result The struct to be filled with calculation results.
+     */
+    function _handleFirstDepositInternal(
+        uint160 sqrtPriceX96,
+        int24 tickSpacing,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        DepositCalculationResult memory result
+    ) internal pure {
+        int24 tickLower = TickMath.minUsableTick(tickSpacing);
+        int24 tickUpper = TickMath.maxUsableTick(tickSpacing);
+        uint160 sqrtRatioAX96 = TickMath.getSqrtPriceAtTick(tickLower);
+        uint160 sqrtRatioBX96 = TickMath.getSqrtPriceAtTick(tickUpper);
+
+        if (amount0Desired == 0) {
+            revert("DEBUG: amount0Desired is zero");
+        }
+        if (amount1Desired == 0) {
+            revert("DEBUG: amount1Desired is zero");
+        }
+        if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Initial price is zero");
+
+        // Calculate liquidity using BOTH desired amounts
+        uint128 v4LiquidityForCallback = LiquidityAmounts.getLiquidityForAmounts(
+            sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount0Desired, amount1Desired
+        );
+        if (v4LiquidityForCallback == 0) revert Errors.ZeroAmount();
+
+        // Calculate actual amounts needed for this liquidity
+        uint256 actual0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtRatioBX96, v4LiquidityForCallback, true);
+        uint256 actual1 = SqrtPriceMath.getAmount1Delta(sqrtRatioAX96, sqrtPriceX96, v4LiquidityForCallback, true);
+
+        // Cap actual amounts at desired amounts (safety check)
+        actual0 = actual0 > amount0Desired ? amount0Desired : actual0;
+        actual1 = actual1 > amount1Desired ? amount1Desired : actual1;
+
+        // V2 Share Calculation
+        uint128 minLiq128 = MIN_LIQUIDITY;
+        uint256 totalV2Shares = MathUtils.sqrt(actual0 * actual1);
+
+        if (totalV2Shares < minLiq128) {
+            revert Errors.InitialDepositTooSmall(minLiq128, totalV2Shares.toUint128());
+        }
+        
+        uint256 usableV2Shares = totalV2Shares - minLiq128;
+        if (usableV2Shares == 0) {
+            revert Errors.InitialDepositTooSmall(minLiq128, totalV2Shares.toUint128());
+        }
+
+        // Populate Result Struct
+        result.actual0 = actual0; 
+        result.actual1 = actual1;
+        result.sharesToAdd = usableV2Shares.toUint128();
+        result.lockedAmount = minLiq128;
+        result.v4LiquidityForCallback = v4LiquidityForCallback;
+    }
+
+    /**
      * @notice Withdraw liquidity from a pool
      * @dev Uses PoolId to manage state for the correct pool.
      * @inheritdoc IFullRangeLiquidityManager
@@ -343,21 +524,21 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             revert Errors.InsufficientShares(sharesToBurn, userShareBalance);
         }
         
-        uint128 totalSharesInternal = poolTotalShares[poolId]; // Use poolId
-        if (totalSharesInternal == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId)); // Use poolId, unwrap for error
-        uint128 sharesToBurn128 = sharesToBurn.toUint128();
-        if (sharesToBurn128 > totalSharesInternal) { 
-             revert Errors.InsufficientShares(sharesToBurn, totalSharesInternal);
-        }
-
+        uint128 totalV4Liquidity = poolTotalShares[poolId]; // Read total V4 liquidity
+        if (totalV4Liquidity == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
+        
+        uint256 lockedV4Liquidity = lockedLiquidity[poolId]; // Get locked V4 liquidity
+        
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId); // Use poolId
 
-        // Calculate withdrawal amounts
-        (amount0, amount1) = _calculateWithdrawAmounts(
-            totalSharesInternal,
-            sharesToBurn,
+        // Calculate withdrawal amounts and V4 liquidity to remove
+        uint128 v4LiquidityToRemove; // Variable to capture the third return value
+        (amount0, amount1, v4LiquidityToRemove) = _calculateWithdrawAmounts(
+            totalV4Liquidity,
+            sharesToBurn, // User provides usable shares to burn
             reserve0,
-            reserve1
+            reserve1,
+            lockedV4Liquidity // Pass the locked liquidity
         );
         
         if (amount0 < amount0Min || amount1 < amount1Min) {
@@ -369,19 +550,21 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         
         PoolKey memory key = _poolKeys[poolId]; // Use poolId
 
-        uint128 oldTotalSharesInternal = totalSharesInternal;
-        uint128 newTotalSharesInternal = oldTotalSharesInternal - sharesToBurn128;
-        poolTotalShares[poolId] = newTotalSharesInternal; // Use poolId
+        uint128 oldTotalV4Liquidity = totalV4Liquidity;
+        // Update total V4 liquidity by subtracting the calculated V4 amount
+        uint128 newTotalV4Liquidity = oldTotalV4Liquidity - v4LiquidityToRemove;
+        poolTotalShares[poolId] = newTotalV4Liquidity; // Update the tracking
         
-        // Burn position tokens from msg.sender *before* calling unlock
+        // Burn usable position tokens from msg.sender *before* calling unlock
+        // Use sharesToBurn (the usable amount) for the ERC6909 burn
         positions.burn(msg.sender, tokenId, sharesToBurn);
         
         // Prepare callback data
         CallbackData memory callbackData = CallbackData({
-            poolId: poolId, // Use poolId
+            poolId: poolId,
             callbackType: CallbackType.WITHDRAW, 
-            shares: sharesToBurn128,
-            oldTotalShares: oldTotalSharesInternal,
+            shares: v4LiquidityToRemove, // Pass the V4 liquidity amount to remove
+            oldTotalShares: oldTotalV4Liquidity,
             amount0: amount0,
             amount1: amount1,
             recipient: address(this) // Unlock target is this contract
@@ -403,11 +586,11 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             recipient,
             amount0,
             amount1,
-            oldTotalSharesInternal,
-            sharesToBurn128,
+            oldTotalV4Liquidity,
+            sharesToBurn.toUint128(), // Event logs the usable shares burned
             block.timestamp
         );
-        emit PoolStateUpdated(poolId, newTotalSharesInternal, uint8(CallbackType.WITHDRAW)); // Use poolId
+        emit PoolStateUpdated(poolId, newTotalV4Liquidity, uint8(CallbackType.WITHDRAW)); // Log new total V4 liquidity
         
         return (amount0, amount1);
     }
@@ -454,12 +637,16 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId); // Use poolId
         uint128 totalSharesInternal = poolTotalShares[poolId]; // Use poolId
+        uint256 lockedV4Liquidity = lockedLiquidity[poolId]; // Get locked liquidity for the pool
 
-        (amount0Out, amount1Out) = _calculateWithdrawAmounts(
+        // Calculate withdrawal amounts and V4 liquidity to remove
+        uint128 v4LiquidityToRemove; // Variable to capture the third return value
+        (amount0Out, amount1Out, v4LiquidityToRemove) = _calculateWithdrawAmounts(
             totalSharesInternal,
             sharesToBurn,
             reserve0,
-            reserve1
+            reserve1,
+            lockedV4Liquidity // Pass the locked liquidity
         );
         
         PoolKey memory key = _poolKeys[poolId]; // Use poolId
@@ -538,104 +725,84 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     // === INTERNAL HELPER FUNCTIONS ===
 
     /**
-     * @notice Calculates deposit shares based on desired amounts and pool state.
-     * @param totalSharesInternal Current total shares tracked internally.
-     * @param sqrtPriceX96 Current sqrt price of the pool.
-     * @param tickSpacing Tick spacing.
-     * @param amount0Desired Desired amount of token0.
-     * @param amount1Desired Desired amount of token1.
-     * @param reserve0 Current token0 reserves (read from pool state).
-     * @param reserve1 Current token1 reserves (read from pool state).
-     * @return actual0 Actual token0 amount calculated.
-     * @return actual1 Actual token1 amount calculated.
-     * @return shares Shares to be minted.
-     * @return lockedSharesAmount Shares to be locked if it's the first deposit.
+     * @dev Converts a uint256 to its string representation.
+     * @param value The uint256 value to convert.
+     * @return The string representation of the value.
      */
-    function _calculateDepositShares( // Renamed function
-        uint128 totalSharesInternal,
-        uint160 sqrtPriceX96,
-        int24 tickSpacing,
-        uint256 amount0Desired,
-        uint256 amount1Desired,
-        uint256 reserve0,
-        uint256 reserve1
-    ) internal pure returns (
-        uint256 actual0,
-        uint256 actual1,
-        uint128 shares,
-        uint128 lockedSharesAmount
-    ) {
-        int24 tickLower = TickMath.minUsableTick(tickSpacing);
-        int24 tickUpper = TickMath.maxUsableTick(tickSpacing);
-        uint160 sqrtRatioAX96 = TickMath.getSqrtPriceAtTick(tickLower);
-        uint160 sqrtRatioBX96 = TickMath.getSqrtPriceAtTick(tickUpper);
-
-        if (totalSharesInternal == 0) {
-            // First deposit
-            if (amount0Desired == 0 || amount1Desired == 0) revert Errors.ZeroAmount();
-            if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Initial price is zero");
-
-            // Calculate liquidity (shares) based on amounts and price range (full range)
-            shares = LiquidityAmounts.getLiquidityForAmounts(
-                sqrtPriceX96,
-                sqrtRatioAX96,
-                sqrtRatioBX96,
-                amount0Desired,
-                amount1Desired
-            );
-            if (shares < MIN_LIQUIDITY) revert Errors.InitialDepositTooSmall(MIN_LIQUIDITY, shares);
-
-            // Calculate actual amounts based on the determined liquidity using SqrtPriceMath
-            actual0 = SqrtPriceMath.getAmount0Delta(sqrtRatioAX96, sqrtRatioBX96, shares, false); // Use SqrtPriceMath
-            actual1 = SqrtPriceMath.getAmount1Delta(sqrtRatioAX96, sqrtRatioBX96, shares, false); // Use SqrtPriceMath
-
-            // Lock minimum shares
-            lockedSharesAmount = MIN_LOCKED_SHARES.toUint128(); 
-            if (shares <= lockedSharesAmount) revert Errors.InitialDepositTooSmall(lockedSharesAmount, shares);
-
-        } else {
-            // Subsequent deposits - calculate liquidity (shares) based on one amount and reserves ratio
-            if (reserve0 == 0 || reserve1 == 0) revert Errors.ValidationInvalidInput("Reserves are zero");
-            
-            uint256 shares0 = MathUtils.calculateProportional(amount0Desired, totalSharesInternal, reserve0, true);
-            uint256 shares1 = MathUtils.calculateProportional(amount1Desired, totalSharesInternal, reserve1, true);
-            uint256 optimalShares = shares0 < shares1 ? shares0 : shares1;
-            shares = optimalShares.toUint128();
-            if (shares == 0) revert Errors.ZeroAmount();
-
-            // Calculate actual amounts based on the determined shares and reserves ratio
-            actual0 = MathUtils.calculateProportional(reserve0, uint256(shares), totalSharesInternal, true);
-            actual1 = MathUtils.calculateProportional(reserve1, uint256(shares), totalSharesInternal, true);
-            
-            lockedSharesAmount = 0;
+    function _toString(uint256 value) internal pure returns (string memory) {
+        if (value == 0) {
+            return "0";
         }
-
-        // Cap amounts at MAX_RESERVE if needed
-        if (actual0 > MAX_RESERVE) actual0 = MAX_RESERVE;
-        if (actual1 > MAX_RESERVE) actual1 = MAX_RESERVE;
+        uint256 temp = value;
+        uint256 digits;
+        while (temp != 0) {
+            digits++;
+            temp /= 10;
+        }
+        bytes memory buffer = new bytes(digits);
+        while (value != 0) {
+            digits -= 1;
+            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
+            value /= 10;
+        }
+        return string(buffer);
     }
 
     /**
      * @notice Calculate withdrawal amounts based on shares and pool state.
-     * @param totalSharesInternal Current total shares tracked internally.
-     * @param sharesToBurn Shares being burned.
+     * @param totalV4Liquidity Current total V4 liquidity tracked internally.
+     * @param usableSharesToBurn Usable (ERC6909) shares being burned.
      * @param reserve0 Current token0 reserves (read from pool state).
      * @param reserve1 Current token1 reserves (read from pool state).
+     * @param lockedV4Liquidity The amount of V4 liquidity locked in the pool.
      * @return amount0 Token0 amount to withdraw.
      * @return amount1 Token1 amount to withdraw.
+     * @return v4LiquidityToWithdraw The amount of V4 liquidity corresponding to the burned shares.
      */
     function _calculateWithdrawAmounts(
-        uint128 totalSharesInternal,
-        uint256 sharesToBurn,
+        uint128 totalV4Liquidity,
+        uint256 usableSharesToBurn,
         uint256 reserve0,
-        uint256 reserve1
-    ) internal pure returns (uint256 amount0, uint256 amount1) {
-        if (totalSharesInternal == 0) revert Errors.PoolNotInitialized(bytes32(0));
-        if (sharesToBurn == 0) return (0, 0);
+        uint256 reserve1,
+        uint256 lockedV4Liquidity
+    ) internal pure returns (uint256 amount0, uint256 amount1, uint128 v4LiquidityToWithdraw) {
+        if (totalV4Liquidity == 0) revert Errors.PoolNotInitialized(bytes32(0));
+        if (usableSharesToBurn == 0) return (0, 0, 0);
 
-        // Calculate amounts proportionally using MathUtils utility
-        amount0 = MathUtils.calculateProportional(reserve0, sharesToBurn, totalSharesInternal, false);
-        amount1 = MathUtils.calculateProportional(reserve1, sharesToBurn, totalSharesInternal, false);
+        // Calculate total usable shares (total V4 liquidity - locked V4 liquidity)
+        uint128 lockedLiq128 = lockedV4Liquidity.toUint128();
+        if (lockedLiq128 > totalV4Liquidity) revert Errors.ValidationInvalidInput("Locked liquidity exceeds total"); // Safety check
+        uint128 totalUsableShares = totalV4Liquidity - lockedLiq128;
+
+        if (totalUsableShares == 0) {
+            // Cannot withdraw usable shares if only locked liquidity exists or total liquidity is zero
+            revert Errors.InsufficientShares(usableSharesToBurn, 0);
+        }
+
+        // Calculate the V4 liquidity corresponding to the usable shares being burned
+        // Proportional calculation: v4ToWithdraw = usableSharesToBurn * totalV4Liquidity / totalUsableShares
+        // Note: We use totalV4Liquidity as the basis for proportionality to withdraw the correct fraction of overall pool assets.
+        // We use totalUsableShares as the denominator corresponding to the usableSharesToBurn amount.
+        v4LiquidityToWithdraw = MathUtils.calculateProportional(
+            totalV4Liquidity,    // Basis is total V4 liquidity
+            usableSharesToBurn,  // Amount is usable shares to burn
+            totalUsableShares,   // Denominator is total usable shares
+            false                // Round down
+        ).toUint128();
+
+        if (v4LiquidityToWithdraw == 0 && usableSharesToBurn > 0) {
+            // This might happen due to rounding if sharesToBurn is very small relative to total
+            // Revert because user intended to burn non-zero shares.
+            revert Errors.WithdrawAmountTooSmall(); 
+        }
+        if (v4LiquidityToWithdraw > totalV4Liquidity) {
+            // Safety check against proportion calculation errors
+            revert Errors.ValidationInvalidInput("Calculated withdraw liquidity exceeds total"); 
+        }
+
+        // Calculate token amounts based on the V4 liquidity being withdrawn proportionally from reserves
+        amount0 = MathUtils.calculateProportional(reserve0, v4LiquidityToWithdraw, totalV4Liquidity, false);
+        amount1 = MathUtils.calculateProportional(reserve1, v4LiquidityToWithdraw, totalV4Liquidity, false);
     }
 
     /**
@@ -655,22 +822,27 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         int24 tickLower = TickMath.minUsableTick(key.tickSpacing);
         int24 tickUpper = TickMath.maxUsableTick(key.tickSpacing);
-        bytes32 posSlot = Position.calculatePositionKey(address(this), tickLower, tickUpper, bytes32(0)); // Use calculatePositionKey
-        bytes32 stateSlot = _getPoolStateSlot(poolId); // Use poolId
 
-        // Use assembly for multi-slot read
-        assembly {
-            let slot0Val := sload(stateSlot)
-            // Mask for sqrtPriceX96 (lower 160 bits)
-            sqrtPriceX96 := and(slot0Val, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF)
-            if gt(sqrtPriceX96, 0) {
-                let posVal := sload(posSlot)
-                liquidity := and(posVal, 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF) // Mask lower 128 bits
-                success := 1
-            } {
-                success := 0
-            }
-        }
+        // Calculate position key
+        bytes32 positionKey = Position.calculatePositionKey(address(this), tickLower, tickUpper, bytes32(0));
+        
+        // IMPORTANT: We need to get the correct storage slot for this position
+        // First get the pool state slot
+        bytes32 stateSlot = keccak256(abi.encodePacked(PoolId.unwrap(poolId), POOLS_SLOT));
+        // Get the position mapping slot
+        bytes32 positionMappingSlot = bytes32(uint256(stateSlot) + POSITIONS_OFFSET);
+        // Calculate the final position slot
+        bytes32 positionSlot = keccak256(abi.encodePacked(positionKey, positionMappingSlot));
+        
+        // Get global Slot0 data to retrieve sqrtPriceX96
+        (sqrtPriceX96, , , ) = StateLibrary.getSlot0(manager, poolId);
+        
+        // Now read the position's liquidity from storage
+        // Use StateLibrary to get position info instead of direct storage access
+        liquidity = StateLibrary.getPositionLiquidity(manager, poolId, positionKey);
+        success = liquidity > 0 && sqrtPriceX96 > 0;
+        
+        return (liquidity, sqrtPriceX96, success);
     }
 
     /**
