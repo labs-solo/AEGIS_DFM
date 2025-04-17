@@ -8,7 +8,7 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
  * @notice Collection of all custom errors used in the protocol
  */
 library Errors {
-    // Access control errors
+    // --- Access Control ---
     error AccessDenied();
     error AccessOnlyGovernance(address caller);
     error AccessOnlyPoolManager(address caller);
@@ -16,8 +16,11 @@ library Errors {
     error AccessOnlyEmergencyAdmin(address caller);
     error Unauthorized();
     error CallerNotPoolManager(address caller);
-    
-    // Validation and input errors
+    error CallerNotMarginContract();
+    error AccessOnlyOwner(address caller);
+    error UnauthorizedCaller(address caller);
+
+    // --- Validation & Input ---
     error ValidationDeadlinePassed(uint32 deadline, uint32 blockTime);
     error ValidationZeroAddress(string target);
     error ValidationInvalidInput(string reason);
@@ -35,12 +38,25 @@ library Errors {
     error InvalidCallbackSalt();
     error InvalidPolicyImplementationsLength(uint256 length);
     error NotInitialized(string component);
+    error AlreadyInitialized(string component);
     error ReinvestmentDisabled();
     error RateLimited();
     error InvalidPoolKey();
     error InvalidPoolId();
-    
-    // Math errors
+    error ZeroAddress();
+    error ZeroAmount();
+    error ZeroLiquidity();
+    error ZeroShares();
+    error ZeroPolicyManagerAddress();
+    error ZeroPoolManagerAddress();
+    error ZeroFullRangeAddress();
+    error InvalidCallbackType(uint8 callbackType);
+    error InvalidTickRange();
+    error InvalidParameter(string parameterName, uint256 value);
+    error ExpiryTooSoon(uint256 expiry, uint256 requiredTime);
+    error ExpiryTooFar(uint256 expiry, uint256 requiredTime);
+
+    // --- Math & Calculation ---
     error DivisionByZero();
     error Overflow();
     error Underflow();
@@ -52,30 +68,23 @@ library Errors {
     error InvalidPercentage();
     error InvalidFee();
     error InvalidPrice(uint160 sqrtPriceX96);
-    error InvalidTick();
-    error InvalidRange();
-    error InvalidSlippage();
     error InvalidLiquidity();
     error InvalidInput();
     error AmountTooLarge(uint256 amount, uint256 maximum);
     error SlippageExceeded(uint256 required, uint256 actual);
-    
-    // System errors
-    error ZeroAddress();
-    error ZeroAmount();
-    error ZeroLiquidity();
-    error ZeroShares();
-    error ZeroPolicyManagerAddress();
-    error ZeroPoolManagerAddress();
-    error ZeroFullRangeAddress();
+    error CalculationError(string reason);
+    error MathOverflow();
+    error MathUnderflow();
+
+    // --- System & State ---
     error HookDispatchFailed(bytes4 selector);
     error DelegateCallFailed();
-    error EthTransferFailed(address to, uint256 amount);
     error NotImplemented();
     error ContractPaused();
-    error InvalidCallbackType(uint8 callbackType);
-    
-    // Pool errors
+    error InternalError(string message);
+    error InconsistentState(string reason);
+
+    // --- Pool State & Operations ---
     error PoolNotInitialized(bytes32 poolId);
     error PoolAlreadyInitialized(bytes32 poolId);
     error PoolNotFound(bytes32 poolId);
@@ -90,8 +99,10 @@ library Errors {
     error PoolTickOutOfRange(int24 tick, int24 minTick, int24 maxTick);
     error PoolInEmergencyState(bytes32 poolId);
     error OnlyDynamicFeePoolAllowed();
-    
-    // Liquidity errors
+    error FailedToReadPoolData(PoolId poolId);
+    error PoolKeyAlreadyStored(bytes32 poolId);
+
+    // --- Liquidity & Shares ---
     error InsufficientAmount(uint256 requested, uint256 available);
     error InsufficientLiquidity(uint256 requested, uint256 available);
     error InsufficientShares(uint256 requested, uint256 available);
@@ -105,8 +116,11 @@ library Errors {
     error LiquidityAlreadyExists();
     error LiquidityDoesNotExist();
     error LiquidityNotAvailable();
-    
-    // Policy errors
+    error DepositTooSmall();
+    error InitialDepositTooSmall(uint256 minAmount, uint256 actualAmount);
+    error WithdrawAmountTooSmall();
+
+    // --- Policy ---
     error PolicyNotFound();
     error PolicyAlreadyExists();
     error PolicyInvalidState();
@@ -118,8 +132,8 @@ library Errors {
     error PolicyNotActive();
     error PolicyNotImplemented();
     error AllocationSumError(uint256 polShare, uint256 fullRangeShare, uint256 lpShare, uint256 expected);
-    
-    // Hook errors
+
+    // --- Hooks ---
     error HookNotFound();
     error HookAlreadyExists();
     error HookInvalidState();
@@ -131,8 +145,13 @@ library Errors {
     error HookNotActive();
     error HookNotImplemented();
     error HookInvalidAddress(address hook);
-    
-    // Token errors
+    error HookOnlyInitialization();
+    error HookOnlyModifyLiquidity();
+    error HookOnlySwap();
+    error HookOnlyDonate();
+    error HookNotSet();
+
+    // --- Token & ETH Transfers ---
     error TokenNotFound();
     error TokenAlreadyExists();
     error TokenInvalidState();
@@ -148,17 +167,17 @@ library Errors {
     error TokenEthNotAccepted();
     error TokenInsufficientEth(uint256 required, uint256 provided);
     error TokenEthTransferFailed(address to, uint256 amount);
-    
-    // Native ETH errors
     error NonzeroNativeValue();
     error InsufficientETH(uint256 required, uint256 provided);
     error InsufficientContractBalance(uint256 required, uint256 available);
     error ETHTransferFailed(address to, uint256 amount);
+    error TransferFailed();
+    error TransferFromFailed();
 
-    // Oracle errors
+    // --- Oracle ---
     error OracleOperationFailed(string operation, string reason);
 
-    // Fee Reinvestment Manager Errors
+    // --- Fee Reinvestment ---
     error FeeExtractionFailed(string reason);
     error InvalidPolPercentage(uint256 provided, uint256 min, uint256 max);
     error PoolSpecificPolPercentageNotAllowed();
@@ -166,22 +185,14 @@ library Errors {
     error PoolReinvestmentBlocked(PoolId poolId);
     error CollectionIntervalTooShort(uint256 provided, uint256 minimum);
     error CollectionIntervalTooLong(uint256 provided, uint256 maximum);
-    error CalculationError(string reason);
     error HookCallbackFailed(string reason);
     error FeesNotAvailable();
-
-    /// @notice Error thrown when the extraction amount exceeds the fee amount
     error ExtractionAmountExceedsFees();
-    
-    /// @notice Error thrown when the cache is stale
     error CacheStale(uint32 lastUpdate, uint32 currentTime, uint32 maxAge);
+    error FeeReinvestNotAuthorized(address caller);
+    error CannotWithdrawProtocolFees();
 
-    /// @notice Error thrown when direct pool data reading fails
-    error FailedToReadPoolData(PoolId poolId);
-
-    error AlreadyInitialized(string component);
-
-    // Margin errors
+    // --- Margin & Vault ---
     error WithdrawalWouldMakeVaultInsolvent();
     error NoDebtToRepay();
     error DepositFailed();
@@ -189,30 +200,13 @@ library Errors {
     error PoolUtilizationTooHigh();
     error InsufficientPhysicalShares(uint256 requested, uint256 available);
     error InterestModelNotSet();
-
-    // New errors
-    error InconsistentState(string reason);
-    error DepositTooSmall();
-    error InitialDepositTooSmall(uint256 minSharesRequired, uint256 calculatedShares);
-
-    // <<< PHASE 4 MARGIN/FEE ERRORS >>>
     error MarginContractNotSet();
-    error FeeReinvestNotAuthorized(address caller);
     error RepayAmountExceedsDebt(uint256 sharesToRepay, uint256 currentDebtShares);
     error DepositForRepayFailed();
-    // <<< END PHASE 4 MARGIN/FEE ERRORS >>>
-
     error InvalidAsset();
-    error CallerNotMarginContract();
-    error InvalidParameter(string parameterName, uint256 value);
-
     error MaxPoolUtilizationExceeded(uint256 currentUtilization, uint256 maxUtilization);
-    error ExpiryTooSoon(uint256 expiry, uint256 requiredTime);
-    error ExpiryTooFar(uint256 expiry, uint256 requiredTime);
-    error CannotWithdrawProtocolFees();
-    error InternalError(string message);
 
-    // Phase 5 Errors (Example - Liquidation related)
+    // --- Liquidation ---
     error NotLiquidatable(uint256 currentRatio, uint256 threshold);
     error LiquidationTooSmall(uint256 requestedAmount, uint256 minimumAmount);
     error InvalidLiquidationParams();
