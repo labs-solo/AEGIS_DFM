@@ -154,53 +154,43 @@ contract FullRangeDynamicFeeManager is Owned {
     }
 
     /**
-     * @notice Process oracle data for a pool
-     * @dev Only processes data when needed to save gas
-     * @param poolId The pool ID to process
-     * @return tickCapped Whether the tick was capped
+     * @dev Read the *live* pool tick from slot0, apply your block/tick thresholds,
+     *      cap any excessive jump, update CAP‐event state, and emit one unified OracleUpdated.
      */
-    function processOracleData(PoolId poolId) internal returns (bool tickCapped) {
-        // Retrieve data from Spot
-        (int24 tick, uint32 lastBlockUpdate) = this.getOracleData(poolId);
-        PoolState storage pool = poolStates[poolId];
+    function _syncOracleData(PoolId poolId) internal returns (bool tickCapped) {
+        // 1) Fetch the current tick directly from the PoolManager
+        (, int24 reportedTick, , ) = StateLibrary.getSlot0(poolManager, poolId);
+        uint32 reportedBlock          = uint32(block.number);
 
-        int24 lastTick = pool.lastOracleTick;
+        PoolState storage ps   = poolStates[poolId];
+        int24 lastTick         = ps.lastOracleTick;
+        uint32 lastBlock       = ps.lastOracleUpdateBlock;
+        tickCapped             = false;
 
-        // Default to not capped
-        tickCapped = false;
-
-        // Check if update is needed based on block threshold or tick difference
+        // 2) Only update when block or tick thresholds are exceeded
         if (
-            pool.lastOracleUpdateBlock == 0
-                || lastBlockUpdate >= pool.lastOracleUpdateBlock + thresholds.blockUpdateThreshold
-                || MathUtils.absDiff(tick, lastTick) >= uint24(thresholds.tickDiffThreshold)
+            lastBlock == 0
+            || reportedBlock >= lastBlock + thresholds.blockUpdateThreshold
+            || MathUtils.absDiff(reportedTick, lastTick) >= uint24(thresholds.tickDiffThreshold)
         ) {
-            // Calculate max allowed tick change based on dynamic fee and scaling factor
-            int24 tickScalingFactor = policy.getTickScalingFactor();
-            int24 maxTickChange = _calculateMaxTickChange(pool.baseFeePpm, tickScalingFactor);
+            // 3) Determine max allowed tick move based on current base fee
+            int24 maxChange = _calculateMaxTickChange(ps.baseFeePpm, policy.getTickScalingFactor());
+            int24 delta     = reportedTick - lastTick;
+            int24 nextTick  = reportedTick;
 
-            // Check if tick change exceeds the maximum allowed
-            int24 tickChange = tick - lastTick;
-
-            if (pool.lastOracleUpdateBlock > 0 && MathUtils.absDiff(tick, lastTick) > uint24(maxTickChange)) {
-                // Cap the tick change to the maximum allowed
+            // 4) If the jump is too big, clamp it
+            if (lastBlock > 0 && MathUtils.absDiff(reportedTick, lastTick) > uint24(maxChange)) {
                 tickCapped = true;
-                int24 cappedTick = lastTick + (tickChange > 0 ? maxTickChange : -maxTickChange);
-
-                emit TickChangeCapped(poolId, tickChange, tickChange > 0 ? maxTickChange : -maxTickChange);
-
-                // Use capped tick for the oracle update
-                tick = cappedTick;
+                int24 cap  = delta > 0 ? maxChange : -maxChange;
+                nextTick   = lastTick + cap;
+                emit TickChangeCapped(poolId, delta, cap);
             }
 
-            // Update CAP event status if needed
+            // 5) Flip CAP event flag, record times, and emit
             _updateCapEventStatus(poolId, tickCapped);
-
-            // Update oracle state
-            pool.lastOracleUpdateBlock = lastBlockUpdate;
-            pool.lastOracleTick = tick;
-
-            emit OracleUpdated(poolId, lastTick, tick, tickCapped);
+            ps.lastOracleUpdateBlock = reportedBlock;
+            ps.lastOracleTick        = nextTick;
+            emit OracleUpdated(poolId, lastTick, nextTick, tickCapped);
         }
 
         return tickCapped;
@@ -267,8 +257,8 @@ contract FullRangeDynamicFeeManager is Owned {
         public
         returns (uint256 baseFee, uint256 surgeFeeValue, bool wasUpdated)
     {
-        // First process the latest oracle data using the reverse authorization model
-        processOracleData(poolId);
+        // Sync & cap the live tick in one go (slot0‐only approach)
+        _syncOracleData(poolId);
 
         PoolState storage pool = poolStates[poolId];
 
@@ -303,12 +293,6 @@ contract FullRangeDynamicFeeManager is Owned {
 
             return (pool.baseFeePpm, 0, true); // Return base fee, zero surge fee
         }
-
-        // Check if we need to update the fee based on time interval and CAP events
-        // uint256 timeSinceLastUpdate = block.timestamp - pool.lastUpdateTimestamp; // Removed assignment causing Lvalue error
-
-        // Check if we need to update the oracle data first
-        _updateOracleIfNeeded(poolId, key); // This calls _updateCapEventStatus internally
 
         // Check if update is needed based on time
         bool shouldUpdate = block.timestamp >= pool.lastUpdateTimestamp + 3600; // 1 hour
@@ -353,62 +337,6 @@ contract FullRangeDynamicFeeManager is Owned {
         // surgeFeeValue was calculated earlier
         // wasUpdated reflects if base fee calculation ran
         return (baseFee, surgeFeeValue, wasUpdated);
-    }
-
-    /**
-     * @notice Update oracle data if needed based on thresholds
-     * @param poolId The ID of the pool
-     * @param key The pool key for the pool
-     * @return tickCapped Whether the tick was capped during this update
-     */
-    function _updateOracleIfNeeded(PoolId poolId, PoolKey calldata key) internal returns (bool tickCapped) {
-        // param is unused for now
-        key;
-        PoolState storage pool = poolStates[poolId];
-
-        uint32 lastBlockUpdate = pool.lastOracleUpdateBlock;
-        int24 lastTick = pool.lastOracleTick;
-
-        // Get current tick from pool manager
-        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
-
-        // Default to not capped
-        tickCapped = false;
-
-        // Check if update is needed based on block threshold or tick difference
-        if (
-            lastBlockUpdate == 0 || block.number >= lastBlockUpdate + thresholds.blockUpdateThreshold
-                || MathUtils.absDiff(currentTick, lastTick) >= uint24(thresholds.tickDiffThreshold)
-        ) {
-            // Calculate max allowed tick change based on dynamic fee and scaling factor
-            int24 tickScalingFactor = policy.getTickScalingFactor();
-            int24 maxTickChange = _calculateMaxTickChange(pool.baseFeePpm, tickScalingFactor);
-
-            // Check if tick change exceeds the maximum allowed
-            int24 tickChange = currentTick - lastTick;
-
-            if (lastBlockUpdate > 0 && MathUtils.absDiff(currentTick, lastTick) > uint24(maxTickChange)) {
-                // Cap the tick change to the maximum allowed
-                tickCapped = true;
-                int24 cappedTick = lastTick + (tickChange > 0 ? maxTickChange : -maxTickChange);
-
-                emit TickChangeCapped(poolId, tickChange, tickChange > 0 ? maxTickChange : -maxTickChange);
-
-                // Use capped tick for the oracle update
-                currentTick = cappedTick;
-            }
-
-            // Update CAP event status if needed
-            _updateCapEventStatus(poolId, tickCapped);
-
-            // Update oracle state
-            pool.lastOracleUpdateBlock = uint32(block.number);
-            pool.lastOracleTick = currentTick;
-
-            emit OracleUpdated(poolId, lastTick, currentTick, tickCapped);
-        }
-
-        return tickCapped;
     }
 
     /**
