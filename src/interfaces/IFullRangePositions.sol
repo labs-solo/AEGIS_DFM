@@ -23,4 +23,4 @@ interface IFullRangePositions is IERC1155 {
      * @param amount The amount to burn
      */
     function burn(address from, uint256 id, uint256 amount) external;
-} 
+}

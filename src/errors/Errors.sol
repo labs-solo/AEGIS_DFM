@@ -210,4 +210,4 @@ library Errors {
     error NotLiquidatable(uint256 currentRatio, uint256 threshold);
     error LiquidationTooSmall(uint256 requestedAmount, uint256 minimumAmount);
     error InvalidLiquidationParams();
-} 
+}

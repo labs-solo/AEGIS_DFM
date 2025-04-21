@@ -14,10 +14,11 @@ interface IPoolPolicy {
      * @notice Policy types supported by the system
      */
     enum PolicyType {
-        FEE,           // Manages fee calculation and distribution
-        TICK_SCALING,  // Controls tick movement restrictions
-        VTIER,         // Validates fee tier and tick spacing combinations
-        REINVESTMENT   // Manages fee reinvestment strategies
+        FEE, // Manages fee calculation and distribution
+        TICK_SCALING, // Controls tick movement restrictions
+        VTIER, // Validates fee tier and tick spacing combinations
+        REINVESTMENT // Manages fee reinvestment strategies
+
     }
 
     /**
@@ -42,15 +43,21 @@ interface IPoolPolicy {
      * @param tick The initial tick
      * @param hook The hook address
      */
-    function handlePoolInitialization(PoolId poolId, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick, address hook) external;
+    function handlePoolInitialization(
+        PoolId poolId,
+        PoolKey calldata key,
+        uint160 sqrtPriceX96,
+        int24 tick,
+        address hook
+    ) external;
 
     /**
      * @notice Returns the policy implementation for a specific policy type
      * @param poolId The ID of the pool
      * @param policyType The type of policy to retrieve
-     * @return The policy implementation address
+     * @return implementation The policy implementation address
      */
-    function getPolicy(PoolId poolId, PolicyType policyType) external view returns (address);
+    function getPolicy(PoolId poolId, PolicyType policyType) external view returns (address implementation);
 
     /**
      * @notice Returns fee allocation percentages in PPM
@@ -59,8 +66,11 @@ interface IPoolPolicy {
      * @return fullRangeShare Full range incentive share
      * @return lpShare Liquidity provider share
      */
-    function getFeeAllocations(PoolId poolId) external view returns (uint256 polShare, uint256 fullRangeShare, uint256 lpShare);
-    
+    function getFeeAllocations(PoolId poolId)
+        external
+        view
+        returns (uint256 polShare, uint256 fullRangeShare, uint256 lpShare);
+
     /**
      * @notice Calculates the minimum POL target based on dynamic fee and total liquidity
      * @param poolId The ID of the pool
@@ -68,14 +78,17 @@ interface IPoolPolicy {
      * @param dynamicFeePpm Current dynamic fee in PPM
      * @return Minimum required protocol-owned liquidity amount
      */
-    function getMinimumPOLTarget(PoolId poolId, uint256 totalLiquidity, uint256 dynamicFeePpm) external view returns (uint256);
-    
+    function getMinimumPOLTarget(PoolId poolId, uint256 totalLiquidity, uint256 dynamicFeePpm)
+        external
+        view
+        returns (uint256);
+
     /**
      * @notice Returns the minimum trading fee allowed (in PPM)
      * @return Minimum fee in PPM
      */
     function getMinimumTradingFee() external view returns (uint256);
-    
+
     /**
      * @notice Returns the threshold for claiming fees during swaps
      * @return Threshold as percentage of total liquidity
@@ -125,20 +138,20 @@ interface IPoolPolicy {
      * @param multiplier The new default multiplier value
      */
     function setDefaultPOLMultiplier(uint32 multiplier) external;
-    
+
     /**
      * @notice Sets the POL share percentage for a specific pool
      * @param poolId The pool ID
      * @param polSharePpm The POL share in PPM (parts per million)
      */
     function setPoolPOLShare(PoolId poolId, uint256 polSharePpm) external;
-    
+
     /**
      * @notice Enables or disables the use of pool-specific POL share percentages
      * @param enabled Whether to enable pool-specific POL sharing
      */
     function setPoolSpecificPOLSharingEnabled(bool enabled) external;
-    
+
     /**
      * @notice Gets the POL share percentage for a specific pool
      * @param poolId The pool ID to get the POL share for
@@ -193,11 +206,4 @@ interface IPoolPolicy {
      * @return The address authorized to potentially collect protocol fees (or address(0) if unused).
      */
     function getFeeCollector() external view returns (address);
-
-    /**
-     * @notice Checks if an address is authorized to trigger the reinvestment of protocol interest fees.
-     * @param reinvestor The address to check.
-     * @return isAuthorized True if the address is authorized.
-     */
-    function isAuthorizedReinvestor(address reinvestor) external view returns (bool isAuthorized);
-} 
+}

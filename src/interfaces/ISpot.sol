@@ -2,12 +2,12 @@
 pragma solidity 0.8.26;
 
 // Use direct imports from lib/v4-core/src based on remappings
-import { PoolKey } from "v4-core/src/types/PoolKey.sol";
-import { PoolId } from "v4-core/src/types/PoolId.sol";
-import { IPoolManager } from "v4-core/src/interfaces/IPoolManager.sol";
-import { IHooks } from "v4-core/src/interfaces/IHooks.sol";
-import { BalanceDelta } from "v4-core/src/types/BalanceDelta.sol";
-import { BeforeSwapDelta } from "v4-core/src/types/BeforeSwapDelta.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {BeforeSwapDelta} from "v4-core/src/types/BeforeSwapDelta.sol";
 
 /**
  * @title ISpot
@@ -83,15 +83,10 @@ interface ISpot is IHooks {
      * @return totalShares Total shares in the pool
      * @return tokenId Token ID for the pool
      */
-    function getPoolInfo(PoolId poolId) 
-        external 
-        view 
-        returns (
-            bool isInitialized,
-            uint256[2] memory reserves,
-            uint128 totalShares,
-            uint256 tokenId
-        );
+    function getPoolInfo(PoolId poolId)
+        external
+        view
+        returns (bool isInitialized, uint256[2] memory reserves, uint128 totalShares, uint256 tokenId);
 
     /**
      * @notice Get oracle data for a specific pool
@@ -109,9 +104,9 @@ interface ISpot is IHooks {
      * @return amount0 The actual amount of token0 deposited.
      * @return amount1 The actual amount of token1 deposited.
      */
-    function deposit(DepositParams calldata params) 
-        external 
-        payable 
+    function deposit(DepositParams calldata params)
+        external
+        payable
         returns (uint256 shares, uint256 amount0, uint256 amount1);
 
     /**
@@ -120,9 +115,7 @@ interface ISpot is IHooks {
      * @return amount0 The actual amount of token0 withdrawn.
      * @return amount1 The actual amount of token1 withdrawn.
      */
-    function withdraw(WithdrawParams calldata params)
-        external
-        returns (uint256 amount0, uint256 amount1);
+    function withdraw(WithdrawParams calldata params) external returns (uint256 amount0, uint256 amount1);
 
     /**
      * @notice Checks if a specific pool is initialized.
@@ -138,7 +131,10 @@ interface ISpot is IHooks {
      * @return reserve1 The reserve amount of token1.
      * @return totalShares The total liquidity shares outstanding for the pool.
      */
-    function getPoolReservesAndShares(PoolId poolId) external view returns (uint256 reserve0, uint256 reserve1, uint128 totalShares);
+    function getPoolReservesAndShares(PoolId poolId)
+        external
+        view
+        returns (uint256 reserve0, uint256 reserve1, uint128 totalShares);
 
     /**
      * @notice Gets the token ID associated with a specific pool.
@@ -146,4 +142,10 @@ interface ISpot is IHooks {
      * @return The ERC1155 token ID representing the pool's LP shares.
      */
     function getPoolTokenId(PoolId poolId) external view returns (uint256);
-} 
+
+    /**
+     * @notice poke the hook to reinvest any accrued fees
+     * @param poolId The pool ID to reinvest fees for
+     */
+    function pokeReinvest(PoolId poolId) external;
+}

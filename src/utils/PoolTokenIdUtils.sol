@@ -16,7 +16,7 @@ library PoolTokenIdUtils {
     function toTokenId(PoolId poolId) internal pure returns (uint256) {
         return uint256(PoolId.unwrap(poolId)) & 0x00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF;
     }
-    
+
     /**
      * @notice Convert TokenId to PoolId
      * @param tokenId TokenId from ERC6909
@@ -25,4 +25,4 @@ library PoolTokenIdUtils {
     function toPoolId(uint256 tokenId) internal pure returns (PoolId) {
         return PoolId.wrap(bytes32(tokenId));
     }
-} 
+}

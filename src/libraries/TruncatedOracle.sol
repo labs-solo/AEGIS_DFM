@@ -55,13 +55,11 @@ library TruncatedOracle {
 
             // Calculate absolute tick movement using optimized implementation
             uint24 tickMove = MathUtils.absDiff(tick, last.prevTick);
-            
+
             // Cap tick movement if it exceeds the maximum allowed
             // This is the core anti-manipulation mechanism
             if (tickMove > uint24(maxAbsTickMove)) {
-                tick = tick > last.prevTick 
-                    ? last.prevTick + maxAbsTickMove 
-                    : last.prevTick - maxAbsTickMove;
+                tick = tick > last.prevTick ? last.prevTick + maxAbsTickMove : last.prevTick - maxAbsTickMove;
             }
 
             return Observation({
@@ -182,13 +180,11 @@ library TruncatedOracle {
     /// @param cardinality The number of populated elements in the oracle array
     /// @return beforeOrAt The observation which occurred at, or before, the given timestamp
     /// @return atOrAfter The observation which occurred at, or after, the given timestamp
-    function binarySearch(
-        Observation[65535] storage self,
-        uint32 time,
-        uint32 target,
-        uint16 index,
-        uint16 cardinality
-    ) private view returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
+    function binarySearch(Observation[65535] storage self, uint32 time, uint32 target, uint16 index, uint16 cardinality)
+        private
+        view
+        returns (Observation memory beforeOrAt, Observation memory atOrAfter)
+    {
         uint256 l = (index + 1) % cardinality; // oldest observation
         uint256 r = l + cardinality - 1; // newest observation
         uint256 i;
@@ -286,21 +282,13 @@ library TruncatedOracle {
         uint16 cardinality,
         int24 maxAbsTickMove
     ) internal view returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s) {
-        require(cardinality > 0, 'I');
+        require(cardinality > 0, "I");
 
         tickCumulatives = new int48[](secondsAgos.length);
         secondsPerLiquidityCumulativeX128s = new uint144[](secondsAgos.length);
         for (uint256 i = 0; i < secondsAgos.length; i++) {
-            (tickCumulatives[i], secondsPerLiquidityCumulativeX128s[i]) = observeSingle(
-                self,
-                time,
-                secondsAgos[i],
-                tick,
-                index,
-                liquidity,
-                cardinality,
-                maxAbsTickMove
-            );
+            (tickCumulatives[i], secondsPerLiquidityCumulativeX128s[i]) =
+                observeSingle(self, time, secondsAgos[i], tick, index, liquidity, cardinality, maxAbsTickMove);
         }
     }
 
@@ -350,18 +338,20 @@ library TruncatedOracle {
             // we're in the middle
             uint32 observationTimeDelta = atOrAfter.blockTimestamp - beforeOrAt.blockTimestamp;
             uint32 targetDelta = target - beforeOrAt.blockTimestamp;
-            
+
             return (
-                beforeOrAt.tickCumulative +
-                    ((atOrAfter.tickCumulative - beforeOrAt.tickCumulative) / int48(uint48(observationTimeDelta))) *
-                    int48(uint48(targetDelta)),
-                beforeOrAt.secondsPerLiquidityCumulativeX128 +
-                    uint144(
-                        (uint256(
-                            atOrAfter.secondsPerLiquidityCumulativeX128 - beforeOrAt.secondsPerLiquidityCumulativeX128
-                        ) * targetDelta) / observationTimeDelta
+                beforeOrAt.tickCumulative
+                    + ((atOrAfter.tickCumulative - beforeOrAt.tickCumulative) / int48(uint48(observationTimeDelta)))
+                        * int48(uint48(targetDelta)),
+                beforeOrAt.secondsPerLiquidityCumulativeX128
+                    + uint144(
+                        (
+                            uint256(
+                                atOrAfter.secondsPerLiquidityCumulativeX128 - beforeOrAt.secondsPerLiquidityCumulativeX128
+                            ) * targetDelta
+                        ) / observationTimeDelta
                     )
             );
         }
     }
-} 
+}

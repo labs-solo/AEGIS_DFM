@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import { PoolId, PoolIdLibrary } from "v4-core/src/types/PoolId.sol";
-import { PoolKey } from "v4-core/src/types/PoolKey.sol";
-import { Currency, CurrencyLibrary } from "v4-core/src/types/Currency.sol";
-import { IPoolPolicy } from "./interfaces/IPoolPolicy.sol";
-import { Owned } from "solmate/src/auth/Owned.sol";
-import { Errors } from "./errors/Errors.sol";
-import { TruncGeoOracleMulti } from "./TruncGeoOracleMulti.sol";
-import { TruncatedOracle } from "./libraries/TruncatedOracle.sol";
-import { Hooks } from "v4-core/src/libraries/Hooks.sol";
-import { PolicyType } from "./libraries/PolicyType.sol";
-import { PrecisionConstants } from "./libraries/PrecisionConstants.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
+import {Owned} from "solmate/src/auth/Owned.sol";
+import {Errors} from "./errors/Errors.sol";
+import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
+import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {PolicyType} from "./libraries/PolicyType.sol";
+import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 
 /**
  * @title PoolPolicyManager
@@ -20,7 +20,7 @@ import { PrecisionConstants } from "./libraries/PrecisionConstants.sol";
  */
 contract PoolPolicyManager is IPoolPolicy, Owned {
     // === Fee Policy State Variables ===
-    
+
     // Fee allocation configuration
     uint256 public polSharePpm;
     uint256 public fullRangeSharePpm;
@@ -28,40 +28,40 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     uint256 public minimumTradingFeePpm;
     uint256 public feeClaimThresholdPpm;
     uint256 public defaultDynamicFeePpm;
-    
+
     // POL multiplier configuration
     uint256 public defaultPolMultiplier;
     mapping(PoolId => uint32) public poolPolMultipliers;
-    
+
     // === Tick Scaling Policy State Variables ===
-    
+
     // Tick scaling factor for calculating max tick movement
     int24 public tickScalingFactor;
-    
+
     // Supported tick spacings
     mapping(uint24 => bool) public supportedTickSpacings;
-    
+
     // === VTier Policy State Variables ===
-    
+
     // Flag indicating a dynamic fee (0x800000)
     uint24 private constant DYNAMIC_FEE_FLAG = 0x800000;
-    
+
     // === Policy Manager State Variables ===
-    
+
     // Mapping of policy implementations by pool and type
     mapping(PoolId => mapping(PolicyType => address)) private _policies;
-    
+
     // Add a new mapping for pool-specific POL share percentages
     mapping(PoolId => uint256) public poolPolSharePpm;
-    
+
     // Add a flag to enable/disable pool-specific POL percentages
     bool public allowPoolSpecificPolShare;
-    
+
     // === Phase 4 State Variables ===
     uint256 public protocolInterestFeePercentage; // Scaled by PRECISION (1e18)
     address public feeCollector; // Optional: May not be used if all fees become POL
     mapping(address => bool) public authorizedReinvestors;
-    
+
     // Events
     event FeeConfigChanged(
         uint256 polSharePpm,
@@ -82,7 +82,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     event ProtocolInterestFeePercentageChanged(uint256 newPercentage);
     event FeeCollectorChanged(address newCollector);
     event AuthorizedReinvestorChanged(address indexed reinvestor, bool isAuthorized);
-    
+
     /**
      * @notice Constructor initializes the policy manager with default values
      * @param _owner The owner of the contract
@@ -122,10 +122,10 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
             _defaultPolMultiplier
         );
         defaultDynamicFeePpm = _defaultDynamicFeePpm;
-        
+
         // Initialize tick scaling policy values
         tickScalingFactor = _tickScalingFactor;
-        
+
         // Initialize supported tick spacings
         for (uint256 i = 0; i < _supportedTickSpacings.length; i++) {
             supportedTickSpacings[_supportedTickSpacings[i]] = true;
@@ -136,16 +136,16 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         _setProtocolFeePercentage(_initialProtocolInterestFeePercentage);
         _setFeeCollector(_initialFeeCollector);
     }
-    
+
     // === Policy Management Functions ===
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
     function getPolicy(PoolId poolId, PolicyType policyType) external view returns (address) {
         return _policies[poolId][policyType];
     }
-    
+
     /**
      * @notice Sets a policy implementation for a specific pool and policy type
      * @param poolId The pool ID
@@ -154,97 +154,107 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      */
     function setPolicy(PoolId poolId, PolicyType policyType, address implementation) external onlyOwner {
         if (implementation == address(0)) revert Errors.ZeroAddress();
-        
+
         _policies[poolId][policyType] = implementation;
         emit PolicySet(poolId, policyType, implementation);
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
     function getSoloGovernance() external view returns (address) {
         return owner;
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
     function initializePolicies(PoolId poolId, address governance, address[] calldata implementations) external {
         // Ensure caller has proper permissions
         if (msg.sender != owner && msg.sender != governance) revert Errors.Unauthorized();
-        
+
         // Validate implementations array length
         if (implementations.length != 4) revert Errors.InvalidPolicyImplementationsLength(implementations.length);
-        
+
         // Set each policy type with its implementation
         for (uint8 i = 0; i < 4; i++) {
             address implementation = implementations[i];
             if (implementation == address(0)) revert Errors.ZeroAddress();
-            
+
             PolicyType policyType = PolicyType(i);
             _policies[poolId][policyType] = implementation;
             emit PolicySet(poolId, policyType, implementation);
         }
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
-    function handlePoolInitialization(PoolId poolId, PoolKey calldata /*key*/, uint160 /*sqrtPriceX96*/, int24 tick, address hook) external {
+    function handlePoolInitialization(
+        PoolId poolId,
+        PoolKey calldata, /*key*/
+        uint160, /*sqrtPriceX96*/
+        int24 tick,
+        address hook
+    ) external {
         // Ensure caller has proper permissions (Owner or the Hook itself)
         if (msg.sender != owner && msg.sender != hook) revert Errors.Unauthorized();
 
-        // --- ORACLE LOGIC REMOVED --- 
-        
+        // --- ORACLE LOGIC REMOVED ---
+
         // Emit the original event for observability
         emit PoolInitialized(poolId, hook, tick);
     }
-    
+
     // === Fee Policy Functions ===
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
     function getFeeAllocations(PoolId poolId) external view returns (uint256, uint256, uint256) {
         // Check if pool has a specific POL share
         uint256 poolSpecificPolShare = poolPolSharePpm[poolId];
-        
+
         // If pool-specific POL share is enabled and set for this pool, use it
         if (allowPoolSpecificPolShare && poolSpecificPolShare > 0) {
             return (poolSpecificPolShare, 0, 1000000 - poolSpecificPolShare);
         }
-        
+
         // Otherwise use the global settings
         return (polSharePpm, fullRangeSharePpm, lpSharePpm);
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
-    function getMinimumPOLTarget(PoolId poolId, uint256 totalLiquidity, uint256 dynamicFeePpm) external view returns (uint256) {
+    function getMinimumPOLTarget(PoolId poolId, uint256 totalLiquidity, uint256 dynamicFeePpm)
+        external
+        view
+        returns (uint256)
+    {
         uint256 multiplier = poolPolMultipliers[poolId];
         if (multiplier == 0) {
             multiplier = defaultPolMultiplier;
         }
-        
+
         // Calculate: (totalLiquidity * dynamicFeePpm * multiplier) / (1e6 * 1e6)
         return (totalLiquidity * dynamicFeePpm * multiplier) / 1e12;
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
     function getMinimumTradingFee() external view returns (uint256) {
         return minimumTradingFeePpm;
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
     function getFeeClaimThreshold() external view returns (uint256) {
         return feeClaimThresholdPpm;
     }
-    
+
     /**
      * @notice Gets the POL multiplier for a specific pool
      * @param poolId The ID of the pool
@@ -254,14 +264,14 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         uint256 multiplier = poolPolMultipliers[poolId];
         return multiplier == 0 ? defaultPolMultiplier : multiplier;
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
     function getDefaultDynamicFee() external view returns (uint256) {
         return defaultDynamicFeePpm;
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
@@ -282,7 +292,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
             _defaultPolMultiplier
         );
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
@@ -290,7 +300,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         poolPolMultipliers[poolId] = multiplier;
         emit PoolPOLMultiplierChanged(poolId, multiplier);
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
@@ -298,7 +308,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         defaultPolMultiplier = multiplier;
         emit DefaultPOLMultiplierChanged(multiplier);
     }
-    
+
     /**
      * @notice Sets the default dynamic fee in PPM
      * @param feePpm New default dynamic fee in PPM
@@ -307,7 +317,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         if (feePpm < 1 || feePpm > 1000000) revert Errors.ParameterOutOfRange(feePpm, 1, 1000000);
         defaultDynamicFeePpm = feePpm;
     }
-    
+
     /**
      * @notice Sets the POL share percentage for a specific pool
      * @param poolId The pool ID
@@ -316,11 +326,11 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     function setPoolPOLShare(PoolId poolId, uint256 newPolSharePpm) external onlyOwner {
         // Validate POL share is within valid range (0-100%)
         if (newPolSharePpm > 1000000) revert Errors.ParameterOutOfRange(newPolSharePpm, 0, 1000000);
-        
+
         poolPolSharePpm[poolId] = newPolSharePpm;
         emit PoolPOLShareChanged(poolId, newPolSharePpm);
     }
-    
+
     /**
      * @notice Enables or disables the use of pool-specific POL share percentages
      * @param enabled Whether to enable pool-specific POL sharing
@@ -329,7 +339,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         allowPoolSpecificPolShare = enabled;
         emit PoolSpecificPOLSharingEnabled(enabled);
     }
-    
+
     /**
      * @notice Gets the POL share percentage for a specific pool
      * @param poolId The pool ID to get the POL share for
@@ -337,25 +347,25 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      */
     function getPoolPOLShare(PoolId poolId) external view returns (uint256) {
         uint256 poolSpecificPolShare = poolPolSharePpm[poolId];
-        
+
         // If pool-specific POL share is enabled and set for this pool, use it
         if (allowPoolSpecificPolShare && poolSpecificPolShare > 0) {
             return poolSpecificPolShare;
         }
-        
+
         // Otherwise use the global setting
         return polSharePpm;
     }
-    
+
     // === Tick Scaling Policy Functions ===
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
     function getTickScalingFactor() external view returns (int24) {
         return tickScalingFactor;
     }
-    
+
     /**
      * @notice Sets the tick scaling factor
      * @param newFactor The new tick scaling factor
@@ -364,7 +374,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         if (newFactor <= 0) revert Errors.ParameterOutOfRange(uint256(uint24(newFactor)), 1, type(uint24).max);
         tickScalingFactor = newFactor;
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
@@ -372,28 +382,31 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         supportedTickSpacings[tickSpacing] = isSupported;
         emit TickSpacingSupportChanged(tickSpacing, isSupported);
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
-    function batchUpdateAllowedTickSpacings(uint24[] calldata tickSpacings, bool[] calldata allowed) external onlyOwner {
+    function batchUpdateAllowedTickSpacings(uint24[] calldata tickSpacings, bool[] calldata allowed)
+        external
+        onlyOwner
+    {
         if (tickSpacings.length != allowed.length) revert Errors.ArrayLengthMismatch();
-        
+
         for (uint256 i = 0; i < tickSpacings.length; i++) {
             supportedTickSpacings[tickSpacings[i]] = allowed[i];
             emit TickSpacingSupportChanged(tickSpacings[i], allowed[i]);
         }
     }
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
     function isTickSpacingSupported(uint24 tickSpacing) external view returns (bool) {
         return supportedTickSpacings[tickSpacing];
     }
-    
+
     // === VTier Policy Functions ===
-    
+
     /**
      * @inheritdoc IPoolPolicy
      */
@@ -402,22 +415,22 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         if (!supportedTickSpacings[uint24(tickSpacing)]) {
             return false;
         }
-        
+
         // For dynamic fee pools, any supported tick spacing is valid
         if (fee & DYNAMIC_FEE_FLAG != 0) {
             return true;
         }
-        
+
         // For static fee pools, validate based on your fee/tick spacing rules
         // Example implementation - customize as needed:
         if (fee == 100 && tickSpacing == 1) return true;
         if (fee == 500 && tickSpacing == 10) return true;
         if (fee == 3000 && tickSpacing == 60) return true;
         if (fee == 10000 && tickSpacing == 200) return true;
-        
+
         return false;
     }
-    
+
     // === Phase 4 Implementation ===
 
     /**
@@ -439,14 +452,6 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
-     */
-    function isAuthorizedReinvestor(address reinvestor) external view override returns (bool isAuthorized) {
-        // Also allow the owner (governance) to always be authorized implicitly
-        return authorizedReinvestors[reinvestor] || reinvestor == owner;
-    }
-
-    /**
      * @notice Sets the global protocol interest fee percentage.
      * @param _newPercentage The new percentage scaled by PRECISION (e.g., 0.1e18 for 10%)
      */
@@ -459,23 +464,11 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      * @param _newCollector The new fee collector address. Can be address(0) if not used.
      */
     function setFeeCollector(address _newCollector) external onlyOwner {
-       _setFeeCollector(_newCollector);
-    }
-
-    /**
-     * @notice Authorizes or deauthorizes an address to trigger fee reinvestment.
-     * @param _reinvestor The address to authorize/deauthorize.
-     * @param _isAuthorized True to authorize, false to deauthorize.
-     */
-    function setAuthorizedReinvestor(address _reinvestor, bool _isAuthorized) external onlyOwner {
-        require(_reinvestor != address(0), "PPM: Zero address");
-        require(_reinvestor != owner, "PPM: Owner is implicitly authorized"); // Prevent explicit setting for owner
-        authorizedReinvestors[_reinvestor] = _isAuthorized;
-        emit AuthorizedReinvestorChanged(_reinvestor, _isAuthorized);
+        _setFeeCollector(_newCollector);
     }
 
     // === Internal Helper Functions ===
-    
+
     /**
      * @notice Internal function to set fee configuration
      * @param _polSharePpm Protocol-owned liquidity share in PPM
@@ -497,17 +490,19 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         if (_polSharePpm + _fullRangeSharePpm + _lpSharePpm != 1000000) {
             revert Errors.AllocationSumError(_polSharePpm, _fullRangeSharePpm, _lpSharePpm, 1000000);
         }
-        
+
         // Validate minimum trading fee
-        if (_minimumTradingFeePpm > 100000) { // Max 10%
+        if (_minimumTradingFeePpm > 100000) {
+            // Max 10%
             revert Errors.ParameterOutOfRange(_minimumTradingFeePpm, 0, 100000);
         }
-        
+
         // Validate fee claim threshold
-        if (_feeClaimThresholdPpm > 100000) { // Max 10%
+        if (_feeClaimThresholdPpm > 100000) {
+            // Max 10%
             revert Errors.ParameterOutOfRange(_feeClaimThresholdPpm, 0, 100000);
         }
-        
+
         // Set fee allocation values
         polSharePpm = _polSharePpm;
         fullRangeSharePpm = _fullRangeSharePpm;
@@ -515,7 +510,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         minimumTradingFeePpm = _minimumTradingFeePpm;
         feeClaimThresholdPpm = _feeClaimThresholdPpm;
         defaultPolMultiplier = _defaultPolMultiplier;
-        
+
         emit FeeConfigChanged(
             _polSharePpm,
             _fullRangeSharePpm,
@@ -543,4 +538,4 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         feeCollector = _newCollector;
         emit FeeCollectorChanged(_newCollector);
     }
-} 
+}

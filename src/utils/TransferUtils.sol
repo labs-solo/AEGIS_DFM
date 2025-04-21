@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import { SafeTransferLib } from "solmate/src/utils/SafeTransferLib.sol";
-import { ERC20 } from "solmate/src/tokens/ERC20.sol";
-import { Currency } from "lib/v4-core/src/types/Currency.sol";
-import { CurrencyLibrary } from "lib/v4-core/src/types/Currency.sol";
-import { PoolKey } from "v4-core/src/types/PoolKey.sol";
-import { Errors } from "../errors/Errors.sol";
+import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
+import {ERC20} from "solmate/src/tokens/ERC20.sol";
+import {Currency} from "lib/v4-core/src/types/Currency.sol";
+import {CurrencyLibrary} from "lib/v4-core/src/types/Currency.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Errors} from "../errors/Errors.sol";
 
 /**
  * @title TransferUtils
@@ -25,13 +25,10 @@ library TransferUtils {
      * @param ethValueSent The msg.value sent with the transaction.
      * @return ethAmountRequired The amount of ETH that was required based on the PoolKey and amounts.
      */
-    function transferTokensIn(
-        PoolKey memory key,
-        address from,
-        uint256 amount0,
-        uint256 amount1,
-        uint256 ethValueSent
-    ) internal returns (uint256 ethAmountRequired) {
+    function transferTokensIn(PoolKey memory key, address from, uint256 amount0, uint256 amount1, uint256 ethValueSent)
+        internal
+        returns (uint256 ethAmountRequired)
+    {
         address recipient = address(this);
         ethAmountRequired = 0;
 
@@ -72,19 +69,17 @@ library TransferUtils {
      * @return eth0Success Returns true if ETH transfer for token0 was not needed or succeeded, false if attempted and failed.
      * @return eth1Success Returns true if ETH transfer for token1 was not needed or succeeded, false if attempted and failed.
      */
-    function transferTokensOut(
-        PoolKey memory key,
-        address to,
-        uint256 amount0,
-        uint256 amount1
-    ) internal returns (bool eth0Success, bool eth1Success) {
+    function transferTokensOut(PoolKey memory key, address to, uint256 amount0, uint256 amount1)
+        internal
+        returns (bool eth0Success, bool eth1Success)
+    {
         eth0Success = true; // Assume success unless ETH transfer fails
         eth1Success = true;
 
         if (amount0 > 0) {
             if (key.currency0.isAddressZero()) {
                 // Attempt direct ETH transfer
-                (bool success, ) = to.call{value: amount0, gas: 50000}("");
+                (bool success,) = to.call{value: amount0, gas: 50000}("");
                 if (!success) {
                     eth0Success = false;
                     // NOTE: Caller (Margin) needs to handle the fallback (pendingETHPayments)
@@ -99,7 +94,7 @@ library TransferUtils {
         if (amount1 > 0) {
             if (key.currency1.isAddressZero()) {
                 // Attempt direct ETH transfer
-                (bool success, ) = to.call{value: amount1, gas: 50000}("");
+                (bool success,) = to.call{value: amount1, gas: 50000}("");
                 if (!success) {
                     eth1Success = false;
                     // NOTE: Caller (Margin) needs to handle the fallback (pendingETHPayments)
@@ -111,4 +106,4 @@ library TransferUtils {
 
         return (eth0Success, eth1Success);
     }
-} 
+}

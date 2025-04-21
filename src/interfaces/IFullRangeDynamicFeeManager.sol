@@ -17,14 +17,14 @@ interface IFullRangeDynamicFeeManager {
      * @param capEventOccurred Whether a CAP event occurred
      */
     event DynamicFeeUpdated(bytes32 indexed pid, uint256 oldFeePpm, uint256 newFeePpm, bool capEventOccurred);
-    
+
     /**
      * @notice Emitted when a pool's surge mode changes
      * @param pid The pool ID hash
      * @param surgeEnabled Whether surge mode is enabled
      */
     event SurgeModeChanged(bytes32 indexed pid, bool surgeEnabled);
-    
+
     /**
      * @notice Emitted when surge fee is updated
      * @param poolId The pool ID
@@ -32,7 +32,7 @@ interface IFullRangeDynamicFeeManager {
      * @param capEventActive Whether CAP event is active
      */
     event SurgeFeeUpdated(PoolId poolId, uint256 newSurgeFeePpm, bool capEventActive);
-    
+
     /**
      * @notice Emitted when CAP event state changes
      * @param pid The pool ID hash
@@ -47,13 +47,13 @@ interface IFullRangeDynamicFeeManager {
      * @param timestamp The timestamp of the update
      */
     event OracleUpdated(bytes32 indexed pid, int24 tick, uint32 timestamp);
-    
+
     /**
      * @notice Initialize fee and oracle data for a newly created pool
      * @param poolId The ID of the pool
      */
     function initializeFeeData(PoolId poolId) external;
-    
+
     /**
      * @notice Updates the dynamic fee if needed based on time interval and CAP events
      * @param poolId The pool ID to update fee for
@@ -62,38 +62,30 @@ interface IFullRangeDynamicFeeManager {
      * @return surgeFeeValue The current surge fee in PPM
      * @return wasUpdated Whether fee was updated in this call
      */
-    function updateDynamicFeeIfNeeded(
-        PoolId poolId,
-        PoolKey calldata key
-    ) external returns (
-        uint256 baseFee,
-        uint256 surgeFeeValue,
-        bool wasUpdated
-    );
-    
+    function updateDynamicFeeIfNeeded(PoolId poolId, PoolKey calldata key)
+        external
+        returns (uint256 baseFee, uint256 surgeFeeValue, bool wasUpdated);
+
     /**
      * @notice External function to trigger fee updates with rate limiting
      * @param poolId The pool ID to update fees for
      * @param key The pool key for the pool
      */
     function triggerFeeUpdate(PoolId poolId, PoolKey calldata key) external;
-    
+
     /**
      * @notice Handle fee update and related event emissions
      * @param poolId The pool ID to update fee for
      */
     function handleFeeUpdate(PoolId poolId) external;
-    
+
     /**
      * @notice Gets current fee values for a pool
      * @param poolId The pool ID to query
      * @return baseFee The current base fee in PPM
      * @return surgeFeeValue The current surge fee in PPM
      */
-    function getCurrentFees(PoolId poolId) external view returns (
-        uint256 baseFee,
-        uint256 surgeFeeValue
-    );
+    function getCurrentFees(PoolId poolId) external view returns (uint256 baseFee, uint256 surgeFeeValue);
 
     /**
      * @notice Update oracle data for a pool
@@ -101,7 +93,7 @@ interface IFullRangeDynamicFeeManager {
      * @param tick The current tick value
      */
     function updateOracle(PoolId poolId, int24 tick) external;
-    
+
     /**
      * @notice Check if a CAP event is active for the pool
      * @param poolId The pool ID to query
@@ -112,4 +104,4 @@ interface IFullRangeDynamicFeeManager {
     function isPoolInCapEvent(PoolId poolId) external view returns (bool);
 
     function getCurrentDynamicFee(PoolId poolId) external view returns (uint256);
-} 
+}

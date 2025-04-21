@@ -32,7 +32,6 @@ import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.s
 import {Position} from "v4-core/src/libraries/Position.sol";
 import {FixedPoint96} from "v4-core/src/libraries/FixedPoint96.sol";
 import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
-import "forge-std/console2.sol";
 import {LiquidityMath} from "v4-core/src/libraries/LiquidityMath.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {TransferUtils} from "./utils/TransferUtils.sol";
@@ -50,61 +49,126 @@ using SafeCast for int256;
 contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidityManager {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
-    
+
     // Struct for deposit calculation results
     struct DepositCalculationResult {
         uint256 actual0;
         uint256 actual1;
-        uint128 sharesToAdd;      // V2-based shares for ERC6909
-        uint128 lockedAmount;     // V2-based locked amount (MIN_LIQUIDITY)
+        uint128 sharesToAdd; // V2-based shares for ERC6909
+        uint128 lockedAmount; // V2-based locked amount (MIN_LIQUIDITY)
         uint128 v4LiquidityForCallback; // V4 liquidity for PoolManager interaction
     }
-    
+
+    /**
+     * @notice Parameters for withdrawing liquidity from a pool
+     * @param poolId The pool ID to withdraw from
+     * @param shares The amount of LP shares to burn
+     * @param amount0Min The minimum amount of token0 to receive
+     * @param amount1Min The minimum amount of token1 to receive
+     * @param deadline The deadline by which the transaction must be executed
+     */
+    struct WithdrawParams {
+        PoolId poolId;
+        uint256 shares;
+        uint256 amount0Min;
+        uint256 amount1Min;
+        uint256 deadline;
+    }
+
     /// @dev The Uniswap V4 PoolManager reference
     IPoolManager public immutable manager;
-    
+
     /// @dev ERC6909Claims token for position tokenization
     FullRangePositions public immutable positions;
-    
+
     /// @dev Stored pool data
     mapping(PoolId => uint128) public poolTotalShares;
-    
+
     /// @dev Pool keys for lookups
     mapping(PoolId => PoolKey) private _poolKeys;
-    
+
     /// @dev Maximum reserve cap to prevent unbounded growth
     uint256 public constant MAX_RESERVE = type(uint128).max;
-    
+
     /// @dev Address authorized to store pool keys (typically the associated hook contract)
     /// Set by the owner.
     address public authorizedHookAddress;
-    
+
     // Constants for minimum liquidity locking
     uint256 private constant MIN_LOCKED_SHARES = 1000; // e.g., 1000 wei, adjust as needed
     uint128 private constant MIN_LIQUIDITY = 1000; // Mimics Uniswap V2/V3 Minimum Liquidity
     uint128 private constant MIN_LOCKED_LIQUIDITY = 1000; // Lock 1000 units of liquidity
-    
+
     // Emergency controls
     bool public emergencyWithdrawalsEnabled = false;
     mapping(PoolId => bool) public poolEmergencyState;
     address public emergencyAdmin;
-            
+
     // Tracking locked liquidity
     mapping(PoolId => uint256) public lockedLiquidity;
-    
+
     // Constants
     uint256 private constant MIN_VIABLE_RESERVE = 100;
     uint256 private constant PERCENTAGE_PRECISION = 1_000_000; // 10^6 precision for percentage calculations
-    
+
     // Events for pool management
     event PoolKeyStored(PoolId indexed poolId, PoolKey key);
-    // Using events from the interface
-        
+    event AuthorizedHookAddressSet(address indexed hookAddress);
+    event MinimumLiquidityLocked(PoolId indexed poolId, uint128 amount);
+    event LiquidityAdded(
+        PoolId indexed poolId,
+        address indexed recipient,
+        uint256 amount0,
+        uint256 amount1,
+        uint128 oldTotalShares,
+        uint128 mintedShares,
+        uint256 timestamp
+    );
+    event LiquidityRemoved(
+        PoolId indexed poolId,
+        address indexed recipient,
+        uint256 amount0,
+        uint256 amount1,
+        uint128 oldTotalShares,
+        uint128 burnedShares,
+        uint256 timestamp
+    );
+    event PoolStateUpdated(PoolId indexed poolId, uint128 newTotalShares, uint8 opType);
+    event EmergencyWithdrawalCompleted(
+        PoolId indexed poolId, address indexed user, uint256 amount0, uint256 amount1, uint256 shares
+    );
+    event EmergencyStateActivated(PoolId indexed poolId, address indexed admin, string reason);
+    event EmergencyStateDeactivated(PoolId indexed poolId, address indexed admin);
+    event GlobalEmergencyStateChanged(bool enabled, address indexed admin);
+    event TokensBorrowed(
+        PoolId indexed poolId, address indexed recipient, uint256 amount0, uint256 amount1, uint256 shares
+    );
+    event ProtocolFeesReinvested(PoolId indexed poolId, address indexed lm, uint256 amount0, uint256 amount1);
+    event Reinvested(PoolId indexed poolId, uint128 liquidityMinted, uint256 amount0, uint256 amount1);
+
     // Storage slot constants for V4 state access
     bytes32 private constant POOLS_SLOT = bytes32(uint256(6));
     uint256 private constant POSITIONS_OFFSET = 6;
-    
-    
+
+    /// @notice Operation selector sent to the hook/PoolManager via `unlock`
+    enum CallbackType {
+        DEPOSIT,
+        WITHDRAW,
+        BORROW,
+        REINVEST_PROTOCOL_FEES
+    }
+
+    /// @notice Encoded in `unlock` calldata so Spot ↔︎ LM stay in sync
+    struct CallbackData {
+        PoolId poolId;
+        CallbackType callbackType;
+        uint128 shares; // v4‑liquidity to add/remove
+        uint128 oldTotalShares; // bookkeeping
+        uint256 amount0;
+        uint256 amount1;
+        address recipient; // where token balances finally go
+    }
+
     /**
      * @notice Constructor
      * @param _manager The Uniswap V4 pool manager
@@ -112,20 +176,24 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      */
     constructor(IPoolManager _manager, address _owner) Owned(_owner) {
         manager = _manager;
-        
+
         // Create position token contract
         positions = new FullRangePositions("FullRange Position", "FRP", address(this));
     }
-    
+
     /**
-     * @notice Sets the address authorized to call `storePoolKey`.
-     * @param _hookAddress The address of the authorized hook contract.
+     * @notice Sets the authorized hook address (Spot contract)
+     * @dev Can only be set once by the owner.
+     * @param _hookAddress The address of the Spot hook contract.
      */
     function setAuthorizedHookAddress(address _hookAddress) external onlyOwner {
-        if (_hookAddress == address(0)) revert Errors.ZeroAddress();
+        // Ensure it can only be set once
+        require(authorizedHookAddress == address(0), "Hook address already set");
+        require(_hookAddress != address(0), "Invalid address");
         authorizedHookAddress = _hookAddress;
+        emit AuthorizedHookAddressSet(_hookAddress);
     }
-    
+
     /**
      * @notice Access control modifier for emergency admin
      */
@@ -135,24 +203,25 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
         _;
     }
-    
+
     /**
      * @notice Access control modifier to ensure only FullRange contract can call this function
      */
     modifier onlyFullRange() {
+        if (authorizedHookAddress == address(0)) revert Errors.NotInitialized("AuthorizedHookAddress");
         if (msg.sender != authorizedHookAddress) {
             revert Errors.AccessNotAuthorized(msg.sender);
         }
         _;
     }
-    
+
     /**
      * @notice Allows the contract to receive ETH
      */
     receive() external payable {}
-    
+
     // === POOL MANAGEMENT FUNCTIONS ===
-    
+
     /**
      * @notice Stores the PoolKey associated with a PoolId.
      * @dev Called by the authorized hook during its afterInitialize phase.
@@ -165,7 +234,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         _poolKeys[poolId] = key;
         emit PoolKeyStored(poolId, key);
     }
-    
+
     /**
      * @notice Get the PoolKey for a given PoolId (implements interface)
      * @param poolId The Pool ID to look up
@@ -176,7 +245,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (key.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
         return key;
     }
-    
+
     /**
      * @notice Get the tickSpacing for a given PoolId
      * @param poolId The Pool ID to look up
@@ -185,7 +254,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     function getPoolTickSpacing(PoolId poolId) external view returns (int24) {
         return _poolKeys[poolId].tickSpacing;
     }
-            
+
     /**
      * @notice Get the position token contract
      * @return The position token contract
@@ -193,9 +262,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     function getPositionsContract() external view returns (FullRangePositions) {
         return positions;
     }
-    
+
     // === LIQUIDITY MANAGEMENT FUNCTIONS ===
-    
+
     /**
      * @notice Deposit tokens into a pool with native ETH support
      * @dev Uses PoolId to manage state for the correct pool.
@@ -208,52 +277,34 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint256 amount0Min,
         uint256 amount1Min,
         address recipient
-    ) external payable override nonReentrant returns (
-        uint256 usableShares, // Renamed from usableLiquidity for clarity
-        uint256 amount0,
-        uint256 amount1
-    ) {
+    ) external payable override nonReentrant returns (uint256 usableShares, uint256 amount0, uint256 amount1) {
         if (recipient == address(0)) revert Errors.ZeroAddress();
         if (!isPoolInitialized(poolId)) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
         if (amount0Desired == 0 && amount1Desired == 0) revert Errors.ZeroAmount(); // Must desire some amount
-        
+
         PoolKey memory key = _poolKeys[poolId]; // Use poolId
-        ( , uint160 sqrtPriceX96, ) = getPositionData(poolId); // Use poolId
+        (, uint160 sqrtPriceX96,) = getPositionData(poolId); // Use poolId
         // Note: getPositionData reads liquidity from the *pool*, not poolTotalShares mapping
         // We need poolTotalShares for share calculation consistency
         uint128 totalSharesInternal = poolTotalShares[poolId]; // Use poolId
-        
-        if (sqrtPriceX96 == 0 && totalSharesInternal == 0) { 
-             bytes32 stateSlot = _getPoolStateSlot(poolId); // Use poolId
-             try manager.extsload(stateSlot) returns (bytes32 slot0Data) {
-                 sqrtPriceX96 = uint160(uint256(slot0Data));
-             } catch {
-                 revert Errors.FailedToReadPoolData(poolId); // Use poolId
-             }
-             if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Pool price is zero");
+
+        if (sqrtPriceX96 == 0 && totalSharesInternal == 0) {
+            bytes32 stateSlot = _getPoolStateSlot(poolId); // Use poolId
+            try manager.extsload(stateSlot) returns (bytes32 slot0Data) {
+                sqrtPriceX96 = uint160(uint256(slot0Data));
+            } catch {
+                revert Errors.FailedToReadPoolData(poolId); // Use poolId
+            }
+            if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Pool price is zero");
         }
-                
+
         bool hasToken0Native = key.currency0.isAddressZero();
         bool hasToken1Native = key.currency1.isAddressZero();
-        console2.log("[_deposit] After initial state reads & checks"); // ADDED LOG
-        console2.log("[_deposit] sqrtPriceX96:", sqrtPriceX96); // ADDED LOG
-        console2.log("[_deposit] totalSharesInternal:", totalSharesInternal); // ADDED LOG
-        console2.log("[_deposit] hasToken0Native:", hasToken0Native); // ADDED LOG
-        console2.log("[_deposit] hasToken1Native:", hasToken1Native); // ADDED LOG
 
-        // Use internal share count for calculations
-        (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId); // Line 234 - Calls getPositionData again
-        console2.log("[_deposit] After getPoolReserves"); // ADDED LOG
-        console2.log("[_deposit] reserve0:", reserve0); // ADDED LOG
-        console2.log("[_deposit] reserve1:", reserve1); // ADDED LOG
+        // ——— 3) single‐read slot0 and reuse it for getPoolReserves
+        (uint256 reserve0, uint256 reserve1) = getPoolReservesWithPrice(poolId, sqrtPriceX96);
 
-        // Add new logging here
-        console2.log("[_deposit] About to calculate deposit shares");
-        console2.log("[_deposit] amount0Desired:", amount0Desired);
-        console2.log("[_deposit] amount1Desired:", amount1Desired);
-        console2.log("[_deposit] Before calling _calculateDepositShares or _handleFirstDeposit");
-
-        // MODIFIED: Create a struct and populate it instead of having function return a struct
+        // Calculate deposit shares
         DepositCalculationResult memory calcResult = DepositCalculationResult({
             actual0: 0,
             actual1: 0,
@@ -261,8 +312,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             lockedAmount: 0,
             v4LiquidityForCallback: 0
         });
-
-        // MODIFIED: Call the function to fill the struct (pass by reference)
         _calculateDepositSharesInternal(
             totalSharesInternal,
             sqrtPriceX96,
@@ -271,105 +320,89 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             amount1Desired,
             reserve0,
             reserve1,
-            calcResult // Pass the struct to be filled
+            calcResult
         );
-
-        console2.log("[_deposit] After _calculateDepositShares - reached here");
-
-        // Assign to output variables from struct
         amount0 = calcResult.actual0;
         amount1 = calcResult.actual1;
-        uint128 sharesToAdd = calcResult.sharesToAdd; // V2 shares
-        uint128 lockedAmount = calcResult.lockedAmount; // V2 locked
-        uint128 v4LiquidityForPM = calcResult.v4LiquidityForCallback; // V4 liquidity
+        uint128 sharesToAdd = calcResult.sharesToAdd;
+        uint128 v4LiquidityForPM = calcResult.v4LiquidityForCallback;
 
-        // Calculate total liquidity based on V4 for PM interaction
-        // uint128 totalV2Liquidity = sharesToAdd + lockedAmount; 
-        // console2.log("[_deposit] Total V2 Liquidity for callback:", uint256(totalV2Liquidity));
-        console2.log("[_deposit] V4 Liquidity for callback:", uint256(v4LiquidityForPM));
-
+        // Checks after calculation
         if (amount0 < amount0Min || amount1 < amount1Min) {
             revert Errors.SlippageExceeded(
-                (amount0 < amount0Min) ? amount0Min : amount1Min, 
-                (amount0 < amount0Min) ? amount0 : amount1
+                (amount0 < amount0Min) ? amount0Min : amount1Min, (amount0 < amount0Min) ? amount0 : amount1
             );
         }
-        
+
         // ETH Handling
-        uint256 ethNeeded = 0;
-        if (hasToken0Native) ethNeeded += amount0;
-        if (hasToken1Native) ethNeeded += amount1;
+        uint256 ethNeeded = (hasToken0Native ? amount0 : 0) + (hasToken1Native ? amount1 : 0);
         if (msg.value < ethNeeded) {
             revert Errors.InsufficientETH(ethNeeded, msg.value);
         }
-        
+
         uint128 oldTotalSharesInternal = totalSharesInternal;
         // The internal tracking should track V4 liquidity for consistency with PoolManager
-        uint128 newTotalSharesInternal = oldTotalSharesInternal + v4LiquidityForPM; 
+        uint128 newTotalSharesInternal = oldTotalSharesInternal + v4LiquidityForPM;
         poolTotalShares[poolId] = newTotalSharesInternal; // Update internal share count using poolId
-        
+
         // Lock minimum liquidity based on V4 liquidity?
-        if (v4LiquidityForPM > MIN_LOCKED_LIQUIDITY && lockedLiquidity[poolId] == 0) { // Use poolId
+        if (v4LiquidityForPM > MIN_LOCKED_LIQUIDITY && lockedLiquidity[poolId] == 0) {
+            // Use poolId
             lockedLiquidity[poolId] = MIN_LOCKED_LIQUIDITY; // Use poolId
             emit MinimumLiquidityLocked(poolId, MIN_LOCKED_LIQUIDITY); // Use poolId
         }
-        
+
         usableShares = uint256(sharesToAdd);
-        if (usableShares > 0) { // Only mint if there are usable shares
+        if (usableShares > 0) {
+            // Only mint if there are usable shares
             uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId); // Use poolId
             positions.mint(recipient, tokenId, usableShares);
         }
-                
+
         // Transfer non-native tokens from msg.sender
         if (amount0 > 0 && !hasToken0Native) {
-            console2.log("[_deposit] Transferring actual0 (USDC):", amount0);
-            console2.log("[_deposit] From:", msg.sender, "To:", address(this));
-            console2.log("[_deposit] Token0 Address:", Currency.unwrap(key.currency0));
             SafeTransferLib.safeTransferFrom(ERC20(Currency.unwrap(key.currency0)), msg.sender, address(this), amount0);
         }
         // Uncomment the second transfer
         // /*
         if (amount1 > 0 && !hasToken1Native) {
-            console2.log("[_deposit] Transferring actual1 (WETH):", amount1);
-            console2.log("[_deposit] From:", msg.sender, "To:", address(this));
-            console2.log("[_deposit] Token1 Address:", Currency.unwrap(key.currency1));
             SafeTransferLib.safeTransferFrom(ERC20(Currency.unwrap(key.currency1)), msg.sender, address(this), amount1);
         }
         // */
-                
+
         // Prepare callback data
         CallbackData memory callbackData = CallbackData({
             poolId: poolId, // Use poolId
-            callbackType: CallbackType.DEPOSIT, 
+            callbackType: CallbackType.DEPOSIT,
             shares: v4LiquidityForPM, // Pass the V4 calculated total liquidity
             oldTotalShares: oldTotalSharesInternal,
             amount0: amount0,
             amount1: amount1,
             recipient: address(this) // Unlock target is this contract
         });
-        
+
         // Unlock calls modifyLiquidity via hook and transfers tokens to PoolManager
         manager.unlock(abi.encode(callbackData));
-        
+
         // Refund excess ETH
         if (msg.value > ethNeeded) {
             SafeTransferLib.safeTransferETH(msg.sender, msg.value - ethNeeded);
         }
-        
+
         emit LiquidityAdded(
             poolId, // Use poolId
             recipient,
             amount0,
             amount1,
-            oldTotalSharesInternal, 
+            oldTotalSharesInternal,
             uint128(usableShares),
             block.timestamp
         );
         emit PoolStateUpdated(poolId, newTotalSharesInternal, uint8(CallbackType.DEPOSIT)); // Use poolId
-        
+
         return (usableShares, amount0, amount1);
     }
-    
+
     /**
      * @notice Calculates deposit shares based on desired amounts and pool state, filling the provided result struct.
      * @param totalSharesInternal Current total shares tracked internally.
@@ -393,17 +426,11 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     ) internal pure {
         if (totalSharesInternal == 0) {
             // First deposit logic moved to helper
-            _handleFirstDepositInternal(
-                sqrtPriceX96,
-                tickSpacing,
-                amount0Desired,
-                amount1Desired,
-                result
-            );
+            _handleFirstDepositInternal(sqrtPriceX96, tickSpacing, amount0Desired, amount1Desired, result);
         } else {
             // Subsequent deposits - calculate liquidity (shares) based on one amount and reserves ratio
             // if (reserve0 == 0 || reserve1 == 0) revert Errors.ValidationInvalidInput("Reserves are zero"); // Commented out - Reserves can be zero initially
-            
+
             uint256 shares0 = MathUtils.calculateProportional(amount0Desired, totalSharesInternal, reserve0, true);
             uint256 shares1 = MathUtils.calculateProportional(amount1Desired, totalSharesInternal, reserve1, true);
             uint256 optimalShares = shares0 < shares1 ? shares0 : shares1;
@@ -413,7 +440,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             // Calculate actual amounts based on the determined shares and reserves ratio
             uint256 actual0 = MathUtils.calculateProportional(reserve0, uint256(shares), totalSharesInternal, true);
             uint256 actual1 = MathUtils.calculateProportional(reserve1, uint256(shares), totalSharesInternal, true);
-            
+
             uint128 lockedSharesAmount = 0; // No locking for subsequent deposits
 
             // Cap amounts at MAX_RESERVE if needed
@@ -484,14 +511,14 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (totalV2Shares < minLiq128) {
             revert Errors.InitialDepositTooSmall(minLiq128, totalV2Shares.toUint128());
         }
-        
+
         uint256 usableV2Shares = totalV2Shares - minLiq128;
         if (usableV2Shares == 0) {
             revert Errors.InitialDepositTooSmall(minLiq128, totalV2Shares.toUint128());
         }
 
         // Populate Result Struct
-        result.actual0 = actual0; 
+        result.actual0 = actual0;
         result.actual1 = actual1;
         result.sharesToAdd = usableV2Shares.toUint128();
         result.lockedAmount = minLiq128;
@@ -503,32 +530,28 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @dev Uses PoolId to manage state for the correct pool.
      * @inheritdoc IFullRangeLiquidityManager
      */
-    function withdraw(
-        PoolId poolId,
-        uint256 sharesToBurn,
-        uint256 amount0Min,
-        uint256 amount1Min,
-        address recipient
-    ) external override nonReentrant returns (
-        uint256 amount0,
-        uint256 amount1
-    ) {
+    function withdraw(PoolId poolId, uint256 sharesToBurn, uint256 amount0Min, uint256 amount1Min, address recipient)
+        external
+        override
+        nonReentrant
+        returns (uint256 amount0, uint256 amount1)
+    {
         if (recipient == address(0)) revert Errors.ZeroAddress();
         if (!isPoolInitialized(poolId)) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
         if (sharesToBurn == 0) revert Errors.ZeroAmount();
-        
+
         uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId); // Use poolId
         // Check shares of msg.sender who is burning tokens
         uint256 userShareBalance = positions.balanceOf(msg.sender, tokenId);
-        if (userShareBalance < sharesToBurn) {
+        if (sharesToBurn > userShareBalance) {
             revert Errors.InsufficientShares(sharesToBurn, userShareBalance);
         }
-        
+
         uint128 totalV4Liquidity = poolTotalShares[poolId]; // Read total V4 liquidity
         if (totalV4Liquidity == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
-        
+
         uint256 lockedV4Liquidity = lockedLiquidity[poolId]; // Get locked V4 liquidity
-        
+
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId); // Use poolId
 
         // Calculate withdrawal amounts and V4 liquidity to remove
@@ -540,39 +563,38 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             reserve1,
             lockedV4Liquidity // Pass the locked liquidity
         );
-        
+
         if (amount0 < amount0Min || amount1 < amount1Min) {
-             revert Errors.SlippageExceeded(
-                (amount0 < amount0Min) ? amount0Min : amount1Min, 
-                (amount0 < amount0Min) ? amount0 : amount1
+            revert Errors.SlippageExceeded(
+                (amount0 < amount0Min) ? amount0Min : amount1Min, (amount0 < amount0Min) ? amount0 : amount1
             );
         }
-        
+
         PoolKey memory key = _poolKeys[poolId]; // Use poolId
 
         uint128 oldTotalV4Liquidity = totalV4Liquidity;
         // Update total V4 liquidity by subtracting the calculated V4 amount
         uint128 newTotalV4Liquidity = oldTotalV4Liquidity - v4LiquidityToRemove;
         poolTotalShares[poolId] = newTotalV4Liquidity; // Update the tracking
-        
+
         // Burn usable position tokens from msg.sender *before* calling unlock
         // Use sharesToBurn (the usable amount) for the ERC6909 burn
         positions.burn(msg.sender, tokenId, sharesToBurn);
-        
+
         // Prepare callback data
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
-            callbackType: CallbackType.WITHDRAW, 
+            callbackType: CallbackType.WITHDRAW,
             shares: v4LiquidityToRemove, // Pass the V4 liquidity amount to remove
             oldTotalShares: oldTotalV4Liquidity,
             amount0: amount0,
             amount1: amount1,
             recipient: address(this) // Unlock target is this contract
         });
-        
+
         // Unlock calls modifyLiquidity via hook and transfers tokens from PoolManager
         manager.unlock(abi.encode(callbackData));
-        
+
         // Transfer withdrawn tokens to the recipient
         if (amount0 > 0) {
             CurrencyLibrary.transfer(key.currency0, recipient, amount0);
@@ -580,7 +602,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (amount1 > 0) {
             CurrencyLibrary.transfer(key.currency1, recipient, amount1);
         }
-        
+
         emit LiquidityRemoved(
             poolId, // Use poolId
             recipient,
@@ -591,10 +613,10 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             block.timestamp
         );
         emit PoolStateUpdated(poolId, newTotalV4Liquidity, uint8(CallbackType.WITHDRAW)); // Log new total V4 liquidity
-        
+
         return (amount0, amount1);
     }
-    
+
     /**
      * @notice Pull tokens from the pool manager to this contract
      * @param token The token address (address(0) for ETH)
@@ -607,14 +629,14 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
 
     /**
-     * @notice Emergency withdraw function, available only when emergency mode is enabled
-     * @param params Withdrawal parameters
-     * @param user The user withdrawing liquidity
-     * @return delta The balance delta from the liquidity removal
+     * @notice Emergency withdrawal function that bypasses slippage checks
+     * @param params The withdrawal parameters
+     * @param user The user address
+     * @return delta The balance delta from the operation
      * @return amount0Out Token0 amount withdrawn
      * @return amount1Out Token1 amount withdrawn
      */
-    function emergencyWithdraw(IFullRangeLiquidityManager.WithdrawParams calldata params, address user)
+    function emergencyWithdraw(WithdrawParams calldata params, address user)
         external
         nonReentrant
         returns (BalanceDelta delta, uint256 amount0Out, uint256 amount1Out)
@@ -622,19 +644,20 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         PoolId poolId = params.poolId; // Extract poolId
         if (!isPoolInitialized(poolId)) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
 
-        if (!emergencyWithdrawalsEnabled && !poolEmergencyState[poolId]) { // Use poolId
+        if (!emergencyWithdrawalsEnabled && !poolEmergencyState[poolId]) {
+            // Use poolId
             revert Errors.ValidationInvalidInput("Emergency withdraw not enabled");
         }
-                        
+
         uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId); // Use poolId
         uint256 userShareBalance = positions.balanceOf(user, tokenId);
-        
+
         uint256 sharesToBurn = params.shares;
         if (sharesToBurn == 0) revert Errors.ZeroAmount();
         if (sharesToBurn > userShareBalance) {
             revert Errors.InsufficientShares(sharesToBurn, userShareBalance);
         }
-        
+
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId); // Use poolId
         uint128 totalSharesInternal = poolTotalShares[poolId]; // Use poolId
         uint256 lockedV4Liquidity = lockedLiquidity[poolId]; // Get locked liquidity for the pool
@@ -648,35 +671,35 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             reserve1,
             lockedV4Liquidity // Pass the locked liquidity
         );
-        
+
         PoolKey memory key = _poolKeys[poolId]; // Use poolId
         address token0 = Currency.unwrap(key.currency0);
         address token1 = Currency.unwrap(key.currency1);
-        
+
         uint128 oldTotalShares = totalSharesInternal;
         uint128 newTotalShares = oldTotalShares - sharesToBurn.toUint128();
         poolTotalShares[poolId] = newTotalShares; // Use poolId
-        
+
         positions.burn(user, tokenId, sharesToBurn);
-        
+
         // CallbackData setup uses poolId correctly
         CallbackData memory callbackData = CallbackData({
-            poolId: poolId, 
-            callbackType: CallbackType.WITHDRAW, 
+            poolId: poolId,
+            callbackType: CallbackType.WITHDRAW,
             shares: sharesToBurn.toUint128(),
             oldTotalShares: oldTotalShares,
             amount0: amount0Out,
             amount1: amount1Out,
             recipient: user // Target recipient for withdrawal
         });
-        
+
         // Unlock handles modifyLiquidity and initial token movement
         bytes memory result = manager.unlock(abi.encode(callbackData));
         delta = abi.decode(result, (BalanceDelta));
-        
+
         // Handle delta - Pull tokens owed to this contract
         CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, address(this));
-        
+
         // Transfer final tokens to user
         if (amount0Out > 0) {
             _safeTransferToken(token0, user, amount0Out);
@@ -684,16 +707,18 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (amount1Out > 0) {
             _safeTransferToken(token1, user, amount1Out);
         }
-        
+
         emit EmergencyWithdrawalCompleted(poolId, user, amount0Out, amount1Out, sharesToBurn);
-        emit LiquidityRemoved(poolId, user, amount0Out, amount1Out, oldTotalShares, sharesToBurn.toUint128(), block.timestamp);
+        emit LiquidityRemoved(
+            poolId, user, amount0Out, amount1Out, oldTotalShares, sharesToBurn.toUint128(), block.timestamp
+        );
         emit PoolStateUpdated(poolId, newTotalShares, uint8(CallbackType.WITHDRAW));
-        
+
         return (delta, amount0Out, amount1Out);
     }
-    
+
     // === EMERGENCY CONTROLS ===
-    
+
     /**
      * @notice Enable emergency withdrawals for a specific pool
      * @param poolId The pool ID
@@ -703,7 +728,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         poolEmergencyState[poolId] = true;
         emit EmergencyStateActivated(poolId, msg.sender, reason);
     }
-    
+
     /**
      * @notice Disable emergency withdrawals for a specific pool
      * @param poolId The pool ID
@@ -712,7 +737,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         poolEmergencyState[poolId] = false;
         emit EmergencyStateDeactivated(poolId, msg.sender);
     }
-    
+
     /**
      * @notice Enable or disable global emergency withdrawals
      * @param enabled Whether emergency withdrawals should be enabled
@@ -721,7 +746,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         emergencyWithdrawalsEnabled = enabled;
         emit GlobalEmergencyStateChanged(enabled, msg.sender);
     }
-            
+
     // === INTERNAL HELPER FUNCTIONS ===
 
     /**
@@ -784,20 +809,21 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Note: We use totalV4Liquidity as the basis for proportionality to withdraw the correct fraction of overall pool assets.
         // We use totalUsableShares as the denominator corresponding to the usableSharesToBurn amount.
         v4LiquidityToWithdraw = MathUtils.calculateProportional(
-            totalV4Liquidity,    // Basis is total V4 liquidity
-            usableSharesToBurn,  // Amount is usable shares to burn
-            totalUsableShares,   // Denominator is total usable shares
-            false                // Round down
-        ).toUint128();
+            totalV4Liquidity, usableSharesToBurn, totalUsableShares, false
+        ) // Basis is total V4 liquidity
+                // Amount is usable shares to burn
+                // Denominator is total usable shares
+                // Round down
+            .toUint128();
 
         if (v4LiquidityToWithdraw == 0 && usableSharesToBurn > 0) {
             // This might happen due to rounding if sharesToBurn is very small relative to total
             // Revert because user intended to burn non-zero shares.
-            revert Errors.WithdrawAmountTooSmall(); 
+            revert Errors.WithdrawAmountTooSmall();
         }
         if (v4LiquidityToWithdraw > totalV4Liquidity) {
             // Safety check against proportion calculation errors
-            revert Errors.ValidationInvalidInput("Calculated withdraw liquidity exceeds total"); 
+            revert Errors.ValidationInvalidInput("Calculated withdraw liquidity exceeds total");
         }
 
         // Calculate token amounts based on the V4 liquidity being withdrawn proportionally from reserves
@@ -812,9 +838,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @return sqrtPriceX96 Current sqrt price.
      * @return success Boolean indicating if data read was successful.
      */
-    function getPositionData(PoolId poolId) 
-        public 
-        view 
+    function getPositionData(PoolId poolId)
+        public
+        view
         returns (uint128 liquidity, uint160 sqrtPriceX96, bool success)
     {
         PoolKey memory key = _poolKeys[poolId]; // Use poolId
@@ -825,23 +851,23 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         // Calculate position key
         bytes32 positionKey = Position.calculatePositionKey(address(this), tickLower, tickUpper, bytes32(0));
-        
+
         // IMPORTANT: We need to get the correct storage slot for this position
         // First get the pool state slot
         bytes32 stateSlot = keccak256(abi.encodePacked(PoolId.unwrap(poolId), POOLS_SLOT));
         // Get the position mapping slot
         bytes32 positionMappingSlot = bytes32(uint256(stateSlot) + POSITIONS_OFFSET);
         // Calculate the final position slot
-        bytes32 positionSlot = keccak256(abi.encodePacked(positionKey, positionMappingSlot));
-        
+        // bytes32 positionSlot = keccak256(abi.encodePacked(positionKey, positionMappingSlot)); // Removed assignment
+
         // Get global Slot0 data to retrieve sqrtPriceX96
-        (sqrtPriceX96, , , ) = StateLibrary.getSlot0(manager, poolId);
-        
+        (sqrtPriceX96,,,) = StateLibrary.getSlot0(manager, poolId);
+
         // Now read the position's liquidity from storage
         // Use StateLibrary to get position info instead of direct storage access
         liquidity = StateLibrary.getPositionLiquidity(manager, poolId, positionKey);
         success = liquidity > 0 && sqrtPriceX96 > 0;
-        
+
         return (liquidity, sqrtPriceX96, success);
     }
 
@@ -860,8 +886,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         PoolKey memory key = _poolKeys[poolId]; // Assume key exists if position data was successful
         if (key.tickSpacing == 0) {
-             // This case should ideally not happen if success is true, but added as safeguard
-            return (0, 0); 
+            // This case should ideally not happen if success is true, but added as safeguard
+            return (0, 0);
         }
 
         int24 tickLower = TickMath.minUsableTick(key.tickSpacing);
@@ -891,7 +917,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @param poolId The pool ID.
      */
     function isPoolInitialized(PoolId poolId) public view returns (bool) {
-        bytes32 _poolIdBytes = PoolId.unwrap(poolId); // Rename to avoid conflict
+        // bytes32 _poolIdBytes = PoolId.unwrap(poolId); // avoid "unused" warning - Removed assignment
         // Check if tickSpacing is non-zero, indicating the key has been stored
         return _poolKeys[poolId].tickSpacing != 0; // Use original poolId for mapping access
     }
@@ -906,12 +932,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Convert addresses to Currency types for consistent abstraction
         Currency currency0 = Currency.wrap(token0);
         Currency currency1 = Currency.wrap(token1);
-        
+
         // Handle token0 transfer
         int128 amount0 = delta.amount0();
         if (amount0 < 0) {
             uint256 amount = uint256(int256(-amount0));
-            
+
             if (currency0.isAddressZero()) {
                 // Handle native ETH
                 manager.settle{value: amount}();
@@ -924,12 +950,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             // Need to receive tokens from the pool
             manager.take(currency0, address(this), uint256(int256(amount0)));
         }
-        
+
         // Handle token1 transfer
         int128 amount1 = delta.amount1();
         if (amount1 < 0) {
             uint256 amount = uint256(int256(-amount1));
-            
+
             if (currency1.isAddressZero()) {
                 // Handle native ETH
                 manager.settle{value: amount}();
@@ -943,7 +969,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             manager.take(currency1, address(this), uint256(int256(amount1)));
         }
     }
-    
+
     /**
      * @notice Transfer token to recipient, handling ETH and ERC20 correctly
      * @param token The token address (address(0) for ETH)
@@ -952,7 +978,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      */
     function _safeTransferToken(address token, address to, uint256 amount) internal {
         if (amount == 0) return;
-        
+
         Currency currency = Currency.wrap(token);
         if (currency.isAddressZero()) {
             SafeTransferLib.safeTransferETH(to, amount);
@@ -961,7 +987,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             SafeTransferLib.safeTransfer(ERC20(token), to, amount);
         }
     }
-    
+
     /**
      * @notice Get the storage slot for a pool's state
      * @param poolId The pool ID
@@ -976,15 +1002,15 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @dev The `initialized` flag is true if shares > 0.
      * @inheritdoc IFullRangeLiquidityManager
      */
-    function getAccountPosition(PoolId poolId, address account) 
-        external 
-        view 
-        override 
+    function getAccountPosition(PoolId poolId, address account)
+        external
+        view
+        override
         returns (bool initialized, uint256 shares)
     {
         uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId); // Use poolId
         shares = positions.balanceOf(account, tokenId);
-        initialized = shares > 0; 
+        initialized = shares > 0;
     }
 
     /**
@@ -995,24 +1021,23 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @return amount0 Amount of token0 received
      * @return amount1 Amount of token1 received
      */
-    function borrowImpl(
-        PoolId poolId,
-        uint256 sharesToBorrow,
-        address recipient
-    ) external returns (uint256 amount0, uint256 amount1) {
+    function borrowImpl(PoolId poolId, uint256 sharesToBorrow, address recipient)
+        external
+        returns (uint256 amount0, uint256 amount1)
+    {
         if (!isPoolInitialized(poolId)) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
         if (recipient == address(0)) revert Errors.ZeroAddress();
         if (sharesToBorrow == 0) revert Errors.ZeroAmount();
 
         uint128 totalSharesInternal = poolTotalShares[poolId];
         if (totalSharesInternal == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
-        
+
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId);
-        
+
         // Calculate amounts based on shares
         amount0 = MathUtils.calculateProportional(reserve0, sharesToBorrow, totalSharesInternal, false);
         amount1 = MathUtils.calculateProportional(reserve1, sharesToBorrow, totalSharesInternal, false);
-        
+
         // Prepare callback data
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
@@ -1023,12 +1048,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             amount1: amount1,
             recipient: recipient
         });
-        
+
         // Unlock calls modifyLiquidity via hook and transfers tokens
         manager.unlock(abi.encode(callbackData));
-        
+
         emit TokensBorrowed(poolId, recipient, amount0, amount1, sharesToBorrow);
-        
+
         return (amount0, amount1);
     }
 
@@ -1039,28 +1064,37 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @param polAmount1 Amount of token1 for protocol-owned liquidity
      * @return shares The number of POL shares minted
      */
-    function reinvestFees(
-        PoolId poolId,
-        uint256 polAmount0,
-        uint256 polAmount1
-    ) external returns (uint256 shares) {
+    function reinvestFees(PoolId poolId, uint256 polAmount0, uint256 polAmount1)
+        external
+        payable
+        nonReentrant
+        returns (uint256 shares)
+    {
         if (!isPoolInitialized(poolId)) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
         if (polAmount0 == 0 && polAmount1 == 0) revert Errors.ZeroAmount();
-        
+
         PoolKey memory key = _poolKeys[poolId];
         uint128 totalSharesInternal = poolTotalShares[poolId];
-        
+
+        // ————— 1a) require correct ETH if one side is native
+        bool t0Native = key.currency0.isAddressZero();
+        bool t1Native = key.currency1.isAddressZero();
+        uint256 neededEth = (t0Native ? polAmount0 : 0) + (t1Native ? polAmount1 : 0);
+        require(msg.value == neededEth, "FullRangeLM: wrong ETH");
+
         // Get current pool state
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId);
-        
+
         // Calculate shares based on the ratio of provided amounts to current reserves
-        uint256 shares0 = reserve0 > 0 ? MathUtils.calculateProportional(polAmount0, totalSharesInternal, reserve0, true) : 0;
-        uint256 shares1 = reserve1 > 0 ? MathUtils.calculateProportional(polAmount1, totalSharesInternal, reserve1, true) : 0;
-        
+        uint256 shares0 =
+            reserve0 > 0 ? MathUtils.calculateProportional(polAmount0, totalSharesInternal, reserve0, true) : 0;
+        uint256 shares1 =
+            reserve1 > 0 ? MathUtils.calculateProportional(polAmount1, totalSharesInternal, reserve1, true) : 0;
+
         // Use the smaller share amount to maintain ratio
         shares = shares0 < shares1 ? shares0 : shares1;
         if (shares == 0) revert Errors.ZeroAmount();
-        
+
         // Prepare callback data
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
@@ -1071,12 +1105,18 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             amount1: polAmount1,
             recipient: address(this)
         });
-        
-        // Unlock calls modifyLiquidity via hook and transfers tokens
+
+        // ————— 2) perform the re‑entrancy + liquidity add (pass ETH along if needed)
         manager.unlock(abi.encode(callbackData));
-        
+
+        // ————— 2b) cleanup ERC‑20 approvals
+        address t0 = Currency.unwrap(key.currency0);
+        address t1 = Currency.unwrap(key.currency1);
+        if (!t0Native && polAmount0 > 0) SafeTransferLib.safeApprove(ERC20(t0), address(manager), 0);
+        if (!t1Native && polAmount1 > 0) SafeTransferLib.safeApprove(ERC20(t1), address(manager), 0);
+
         emit ProtocolFeesReinvested(poolId, address(this), polAmount0, polAmount1);
-        
+
         return shares;
     }
 
@@ -1088,7 +1128,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     function getShareValue(PoolId poolId, uint256 shares) external view returns (uint256 amount0, uint256 amount1) {
         uint128 totalShares = poolTotalShares[poolId];
         if (totalShares == 0) return (0, 0);
-        
+
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId);
         amount0 = MathUtils.calculateProportional(reserve0, shares, totalShares, false);
         amount1 = MathUtils.calculateProportional(reserve1, shares, totalShares, false);
@@ -1107,7 +1147,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @notice Update position cache
      * @param poolId The pool ID
      */
-    function updatePositionCache(PoolId poolId) external returns (bool success) {
+    function updatePositionCache(PoolId poolId) external pure returns (bool success) {
+        poolId; // silence
         // Implementation specific to your needs
         return false;
     }
@@ -1117,7 +1158,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @param poolId The pool ID
      * @param newTotalShares The new total shares value
      */
-    function updateTotalShares(PoolId poolId, uint128 newTotalShares) external {
+    function updateTotalShares(PoolId poolId, uint128 newTotalShares) external pure {
+        poolId;
+        newTotalShares; // silence
         // Implementation specific to your needs
         revert("Not implemented");
     }
@@ -1140,37 +1183,160 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         PoolKey memory key = _poolKeys[cbData.poolId];
         if (key.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(cbData.poolId));
 
-        BalanceDelta delta;
-
-        // Create ModifyLiquidityParams based on callback type
         int256 liquidityDelta;
         address recipient;
-
-        if (cbData.callbackType == CallbackType.DEPOSIT) {
+        if (cbData.callbackType == CallbackType.DEPOSIT ||
+            cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES) {
+            
             liquidityDelta = int256(uint256(cbData.shares));
-            recipient = address(this); // For deposits, tokens stay in this contract
+            recipient      = address(this); // Tokens stay/settle within LM
         } else if (cbData.callbackType == CallbackType.WITHDRAW ||
-                  cbData.callbackType == CallbackType.BORROW ||
-                  cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES) {
+                   cbData.callbackType == CallbackType.BORROW) {
             liquidityDelta = -int256(uint256(cbData.shares));
-            recipient = cbData.recipient; // For withdrawals/borrows/reinvests, send to recipient
+            recipient      = cbData.recipient; // Tokens sent to original caller
         } else {
             revert Errors.InvalidCallbackType(uint8(cbData.callbackType));
         }
 
-        // Modify liquidity in the pool
+        // Modify liquidity in the pool using liquidityDelta derived from cbData.shares
         IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
             tickLower: TickMath.minUsableTick(key.tickSpacing),
             tickUpper: TickMath.maxUsableTick(key.tickSpacing),
             liquidityDelta: liquidityDelta,
             salt: bytes32(0)
         });
-        
-        (delta,) = manager.modifyLiquidity(key, params, "");
+
+        (BalanceDelta actualDelta,) = manager.modifyLiquidity(key, params, "");
 
         // Handle settlement using CurrencySettlerExtension
-        CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, recipient);
+        CurrencySettlerExtension.handlePoolDelta(manager, actualDelta, key.currency0, key.currency1, recipient);
 
-        return abi.encode(delta);
+        // Return the actual delta from modifyLiquidity
+        return abi.encode(actualDelta);
     }
-} 
+
+    /**
+     * @notice Internal reinvestment tracking function that can only be called by Spot (fullRange)
+     * @dev This is called by the Spot contract during a successful reinvestment to update shares
+     * @param poolId The pool ID that was reinvested
+     * @param liquidity The amount of liquidity added during reinvestment
+     * @param recipient The address to receive any LP tokens (unused in current implementation)
+     */
+    function internalReinvest(PoolId poolId, uint128 liquidity, address recipient) external onlyFullRange {
+        recipient; // currently unused
+        if (liquidity == 0) return;
+
+        // Only update total shares if tracked internally
+        poolTotalShares[poolId] += liquidity;
+
+        // Removed positions.mint call
+
+        // Removed POLSharesMinted emit
+    }
+
+    /// helper required by the test-suite
+    function getPoolReservesAndShares(PoolId poolId)
+        external
+        view
+        override
+        returns (uint256 reserve0, uint256 reserve1, uint128 totalShares)
+    {
+        (reserve0, reserve1) = getPoolReserves(poolId);
+        totalShares = poolTotalShares[poolId];
+    }
+
+    /**
+     * @dev Protocol‑fee reinvest – assumes Spot has calculated required amounts.
+     *      Amounts/liquidity are provided; this function approves PM and initiates unlock.
+     *      The actual token `take` and `modifyLiquidity` happen in unlockCallback.
+     */
+    // --- Reverted to take use0, use1, liq --- 
+    function reinvest(PoolId poolId, uint256 use0, uint256 use1, uint128 liq)
+        external
+        payable 
+        override
+        onlyFullRange
+        nonReentrant
+        returns (uint128)
+    {
+        // sanity checks
+        PoolKey memory key = _poolKeys[poolId];
+        if (key.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
+        if (liq == 0) revert Errors.ZeroAmount(); 
+
+        // --- Reverted: Approve provided amounts --- 
+        address t0 = Currency.unwrap(key.currency0);
+        address t1 = Currency.unwrap(key.currency1);
+        if (use0 > 0 && t0 != address(0)) SafeTransferLib.safeApprove(ERC20(t0), address(manager), use0);
+        if (use1 > 0 && t1 != address(0)) SafeTransferLib.safeApprove(ERC20(t1), address(manager), use1);
+
+        // build callback data including amounts and liquidity
+        CallbackData memory cb = CallbackData({
+            poolId:         poolId,
+            callbackType:   CallbackType.REINVEST_PROTOCOL_FEES,
+            shares:         liq, // Use provided liquidity
+            oldTotalShares: poolTotalShares[poolId],
+            amount0:        use0, // Use provided amount0
+            amount1:        use1, // Use provided amount1
+            recipient:      address(this)
+        });
+        // --- END Reverted ---
+
+        // do the unlock → (modifyLiquidity -> settlement) dance
+        manager.unlock(abi.encode(cb));
+
+        // Clear allowances after unlock
+        if (use0 > 0 && t0 != address(0)) SafeTransferLib.safeApprove(ERC20(t0), address(manager), 0);
+        if (use1 > 0 && t1 != address(0)) SafeTransferLib.safeApprove(ERC20(t1), address(manager), 0);
+
+        // update internal accounting using the provided liquidity
+        poolTotalShares[poolId] += liq;
+        // Emit event with the amounts provided by Spot
+        emit Reinvested(poolId, liq, use0, use1);
+
+        return liq;
+    }
+
+    /**
+     * @notice Gets pool reserves using a pre-fetched sqrt price to avoid redundant reads.
+     * @param poolId The ID of the pool.
+     * @param sqrtPriceX96 The pre-fetched sqrtPriceX96 of the pool.
+     * @return reserve0 The reserve of token0.
+     * @return reserve1 The reserve of token1.
+     */
+    function getPoolReservesWithPrice(PoolId poolId, uint160 sqrtPriceX96)
+        public
+        view
+        returns (uint256 reserve0, uint256 reserve1)
+    {
+        PoolKey memory k = _poolKeys[poolId];
+        if (k.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
+
+        // 1) compute posKey & bail early if no liquidity
+        bytes32 posKey = Position.calculatePositionKey(
+            address(this), TickMath.minUsableTick(k.tickSpacing), TickMath.maxUsableTick(k.tickSpacing), bytes32(0)
+        );
+        uint128 liq = StateLibrary.getPositionLiquidity(manager, poolId, posKey);
+        if (liq == 0) return (0, 0);
+
+        // 2) now compute boundaries once
+        int24 lower = TickMath.minUsableTick(k.tickSpacing);
+        int24 upper = TickMath.maxUsableTick(k.tickSpacing);
+        uint160 sqrtA = TickMath.getSqrtPriceAtTick(lower);
+        uint160 sqrtB = TickMath.getSqrtPriceAtTick(upper);
+
+        // 3) select correct formula
+        if (sqrtPriceX96 <= sqrtA) {
+            // price below range → all in token0
+            reserve0 = SqrtPriceMath.getAmount0Delta(sqrtA, sqrtB, liq, false);
+            reserve1 = 0;
+        } else if (sqrtPriceX96 >= sqrtB) {
+            // price above range → all in token1
+            reserve1 = SqrtPriceMath.getAmount1Delta(sqrtA, sqrtB, liq, false);
+        } else {
+            // price within range → split across both
+            reserve0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtB, liq, false);
+            reserve1 = SqrtPriceMath.getAmount1Delta(sqrtA, sqrtPriceX96, liq, false);
+        }
+    }
+}
