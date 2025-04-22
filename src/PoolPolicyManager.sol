@@ -10,7 +10,6 @@ import {Errors} from "./errors/Errors.sol";
 import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {PolicyType} from "./libraries/PolicyType.sol";
 import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 
 /**
@@ -62,6 +61,33 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     address public feeCollector; // Optional: May not be used if all fees become POL
     mapping(address => bool) public authorizedReinvestors;
 
+    // === Dynamic Base‐Fee Feedback Parameters ===
+    /// Default: target CAP events per day (equilibrium)
+    uint256 public defaultTargetCapsPerDay;
+    /// Default: seconds over which freqScaled decays linearly to zero (6 months)
+    uint256 public defaultCapFreqDecayWindow;
+    /// Default: scaling factor for frequency (to avoid fractions; use 1e18)
+    uint256 public defaultFreqScaling;
+    /// Default minimum base‐fee (PPM) = 0.01%
+    uint256 public defaultMinBaseFeePpm;
+    /// Default maximum base‐fee (PPM) = 3%
+    uint256 public defaultMaxBaseFeePpm;
+    // Per‐pool overrides:
+    mapping(PoolId => uint256) public poolTargetCapsPerDay;
+    mapping(PoolId => uint256) public poolCapFreqDecayWindow;
+    mapping(PoolId => uint256) public poolFreqScaling;
+    mapping(PoolId => uint256) public poolMinBaseFeePpm;
+    mapping(PoolId => uint256) public poolMaxBaseFeePpm;
+
+    // --- Add new state for surge fee policy ---
+    /// Default: Initial surge fee (PPM) e.g., 0.5%
+    uint256 public defaultInitialSurgeFeePpm;
+    /// Default: Surge fee decay period (seconds) e.g., 1 hour
+    uint256 public defaultSurgeDecayPeriodSeconds;
+    // Per-pool overrides:
+    mapping(PoolId => uint256) public poolInitialSurgeFeePpm;
+    mapping(PoolId => uint256) public poolSurgeDecayPeriodSeconds;
+
     // Events
     event FeeConfigChanged(
         uint256 polSharePpm,
@@ -82,6 +108,12 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     event ProtocolInterestFeePercentageChanged(uint256 newPercentage);
     event FeeCollectorChanged(address newCollector);
     event AuthorizedReinvestorChanged(address indexed reinvestor, bool isAuthorized);
+    event POLShareSet(uint256 oldShare, uint256 newShare);
+    event FullRangeShareSet(uint256 oldShare, uint256 newShare);
+    event DefaultDynamicFeeSet(uint256 oldFee, uint256 newFee);
+    event POLFeeCollectorSet(address indexed oldCollector, address indexed newCollector);
+    event ProtocolInterestFeePercentageSet(uint256 oldPercentage, uint256 newPercentage);
+    event AuthorizedReinvestorSet(address indexed reinvestor, bool isAuthorized);
 
     /**
      * @notice Constructor initializes the policy manager with default values
@@ -135,6 +167,16 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         // Initialize Phase 4 parameters
         _setProtocolFeePercentage(_initialProtocolInterestFeePercentage);
         _setFeeCollector(_initialFeeCollector);
+
+        // Initialize dynamic‐base‐fee defaults
+        defaultTargetCapsPerDay   = 4;
+        defaultCapFreqDecayWindow = 180 days;
+        defaultFreqScaling        = 1e18;
+        defaultMinBaseFeePpm      = 100;    // 0.01%
+        defaultMaxBaseFeePpm      = 30000;  //   3%
+        // Initialize new surge defaults
+        defaultInitialSurgeFeePpm = 5000;   // 0.5%
+        defaultSurgeDecayPeriodSeconds = 3600; // 1 hour
     }
 
     // === Policy Management Functions ===
@@ -316,6 +358,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     function setDefaultDynamicFee(uint256 feePpm) external onlyOwner {
         if (feePpm < 1 || feePpm > 1000000) revert Errors.ParameterOutOfRange(feePpm, 1, 1000000);
         defaultDynamicFeePpm = feePpm;
+        emit DefaultDynamicFeeSet(defaultDynamicFeePpm, feePpm);
     }
 
     /**
@@ -327,8 +370,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         // Validate POL share is within valid range (0-100%)
         if (newPolSharePpm > 1000000) revert Errors.ParameterOutOfRange(newPolSharePpm, 0, 1000000);
 
+        uint256 oldShare = poolPolSharePpm[poolId];
         poolPolSharePpm[poolId] = newPolSharePpm;
-        emit PoolPOLShareChanged(poolId, newPolSharePpm);
+        emit POLShareSet(oldShare, newPolSharePpm);
     }
 
     /**
@@ -526,16 +570,100 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      */
     function _setProtocolFeePercentage(uint256 _newPercentage) internal {
         require(_newPercentage <= PrecisionConstants.PRECISION, "PPM: Percentage <= 100%");
+        uint256 oldPercentage = protocolInterestFeePercentage;
         protocolInterestFeePercentage = _newPercentage;
         emit ProtocolInterestFeePercentageChanged(_newPercentage);
+        emit ProtocolInterestFeePercentageSet(oldPercentage, _newPercentage);
+        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.INTEREST_FEE, msg.sender); // Use correct enum member
     }
 
     /**
      * @notice Internal logic for setting the fee collector
      */
     function _setFeeCollector(address _newCollector) internal {
-        // Allow address(0) if collector role is unused
+        if (_newCollector == address(0)) revert Errors.ZeroAddress();
+        address oldCollector = feeCollector;
         feeCollector = _newCollector;
         emit FeeCollectorChanged(_newCollector);
+        emit POLFeeCollectorSet(oldCollector, _newCollector);
+        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.INTEREST_FEE, msg.sender); // Use correct enum member
+    }
+
+    // --- Add implementations for missing IPoolPolicy functions ---
+
+    /// @inheritdoc IPoolPolicy
+    function getTargetCapsPerDay(PoolId pid) external view returns (uint256) {
+        uint256 v = poolTargetCapsPerDay[pid];
+        return v != 0 ? v : defaultTargetCapsPerDay;
+    }
+
+    /// @inheritdoc IPoolPolicy
+    function getCapFreqDecayWindow(PoolId pid) external view returns (uint256) {
+        uint256 v = poolCapFreqDecayWindow[pid];
+        return v != 0 ? v : defaultCapFreqDecayWindow;
+    }
+
+    /// @inheritdoc IPoolPolicy
+    function getFreqScaling(PoolId pid) external view returns (uint256) {
+        uint256 v = poolFreqScaling[pid];
+        return v != 0 ? v : defaultFreqScaling;
+    }
+
+    /// @inheritdoc IPoolPolicy
+    function getMinBaseFee(PoolId pid) external view returns (uint256) {
+        uint256 v = poolMinBaseFeePpm[pid];
+        return v != 0 ? v : defaultMinBaseFeePpm;
+    }
+
+    /// @inheritdoc IPoolPolicy
+    function getMaxBaseFee(PoolId pid) external view returns (uint256) {
+        uint256 v = poolMaxBaseFeePpm[pid];
+        return v != 0 ? v : defaultMaxBaseFeePpm;
+    }
+
+    /// @inheritdoc IPoolPolicy
+    function getInitialSurgeFeePpm(PoolId pid) external view returns (uint256) {
+        uint256 v = poolInitialSurgeFeePpm[pid];
+        return v != 0 ? v : defaultInitialSurgeFeePpm;
+    }
+
+    /// @inheritdoc IPoolPolicy
+    function getSurgeDecayPeriodSeconds(PoolId pid) external view returns (uint256) {
+        uint256 v = poolSurgeDecayPeriodSeconds[pid];
+        return v != 0 ? v : defaultSurgeDecayPeriodSeconds;
+    }
+
+    /* === Owner functions === */
+    function setMaxBaseFee(PoolId pid, uint256 f)           external onlyOwner { require(f>0,">0"); poolMaxBaseFeePpm[pid]=f; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
+
+    // --- Add setters for dynamic base fee feedback policy overrides ---
+    function setTargetCapsPerDay(PoolId pid, uint256 v)     external onlyOwner { require(v>0,">0"); poolTargetCapsPerDay[pid]=v; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
+    function setCapFreqDecayWindow(PoolId pid, uint256 w)   external onlyOwner { require(w>0,">0"); poolCapFreqDecayWindow[pid]=w; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
+    function setFreqScaling(PoolId pid, uint256 s)          external onlyOwner { require(s>0,">0"); poolFreqScaling[pid]=s; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
+    function setMinBaseFee(PoolId pid, uint256 f)           external onlyOwner { require(f>0,">0"); poolMinBaseFeePpm[pid]=f; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
+
+    // --- Add setters for new surge policy overrides ---
+    function setInitialSurgeFeePpm(PoolId pid, uint256 f)   external onlyOwner { require(f>0,">0"); poolInitialSurgeFeePpm[pid]=f; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
+    function setSurgeDecayPeriodSeconds(PoolId pid, uint256 s) external onlyOwner { require(s>0,">0"); poolSurgeDecayPeriodSeconds[pid]=s; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
+
+    /* === Internal functions === */
+    function setAuthorizedReinvestor(address reinvestor, bool isAuthorized) external onlyOwner {
+        if (reinvestor == address(0)) revert Errors.ZeroAddress();
+        authorizedReinvestors[reinvestor] = isAuthorized;
+        emit AuthorizedReinvestorSet(reinvestor, isAuthorized);
+        // Use PoolId.wrap(bytes32(0)) for zero PoolId
+        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.REINVESTOR_AUTH, msg.sender); // Use correct enum member
+    }
+
+    // --- Implement missing IPoolPolicy functions ---
+
+    /**
+     * @notice Returns the base fee update interval in seconds for the given pool.
+     * @dev Currently returns a global default value.
+     * @return The base fee update interval in seconds (currently 1 hour).
+     */
+    function getBaseFeeUpdateIntervalSeconds(PoolId /*poolId*/) external view override returns (uint256) {
+        // TODO: Implement per-pool logic if needed
+        return 1 hours; // Placeholder: Return 1 hour default
     }
 }

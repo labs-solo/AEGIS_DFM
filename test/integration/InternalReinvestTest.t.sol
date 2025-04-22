@@ -1,28 +1,27 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import "forge-std/Test.sol";
-import "forge-std/console2.sol";
-import {ForkSetup} from "./integration/ForkSetup.t.sol";
+import {Test} from "forge-std/Test.sol";
+import {Vm}   from "forge-std/Vm.sol";
+import {ForkSetup} from "./ForkSetup.t.sol";
 
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-// Remove StateLibrary import if not used elsewhere
-// import {StateLibrary}   from "v4-core/src/libraries/StateLibrary.sol";
+// import {StateLibrary}   from "v4-core/src/libraries/StateLibrary.sol"; // Keep commented out
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
-import {Spot} from "../src/Spot.sol";
-import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
-// import {IWETH9}         from "v4-periphery/src/interfaces/external/IWETH9.sol"; // Not directly used
+// Changed to absolute src imports
+import {Spot} from "src/Spot.sol";
+import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
+import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
+import {ISpot, DepositParams as ISpotDepositParams} from "src/interfaces/ISpot.sol";
+
+// import {IWETH9}         from "v4-periphery/src/interfaces/external/IWETH9.sol"; // Keep commented out
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {CurrencySettler} from "uniswap-hooks/src/utils/CurrencySettler.sol";
-import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol"; // Ensure this import is present
-// Import ISpot to access its struct definition
-import {ISpot, DepositParams as ISpotDepositParams} from "../src/interfaces/ISpot.sol";
-// Remove unused import
-// import {PoolModifyLiquidityTest} from "./integration/routers/PoolModifyLiquidityTest.sol";
+import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
+// import {PoolModifyLiquidityTest} from "./integration/routers/PoolModifyLiquidityTest.sol"; // Keep commented out
 
 // Remove local struct definition, use imported one
 // struct LocalDepositParams {
@@ -119,7 +118,6 @@ contract InternalReinvestTest is ForkSetup {
 
         // Call deposit from the test contract context (no prank)
         hook.deposit(params);
-        console2.log("Initial liquidity added via hook.deposit.");
     }
 
     /* ---------- Test 1 ---------------------------------------------------- */
@@ -208,7 +206,6 @@ contract InternalReinvestTest is ForkSetup {
         }
 
         (,, uint128 liqBefore) = lm.getPoolReservesAndShares(poolId);
-        console2.log("Liquidity before reinvest:", liqBefore);
         assertTrue(liqBefore > 0, "Liquidity should be > 0 after initial deposit");
 
         vm.recordLogs();
@@ -222,7 +219,6 @@ contract InternalReinvestTest is ForkSetup {
         uint256 used1;
 
         for (uint256 i; i < logs.length; ++i) {
-            console2.logBytes32(logs[i].topics[0]); // Log topic 0 for debugging
             if (logs[i].topics[0] == successSig) {
                 (used0, used1) = abi.decode(logs[i].data, (uint256, uint256));
                 success = true;
@@ -232,7 +228,6 @@ contract InternalReinvestTest is ForkSetup {
         assertTrue(used0 > 0 || used1 > 0, "no tokens used");
 
         (,, uint128 liqAfter) = lm.getPoolReservesAndShares(poolId);
-        console2.log("Liquidity after reinvest:", liqAfter);
         assertGt(liqAfter, liqBefore, "liquidity did not grow");
 
         // cooldown check

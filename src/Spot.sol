@@ -201,9 +201,29 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
             revert Errors.NotInitialized("DynamicFeeManager");
         }
 
-        uint24 fee = uint24(dynamicFeeManager.getCurrentDynamicFee(key.toId()));
+        /* ------------------------------------------------------------------
+         *  ⛽  GAS‑AWARE DYNAMIC‑FEE UPDATE
+         * ------------------------------------------------------------------
+         *  * Runs the full update only when needed:
+         *      – first swap after `minInterval`, or
+         *      – every swap while a CAP‑event is active.
+         *    This prevents paying ~25 k gas on every single trade.
+         */
 
-        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, fee);
+        (uint256 baseFee, uint256 surgeFee, bool didUpdate) =
+            dynamicFeeManager.updateDynamicFeeIfNeeded(key.toId(), key);
+
+        // When nothing changed *and* we are not in a CAP event, fall back to the
+        // cached value (6 gas) instead of returning the freshly computed one.
+        uint24 fee = didUpdate || dynamicFeeManager.isCAPEventActive(key.toId())
+            ? uint24(baseFee + surgeFee)
+            : uint24(dynamicFeeManager.getCurrentDynamicFee(key.toId()));
+
+        return (
+            BaseHook.beforeSwap.selector,
+            BeforeSwapDeltaLibrary.ZERO_DELTA,
+            fee
+        );
     }
 
     /* ─────────────────── Hook: afterSwap ────────────────────── */

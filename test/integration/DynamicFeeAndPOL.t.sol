@@ -89,9 +89,10 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         polSharePpm = policyManager.getPoolPOLShare(poolId);
         tickScalingFactor = policyManager.getTickScalingFactor();
 
-        // Extract surge fee parameters from the DynamicFeeManager
-        surgeFeeInitialPpm = FullRangeDynamicFeeManager(address(dynamicFeeManager)).INITIAL_SURGE_FEE_PPM();
-        surgeFeeDecayPeriod = FullRangeDynamicFeeManager(address(dynamicFeeManager)).SURGE_DECAY_PERIOD_SECONDS();
+        // --- Fetch Policy Parameters ---
+        // Get initial surge fee from the PolicyManager
+        surgeFeeInitialPpm = policyManager.defaultInitialSurgeFeePpm();
+        surgeFeeDecayPeriod = policyManager.defaultSurgeDecayPeriodSeconds();
 
         // Fund test accounts with WETH and USDC
         vm.startPrank(deployerEOA);
@@ -130,6 +131,12 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // Add initial liquidity to the pool from lpProvider to enable swaps
         _addInitialLiquidity();
 
+        // ── ADDED: shorten CAP‐feedback window so our 1h warp tests take effect immediately
+        vm.startPrank(deployerEOA);
+        policyManager.setCapFreqDecayWindow(poolId, 3600);
+        policyManager.setFreqScaling(poolId, 1);
+        vm.stopPrank();
+
         // Log key test parameters
         console2.log("Test setup complete for Dynamic Fee & POL tests");
         console2.log("Default Dynamic Fee (PPM):", defaultDynamicFee);
@@ -165,6 +172,14 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         usdc.approve(address(poolManager), type(uint256).max);
         weth.approve(address(liquidityManager), type(uint256).max);
         usdc.approve(address(liquidityManager), type(uint256).max);
+        weth.approve(address(swapRouter), type(uint256).max);
+        usdc.approve(address(swapRouter), type(uint256).max);
+        // Make sure router can pull both tokens for real swaps
+        // And also approve for the LiquidityRouter so its calls hit our hook
+        usdc.approve(address(swapRouter), type(uint256).max);
+        weth.approve(address(swapRouter), type(uint256).max);
+        usdc.approve(address(liquidityRouter), type(uint256).max); // Added LiquidityRouter approval
+        weth.approve(address(liquidityRouter), type(uint256).max); // Added LiquidityRouter approval
         vm.stopPrank();
     }
 
@@ -268,8 +283,23 @@ contract DynamicFeeAndPOLTest is ForkSetup {
             (uint128 liquidityFromView,,) =
                 FullRangeLiquidityManager(payable(address(liquidityManager))).getPositionData(poolId);
             console2.log("Pool liquidity after deposit (from getPositionData):", uint256(liquidityFromView));
-            require(liquidityFromView > 0, "getPositionData returned zero liquidity");
-            console2.log("Deposit successful!");
+            /**
+             * FullRangeLiquidityManager only *holds* the tokens;  
+             * they become **active pool liquidity** the first time
+             * `reinvest()` or other activation functions are called.  
+             * If we skip that call the pool's liquidity stays 0
+             * and every subsequent swap reverts (what we saw in
+             * the failing trace). Kick it once right here so the
+             * swaps in the tests have something to trade against.
+             */
+            // Use fullRange's pokeReinvest which properly calculates liquidity
+            Spot(payable(address(fullRange))).pokeReinvest(poolId);
+
+            // re‑query the v4 position after the reinvest
+            (liquidityFromView,,) =
+                FullRangeLiquidityManager(payable(address(liquidityManager))).getPositionData(poolId);
+            require(liquidityFromView > 0, "reinvestPOL produced zero liquidity");
+            console2.log("Deposit + reinvest successful, active liquidity:", uint256(liquidityFromView));
         } catch Error(string memory reason) {
             console2.log("Deposit failed with reason:", reason);
             revert(reason);
@@ -447,6 +477,179 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         console2.log("Expected fees:");
         console2.log("  Total fee amount (including POL):", expectedTotalFee);
         console2.log("  Expected POL portion:", expectedPolFee);
+    }
+
+    /// @notice B2: when CAPs > target (4/day), base-fee should rise above default
+    function test_B2_BaseFee_Increases_When_Caps_Too_Frequent() public {
+        console2.log("--- Test: Base Fee Increase --- ");
+        // --- GET INITIAL STATE ---
+        uint256 initialBase = dynamicFeeManager.getBaseFee(poolId);
+        console2.log("Initial Base Fee:", initialBase);
+
+        // Determine required swap params based on token order
+        bool zeroForOne = Currency.unwrap(poolKey.currency0) == address(usdc); // selling USDC for WETH
+        /* ----------------------------------------------------------------
+         * Any non‑zero tick move triggers a CAP when
+         *   baseFee = 3 000 ppm  and  tickScalingFactor = 2
+         * ⇒ maxTickChange = 0
+         * We therefore use *tiny* trades so the swap can always succeed
+         * (no "transfer amount exceeds balance" reverts) while still
+         * bumping the frequency counter.
+         * -------------------------------------------------------------- */
+        int256 capAmount = zeroForOne
+            ? int256(1_000 * 1e6)   // 1 000 USDC
+            : int256(0.05 ether);   // 0.05 WETH
+
+        // ╭──────────────────────────────────────────────────────────────╮
+        // │ Make sure lpProvider can fund ALL swaps in the upcoming loop │
+        // ╰──────────────────────────────────────────────────────────────╯
+        uint256 swapsNeeded = policyManager.getTargetCapsPerDay(poolId) + 2;
+        uint256 topUp = uint256(capAmount > 0 ? capAmount : -capAmount) * swapsNeeded;
+        if (zeroForOne) {
+            _dealAndApprove(usdc, lpProvider, topUp);
+        } else {
+            _dealAndApprove(IERC20Minimal(WETH_ADDRESS), lpProvider, topUp);
+        }
+        
+        (uint160 currentSqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
+        uint160 sqrtPriceLimitX96Lower = TickMath.MIN_SQRT_PRICE + 1;
+        uint160 sqrtPriceLimitX96Upper = TickMath.MAX_SQRT_PRICE - 1;
+
+        // Define TestSettings for the swap router
+        PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({
+            takeClaims: true,       // Assume claims are handled elsewhere or not critical here
+            settleUsingBurn: false  // Standard settlement
+        });
+
+        // Do N+1 successive swaps through the router, catching the reverts on cap
+        uint256 targetCaps = policyManager.getTargetCapsPerDay(poolId);
+        for (uint256 i = 0; i < swapsNeeded; ++i) {
+            // Use the same block for quick succession before decay calculation kicks in
+            uint256 blockNumber = block.number + i;
+            vm.roll(blockNumber);
+            vm.startPrank(lpProvider);
+            // route through the LiquidityRouter (which is hooked) instead of direct poolManager or swapRouter
+            try liquidityRouter.swap(poolKey, IPoolManager.SwapParams({
+                zeroForOne: zeroForOne,
+                amountSpecified: capAmount,
+                sqrtPriceLimitX96: zeroForOne ? sqrtPriceLimitX96Lower : sqrtPriceLimitX96Upper
+            }), testSettings, ZERO_BYTES) { // Added testSettings as the 3rd argument
+                // if it didn't revert, fine
+            } catch Error(string memory reason) {
+                // expected cap-revert or other swap issues
+                console2.log("[Swap Loop] Swap reverted:", reason);
+            } catch (bytes memory lowLevelData) {
+                console2.log("[Swap Loop] Swap reverted (low-level): ");
+                console2.logBytes(lowLevelData);
+            }
+            vm.stopPrank();
+        }
+
+        // now the hook saw all those caps…
+        // but updateBaseFeeIfNeeded enforces a 1 hour minInterval before recomputing
+        // so fast-forward past it:
+        vm.warp(block.timestamp + 3601);
+
+        // …now updating really runs
+        (uint256 returnedBase, , bool didUpdate) =
+            dynamicFeeManager.updateDynamicFeeIfNeeded(poolId, poolKey); // Note: Changed from updateBaseFeeIfNeeded to updateDynamicFeeIfNeeded
+        assertTrue(didUpdate, "Update flag should be true");
+        uint256 newBase = dynamicFeeManager.getBaseFee(poolId);
+        assertEq(newBase, returnedBase, "Stored base fee does not match returned base fee!");
+        assertTrue(newBase > initialBase, "base-fee did not increase"); // Check against initial
+    }
+
+    /// @notice B3: when CAPs < target, base-fee should fall below default
+    function test_B3_BaseFee_Decreases_When_Caps_Too_Rare() public {
+        console2.log("--- Test: Base Fee Decrease --- ");
+        // seed the fee/oracle once so we leave the `lastUpdateTimestamp==0` branch
+        // (otherwise the first call just initializes and never recomputes the fee).
+        dynamicFeeManager.updateDynamicFeeIfNeeded(poolId, poolKey);
+        vm.roll(block.number + 1);
+
+        // B3: with ZERO CAPs, *after* 1h the base‑fee clamps straight to its minimum
+        vm.warp(block.timestamp + 1 hours);
+        vm.roll(block.number + 1); // Advance block number
+        dynamicFeeManager.updateDynamicFeeIfNeeded(poolId, poolKey);
+        uint256 feeAfter1Hour = dynamicFeeManager.getBaseFee(poolId);
+        uint256 minBaseFee    = policyManager.getMinBaseFee(poolId);
+        assertEq(
+            feeAfter1Hour,
+            minBaseFee,
+            "Base fee should clamp to minFee after 1h with 0 caps"
+        );
+
+        // Warp another hour (total 2h), still no CAPs
+        vm.warp(block.timestamp + 1 hours);
+        vm.roll(block.number + 1); // Advance block number
+        dynamicFeeManager.updateDynamicFeeIfNeeded(poolId, poolKey);
+
+        // Get base fee directly from storage using the getter
+        uint256 currentBase = dynamicFeeManager.getBaseFee(poolId);
+
+        // (we already pulled minBaseFee above)
+        console2.log("Default Base Fee:", defaultDynamicFee);
+        console2.log("Base Fee after low frequency:", currentBase);
+        assertEq(currentBase, minBaseFee, "Base fee should be minFee after 2 hours with 0 caps");
+        assertTrue(currentBase < defaultDynamicFee, "base-fee did not decrease below default");
+    }
+
+    /// @notice Helper: trigger a CAP event via a large single swap
+    function _triggerCap() internal {
+        console2.log("--- Triggering CAP Event (Attempting Swap) --- ");
+        // **advance the block** so syncOracleData always sees a new block and records a cap
+        vm.roll(block.number + 1);
+
+        bool zeroForOne = true; // Swap USDC for WETH
+        int256 amountSpecified = int256(10_000 * 1e6); // 10k USDC
+
+        // loosen the limit so a tiny fill goes through
+        (uint160 currentSqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
+        uint160 sqrtPriceLimitX96 = zeroForOne
+            // 5% below current price if selling token0
+            ? uint160((uint256(currentSqrtPriceX96) * 95) / 100)
+            // 5% above current price if selling token1
+            : uint160((uint256(currentSqrtPriceX96) * 105) / 100);
+
+        IPoolManager.SwapParams memory p = IPoolManager.SwapParams({
+            zeroForOne:        zeroForOne,
+            amountSpecified:   amountSpecified,
+            sqrtPriceLimitX96: sqrtPriceLimitX96
+        });
+
+        PoolSwapTest.TestSettings memory settings = PoolSwapTest.TestSettings({
+            takeClaims: true,
+            settleUsingBurn: false
+        });
+
+        // Perform swap to move tick - catch reverts but proceed
+        // Use the swapRouter (PoolSwapTest) which handles unlock
+        try swapRouter.swap(poolKey, p, settings, ZERO_BYTES) {}
+        catch Error(string memory reason) {
+             console2.log("[DynamicFeeAndPOL._triggerCap] Swap reverted:", reason);
+        }
+
+        // **advance block again** before pulling in the cap event
+        vm.roll(block.number + 1);
+        console2.log("Manually calling updateDynamicFeeIfNeeded post-CAP attempt...");
+        dynamicFeeManager.updateDynamicFeeIfNeeded(poolId, poolKey);
+        console2.log("--- CAP Event Update Processed --- "); // Changed log message for clarity
+    }
+
+    /**
+     * @notice Deals tokens to a recipient and approves relevant contracts.
+     * @param token The ERC20 token contract instance.
+     * @param recipient The address to receive tokens.
+     * @param amount The amount of tokens to deal and approve.
+     */
+    function _dealAndApprove(IERC20Minimal token, address recipient, uint256 amount) internal {
+        address tokenAddr = address(token);
+        deal(tokenAddr, recipient, amount);
+        vm.startPrank(recipient);
+        token.approve(address(poolManager), amount);
+        token.approve(address(swapRouter), amount);
+        token.approve(address(liquidityManager), amount);
+        vm.stopPrank();
     }
 
     // Additional test functions to be implemented

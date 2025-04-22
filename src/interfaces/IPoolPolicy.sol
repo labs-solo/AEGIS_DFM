@@ -17,8 +17,10 @@ interface IPoolPolicy {
         FEE, // Manages fee calculation and distribution
         TICK_SCALING, // Controls tick movement restrictions
         VTIER, // Validates fee tier and tick spacing combinations
-        REINVESTMENT // Manages fee reinvestment strategies
-
+        REINVESTMENT, // Manages fee reinvestment strategies
+        ORACLE, // Added: Manages oracle behavior and thresholds
+        INTEREST_FEE, // Added: Manages protocol interest fee settings
+        REINVESTOR_AUTH // Added: Manages authorized reinvestor addresses
     }
 
     /**
@@ -206,4 +208,50 @@ interface IPoolPolicy {
      * @return The address authorized to potentially collect protocol fees (or address(0) if unused).
      */
     function getFeeCollector() external view returns (address);
+
+    // ----------------------------------------------------------------
+    // Dynamic Fee Feedback Policy Getters
+    // ----------------------------------------------------------------
+
+    /**
+     * @notice Returns the policy‐defined initial surge fee in PPM for the given pool.
+     */
+    function getInitialSurgeFeePpm(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the policy‐defined surge decay period (in seconds) for the given pool.
+     */
+    function getSurgeDecayPeriodSeconds(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the target number of CAP events per day (equilibrium) for the given pool.
+     */
+    function getTargetCapsPerDay(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the CAP‐frequency decay window (in seconds) for the given pool.
+     */
+    function getCapFreqDecayWindow(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the scaling factor used for CAP frequency math for the given pool.
+     */
+    function getFreqScaling(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the minimum base fee (in PPM) for the given pool.
+     */
+    function getMinBaseFee(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the maximum base fee (in PPM) for the given pool.
+     */
+    function getMaxBaseFee(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the base fee update interval in seconds for the given pool.
+     * @param poolId The ID of the pool
+     * @return The base fee update interval in seconds
+     */
+    function getBaseFeeUpdateIntervalSeconds(PoolId poolId) external view returns (uint256);
 }

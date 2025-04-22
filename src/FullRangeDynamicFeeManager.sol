@@ -16,41 +16,52 @@ import {Owned} from "solmate/src/auth/Owned.sol";
 import {MathUtils} from "./libraries/MathUtils.sol";
 import {Errors} from "./errors/Errors.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
-import {MathUtils} from "./libraries/MathUtils.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
+import {console} from "forge-std/console.sol";
 
 /**
  * @title FullRangeDynamicFeeManager
  * @notice Manages dynamic fees for pools including CAP event detection (based on oracle tick capping) and oracle functionality
  * @dev This contract combines functionalities of the original FeeManager and OracleManager
  */
-contract FullRangeDynamicFeeManager is Owned {
+contract FullRangeDynamicFeeManager is Owned, IFullRangeDynamicFeeManager {
     // Using PPM (parts per million) for fee and multiplier values (1e6 = 100%).
 
-    // --- Constants for Surge Fees ---
-    uint256 public constant INITIAL_SURGE_FEE_PPM = 5000; // Example: 0.5% Surge Fee
-    uint256 public constant SURGE_DECAY_PERIOD_SECONDS = 3600; // Example: 1 hour decay
+    // --- Removed in-line cap-frequency and base-fee constants; configurable via policy ---
 
+    /// @dev We pack several things into a single struct per pool to save SSTOREs:
+    ///      - the base fee PPM
+    ///      - the surge fee PPM (calculated dynamically)
+    ///      - the timestamp when the surge was last triggered
+    ///      - the timestamp of last base-fee update
+    ///      - the timestamp used for rate-limiting fee updates
+    ///      - whether we are currently in a cap event
+    ///      - last oracle tick and update block
     struct PoolState {
-        // Slot 1: Fee parameters (256 bits)
-        uint128 baseFeePpm; // Renamed from currentFeePpm for clarity (still represents base)
-        uint128 currentSurgeFeePpm; // Added: Stores the current value of the surge component
-        // Slot 2: Timestamps and flags (256 bits)
-        uint48 lastUpdateTimestamp; // Timestamp of the last base fee update
-        uint48 capEventEndTime; // Added: Timestamp when the last CAP event ended
-        uint48 lastFeeUpdate; // Rate limiting timestamp for triggerFeeUpdate
-        bool isInCapEvent; // Tracks if currently in CAP event (tick was capped)
-        uint8 reserved; // 1 byte reserved for future flags
-        // Slot 3: Oracle data (256 bits)
-        uint32 lastOracleUpdateBlock;
-        int24 lastOracleTick; // Already optimized
-            // 200 bits remaining in this slot for future use
+        // Fee state
+        uint128 baseFeePpm;
+        uint48  lastCapTimestamp; // Replaces currentSurgeFeePpm and capEventEndTime
+
+        // Timestamps for base-fee logic
+        uint48  lastUpdateTimestamp;
+        uint48  lastFeeUpdate;
+
+        // Frequency state
+        uint128 freqScaled;
+        uint48  freqLastUpdate;
+
+        // Oracle state (Added back)
+        int24   lastOracleTick;
+        uint32  lastOracleUpdateBlock;
+
+        // Flags
+        bool    isInCapEvent;
     }
 
-    // Current fee state storage
-    mapping(PoolId => PoolState) public poolStates;
+    // Current fee state storage (now private; expose via helper below)
+    mapping(PoolId => PoolState) private poolStates;
 
     // Reference to policy manager
     IPoolPolicy public policy;
@@ -69,18 +80,14 @@ contract FullRangeDynamicFeeManager is Owned {
 
     ThresholdConfig public thresholds;
 
-    // Minimum time between triggered fee updates
-    uint256 public constant MIN_UPDATE_INTERVAL = 1 hours;
+    // Define the enum for adjustment types
+    enum AdjustmentType { Increase, Decrease }
 
     // Events
-    event DynamicFeeUpdated(PoolId indexed poolId, uint256 oldFeePpm, uint256 newFeePpm, bool capEventOccurred);
-    event SurgeFeeUpdated(PoolId indexed poolId, uint256 surgeFee, bool capEventOccurred);
     event FeeAdjustmentApplied(PoolId indexed poolId, uint256 oldFee, uint256 newFee, uint8 adjustmentType);
 
     // Oracle events
-    event OracleUpdated(PoolId indexed poolId, int24 oldTick, int24 newTick, bool tickCapped);
     event TickChangeCapped(PoolId indexed poolId, int24 actualChange, int24 cappedChange);
-    event CapEventStateChanged(PoolId indexed poolId, bool isInCapEvent);
     event ThresholdsUpdated(uint32 blockUpdateThreshold, int24 tickThreshold);
 
     /**
@@ -155,45 +162,68 @@ contract FullRangeDynamicFeeManager is Owned {
 
     /**
      * @dev Read the *live* pool tick from slot0, apply your block/tick thresholds,
-     *      cap any excessive jump, update CAP‐event state, and emit one unified OracleUpdated.
+     *      cap any excessive jump, update CAP-event state, and emit one unified OracleUpdated.
      */
-    function _syncOracleData(PoolId poolId) internal returns (bool tickCapped) {
+    function _syncOracleData(PoolId poolId, PoolKey calldata key) internal returns (bool tickCapped) {
         // 1) Fetch the current tick directly from the PoolManager
         (, int24 reportedTick, , ) = StateLibrary.getSlot0(poolManager, poolId);
-        uint32 reportedBlock          = uint32(block.number);
+        uint32 reportedBlock = uint32(block.number);
 
-        PoolState storage ps   = poolStates[poolId];
-        int24 lastTick         = ps.lastOracleTick;
-        uint32 lastBlock       = ps.lastOracleUpdateBlock;
-        tickCapped             = false;
+        PoolState storage ps = poolStates[poolId];
+        int24 lastRecordedTick = ps.lastOracleTick; // Use a distinct name
+        uint32 lastBlock = ps.lastOracleUpdateBlock;
+        int24 nextTickToRecord = reportedTick; // Start with the reported tick
+        tickCapped = false;
 
-        // 2) Only update when block or tick thresholds are exceeded
+        // 2) Only update when block or tick thresholds are exceeded.
+        //    Check if the time/tick diff is NOT below thresholds (i.e., if an update IS needed).
         if (
-            lastBlock == 0
-            || reportedBlock >= lastBlock + thresholds.blockUpdateThreshold
-            || MathUtils.absDiff(reportedTick, lastTick) >= uint24(thresholds.tickDiffThreshold)
+            lastBlock == 0 || // Always update if it's the first time
+            !( // Use NOT to check if thresholds ARE met
+                reportedBlock < lastBlock + thresholds.blockUpdateThreshold && // CHANGED from >= to <
+                MathUtils.absDiff(reportedTick, lastRecordedTick) < uint24(thresholds.tickDiffThreshold) // Also check tick diff < threshold
+            )
         ) {
+            // Log values inside threshold check
+            // console.log("[_syncOracleData] Thresholds met for pool (bytes32 ID):"); // Log string first
+            // console.logBytes32(PoolId.unwrap(poolId)); // Log bytes32 separately
+            // console.log("  Reported Tick:", reportedTick);
+            // console.log("  Last Recorded Tick:", lastRecordedTick);
+            // console.log("  Current Base Fee (PPM):", ps.baseFeePpm);
+
             // 3) Determine max allowed tick move based on current base fee
             int24 maxChange = _calculateMaxTickChange(ps.baseFeePpm, policy.getTickScalingFactor());
-            int24 delta     = reportedTick - lastTick;
-            int24 nextTick  = reportedTick;
+            // console.log("  Calculated Max Tick Change:", maxChange);
+            int24 actualDelta = reportedTick - lastRecordedTick; // Calculate actual change vs last recorded
+            uint256 absActualDelta = MathUtils.absDiff(reportedTick, lastRecordedTick);
+            // console.log("  Absolute Actual Tick Delta:", absActualDelta);
 
-            // 4) If the jump is too big, clamp it
-            if (lastBlock > 0 && MathUtils.absDiff(reportedTick, lastTick) > uint24(maxChange)) {
+            // 4) Check if actual jump vs. last recorded tick is too big
+            if (lastBlock > 0 && absActualDelta > uint24(maxChange)) { // Compare abs diff
                 tickCapped = true;
-                int24 cap  = delta > 0 ? maxChange : -maxChange;
-                nextTick   = lastTick + cap;
-                emit TickChangeCapped(poolId, delta, cap);
+                // console.log("  *** Tick Capped! ***");
+                int24 cap = actualDelta > 0 ? maxChange : -maxChange;
+                // If maxChange==0, force a full tick update so we can exit the cap event
+                if (cap == 0) cap = actualDelta;
+                nextTickToRecord = lastRecordedTick + cap; // Update to the CAPPED tick
+                emit TickChangeCapped(poolId, actualDelta, cap);
             }
+            // If not capped, nextTickToRecord remains the reportedTick
 
-            // 5) Flip CAP event flag, record times, and emit
+            // 5) Update CAP event status based on the tickCapped flag determined above
             _updateCapEventStatus(poolId, tickCapped);
-            ps.lastOracleUpdateBlock = reportedBlock;
-            ps.lastOracleTick        = nextTick;
-            emit OracleUpdated(poolId, lastTick, nextTick, tickCapped);
-        }
 
-        return tickCapped;
+            // 6) Record the new oracle state (block and the potentially capped tick)
+            ps.lastOracleUpdateBlock = reportedBlock;
+            ps.lastOracleTick = nextTickToRecord; // Record the calculated next tick
+            emit OracleUpdated(poolId, lastRecordedTick, nextTickToRecord, tickCapped);
+            // split the log into two 2‑arg calls to match forge-std overloads
+            // console.log("  Oracle Updated. New Recorded Tick:", nextTickToRecord);
+            // console.log("  Tick Capped Flag:", tickCapped);
+        }
+        // If thresholds not met, tickCapped remains false, no state updated
+
+        return tickCapped; // Return the status determined within the threshold check
     }
 
     /**
@@ -202,33 +232,26 @@ contract FullRangeDynamicFeeManager is Owned {
      * @param key The pool key for the pool
      */
     function triggerFeeUpdate(PoolId poolId, PoolKey calldata key) external {
+        // Removed redundant rate limiting check; it's handled in _updateBaseFeeAndFrequency
+        /*
         PoolState storage pool = poolStates[poolId];
-
-        // Rate limiting to prevent spam
         if (uint48(block.timestamp) < pool.lastFeeUpdate + MIN_UPDATE_INTERVAL) {
             revert Errors.RateLimited();
         }
+        */
 
         // Get the ID from the key
         PoolId keyId = key.toId();
 
-        // Compare them by casting to bytes32 in memory (not direct conversion)
-        bytes32 poolIdBytes;
-        bytes32 keyIdBytes;
-
-        assembly {
-            poolIdBytes := poolId
-            keyIdBytes := keyId
-        }
-
         // Verify this is a valid pool ID/key combination
-        if (keyIdBytes != poolIdBytes) revert Errors.InvalidPoolKey();
+        if (PoolId.unwrap(poolId) != PoolId.unwrap(keyId)) revert Errors.InvalidPoolKey();
 
-        // Update fees
-        updateDynamicFeeIfNeeded(poolId, key);
+        // Update fees using this.
+        this.updateDynamicFeeIfNeeded(poolId, key);
 
-        // Record the update time
-        pool.lastFeeUpdate = uint48(block.timestamp);
+        // Record the update time - This seems redundant now as updates are timestamped inside _updateBaseFeeAndFrequency
+        // PoolState storage pool = poolStates[poolId]; // Already declared if uncommenting rate limit
+        // pool.lastFeeUpdate = uint48(block.timestamp);
     }
 
     /**
@@ -249,94 +272,37 @@ contract FullRangeDynamicFeeManager is Owned {
      * @notice Updates the dynamic fee if needed based on time interval and CAP events
      * @param poolId The pool ID to update fee for
      * @param key The pool key for the pool
-     * @return baseFee The current base fee in PPM
-     * @return surgeFeeValue The current surge fee in PPM
-     * @return wasUpdated Whether fee was updated in this call
+     * @return newBase The current base fee in PPM
+     * @return newSurge The current surge fee in PPM
+     * @return didUpdate Whether the base fee calculation logic ran in this call
      */
     function updateDynamicFeeIfNeeded(PoolId poolId, PoolKey calldata key)
-        public
-        returns (uint256 baseFee, uint256 surgeFeeValue, bool wasUpdated)
+        external override
+        returns (uint256 newBase, uint256 newSurge, bool didUpdate)
     {
-        // Sync & cap the live tick in one go (slot0‐only approach)
-        _syncOracleData(poolId);
-
         PoolState storage pool = poolStates[poolId];
 
-        // Get the ID from the key
-        PoolId keyId = key.toId();
-
-        // Compare them by casting to bytes32 in memory (not direct conversion)
-        bytes32 poolIdBytes;
-        bytes32 keyIdBytes;
-
-        assembly {
-            poolIdBytes := poolId
-            keyIdBytes := keyId
-        }
-
-        // Verify this is a valid pool ID/key combination
-        if (keyIdBytes != poolIdBytes) revert Errors.InvalidPoolKey();
-
-        // Initialize if needed
+        // when we first come online, we need to seed both the oracle
+        // and the dynamic-fee state.
         if (pool.lastUpdateTimestamp == 0) {
-            uint256 defaultFee = policy.getDefaultDynamicFee();
-            pool.baseFeePpm = uint128(defaultFee);
+            pool.lastCapTimestamp    = 0; // Initialize new field
+            pool.isInCapEvent        = false;
+            pool.freqScaled          = 0;
+            pool.freqLastUpdate      = 0;
+
+            pool.baseFeePpm          = uint128(policy.getDefaultDynamicFee());
             pool.lastUpdateTimestamp = uint48(block.timestamp);
-
-            // Initialize oracle data
-            (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
-            pool.lastOracleUpdateBlock = uint32(block.number);
-            pool.lastOracleTick = currentTick;
-            pool.isInCapEvent = false;
-            pool.currentSurgeFeePpm = 0; // Initialize surge fee
-            pool.capEventEndTime = 0; // Initialize end time
-
-            return (pool.baseFeePpm, 0, true); // Return base fee, zero surge fee
         }
 
-        // Check if update is needed based on time
-        bool shouldUpdate = block.timestamp >= pool.lastUpdateTimestamp + 3600; // 1 hour
+        // Pull in new oracle data, determine tickCapped…
+        bool tickCapped = _syncOracleData(poolId, key);
 
-        // Calculate current surge fee (needed regardless of base fee update)
-        surgeFeeValue = _calculateCurrentDecayedSurgeFee(poolId);
+        // update cap status and potentially lastCapTimestamp
+        _updateCapEventStatus(poolId, tickCapped);
 
-        if (shouldUpdate) {
-            // --- Base Fee Calculation ---
-            // This part should contain the logic for adjusting the BASE fee over time,
-            // independently of CAP events/surge fees.
-            // For now, let's assume a simple fixed base fee or minimal adjustment.
-            // TODO: Implement desired base dynamic fee logic here.
-            uint256 oldBaseFee = pool.baseFeePpm;
-            uint256 newBaseFeePpm = oldBaseFee; // Placeholder: Keep base fee constant for now
-
-            // Example: Gradual adjustment logic (if needed, unrelated to surge)
-            // uint256 adjustmentPct = 990000; // e.g., slowly decrease base fee by 1% per hour
-            // newBaseFeePpm = (oldBaseFee * adjustmentPct) / 1000000;
-
-            // Enforce base fee bounds (using min fee from policy)
-            uint256 minTradingFee = policy.getMinimumTradingFee();
-            uint256 maxBaseFeePpm = 50000; // Example Max Base Fee: 5%
-            if (newBaseFeePpm < minTradingFee) {
-                newBaseFeePpm = minTradingFee;
-            } else if (newBaseFeePpm > maxBaseFeePpm) {
-                newBaseFeePpm = maxBaseFeePpm;
-            }
-
-            // Update base fee state if changed
-            if (newBaseFeePpm != oldBaseFee) {
-                pool.baseFeePpm = uint128(newBaseFeePpm);
-                // Emit event reflecting only the base fee change
-                emit DynamicFeeUpdated(poolId, oldBaseFee, newBaseFeePpm, pool.isInCapEvent);
-            }
-
-            pool.lastUpdateTimestamp = uint48(block.timestamp);
-            wasUpdated = true; // Base fee calculation was attempted
-        }
-
-        baseFee = pool.baseFeePpm; // Return current base fee
-        // surgeFeeValue was calculated earlier
-        // wasUpdated reflects if base fee calculation ran
-        return (baseFee, surgeFeeValue, wasUpdated);
+        // …then recalc the base fee and return both pieces
+        ( newBase, newSurge, didUpdate ) =
+            _updateBaseFeeAndFrequency(poolId, key);
     }
 
     /**
@@ -345,29 +311,28 @@ contract FullRangeDynamicFeeManager is Owned {
      * @param tickCapped Whether the tick was capped in the current update
      */
     function _updateCapEventStatus(PoolId poolId, bool tickCapped) internal {
-        PoolState storage pool = poolStates[poolId];
+        PoolState storage pool     = poolStates[poolId];
+        uint48            nowTs    = uint48(block.timestamp);
 
-        // Determine the new CAP state SOLELY based on whether the tick was capped
-        bool newCapState = tickCapped;
+        bool previous            = pool.isInCapEvent;
+        bool isNow               = tickCapped;
 
-        // Check if the state needs to change
-        if (pool.isInCapEvent != newCapState) {
-            pool.isInCapEvent = newCapState;
-            emit CapEventStateChanged(poolId, newCapState);
-
-            // -- Add logic here for Phase 3 (surge start/end time tracking) --
-            if (newCapState) {
-                // CAP Event Started
-                pool.currentSurgeFeePpm = uint128(INITIAL_SURGE_FEE_PPM);
-                pool.capEventEndTime = 0; // Reset end time
-                emit SurgeFeeUpdated(poolId, pool.currentSurgeFeePpm, true); // Emit surge update (CAP Active)
-            } else {
-                // CAP Event Ended
-                pool.capEventEndTime = uint48(block.timestamp); // Record end time
-                // Surge fee remains at its current value, decay starts now.
-                // Emit surge update (CAP Inactive, decay begins)
-                emit SurgeFeeUpdated(poolId, pool.currentSurgeFeePpm, false);
+        // 1) If we're entering (or re-entering) a CAP event...
+        if (isNow) {
+            // stamp when surge was kicked off
+            pool.lastCapTimestamp = nowTs;
+            if (!previous) {
+               emit SurgeFeeUpdated(poolId, policy.getInitialSurgeFeePpm(poolId), true);
             }
+        }
+        // 2) If we're exiting a CAP event...
+        else if (previous && !isNow) {
+            // we no longer need capEventEndTime for decay...
+            emit SurgeFeeUpdated(poolId, _calculateCurrentDecayedSurgeFee(poolId), false);
+        }
+
+        if (previous != isNow) {
+            pool.isInCapEvent = isNow;
         }
     }
 
@@ -380,6 +345,8 @@ contract FullRangeDynamicFeeManager is Owned {
     function _calculateMaxTickChange(uint256 currentFeePpm, int24 tickScalingFactor) internal pure returns (int24) {
         // Calculate the max tick change based on the fee and scaling factor using MathUtils for consistency
         // Use MathUtils.calculateFeeWithScale for better precision and overflow protection
+         if (tickScalingFactor <= 0) return 0; // Avoid division by zero or negative scaling issues
+
         uint256 maxChangeUint = MathUtils.calculateFeeWithScale(
             currentFeePpm,
             uint256(uint24(tickScalingFactor)), // Safe conversion to uint256
@@ -390,7 +357,8 @@ contract FullRangeDynamicFeeManager is Owned {
 
         // Clamp to int24 bounds
         if (maxChangeScaled > type(int24).max) return type(int24).max;
-        if (maxChangeScaled < type(int24).min) return type(int24).min; // Should be positive anyway
+        // No need to check min as result should be positive
+        // if (maxChangeScaled < type(int24).min) return type(int24).min;
 
         return int24(maxChangeScaled);
     }
@@ -402,36 +370,38 @@ contract FullRangeDynamicFeeManager is Owned {
      */
     function _calculateCurrentDecayedSurgeFee(PoolId poolId) internal view returns (uint256) {
         PoolState storage pool = poolStates[poolId];
-        uint128 initialSurge = uint128(INITIAL_SURGE_FEE_PPM); // Use constant
+        uint256 initialSurge    = policy.getInitialSurgeFeePpm(poolId);
+        uint256 decayPeriod     = policy.getSurgeDecayPeriodSeconds(poolId);
+        uint48  startTs         = pool.lastCapTimestamp;
 
-        // If still in CAP event, return the full initial surge fee
+        // If we are *currently* in a cap event, the surge is the full initial surge.
+        // The decay only applies *after* the cap event ends (isNow becomes false).
         if (pool.isInCapEvent) {
-            // Ensure surge fee is set (might happen if CAP starts before first updateDynamicFeeIfNeeded)
-            if (pool.currentSurgeFeePpm == 0) {
-                return initialSurge;
-            }
-            return pool.currentSurgeFeePpm;
+             return initialSurge;
         }
 
-        // If CAP event has ended, calculate decay
-        uint48 endTime = pool.capEventEndTime;
-        if (endTime == 0) {
-            return 0; // CAP never happened or surge fully decayed previously
+        // never triggered OR cap event just ended this block -> zero (or full if decay=0)
+        if (startTs == 0 || startTs == block.timestamp) {
+             // If decay period is 0, surge is only non-zero *exactly* at the cap timestamp.
+             // Since we are past that point if !isInCapEvent, return 0.
+             return 0;
         }
 
-        uint256 timeSinceEnd = block.timestamp - endTime;
+        // Handle zero decay period after the initial cap block
+        if (decayPeriod == 0) {
+             return 0; // Instant decay after the cap block
+        }
 
-        // Check if decay period is complete
-        if (timeSinceEnd >= SURGE_DECAY_PERIOD_SECONDS) {
+        uint256 sinceCap = block.timestamp > startTs
+                         ? block.timestamp - startTs
+                         : 0; // Should not happen if startTs > 0 and startTs != block.timestamp
+
+        if (sinceCap >= decayPeriod) {
             return 0; // Decay finished
         }
 
-        // Calculate linear decay
-        // decayedSurge = initialSurge * (remaining_decay_time / total_decay_time)
-        uint256 decayedSurge =
-            (uint256(initialSurge) * (SURGE_DECAY_PERIOD_SECONDS - timeSinceEnd)) / SURGE_DECAY_PERIOD_SECONDS;
-
-        return decayedSurge;
+        // linear decay: initialSurge × (remaining / total)
+        return (initialSurge * (decayPeriod - sinceCap)) / decayPeriod;
     }
 
     /**
@@ -446,10 +416,14 @@ contract FullRangeDynamicFeeManager is Owned {
 
         // Add safety check for potential overflow, though unlikely with uint128 + decayed uint256
         uint256 totalFee = baseFee + surgeFee;
-        if (totalFee > type(uint128).max) {
-            // Check against reasonable upper bound if needed
-            totalFee = type(uint128).max; // Cap at max uint128 for safety
+        uint256 maxFee = policy.getMaxBaseFee(poolId) + policy.getInitialSurgeFeePpm(poolId); // A reasonable upper bound
+        if (totalFee > maxFee) {
+            totalFee = maxFee; // Cap at a reasonable max total fee
         }
+        // Clamp to uint128 if needed for consistency, though totalFee is uint256
+        // if (totalFee > type(uint128).max) {
+        //     totalFee = type(uint128).max;
+        // }
 
         return totalFee;
     }
@@ -470,6 +444,9 @@ contract FullRangeDynamicFeeManager is Owned {
         pool.baseFeePpm = uint128(defaultFee);
         pool.lastUpdateTimestamp = uint48(block.timestamp);
         pool.isInCapEvent = false;
+        pool.lastCapTimestamp = 0; // Initialize cap timestamp
+        pool.freqScaled = 0; // Initialize frequency state
+        pool.freqLastUpdate = 0; // Initialize frequency state
 
         emit DynamicFeeUpdated(
             poolId,
@@ -491,7 +468,8 @@ contract FullRangeDynamicFeeManager is Owned {
         if (pool.lastOracleUpdateBlock == 0) {
             pool.lastOracleUpdateBlock = uint32(block.number);
             pool.lastOracleTick = initialTick;
-            pool.isInCapEvent = false;
+            // Don't initialize isInCapEvent here, let fee initialization or sync handle it
+            // pool.isInCapEvent = false;
 
             emit OracleUpdated(poolId, 0, initialTick, false);
         }
@@ -504,7 +482,9 @@ contract FullRangeDynamicFeeManager is Owned {
      */
     function setThresholds(uint32 blockThreshold, int24 tickThreshold) external onlyOwner {
         if (blockThreshold == 0) revert Errors.ParameterOutOfRange(blockThreshold, 1, type(uint32).max);
-        if (tickThreshold <= 0) revert Errors.ParameterOutOfRange(uint256(uint24(tickThreshold)), 1, type(uint24).max);
+        // Allow zero tick threshold?
+        // if (tickThreshold <= 0) revert Errors.ParameterOutOfRange(uint256(uint24(tickThreshold)), 1, type(uint24).max);
+         if (tickThreshold < 0) revert Errors.ParameterOutOfRange(uint256(uint24(tickThreshold)), 0, type(uint24).max);
 
         thresholds.blockUpdateThreshold = blockThreshold;
         thresholds.tickDiffThreshold = tickThreshold;
@@ -514,15 +494,18 @@ contract FullRangeDynamicFeeManager is Owned {
 
     /**
      * @notice Checks if a pool is currently in a CAP event state.
+     * @dev Renamed from isPoolInCapEvent to match IFullRangeDynamicFeeManager interface
      * @param poolId The ID of the pool.
      * @return True if the pool is in a CAP event state, false otherwise.
      */
-    function isPoolInCapEvent(PoolId poolId) external view returns (bool) {
+    function isCAPEventActive(PoolId poolId) external view override returns (bool) {
         return poolStates[poolId].isInCapEvent;
     }
 
     /**
      * @notice Checks if a pool's tick movement is currently capped.
+     * @dev This is a view function and might be slightly out of sync if state hasn't been updated recently.
+     *      It calculates based on the last *recorded* oracle tick vs current pool tick.
      * @param poolId The ID of the pool.
      * @return True if the tick movement is capped, false otherwise.
      */
@@ -532,11 +515,224 @@ contract FullRangeDynamicFeeManager is Owned {
         // Get current tick from pool manager
         (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
 
+        // Get last recorded tick
+        int24 lastRecordedTick = pool.lastOracleTick;
+        if (pool.lastOracleUpdateBlock == 0) {
+            // If oracle not initialized, cannot determine if capped
+            return false;
+        }
+
         // Calculate max allowed tick change based on dynamic fee and scaling factor
         int24 tickScalingFactor = policy.getTickScalingFactor();
+        // Use the current base fee for the calculation
         int24 maxTickChange = _calculateMaxTickChange(pool.baseFeePpm, tickScalingFactor);
 
         // Check if tick change exceeds the maximum allowed
-        return MathUtils.absDiff(currentTick, pool.lastOracleTick) > uint24(maxTickChange);
+        return MathUtils.absDiff(currentTick, lastRecordedTick) > uint24(maxTickChange);
     }
+
+    // --- Helper functions for policy access --- REMOVED
+    /*
+    function getInitialSurgeFeePpm(PoolId poolId) internal view returns (uint256) {
+        // TODO: Replace with actual call to policy.getInitialSurgeFeePpm(poolId)
+        // Assuming a default value for now if not in policy
+        // return 5000; // Example: 0.5%
+        return policy.getInitialSurgeFeePpm(poolId);
+    }
+
+    function getSurgeDecayPeriodSeconds(PoolId poolId) internal view returns (uint256) {
+         // TODO: Replace with actual call to policy.getSurgeDecayPeriodSeconds(poolId)
+        // Assuming a default value for now if not in policy
+        // return 3600; // Example: 1 hour
+        return policy.getSurgeDecayPeriodSeconds(poolId);
+    }
+    */
+    // ----------------------------------------------------------------
+    // Helper Getter
+    // ----------------------------------------------------------------
+
+    /**
+     * @notice Returns the current base-fee (PPM) for a pool.
+     * @param poolId The ID of the pool.
+     * @return baseFeePpm The current base fee in PPM.
+     */
+    function getBaseFee(PoolId poolId) external view returns (uint256 baseFeePpm) {
+        return poolStates[poolId].baseFeePpm;
+    }
+
+    /// @dev Updates the base fee based on cap frequency, and returns
+    ///      (newBaseFeePpm, currentSurgeFeePpm, didBaseFeeUpdate)
+    function _updateBaseFeeAndFrequency(
+        PoolId poolId,
+        PoolKey memory /*key*/
+    )
+        internal
+        returns (
+            uint256 newBase,
+            uint256 surgeFee,
+            bool didUpdate
+        )
+    {
+        PoolState storage pool = poolStates[poolId];
+        uint48 nowTs = uint48(block.timestamp);
+
+        // ── DEBUG LOGGING ───────────────────────────────────────────────────
+        console.log("_updateBaseFee >> nowTs:", nowTs);
+        console.log("  lastUpdateTimestamp:", pool.lastUpdateTimestamp);
+        console.log("  freqLastUpdate:", pool.freqLastUpdate);
+        console.log("  freqScaled before snapshot:", pool.freqScaled);
+
+        // 1) compute current decayed surge
+        surgeFee = _calculateCurrentDecayedSurgeFee(poolId);
+
+        // 2) snapshot pre-decay frequency (for base-fee calculation)
+        uint256 rawFreq = pool.freqScaled;
+        console.log("  rawFreq snapshot:", rawFreq);
+
+        // 3) decay the frequency counter
+        uint256 window = policy.getCapFreqDecayWindow(poolId);
+        console.log("  decay window:", window);
+        if (pool.freqLastUpdate != 0 && pool.freqScaled > 0 && window > 0) {
+            uint256 elapsed = nowTs - pool.freqLastUpdate;
+            console.log("  elapsed since last freqUpdate:", elapsed);
+            if (elapsed < window) {
+                uint256 decayAmt = (uint256(pool.freqScaled) * elapsed) / window;
+                console.log("  decayAmt:", decayAmt);
+                pool.freqScaled = uint128(pool.freqScaled > decayAmt ? pool.freqScaled - decayAmt : 0);
+                console.log("  freqScaled after decay:", pool.freqScaled);
+            } else {
+                pool.freqScaled = 0;
+                console.log("  freqScaled reset to 0 (elapsed >= window)");
+            }
+        }
+
+        // 4) if we just triggered a cap, bump freqScaled
+        if (pool.lastCapTimestamp == nowTs) {
+            console.log("  cap just triggered this block; bumping freqScaled");
+            uint256 scale = policy.getFreqScaling(poolId);
+            uint256 updated = uint256(pool.freqScaled) + scale;
+            pool.freqScaled = updated > type(uint128).max ? type(uint128).max : uint128(updated);
+            console.log("  freqScaled after bump:", pool.freqScaled);
+        }
+
+        // update timestamp for frequency decay
+        pool.freqLastUpdate = nowTs;
+
+        console.log("  freqLastUpdate updated to nowTs");
+
+        // 5) enforce minimum update interval for base-fee recalculation.
+        //    Frequency update above happens regardless of this check.
+        uint256 minInterval = policy.getBaseFeeUpdateIntervalSeconds(poolId);
+        console.log("  minInterval:", minInterval);
+        if (nowTs < pool.lastUpdateTimestamp + minInterval) {
+            console.log("  too soon to recompute base-fee (skipping)");
+            // too soon, so skip base‐fee change
+            return (pool.baseFeePpm, surgeFee, false);
+        }
+
+
+        // 6) apply dynamic‑fee formula based on rawFreq snapshot
+        uint256 defaultFee = policy.getDefaultDynamicFee();
+        uint256 targetCaps = policy.getTargetCapsPerDay(poolId);
+        console.log("  defaultFee:", defaultFee);
+        console.log("  targetCaps/day:", targetCaps);
+        uint256 minFee     = policy.getMinBaseFee(poolId);
+        uint256 maxFee     = policy.getMaxBaseFee(poolId);
+
+        uint256 num   = rawFreq * 86400;
+        console.log("  num (rawFreq*86400):", num);
+        uint256 den   = targetCaps * window;
+        console.log("  den (targetCaps*window):", den);
+        int256  diff;
+        if (den == 0) {
+            diff = 0;
+        } else {
+            int256 ratioPpm = int256((num * 1e6) / den);
+            console.log("  ratioPpm:", ratioPpm);
+            diff = (int256(defaultFee) * (ratioPpm - int256(1e6))) / int256(1e6);
+            console.log("  diff:", diff);
+        }
+
+        int256 interim = int256(defaultFee) + diff;
+        console.log("  interim fee:", interim);
+        uint256 clamped = interim < 0 ? 0 : uint256(interim);
+        if (clamped < minFee) clamped = minFee;
+        if (clamped > maxFee) clamped = maxFee;
+        console.log("  clamped newBase (min/max):", clamped);
+        newBase = clamped;
+
+        // 7) write state & emit if changed
+        if (newBase != pool.baseFeePpm) {
+            emit FeeAdjustmentApplied(
+                poolId,
+                pool.baseFeePpm,
+                newBase,
+                newBase > pool.baseFeePpm ? uint8(AdjustmentType.Increase) : uint8(AdjustmentType.Decrease)
+            );
+            pool.baseFeePpm         = uint128(newBase);
+            pool.lastUpdateTimestamp = nowTs;
+            didUpdate = true;
+        } else {
+            didUpdate = false;
+        }
+        return (newBase, surgeFee, didUpdate);
+    }
+
+    // --- Implementations for missing IFullRangeDynamicFeeManager functions ---
+
+    /**
+     * @notice Returns the current base and surge fee components for a pool.
+     * @param poolId The ID of the pool.
+     * @return baseFee The current base fee in PPM.
+     * @return surgeFeeValue The current surge fee (potentially decayed) in PPM.
+     */
+    function getCurrentFees(PoolId poolId) external view override returns (uint256 baseFee, uint256 surgeFeeValue) {
+        PoolState storage pool = poolStates[poolId];
+        // Ensure pool is initialized before calculating total fee
+        if (pool.lastUpdateTimestamp == 0) {
+            return (policy.getDefaultDynamicFee(), 0);
+        }
+        baseFee = pool.baseFeePpm;
+        surgeFeeValue = _calculateCurrentDecayedSurgeFee(poolId);
+        return (baseFee, surgeFeeValue);
+    }
+
+    /**
+     * @notice Placeholder/Compatibility function to handle fee updates as per the interface.
+     * @dev Current design uses triggerFeeUpdate/updateDynamicFeeIfNeeded with PoolKey.
+     *      This implementation attempts to fetch the key and call updateDynamicFeeIfNeeded.
+     *      Consider revising interface or implementation if key fetching is not desired/possible.
+     * @param poolId The ID of the pool.
+     */
+    function handleFeeUpdate(PoolId poolId) external override {
+        // Reverted implementation: This function requires PoolKey which isn't provided by the interface.
+        // Updates should be triggered via triggerFeeUpdate or updateDynamicFeeIfNeeded.
+        revert("FullRangeDynamicFeeManager: handleFeeUpdate cannot execute without PoolKey. Use triggerFeeUpdate or updateDynamicFeeIfNeeded.");
+        /*
+        // Attempt to fetch the PoolKey - This might be complex or impossible depending on context
+        // For now, revert as the direct mapping is unclear without the key.
+        // A more robust solution would require knowing how this function is intended to be called
+        // or adjusting the interface.
+        // Alternatively, if it's meant for internal logic triggering, refactor might be needed.
+
+        // Fetch PoolKey associated with PoolId - requires PoolManager lookup
+        // ERROR: getPoolParameters is not in standard IPoolManager interface
+        (Currency c0, Currency c1, uint24 fee, int24 tickSpacing, IHooks hooks) = poolManager.getPoolParameters(poolId);
+        PoolKey memory key = PoolKey({ currency0: c0, currency1: c1, fee: fee, tickSpacing: tickSpacing, hooks: hooks});
+
+        // Call the internal update logic
+        this.updateDynamicFeeIfNeeded(poolId, key);
+        */
+    }
+
+    /**
+     * @notice Placeholder/Compatibility function to update the oracle as per the interface.
+     * @dev Reverts, as the current contract design uses a reverse authorization model (pulling data via _syncOracleData)
+     *      rather than allowing external pushes via this function.
+     */
+    function updateOracle(PoolId /*poolId*/, int24 /*tick*/) external override {
+        revert("FullRangeDynamicFeeManager: updateOracle not supported due to reverse authorization model. Use _syncOracleData internally.");
+    }
+
+    // --- End of IFullRangeDynamicFeeManager implementations ---
 }

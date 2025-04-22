@@ -61,6 +61,7 @@ contract ForkSetup is Test {
     PoolModifyLiquidityTest internal lpRouter;
     PoolSwapTest internal swapRouter;
     PoolDonateTest internal donateRouter;
+    PoolSwapTest internal liquidityRouter;
 
     // --- Core V4 & Pool Identifiers ---
     PoolKey internal poolKey;
@@ -152,7 +153,7 @@ contract ForkSetup is Test {
             2, // Multipliers, Default Dynamic Fee, Tick Scaling Factor
             supportedTickSpacings_,
             1e17, // Interest Fee
-            address(0) // Fee Collector
+            deployerEOA // Fee Collector - Use deployer address instead of address(0)
         );
         emit log_named_address("PolicyManager deployed at", address(policyManager));
         require(address(policyManager) != address(0), "PolicyManager deployment failed");
@@ -280,12 +281,15 @@ contract ForkSetup is Test {
         lpRouter = new PoolModifyLiquidityTest(poolManager);
         swapRouter = new PoolSwapTest(poolManager);
         donateRouter = new PoolDonateTest(poolManager);
+        liquidityRouter = new PoolSwapTest(poolManager);
         emit log_named_address("Test LiquidityRouter deployed at", address(lpRouter));
         emit log_named_address("Test SwapRouter deployed at", address(swapRouter));
         emit log_named_address("Test Donate Router deployed at", address(donateRouter));
+        emit log_named_address("Test (Liquidity) Router deployed at", address(liquidityRouter));
         require(address(lpRouter) != address(0), "lpRouter deployment failed");
         require(address(swapRouter) != address(0), "swapRouter deployment failed");
         require(address(donateRouter) != address(0), "donateRouter deployment failed");
+        require(address(liquidityRouter) != address(0), "liquidityRouter deployment failed");
 
         // Stop pranking *before* initializing the pool
         vm.stopPrank();
