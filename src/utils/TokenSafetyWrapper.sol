@@ -22,7 +22,7 @@ library TokenSafetyWrapper {
         if (amount == 0) return; // Gas optimization
         SafeTransferLib.safeTransferFrom(ERC20(token), from, to, amount);
     }
-    
+
     /**
      * @notice Safely transfer tokens to an address
      * @param token The token to transfer
@@ -33,7 +33,7 @@ library TokenSafetyWrapper {
         if (amount == 0) return; // Gas optimization
         SafeTransferLib.safeTransfer(ERC20(token), to, amount);
     }
-    
+
     /**
      * @notice Safely approve token spending
      * @param token The token to approve
@@ -43,16 +43,16 @@ library TokenSafetyWrapper {
     function safeApprove(address token, address spender, uint256 amount) internal {
         // Skip 0 amount approvals to save gas
         if (amount == 0) return;
-        
+
         // Reset approval first if non-zero to avoid issues with certain tokens
         uint256 currentAllowance = ERC20(token).allowance(address(this), spender);
         if (currentAllowance > 0) {
             SafeTransferLib.safeApprove(ERC20(token), spender, 0);
         }
-        
+
         SafeTransferLib.safeApprove(ERC20(token), spender, amount);
     }
-    
+
     /**
      * @notice Get token balance safely
      * @param token The token to query balance for
@@ -62,7 +62,7 @@ library TokenSafetyWrapper {
     function safeBalanceOf(address token, address account) internal view returns (uint256 balance) {
         return ERC20(token).balanceOf(account);
     }
-    
+
     /**
      * @notice Revoke approval completely
      * @param token The token to revoke approval for
@@ -75,4 +75,4 @@ library TokenSafetyWrapper {
             SafeTransferLib.safeApprove(ERC20(token), spender, 0);
         }
     }
-} 
+}

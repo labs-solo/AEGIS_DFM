@@ -83,4 +83,4 @@ interface ISpotHooks is IHooks {
         BalanceDelta feesAccrued,
         bytes calldata hookData
     ) external returns (bytes4, BalanceDelta);
-} 
+}

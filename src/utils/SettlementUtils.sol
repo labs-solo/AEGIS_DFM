@@ -26,7 +26,7 @@ library SettlementUtils {
      * @dev Handles token transfers based on the delta (positive means take, negative means pay)
      * @param manager The PoolManager address
      * @param delta The balance delta to settle
-     * @param token0 Address of token0 
+     * @param token0 Address of token0
      * @param token1 Address of token1
      * @param recipientOrSender Address to send tokens to (for positive deltas) or take from (for negative deltas)
      */
@@ -40,7 +40,7 @@ library SettlementUtils {
         // Decode delta values
         int256 delta0 = delta.amount0();
         int256 delta1 = delta.amount1();
-        
+
         // Handle token0 settlement
         if (delta0 > 0) {
             // Take tokens from the pool (pool owes tokens to us)
@@ -73,25 +73,21 @@ library SettlementUtils {
      * @param key The PoolKey to operate on
      * @param delta The balance delta from operation
      */
-    function collectDeltas(
-        IPoolManager manager,
-        PoolKey memory key,
-        BalanceDelta delta
-    ) internal {
+    function collectDeltas(IPoolManager manager, PoolKey memory key, BalanceDelta delta) internal {
         // Decode delta values
         int256 delta0 = delta.amount0();
         int256 delta1 = delta.amount1();
-        
+
         // Handle token0 collection if positive (we get tokens from pool)
         if (delta0 > 0) {
             manager.take(key.currency0, address(this), uint256(delta0));
         }
-        
+
         // Handle token1 collection if positive (we get tokens from pool)
         if (delta1 > 0) {
             manager.take(key.currency1, address(this), uint256(delta1));
         }
-        
+
         // Handle negative deltas (we owe tokens to pool)
         if (delta0 < 0 || delta1 < 0) {
             // We need to settle negative delta values
@@ -99,12 +95,12 @@ library SettlementUtils {
                 uint256 amountToSend = uint256(-delta0);
                 ERC20(Currency.unwrap(key.currency0)).safeApprove(address(manager), amountToSend);
             }
-            
+
             if (delta1 < 0) {
                 uint256 amountToSend = uint256(-delta1);
                 ERC20(Currency.unwrap(key.currency1)).safeApprove(address(manager), amountToSend);
             }
-            
+
             // Call settle once for both currencies if needed
             manager.settle();
         }
@@ -115,7 +111,7 @@ library SettlementUtils {
      * @dev Used when contract already has the tokens and needs to settle with the PoolManager
      * @param manager The PoolManager address
      * @param delta The balance delta to settle
-     * @param token0 Address of token0 
+     * @param token0 Address of token0
      * @param token1 Address of token1
      * @param recipient Address to send tokens to (for positive deltas)
      */
@@ -129,7 +125,7 @@ library SettlementUtils {
         // Decode delta values
         int256 delta0 = delta.amount0();
         int256 delta1 = delta.amount1();
-        
+
         // Handle token0 settlement
         if (delta0 > 0) {
             // Take tokens from the pool (pool owes tokens to us)
@@ -152,7 +148,7 @@ library SettlementUtils {
             manager.settle();
         }
     }
-    
+
     /**
      * @notice Calculate fee share distribution for position token holders
      * @param poolId The pool ID
@@ -169,10 +165,10 @@ library SettlementUtils {
     ) internal view returns (uint256 sharesFromFees) {
         uint128 totalLiquidity = liquidityManager.poolTotalShares(poolId);
         if (totalLiquidity == 0) return 0;
-        
+
         // Use MathUtils to calculate geometric shares
         sharesFromFees = MathUtils.calculateGeometricShares(feeAmount0, feeAmount1);
-        
+
         return sharesFromFees;
     }
-} 
+}

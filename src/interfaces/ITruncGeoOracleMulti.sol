@@ -40,12 +40,10 @@ interface ITruncGeoOracleMulti {
      * @return tickCumulative The cumulative tick value
      * @return secondsPerLiquidityCumulativeX128 The cumulative seconds per liquidity value
      */
-    function getLastObservation(PoolId poolId) external view returns (
-        uint32 timestamp,
-        int24 tick,
-        int48 tickCumulative,
-        uint144 secondsPerLiquidityCumulativeX128
-    );
+    function getLastObservation(PoolId poolId)
+        external
+        view
+        returns (uint32 timestamp, int24 tick, int48 tickCumulative, uint144 secondsPerLiquidityCumulativeX128);
 
     /**
      * @notice Updates the maximum tick movement for a pool.
@@ -62,7 +60,9 @@ interface ITruncGeoOracleMulti {
      * @return secondsPerLiquidityCumulativeX128s The seconds per liquidity cumulative values.
      */
     function observe(PoolKey calldata key, uint32[] calldata secondsAgos)
-        external view returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s);
+        external
+        view
+        returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s);
 
     /**
      * @notice Increases the cardinality of the oracle observation array
@@ -72,5 +72,6 @@ interface ITruncGeoOracleMulti {
      * @return cardinalityNextNew The new cardinality.
      */
     function increaseCardinalityNext(PoolKey calldata key, uint16 cardinalityNext)
-        external returns (uint16 cardinalityNextOld, uint16 cardinalityNextNew);
-} 
+        external
+        returns (uint16 cardinalityNextOld, uint16 cardinalityNextNew);
+}

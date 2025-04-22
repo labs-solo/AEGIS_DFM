@@ -17,7 +17,7 @@ library CurrencySettlerExtension {
     using CurrencyLibrary for Currency;
     using SafeCast for uint256;
     using SafeCast for int256;
-    
+
     /**
      * @notice Take a currency from the pool manager
      * @param manager The pool manager instance
@@ -25,32 +25,23 @@ library CurrencySettlerExtension {
      * @param recipient The recipient of the tokens
      * @param amount The amount to take
      */
-    function takeCurrency(
-        IPoolManager manager,
-        Currency currency,
-        address recipient,
-        uint256 amount
-    ) internal {
+    function takeCurrency(IPoolManager manager, Currency currency, address recipient, uint256 amount) internal {
         if (amount == 0) return;
         if (recipient == address(0)) revert Errors.ZeroAddress();
-        
+
         // Use Uniswap's standard CurrencySettler directly
         CurrencySettler.take(currency, manager, recipient, amount, false);
     }
-    
+
     /**
      * @notice Settle a currency with the pool manager
      * @param manager The pool manager instance
      * @param currency The currency to settle
      * @param amount The amount to settle
      */
-    function settleCurrency(
-        IPoolManager manager,
-        Currency currency,
-        uint256 amount
-    ) internal {
+    function settleCurrency(IPoolManager manager, Currency currency, uint256 amount) internal {
         if (amount == 0) return;
-        
+
         if (currency.isAddressZero()) {
             // Use Uniswap's standard CurrencySettler with native ETH
             CurrencySettler.settle(currency, manager, address(this), amount, false);
@@ -59,49 +50,49 @@ library CurrencySettlerExtension {
             CurrencySettler.settle(currency, manager, address(this), amount, false);
         }
     }
-    
+
     /**
      * @notice Handle a balance delta for both currencies in a key
      * @param manager The pool manager
      * @param delta The balance delta to settle
-     * @param currency0 The first currency
-     * @param currency1 The second currency
+     * @param cur0 The first currency
+     * @param cur1 The second currency
      * @param recipient The recipient for positive deltas
      */
     function handlePoolDelta(
         IPoolManager manager,
         BalanceDelta delta,
-        Currency currency0,
-        Currency currency1,
+        Currency cur0,
+        Currency cur1,
         address recipient
     ) internal {
-        // Handle currency0
-        _handleSingleCurrency(manager, delta.amount0(), currency0, recipient);
-        
-        // Handle currency1
-        _handleSingleCurrency(manager, delta.amount1(), currency1, recipient);
+        _handle(manager, delta.amount0(), cur0, recipient);
+        _handle(manager, delta.amount1(), cur1, recipient);
     }
-    
+
     /**
      * @notice Handle a single currency delta
      * @dev Internal helper to reduce code duplication
-     * @param manager The pool manager
-     * @param amount The delta amount (positive or negative)
-     * @param currency The currency to handle
-     * @param recipient The recipient for positive deltas
+     * @param m The pool manager
+     * @param amt The delta amount (positive or negative)
+     * @param cur The currency to handle
+     * @param recip The recipient for positive deltas (where PoolManager sends tokens)
      */
-    function _handleSingleCurrency(
-        IPoolManager manager,
-        int128 amount,
-        Currency currency,
-        address recipient
-    ) private {
-        if (amount > 0) {
-            // Take from pool (positive delta)
-            takeCurrency(manager, currency, recipient, uint256(uint128(amount)));
-        } else if (amount < 0) {
-            // Pay to pool (negative delta)
-            settleCurrency(manager, currency, uint256(uint128(-amount)));
+    function _handle(IPoolManager m, int128 amt, Currency cur, address recip) private {
+        if (amt < 0) {
+            // LM owes → settle (pay‑in)
+            uint256 amountToSettle = uint256(uint128(-amt));
+            if (cur.isAddressZero()) {
+                m.settle{value: amountToSettle}();
+            } else {
+                // Use Uniswap's standard CurrencySettler for ERC20s
+                CurrencySettler.settle(cur, m, address(this), amountToSettle, false);
+            }
+        } else if (amt > 0) {
+            // pool owes LM → take (pull‑out)
+            // Tell PoolManager to send tokens *to* the specified recipient
+            m.take(cur, recip, uint256(uint128(amt)));
         }
+        // if amt == 0, do nothing
     }
-} 
+}

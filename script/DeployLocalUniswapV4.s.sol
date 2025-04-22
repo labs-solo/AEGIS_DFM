@@ -2,6 +2,7 @@
 pragma solidity 0.8.26;
 
 import "forge-std/Script.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 // Uniswap V4 Core
 import {PoolManager} from "v4-core/src/PoolManager.sol";
@@ -26,7 +27,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 
 // Test Tokens
-import { MockERC20 } from "../src/token/MockERC20.sol";
+import {MockERC20} from "../src/token/MockERC20.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -38,6 +39,9 @@ import { MockERC20 } from "../src/token/MockERC20.sol";
  * 4. Test utility routers for liquidity and swaps
  */
 contract DeployLocalUniswapV4 is Script {
+    // ADD using directive HERE
+    using PoolIdLibrary for PoolId;
+
     // Deployed contract references
     PoolManager public poolManager;
     PoolPolicyManager public policyManager;
@@ -45,27 +49,28 @@ contract DeployLocalUniswapV4 is Script {
     FullRangeDynamicFeeManager public dynamicFeeManager;
     Spot public fullRange;
     TruncGeoOracleMulti public truncGeoOracle;
-    
+
     // Test contract references
     PoolModifyLiquidityTest public lpRouter;
     PoolSwapTest public swapRouter;
     PoolDonateTest public donateRouter;
-    
+
     // Deployment parameters
     uint256 public constant DEFAULT_PROTOCOL_FEE = 0; // 0% protocol fee
     uint256 public constant HOOK_FEE = 30; // 0.30% hook fee
-    address public constant GOVERNANCE = address(0x5); // Governance address
     uint24 public constant FEE = 3000; // Added FEE constant (0.3%)
     int24 public constant TICK_SPACING = 60; // Added TICK_SPACING constant
     uint160 public constant INITIAL_SQRT_PRICE_X96 = 79228162514264337593543950336; // Added INITIAL_SQRT_PRICE_X96 (1:1 price)
 
     function run() external {
-        uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
-        address deployerAddress = vm.addr(deployerPrivateKey);
-        address governance = deployerAddress; // Use deployer as governance for local test
+        uint256 deployerKey = vm.envUint("PRIVATE_KEY");
+        address deployer = vm.addr(deployerKey);
 
-        vm.startBroadcast(deployerPrivateKey);
-        
+        /* governance is the deployer in local test-nets */
+        address governance = deployer;
+
+        vm.startBroadcast(deployerKey);
+
         // Step 1: Deploy PoolManager
         console.log("Deploying PoolManager...");
         poolManager = new PoolManager(address(uint160(DEFAULT_PROTOCOL_FEE)));
@@ -90,12 +95,12 @@ contract DeployLocalUniswapV4 is Script {
             hooks: IHooks(address(0)) // Placeholder hook address initially
         });
         PoolId poolId = PoolIdLibrary.toId(key); // Use library for PoolId calculation
-        
+
         // Step 1.5: Deploy Oracle (BEFORE PolicyManager)
         console.log("Deploying TruncGeoOracleMulti...");
         truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance);
         console.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
-        
+
         // Step 2: Deploy Policy Manager
         console.log("Deploying PolicyManager...");
         uint24[] memory supportedTickSpacings = new uint24[](3);
@@ -108,29 +113,29 @@ contract DeployLocalUniswapV4 is Script {
             250000, // POL_SHARE_PPM (25%)
             250000, // FULLRANGE_SHARE_PPM (25%)
             500000, // LP_SHARE_PPM (50%)
-            1000,   // MIN_TRADING_FEE_PPM (0.1%)
-            10000,  // FEE_CLAIM_THRESHOLD_PPM (1%)
-            10,     // DEFAULT_POL_MULTIPLIER
-            3000,   // DEFAULT_DYNAMIC_FEE_PPM (0.3%)
-            2,      // TICK_SCALING_FACTOR
+            1000, // MIN_TRADING_FEE_PPM (0.1%)
+            10000, // FEE_CLAIM_THRESHOLD_PPM (1%)
+            10, // DEFAULT_POL_MULTIPLIER
+            3000, // DEFAULT_DYNAMIC_FEE_PPM (0.3%)
+            2, // TICK_SCALING_FACTOR
             supportedTickSpacings,
-            1e17,   // Protocol Interest Fee Percentage (10%)
+            1e17, // Protocol Interest Fee Percentage (10%)
             address(0) // Fee Collector
         );
         console.log("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
-                
+
         // Step 3: Deploy FullRange components
         console.log("Deploying FullRange components...");
-        
+
         // Deploy Liquidity Manager
         liquidityManager = new FullRangeLiquidityManager(IPoolManager(address(poolManager)), governance);
         console.log("LiquidityManager deployed at:", address(liquidityManager));
-        
+
         // Deploy Spot hook (which is MarginHarness in this script)
         // Use _deployFullRange which now needs poolId
-        fullRange = _deployFullRange(deployerAddress, poolId, key); // Pass poolId and key
+        fullRange = _deployFullRange(deployer, poolId, key, governance);
         console.log("FullRange hook deployed at:", address(fullRange));
-        
+
         // Deploy DynamicFeeManager AFTER FullRange
         dynamicFeeManager = new FullRangeDynamicFeeManager(
             governance,
@@ -139,7 +144,7 @@ contract DeployLocalUniswapV4 is Script {
             address(fullRange) // Pass actual FullRange address
         );
         console.log("DynamicFeeManager deployed at:", address(dynamicFeeManager));
-        
+
         // Step 4: Configure deployed contracts
         console.log("Configuring contracts...");
         liquidityManager.setAuthorizedHookAddress(address(fullRange));
@@ -157,9 +162,9 @@ contract DeployLocalUniswapV4 is Script {
         console.log("LiquidityRouter deployed at:", address(lpRouter));
         console.log("SwapRouter deployed at:", address(swapRouter));
         console.log("Test Donate Router:", address(donateRouter));
-        
+
         vm.stopBroadcast();
-        
+
         // Output summary
         console.log("\n=== Deployment Complete ===");
         console.log("PoolManager:", address(poolManager));
@@ -172,27 +177,28 @@ contract DeployLocalUniswapV4 is Script {
         console.log("Test Donate Router:", address(donateRouter));
     }
 
-    // Update _deployFullRange to accept and use PoolId
-    function _deployFullRange(address _deployer, PoolId _poolId, PoolKey memory _key) internal returns (Spot) {
+    // Update _deployFullRange to accept and use PoolId and governance
+    function _deployFullRange(address _deployer, PoolId _poolId, PoolKey memory _key, address _governance)
+        internal
+        returns (Spot)
+    {
         // Calculate required hook flags
         uint160 flags = uint160(
             // Hooks.BEFORE_INITIALIZE_FLAG | // Removed if not used
-            Hooks.AFTER_INITIALIZE_FLAG |
+            Hooks.AFTER_INITIALIZE_FLAG
             // Hooks.BEFORE_ADD_LIQUIDITY_FLAG | // Removed if not used
-            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
+            | Hooks.AFTER_ADD_LIQUIDITY_FLAG
             // Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | // Removed if not used
-            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
-            Hooks.BEFORE_SWAP_FLAG |
-            Hooks.AFTER_SWAP_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+            | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
+                | Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
         );
 
         // Predict hook address first to deploy MarginManager
         bytes memory spotCreationCodePlaceholder = abi.encodePacked(
             type(Spot).creationCode, // Use Spot instead of MarginHarness
-            abi.encode(IPoolManager(address(poolManager)), policyManager, liquidityManager) // Remove _poolId
+            abi.encode(IPoolManager(address(poolManager)), policyManager, liquidityManager, _deployer) // Add _deployer as owner
         );
-        (address predictedHookAddress, ) = HookMiner.find(
+        (address predictedHookAddress,) = HookMiner.find(
             _deployer,
             flags,
             spotCreationCodePlaceholder, // Use Spot creation code
@@ -204,7 +210,8 @@ contract DeployLocalUniswapV4 is Script {
         bytes memory constructorArgs = abi.encode(
             IPoolManager(address(poolManager)),
             policyManager,
-            liquidityManager
+            liquidityManager,
+            _governance // <-- use parameter
         );
 
         // Recalculate salt with final args
@@ -218,16 +225,28 @@ contract DeployLocalUniswapV4 is Script {
         console.logBytes32(salt);
 
         // Deploy Spot
-        Spot fullRangeInstance = new Spot{salt: salt}( // Use Spot instead of MarginHarness
+        Spot hook = new Spot{salt: salt}(
             poolManager,
             IPoolPolicy(address(policyManager)),
-            liquidityManager
+            liquidityManager,
+            _governance // governance injected here
         );
 
         // Verify the deployed address matches the calculated address
-        require(address(fullRangeInstance) == finalHookAddress, "HookMiner address mismatch");
-        console.log("Deployed hook address:", address(fullRangeInstance));
+        require(address(hook) == finalHookAddress, "HookMiner address mismatch");
+        console.log("Deployed hook address:", address(hook));
 
-        return fullRangeInstance; // Return the Spot instance directly
+        return hook;
     }
-} 
+
+    function _onPoolCreated(
+        IPoolManager manager,
+        IPoolManager, /* manager */
+        PoolId _poolId,
+        PoolKey memory, /* _key */
+        uint160 sqrtPriceX96,
+        int24 tick
+    ) internal pure {
+        console2.log(string.concat("Pool created: ", Strings.toHexString(uint256(PoolId.unwrap(_poolId)))));
+    }
+}

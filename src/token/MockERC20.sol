@@ -8,11 +8,7 @@ import "solmate/src/tokens/ERC20.sol";
  * @notice A simple ERC20 implementation for testing purposes
  */
 contract MockERC20 is ERC20 {
-    constructor(
-        string memory name,
-        string memory symbol,
-        uint8 decimals
-    ) ERC20(name, symbol, decimals) {}
+    constructor(string memory name, string memory symbol, uint8 decimals) ERC20(name, symbol, decimals) {}
 
     /**
      * @notice Mint tokens to a specified address
@@ -31,4 +27,4 @@ contract MockERC20 is ERC20 {
     function burn(address from, uint256 amount) public {
         _burn(from, amount);
     }
-} 
+}

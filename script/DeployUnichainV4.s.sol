@@ -36,25 +36,25 @@ import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
  */
 contract DeployUnichainV4 is Script {
     // Deployed contract references
-    IPoolManager public poolManager;         // Reference to existing manager
+    IPoolManager public poolManager; // Reference to existing manager
     PoolPolicyManager public policyManager; // Deployed
     FullRangeLiquidityManager public liquidityManager; // Deployed
     TruncGeoOracleMulti public truncGeoOracle; // Deployed
     // Removed: dynamicFeeManager, fullRange
-    
+
     // Test contract references
     PoolModifyLiquidityTest public lpRouter; // Deployed
-    PoolSwapTest public swapRouter;       // Deployed
-    PoolDonateTest public donateRouter;     // Deployed
-    
+    PoolSwapTest public swapRouter; // Deployed
+    PoolDonateTest public donateRouter; // Deployed
+
     // Deployment parameters (Constants remain, used by external setup)
     uint24 public constant FEE = 3000; // Pool fee (0.3%)
     int24 public constant TICK_SPACING = 60; // Tick spacing
     uint160 public constant INITIAL_SQRT_PRICE_X96 = 79228162514264337593543950336; // 1:1 price
-    
+
     // Unichain Mainnet-specific addresses
     address public constant UNICHAIN_POOL_MANAGER = 0x1F98400000000000000000000000000000000004; // Official Unichain PoolManager
-    
+
     // Official tokens (Constants remain, used by external setup)
     address public constant WETH = 0x4200000000000000000000000000000000000006; // WETH9 on Unichain
     address public constant USDC = 0x078D782b760474a361dDA0AF3839290b0EF57AD6; // Circle USDC on Unichain
@@ -73,15 +73,15 @@ contract DeployUnichainV4 is Script {
         console2.log("Using Unichain PoolManager at:", UNICHAIN_POOL_MANAGER);
         poolManager = IPoolManager(UNICHAIN_POOL_MANAGER);
 
-        // --- Broadcast: Deploy Dependencies & Test Routers --- 
+        // --- Broadcast: Deploy Dependencies & Test Routers ---
         console2.log("\n--- Starting Broadcast: Dependencies & Test Routers ---");
         vm.startBroadcast(deployerPrivateKey);
-        
+
         // Step 1.5: Deploy Oracle
         console2.log("Deploying TruncGeoOracleMulti...");
         truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance);
         console2.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
-        
+
         // Step 2: Deploy Policy Manager
         console2.log("Deploying PolicyManager...");
         uint24[] memory supportedTickSpacings_ = new uint24[](3);
@@ -91,20 +91,25 @@ contract DeployUnichainV4 is Script {
 
         policyManager = new PoolPolicyManager(
             governance,
-            250000, 250000, 500000, // Shares PPM
-            1000, 10000, // Fee PPMs
-            10, 3000, 2, // Multipliers & Factors
+            250000,
+            250000,
+            500000, // Shares PPM
+            1000,
+            10000, // Fee PPMs
+            10,
+            3000,
+            2, // Multipliers & Factors
             supportedTickSpacings_,
             1e17, // Interest Fee
             address(0) // Fee Collector
         );
         console2.log("PoolPolicyManager Deployed at:", address(policyManager));
-                 
+
         // Step 3: Deploy Liquidity Manager
         console2.log("Deploying Liquidity Manager...");
         liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
         console2.log("LiquidityManager deployed at:", address(liquidityManager));
-        
+
         // Step 4: Deploy test routers
         console2.log("Deploying test routers...");
         lpRouter = new PoolModifyLiquidityTest(poolManager);
@@ -115,10 +120,10 @@ contract DeployUnichainV4 is Script {
         console2.log("Test Donate Router deployed at:", address(donateRouter));
 
         // Removed: Hook deployment, Dynamic Fee Manager deployment, configurations, pool initialization
-        
+
         vm.stopBroadcast();
         console2.log("--- Broadcast Complete ---");
-        
+
         // Output summary
         console2.log("\n=== Dependency Deployment Complete ===");
         console2.log("Using Unichain PoolManager:", address(poolManager));
@@ -131,4 +136,4 @@ contract DeployUnichainV4 is Script {
     }
 
     // Removed: _getHookSaltConfig function (no longer needed here)
-} 
+}

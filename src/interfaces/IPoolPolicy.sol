@@ -14,10 +14,13 @@ interface IPoolPolicy {
      * @notice Policy types supported by the system
      */
     enum PolicyType {
-        FEE,           // Manages fee calculation and distribution
-        TICK_SCALING,  // Controls tick movement restrictions
-        VTIER,         // Validates fee tier and tick spacing combinations
-        REINVESTMENT   // Manages fee reinvestment strategies
+        FEE, // Manages fee calculation and distribution
+        TICK_SCALING, // Controls tick movement restrictions
+        VTIER, // Validates fee tier and tick spacing combinations
+        REINVESTMENT, // Manages fee reinvestment strategies
+        ORACLE, // Added: Manages oracle behavior and thresholds
+        INTEREST_FEE, // Added: Manages protocol interest fee settings
+        REINVESTOR_AUTH // Added: Manages authorized reinvestor addresses
     }
 
     /**
@@ -42,15 +45,21 @@ interface IPoolPolicy {
      * @param tick The initial tick
      * @param hook The hook address
      */
-    function handlePoolInitialization(PoolId poolId, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick, address hook) external;
+    function handlePoolInitialization(
+        PoolId poolId,
+        PoolKey calldata key,
+        uint160 sqrtPriceX96,
+        int24 tick,
+        address hook
+    ) external;
 
     /**
      * @notice Returns the policy implementation for a specific policy type
      * @param poolId The ID of the pool
      * @param policyType The type of policy to retrieve
-     * @return The policy implementation address
+     * @return implementation The policy implementation address
      */
-    function getPolicy(PoolId poolId, PolicyType policyType) external view returns (address);
+    function getPolicy(PoolId poolId, PolicyType policyType) external view returns (address implementation);
 
     /**
      * @notice Returns fee allocation percentages in PPM
@@ -59,8 +68,11 @@ interface IPoolPolicy {
      * @return fullRangeShare Full range incentive share
      * @return lpShare Liquidity provider share
      */
-    function getFeeAllocations(PoolId poolId) external view returns (uint256 polShare, uint256 fullRangeShare, uint256 lpShare);
-    
+    function getFeeAllocations(PoolId poolId)
+        external
+        view
+        returns (uint256 polShare, uint256 fullRangeShare, uint256 lpShare);
+
     /**
      * @notice Calculates the minimum POL target based on dynamic fee and total liquidity
      * @param poolId The ID of the pool
@@ -68,14 +80,17 @@ interface IPoolPolicy {
      * @param dynamicFeePpm Current dynamic fee in PPM
      * @return Minimum required protocol-owned liquidity amount
      */
-    function getMinimumPOLTarget(PoolId poolId, uint256 totalLiquidity, uint256 dynamicFeePpm) external view returns (uint256);
-    
+    function getMinimumPOLTarget(PoolId poolId, uint256 totalLiquidity, uint256 dynamicFeePpm)
+        external
+        view
+        returns (uint256);
+
     /**
      * @notice Returns the minimum trading fee allowed (in PPM)
      * @return Minimum fee in PPM
      */
     function getMinimumTradingFee() external view returns (uint256);
-    
+
     /**
      * @notice Returns the threshold for claiming fees during swaps
      * @return Threshold as percentage of total liquidity
@@ -125,20 +140,20 @@ interface IPoolPolicy {
      * @param multiplier The new default multiplier value
      */
     function setDefaultPOLMultiplier(uint32 multiplier) external;
-    
+
     /**
      * @notice Sets the POL share percentage for a specific pool
      * @param poolId The pool ID
      * @param polSharePpm The POL share in PPM (parts per million)
      */
     function setPoolPOLShare(PoolId poolId, uint256 polSharePpm) external;
-    
+
     /**
      * @notice Enables or disables the use of pool-specific POL share percentages
      * @param enabled Whether to enable pool-specific POL sharing
      */
     function setPoolSpecificPOLSharingEnabled(bool enabled) external;
-    
+
     /**
      * @notice Gets the POL share percentage for a specific pool
      * @param poolId The pool ID to get the POL share for
@@ -194,10 +209,49 @@ interface IPoolPolicy {
      */
     function getFeeCollector() external view returns (address);
 
+    // ----------------------------------------------------------------
+    // Dynamic Fee Feedback Policy Getters
+    // ----------------------------------------------------------------
+
     /**
-     * @notice Checks if an address is authorized to trigger the reinvestment of protocol interest fees.
-     * @param reinvestor The address to check.
-     * @return isAuthorized True if the address is authorized.
+     * @notice Returns the policy‐defined initial surge fee in PPM for the given pool.
      */
-    function isAuthorizedReinvestor(address reinvestor) external view returns (bool isAuthorized);
-} 
+    function getInitialSurgeFeePpm(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the policy‐defined surge decay period (in seconds) for the given pool.
+     */
+    function getSurgeDecayPeriodSeconds(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the target number of CAP events per day (equilibrium) for the given pool.
+     */
+    function getTargetCapsPerDay(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the CAP‐frequency decay window (in seconds) for the given pool.
+     */
+    function getCapFreqDecayWindow(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the scaling factor used for CAP frequency math for the given pool.
+     */
+    function getFreqScaling(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the minimum base fee (in PPM) for the given pool.
+     */
+    function getMinBaseFee(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the maximum base fee (in PPM) for the given pool.
+     */
+    function getMaxBaseFee(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the base fee update interval in seconds for the given pool.
+     * @param poolId The ID of the pool
+     * @return The base fee update interval in seconds
+     */
+    function getBaseFeeUpdateIntervalSeconds(PoolId poolId) external view returns (uint256);
+}

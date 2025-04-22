@@ -15,4 +15,4 @@ interface IPoolCreationPolicy {
      * @return Boolean indicating if pool creation is allowed
      */
     function canCreatePool(address sender, PoolKey calldata key) external view returns (bool);
-} 
+}

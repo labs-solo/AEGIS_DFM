@@ -34,7 +34,7 @@ library HookMiner {
     {
         flags = flags & FLAG_MASK; // mask for only the bottom 14 bits
         bytes memory creationCodeWithArgs = abi.encodePacked(creationCode, constructorArgs);
-        
+
         // Try hardcoded salts
         bytes32[] memory knownSalts = new bytes32[](6);
         knownSalts[0] = SPOT_DEFAULT_SALT; // Then default Spot salt
@@ -61,7 +61,7 @@ library HookMiner {
                 return (hookAddress, bytes32(salt));
             }
         }
-        
+
         revert("HookMiner: could not find salt");
     }
 
@@ -79,7 +79,7 @@ library HookMiner {
             uint160(uint256(keccak256(abi.encodePacked(bytes1(0xFF), deployer, salt, keccak256(creationCodeWithArgs)))))
         );
     }
-    
+
     /// @notice Verifies if an address has the correct hook permissions
     /// @param hookAddress The address to verify
     /// @param flags The expected hook flags
@@ -88,4 +88,4 @@ library HookMiner {
         flags = flags & FLAG_MASK; // mask for only the bottom 14 bits
         return (uint160(hookAddress) & FLAG_MASK) == flags;
     }
-} 
+}

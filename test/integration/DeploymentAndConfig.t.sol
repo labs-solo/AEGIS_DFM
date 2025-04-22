@@ -46,27 +46,45 @@ contract DeploymentAndConfigTest is ForkSetup {
 
     /// @notice Test A2: Verify PoolManager linkages are correct.
     function test_VerifyPoolManagerLinkages() public {
-        assertEq(address(liquidityManager.manager()), address(poolManager), "LiquidityManager->PoolManager link mismatch");
-        assertEq(address(dynamicFeeManager.poolManager()), address(poolManager), "DynamicFeeManager->PoolManager link mismatch");
+        assertEq(
+            address(liquidityManager.manager()), address(poolManager), "LiquidityManager->PoolManager link mismatch"
+        );
+        assertEq(
+            address(dynamicFeeManager.poolManager()),
+            address(poolManager),
+            "DynamicFeeManager->PoolManager link mismatch"
+        );
         assertEq(address(fullRange.poolManager()), address(poolManager), "SpotHook->PoolManager link mismatch");
         // assertEq(address(oracle.poolManager()), address(poolManager), "Oracle->PoolManager link mismatch"); // Uncomment if Oracle interface has poolManager()
     }
 
     /// @notice Test A3: Verify PolicyManager linkages are correct.
     function test_VerifyPolicyManagerLinkages() public {
-        assertEq(address(dynamicFeeManager.policy()), address(policyManager), "DynamicFeeManager->PolicyManager link mismatch");
+        assertEq(
+            address(dynamicFeeManager.policy()),
+            address(policyManager),
+            "DynamicFeeManager->PolicyManager link mismatch"
+        );
         assertEq(address(fullRange.policyManager()), address(policyManager), "SpotHook->PolicyManager link mismatch");
     }
 
     /// @notice Test A4: Verify LiquidityManager linkages and hook authorization.
     function test_VerifyLiquidityManagerLinkages() public {
-        assertEq(address(fullRange.liquidityManager()), address(liquidityManager), "SpotHook->LiquidityManager link mismatch");
-        assertEq(liquidityManager.authorizedHookAddress(), address(fullRange), "SpotHook not authorized in LiquidityManager");
+        assertEq(
+            address(fullRange.liquidityManager()), address(liquidityManager), "SpotHook->LiquidityManager link mismatch"
+        );
+        assertEq(
+            liquidityManager.authorizedHookAddress(), address(fullRange), "SpotHook not authorized in LiquidityManager"
+        );
     }
 
     /// @notice Test A5: Verify DynamicFeeManager linkages.
     function test_VerifyDynamicFeeManagerLinkages() public {
-        assertEq(address(fullRange.dynamicFeeManager()), address(dynamicFeeManager), "SpotHook->DynamicFeeManager link mismatch");
+        assertEq(
+            address(fullRange.dynamicFeeManager()),
+            address(dynamicFeeManager),
+            "SpotHook->DynamicFeeManager link mismatch"
+        );
         assertEq(dynamicFeeManager.fullRangeAddress(), address(fullRange), "DynamicFeeManager->SpotHook link mismatch");
         // assertEq(address(dynamicFeeManager.oracle()), address(oracle), "DynamicFeeManager->Oracle link mismatch"); // Removed: Oracle accessed via getOracleData
     }
@@ -81,13 +99,13 @@ contract DeploymentAndConfigTest is ForkSetup {
     /// @notice Test A7: Verify initial pool setup (existence, hook, initialization, tokens).
     function test_VerifyInitialPoolSetup() public {
         // Read pool slot0 using StateLibrary to verify existence/basic setup
-        (uint160 sqrtPriceX96, int24 tick, , ) = StateLibrary.getSlot0(poolManager, poolId);
+        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
         assertTrue(sqrtPriceX96 > 0, "Pool not initialized (sqrtPriceX96 is zero)");
         // Non-zero tick could also imply initialization, depending on the exact setup
         //assertTrue(tick != 0, "Pool not initialized (tick is zero)");
 
         // Read liquidity using StateLibrary
-        uint128 liquidity = StateLibrary.getLiquidity(poolManager, poolId);
+        // (call omitted – value not needed)
 
         // Check hook address implicitly: We assume poolId derived in ForkSetup used the correct hook.
         // The test verifies that *a* pool exists for this poolId in the PoolManager.
@@ -100,8 +118,7 @@ contract DeploymentAndConfigTest is ForkSetup {
         address token0 = Currency.unwrap(poolKey.currency0);
         address token1 = Currency.unwrap(poolKey.currency1);
         assertTrue(
-            (token0 == address(weth) && token1 == address(usdc)) ||
-            (token0 == address(usdc) && token1 == address(weth)),
+            (token0 == address(weth) && token1 == address(usdc)) || (token0 == address(usdc) && token1 == address(weth)),
             "Pool tokens do not match WETH/USDC"
         );
     }
@@ -121,4 +138,4 @@ contract DeploymentAndConfigTest is ForkSetup {
         // assertEq(policyManager.getMinReinvestmentInterval(poolId), EXPECTED_MIN_REINVEST_INTERVAL, "Min Reinvestment Interval mismatch"); // Function not found
         // Add asserts for any other critical parameters set during deployment
     }
-} 
+}
