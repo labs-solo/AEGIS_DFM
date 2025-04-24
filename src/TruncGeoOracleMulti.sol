@@ -9,6 +9,8 @@ import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {Errors} from "./errors/Errors.sol";
+import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
+import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 
 /**
  * @title TruncGeoOracleMulti
@@ -39,8 +41,16 @@ contract TruncGeoOracleMulti {
     // The authorized Spot hook address - critical for secure mutual authentication
     address public fullRangeHook;
 
+    // The policy manager for getting configuration
+    IPoolPolicy public immutable policyManager;
+
     // Number of historic observations to keep (roughly 24h at 1h sample rate)
     uint32 internal constant SAMPLE_CAPACITY = 24;
+
+    // dynamic capping -------------------------------------------------------
+    mapping(bytes32 => uint24)  public maxTicksPerBlock;   // adaptive cap
+    mapping(bytes32 => uint128) private capFreq;           // ppm-seconds accumulator
+    mapping(bytes32 => uint48)  private lastFreqTs;        // last decay update
 
     struct ObservationState {
         uint16 index;
@@ -51,29 +61,39 @@ contract TruncGeoOracleMulti {
     // Observations for each pool keyed by PoolId.
     mapping(bytes32 => TruncatedOracle.Observation[65535]) public observations;
     mapping(bytes32 => ObservationState) public states;
-    // Pool-specific maximum absolute tick movement.
-    mapping(bytes32 => int24) public maxAbsTickMove;
 
     // Events for observability and debugging
     event OracleEnabled(bytes32 indexed poolId, int24 initialMaxAbsTickMove);
-    event ObservationUpdated(bytes32 indexed poolId, int24 newTick, uint32 timestamp);
-    event MaxTickMoveUpdated(bytes32 indexed poolId, int24 oldMove, int24 newMove);
-    event CardinalityIncreased(bytes32 indexed poolId, uint16 oldCardinality, uint16 newCardinality);
+    event ObservationUpdated(bytes32 indexed poolId, int24 tick, uint32 timestamp);
+    event TickCapped(bytes32 indexed poolId, int24 truncatedTo);
+    event TickCapParamChanged(bytes32 indexed poolId, uint24 newMaxTicksPerBlock);
 
     address public governance; // Need governance address for setter
+
+    /* ---------------- modifiers -------------------- */
+    modifier onlyHook() {
+        require(msg.sender == fullRangeHook, "Oracle: not hook");
+        _;
+    }
 
     /**
      * @notice Constructor - MODIFIED: Removed _fullRangeHook
      * @param _poolManager The Uniswap V4 Pool Manager
      * @param _governance The initial governance address for setting the hook
+     * @param _policyManager The policy manager contract
      */
-    constructor(IPoolManager _poolManager, address _governance) {
+    constructor(
+        IPoolManager _poolManager,
+        address _governance,
+        IPoolPolicy _policyManager
+    ) {
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
         if (_governance == address(0)) revert Errors.ZeroAddress();
+        if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
 
         poolManager = _poolManager;
         governance = _governance;
-        // fullRangeHook = _fullRangeHook; // REMOVED
+        policyManager = _policyManager;
     }
 
     // NEW FUNCTION: Setter for Spot hook address
@@ -100,14 +120,115 @@ contract TruncGeoOracleMulti {
         _;
     }
 
+    /* ─────────────────── external API ─────────────────── */
+    /// @notice Push a new observation and immediately know whether the tick
+    ///         move had to be capped.  Designed for the Spot hook hot-path.
+    /// @param id         PoolId (bytes32) of the pool
+    /// @param zeroForOne Direction of the swap (needed for cap logic)
+    /// @return tick      The truncated/stored tick
+    /// @return capped    True if the tick move exceeded the policy cap
+    function pushObservationAndCheckCap(
+        PoolId id,
+        bool   zeroForOne
+    )
+        external
+        onlyHook
+        returns (int24 tick, bool capped)
+    {
+        // reuse existing internal routine to avoid code duplication
+        return _pushObservation(id, zeroForOne);
+    }
+
+    /* ─────────────── internal logic for observation pushing ───────────── */
+    function _pushObservation(
+        PoolId id,
+        bool   zeroForOne
+    ) internal returns (int24 tick, bool capped) {
+        bytes32 poolId = PoolId.unwrap(id);
+        
+        // Check if pool is enabled in oracle
+        if (states[poolId].cardinality == 0) {
+            revert Errors.OracleOperationFailed("pushObservation", "Pool not enabled in oracle");
+        }
+
+        // Get current tick from pool manager
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, id);
+
+        // Get the most recent observation for comparison
+        TruncatedOracle.Observation memory lastObs = observations[poolId][states[poolId].index];
+        
+        // Apply adaptive cap
+        uint24 cap = maxTicksPerBlock[poolId];
+        (capped, tick) = TickMoveGuard.truncate(lastObs.prevTick, currentTick, cap);
+
+        // Update frequency accumulator and maybe rebalance cap
+        _updateFreq(poolId, capped);
+        _maybeRebalanceCap(poolId);
+
+        // Update the observation with the potentially capped tick
+        uint128 liquidity = StateLibrary.getLiquidity(poolManager, id);
+        (states[poolId].index, states[poolId].cardinality) = observations[poolId].write(
+            states[poolId].index, 
+            _blockTimestamp(), 
+            tick, 
+            liquidity, 
+            states[poolId].cardinality, 
+            states[poolId].cardinalityNext
+        );
+
+        if (capped) emit TickCapped(poolId, tick);
+        emit ObservationUpdated(poolId, tick, _blockTimestamp());
+        
+        return (tick, capped);
+    }
+
+    /* ───────────── adaptive-cap helpers ───────────── */
+    function _updateFreq(bytes32 pid, bool capped_) private {
+        uint48 nowTs  = uint48(block.timestamp);
+        uint48 last   = lastFreqTs[pid];
+        if (nowTs == last) {
+            if (capped_) capFreq[pid] += 1e6;
+            return;
+        }
+        uint32 window = IPoolPolicy(policyManager).getCapBudgetDecayWindow(pid);
+        uint128 f     = capFreq[pid];
+        if (window > 0) {
+            uint256 decay = uint256(f) * (nowTs - last) / window;
+            f -= uint128(decay > f ? f : decay);
+        }
+        if (capped_) f += 1e6;
+        capFreq[pid] = f;
+        lastFreqTs[pid] = nowTs;
+    }
+
+    function _maybeRebalanceCap(bytes32 pid) private {
+        uint256 target = IPoolPolicy(policyManager).getTargetCapsPerDay(pid);
+        if (target == 0) return;
+
+        uint32 window = IPoolPolicy(policyManager).getCapBudgetDecayWindow(pid);
+        uint256 perDay = window == 0 ? 0 : uint256(capFreq[pid]) * 1 days / uint256(window);
+
+        uint24 cap = maxTicksPerBlock[pid];
+        bool changed;
+        if (perDay > target * 115 / 100 && cap < 250_000) {        // too many caps → loosen cap
+            cap = uint24(uint256(cap) * 125 / 100);
+            changed = true;
+        } else if (perDay < target * 85 / 100 && cap > 1) {        // too quiet → tighten cap
+            cap = uint24(uint256(cap) * 80 / 100);
+            if (cap == 0) cap = 1;
+            changed = true;
+        }
+        if (changed) {
+            maxTicksPerBlock[pid] = cap;
+            emit TickCapParamChanged(pid, cap);
+        }
+    }
+
     /**
      * @notice Enables oracle functionality for a pool.
      * MODIFIED: Uses modifier, added check
      */
-    function enableOracleForPool(PoolKey calldata key, int24 initialMaxAbsTickMove) external onlyFullRangeHook {
-        // Check moved to modifier
-        // if (msg.sender != fullRangeHook) { ... }
-
+    function enableOracleForPool(PoolKey calldata key) external onlyFullRangeHook {
         PoolId pid = key.toId();
         bytes32 id = PoolId.unwrap(pid);
 
@@ -121,11 +242,16 @@ contract TruncGeoOracleMulti {
             revert Errors.OnlyDynamicFeePoolAllowed();
         }
 
-        maxAbsTickMove[id] = initialMaxAbsTickMove;
         (, int24 tick,,) = StateLibrary.getSlot0(poolManager, pid);
         (states[id].cardinality, states[id].cardinalityNext) = observations[id].initialize(_blockTimestamp(), tick);
 
-        emit OracleEnabled(id, initialMaxAbsTickMove);
+        // initialise per-pool adaptive cap from policy default
+        uint24 initCap = IPoolPolicy(policyManager).getDefaultMaxTicksPerBlock(id);
+        if (initCap == 0) initCap = 50;          // sane fallback
+        maxTicksPerBlock[id] = initCap;
+        lastFreqTs[id] = uint48(block.timestamp);
+
+        emit OracleEnabled(id, int24(int256(uint256(initCap))));
     }
 
     /**
@@ -150,22 +276,16 @@ contract TruncGeoOracleMulti {
         // Get current tick from pool manager
         (, int24 tick,,) = StateLibrary.getSlot0(poolManager, pid);
 
-        // Get the pool-specific maximum tick movement
-        int24 localMaxAbsTickMove = maxAbsTickMove[id];
-
         // Update observation with truncated oracle logic
         // This applies tick capping to prevent oracle manipulation
+        (bool capped, int24 newTick) = TickMoveGuard.checkHardCapOnly(observations[id][states[id].index].prevTick, tick);
+
         (states[id].index, states[id].cardinality) = observations[id].write(
-            states[id].index,
-            _blockTimestamp(),
-            tick,
-            liquidity,
-            states[id].cardinality,
-            states[id].cardinalityNext,
-            localMaxAbsTickMove
+            states[id].index, _blockTimestamp(), newTick, liquidity, states[id].cardinality, states[id].cardinalityNext
         );
 
-        emit ObservationUpdated(id, tick, _blockTimestamp());
+        if (capped) emit TickCapped(id, newTick);
+        emit ObservationUpdated(id, newTick, _blockTimestamp());
     }
 
     /**
@@ -208,7 +328,6 @@ contract TruncGeoOracleMulti {
      */
     function getLastObservation(PoolId poolId)
         external
-        view
         returns (uint32 timestamp, int24 tick, int48 tickCumulative, uint144 secondsPerLiquidityCumulativeX128)
     {
         bytes32 id = PoolId.unwrap(poolId);
@@ -217,26 +336,19 @@ contract TruncGeoOracleMulti {
 
         TruncatedOracle.Observation memory observation = observations[id][state.index];
 
-        // Get the pool-specific maximum tick movement for consistent tick capping
-        int24 localMaxAbsTickMove = maxAbsTickMove[id];
-        if (localMaxAbsTickMove == 0) {
-            localMaxAbsTickMove = TruncatedOracle.MAX_ABS_TICK_MOVE;
-        }
+        // Retrieve current tick from pool state
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
 
         // If the observation is not from the current timestamp, we may need to transform it
         // However, since this is view-only, we don't actually update storage
         uint32 currentTime = _blockTimestamp();
         if (observation.blockTimestamp < currentTime) {
-            // Get current tick, ignore others
-            (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
-
             // This doesn't update storage, just gives us the expected value after tick capping
             TruncatedOracle.Observation memory transformedObservation = TruncatedOracle.transform(
                 observation,
                 currentTime,
                 currentTick,
-                0, // Liquidity not used
-                localMaxAbsTickMove
+                0 // liquidity ignored
             );
 
             return (
@@ -256,28 +368,6 @@ contract TruncGeoOracleMulti {
     }
 
     /**
-     * @notice Updates the maximum tick movement for a pool.
-     * @param poolId The pool identifier.
-     * @param newMove The new maximum tick movement.
-     *
-     * @dev SECURITY: This is a governance function protected by the mutual authentication system.
-     *      Only the trusted Spot hook can update the tick movement configuration.
-     *      This prevents unauthorized changes to the tick capping parameters.
-     */
-    function updateMaxAbsTickMoveForPool(bytes32 poolId, int24 newMove) public virtual {
-        // Only Spot hook can update the configuration
-        // Part of the mutual authentication security system
-        if (msg.sender != fullRangeHook) {
-            revert Errors.AccessNotAuthorized(msg.sender);
-        }
-
-        int24 oldMove = maxAbsTickMove[poolId];
-        maxAbsTickMove[poolId] = newMove;
-
-        emit MaxTickMoveUpdated(poolId, oldMove, newMove);
-    }
-
-    /**
      * @notice Observes oracle data for a pool.
      * @param key The pool key.
      * @param secondsAgos Array of time offsets.
@@ -286,7 +376,6 @@ contract TruncGeoOracleMulti {
      */
     function observe(PoolKey calldata key, uint32[] calldata secondsAgos)
         external
-        view
         returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s)
     {
         PoolId pid = key.toId();
@@ -294,53 +383,14 @@ contract TruncGeoOracleMulti {
         ObservationState memory state = states[id];
         (, int24 tick,,) = StateLibrary.getSlot0(poolManager, pid);
 
-        // Get the pool-specific maximum tick movement
-        int24 localMaxAbsTickMove = maxAbsTickMove[id];
-
-        // If the pool doesn't have a specific value, use the default
-        if (localMaxAbsTickMove == 0) {
-            localMaxAbsTickMove = TruncatedOracle.MAX_ABS_TICK_MOVE;
-        }
-
         return observations[id].observe(
             _blockTimestamp(),
             secondsAgos,
             tick,
             state.index,
-            0, // Liquidity is not used in time-weighted calculations
-            state.cardinality,
-            localMaxAbsTickMove
+            0, // liquidity ignored
+            state.cardinality
         );
-    }
-
-    /**
-     * @notice Increases the cardinality of the oracle observation array
-     * @param key The pool key.
-     * @param cardinalityNext The new cardinality to grow to.
-     * @return cardinalityNextOld The previous cardinality.
-     * @return cardinalityNextNew The new cardinality.
-     *
-     * @dev SECURITY: Protected by the mutual authentication system.
-     *      Only the trusted Spot hook can increase cardinality.
-     */
-    function increaseCardinalityNext(PoolKey calldata key, uint16 cardinalityNext)
-        external
-        returns (uint16 cardinalityNextOld, uint16 cardinalityNextNew)
-    {
-        // Only Spot hook can increase cardinality
-        // Part of the mutual authentication security system
-        if (msg.sender != fullRangeHook) {
-            revert Errors.AccessNotAuthorized(msg.sender);
-        }
-
-        PoolId pid = key.toId();
-        bytes32 id = PoolId.unwrap(pid);
-        ObservationState storage state = states[id];
-        cardinalityNextOld = state.cardinalityNext;
-        cardinalityNextNew = observations[id].grow(cardinalityNextOld, cardinalityNext);
-        state.cardinalityNext = cardinalityNextNew;
-
-        emit CardinalityIncreased(id, cardinalityNextOld, cardinalityNextNew);
     }
 
     /**
@@ -367,7 +417,7 @@ contract TruncGeoOracleMulti {
      * @return _tick The latest observed tick
      * @return blockTimestampResult The block timestamp of the observation
      */
-    function getLatestObservation(PoolId poolId) external view returns (int24 _tick, uint32 blockTimestampResult) {
+    function getLatestObservation(PoolId poolId) external returns (int24 _tick, uint32 blockTimestampResult) {
         bytes32 id = PoolId.unwrap(poolId);
         if (states[id].cardinality == 0) {
             revert Errors.OracleOperationFailed("getLatestObservation", "Pool not enabled in oracle");

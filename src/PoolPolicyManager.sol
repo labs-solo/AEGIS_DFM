@@ -21,15 +21,15 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // === Fee Policy State Variables ===
 
     // Fee allocation configuration
-    uint256 public polSharePpm;
-    uint256 public fullRangeSharePpm;
-    uint256 public lpSharePpm;
-    uint256 public minimumTradingFeePpm;
-    uint256 public feeClaimThresholdPpm;
-    uint256 public defaultDynamicFeePpm;
+    uint24 public polSharePpm;
+    uint24 public fullRangeSharePpm;
+    uint24 public lpSharePpm;
+    uint24 public minimumTradingFeePpm;
+    uint24 public feeClaimThresholdPpm;
+    uint24 public defaultDynamicFeePpm;
 
     // POL multiplier configuration
-    uint256 public defaultPolMultiplier;
+    uint32 public defaultPolMultiplier;
     mapping(PoolId => uint32) public poolPolMultipliers;
 
     // === Tick Scaling Policy State Variables ===
@@ -63,30 +63,30 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
 
     // === Dynamic Base‐Fee Feedback Parameters ===
     /// Default: target CAP events per day (equilibrium)
-    uint256 public defaultTargetCapsPerDay;
-    /// Default: seconds over which freqScaled decays linearly to zero (6 months)
-    uint256 public defaultCapFreqDecayWindow;
+    uint32  public defaultTargetCapsPerDay;       // fits - <4 G caps/day
+    /// Default: seconds over which freqScaled decays linearly to zero (≈6 mo)
+    uint32  public defaultCapBudgetDecayWindow;   // fits - <136 yr
     /// Default: scaling factor for frequency (to avoid fractions; use 1e18)
     uint256 public defaultFreqScaling;
     /// Default minimum base‐fee (PPM) = 0.01%
-    uint256 public defaultMinBaseFeePpm;
+    uint24 public defaultMinBaseFeePpm;
     /// Default maximum base‐fee (PPM) = 3%
-    uint256 public defaultMaxBaseFeePpm;
+    uint24 public defaultMaxBaseFeePpm;
     // Per‐pool overrides:
-    mapping(PoolId => uint256) public poolTargetCapsPerDay;
-    mapping(PoolId => uint256) public poolCapFreqDecayWindow;
+    mapping(PoolId => uint32)  public poolTargetCapsPerDay;
+    mapping(PoolId => uint32)  public poolCapBudgetDecayWindow;
     mapping(PoolId => uint256) public poolFreqScaling;
-    mapping(PoolId => uint256) public poolMinBaseFeePpm;
-    mapping(PoolId => uint256) public poolMaxBaseFeePpm;
+    mapping(PoolId => uint24) public poolMinBaseFeePpm;
+    mapping(PoolId => uint24) public poolMaxBaseFeePpm;
 
     // --- Add new state for surge fee policy ---
-    /// Default: Initial surge fee (PPM) e.g., 0.5%
-    uint256 public defaultInitialSurgeFeePpm;
     /// Default: Surge fee decay period (seconds) e.g., 1 hour
-    uint256 public defaultSurgeDecayPeriodSeconds;
+    uint32 public defaultSurgeDecayPeriodSeconds;
+    /// Default: Surge fee multiplier (PPM) e.g., 1_000_000 = 100%
+    uint24 public _defaultSurgeFeeMultiplierPpm;
     // Per-pool overrides:
-    mapping(PoolId => uint256) public poolInitialSurgeFeePpm;
-    mapping(PoolId => uint256) public poolSurgeDecayPeriodSeconds;
+    mapping(PoolId => uint32) public poolSurgeDecayPeriodSeconds;
+    mapping(PoolId => uint24) public _surgeFeeMultiplierPpm;
 
     // Events
     event FeeConfigChanged(
@@ -115,48 +115,65 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     event ProtocolInterestFeePercentageSet(uint256 oldPercentage, uint256 newPercentage);
     event AuthorizedReinvestorSet(address indexed reinvestor, bool isAuthorized);
 
+    // New state for surge fee policy
+    mapping(bytes32 => uint32) private _maxStepPpm;
+    uint32 private _globalMaxStepPpm;
+
+    /// @notice **Target** number of cap‑events per day the protocol is willing
+    ///         to subsidise before the base‑fee is nudged upwards (ppm/event).
+    ///         Naming it *target* instead of *max* clarifies that falling below
+    ///         the level decreases the fee.
+    uint32 public capBudgetDailyPpm; // default = 1e6 = 1 cap/day
+
+    /// @notice Linear‑decay half‑life for the budget counter, expressed in
+    ///         seconds.  Default is 180 days (≈ 6 months) in production; tests
+    ///         override this with much smaller values for speed.
+    uint32 public capBudgetDecayWindow; // seconds
+
+    /*──────────────────── adaptive-cap default ────────────────*/
+    /// Default starting value for `maxTicksPerBlock`
+    uint24 public defaultMaxTicksPerBlock = 50;   // 50 ticks
+
     /**
      * @notice Constructor initializes the policy manager with default values
      * @param _owner The owner of the contract
-     * @param _polSharePpm Initial protocol-owned liquidity share in PPM
-     * @param _fullRangeSharePpm Initial full range incentive share in PPM
-     * @param _lpSharePpm Initial LP share in PPM
-     * @param _minimumTradingFeePpm Initial minimum trading fee in PPM
-     * @param _feeClaimThresholdPpm Initial fee claim threshold in PPM
-     * @param _defaultPolMultiplier Initial default POL target multiplier
-     * @param _defaultDynamicFeePpm Initial default dynamic fee in PPM
-     * @param _tickScalingFactor Initial tick scaling factor
+     * @param _defaultFee Initial fee configuration
      * @param _supportedTickSpacings Array of initially supported tick spacings
      * @param _initialProtocolInterestFeePercentage Initial protocol interest fee percentage (scaled by PRECISION)
      * @param _initialFeeCollector Initial fee collector address (can be address(0))
      */
     constructor(
         address _owner,
-        uint256 _polSharePpm,
-        uint256 _fullRangeSharePpm,
-        uint256 _lpSharePpm,
-        uint256 _minimumTradingFeePpm,
-        uint256 _feeClaimThresholdPpm,
-        uint256 _defaultPolMultiplier,
-        uint256 _defaultDynamicFeePpm,
-        int24 _tickScalingFactor,
+        uint256 _defaultFee,
         uint24[] memory _supportedTickSpacings,
         uint256 _initialProtocolInterestFeePercentage, // Added Phase 4 param
         address _initialFeeCollector // Added Phase 4 param
     ) Owned(_owner) {
         // Initialize fee policy values
-        _setFeeConfig(
-            _polSharePpm,
-            _fullRangeSharePpm,
-            _lpSharePpm,
-            _minimumTradingFeePpm,
-            _feeClaimThresholdPpm,
-            _defaultPolMultiplier
-        );
-        defaultDynamicFeePpm = _defaultDynamicFeePpm;
+        polSharePpm = 100000; // 10% by default
+        fullRangeSharePpm = 0; // 0% by default
+        lpSharePpm = 900000; // 90% by default
+        minimumTradingFeePpm = 100; // 0.01% minimum fee
+        feeClaimThresholdPpm = 10000; // 1% threshold
+        defaultPolMultiplier = 10; // 10x multiplier
+        require(_defaultFee <= type(uint24).max, "defaultFee>24b");
+        defaultDynamicFeePpm = uint24(_defaultFee);
+
+        // Initialize dynamic‐base‐fee defaults
+        defaultTargetCapsPerDay     = 4;
+        defaultCapBudgetDecayWindow = uint32(180 days);
+        defaultFreqScaling = 1e18;
+        defaultMinBaseFeePpm = 100; // 0.01%
+        defaultMaxBaseFeePpm = 30000; //   3%
+        // Initialize new surge defaults
+        defaultSurgeDecayPeriodSeconds = 3600; // 1 hour
+        _defaultSurgeFeeMultiplierPpm = 3_000_000; // 300% of base fee
+
+        // Set _globalMaxStepPpm to 100,000 (10% per interval)
+        _globalMaxStepPpm = 30_000; // 3% per interval
 
         // Initialize tick scaling policy values
-        tickScalingFactor = _tickScalingFactor;
+        tickScalingFactor = 1; // Default tick scaling factor
 
         // Initialize supported tick spacings
         for (uint256 i = 0; i < _supportedTickSpacings.length; i++) {
@@ -167,16 +184,10 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         // Initialize Phase 4 parameters
         _setProtocolFeePercentage(_initialProtocolInterestFeePercentage);
         _setFeeCollector(_initialFeeCollector);
-
-        // Initialize dynamic‐base‐fee defaults
-        defaultTargetCapsPerDay   = 4;
-        defaultCapFreqDecayWindow = 180 days;
-        defaultFreqScaling        = 1e18;
-        defaultMinBaseFeePpm      = 100;    // 0.01%
-        defaultMaxBaseFeePpm      = 30000;  //   3%
-        // Initialize new surge defaults
-        defaultInitialSurgeFeePpm = 5000;   // 0.5%
-        defaultSurgeDecayPeriodSeconds = 3600; // 1 hour
+        
+        // Initialize cap budget parameters with default values
+        capBudgetDailyPpm = 1e6; // 1 cap per day
+        capBudgetDecayWindow = 180 days; // 6 months decay window
     }
 
     // === Policy Management Functions ===
@@ -357,8 +368,8 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      */
     function setDefaultDynamicFee(uint256 feePpm) external onlyOwner {
         if (feePpm < 1 || feePpm > 1000000) revert Errors.ParameterOutOfRange(feePpm, 1, 1000000);
-        defaultDynamicFeePpm = feePpm;
-        emit DefaultDynamicFeeSet(defaultDynamicFeePpm, feePpm);
+        defaultDynamicFeePpm = uint24(feePpm);
+        emit DefaultDynamicFeeSet(uint24(defaultDynamicFeePpm), uint24(feePpm));
     }
 
     /**
@@ -548,12 +559,12 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         }
 
         // Set fee allocation values
-        polSharePpm = _polSharePpm;
-        fullRangeSharePpm = _fullRangeSharePpm;
-        lpSharePpm = _lpSharePpm;
-        minimumTradingFeePpm = _minimumTradingFeePpm;
-        feeClaimThresholdPpm = _feeClaimThresholdPpm;
-        defaultPolMultiplier = _defaultPolMultiplier;
+        polSharePpm = uint24(_polSharePpm);
+        fullRangeSharePpm = uint24(_fullRangeSharePpm);
+        lpSharePpm = uint24(_lpSharePpm);
+        minimumTradingFeePpm = uint24(_minimumTradingFeePpm);
+        feeClaimThresholdPpm = uint24(_feeClaimThresholdPpm);
+        defaultPolMultiplier = uint32(_defaultPolMultiplier);
 
         emit FeeConfigChanged(
             _polSharePpm,
@@ -592,15 +603,25 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // --- Add implementations for missing IPoolPolicy functions ---
 
     /// @inheritdoc IPoolPolicy
-    function getTargetCapsPerDay(PoolId pid) external view returns (uint256) {
-        uint256 v = poolTargetCapsPerDay[pid];
-        return v != 0 ? v : defaultTargetCapsPerDay;
+    function getTargetCapsPerDay(bytes32 poolId)
+        external
+        view
+        override
+        returns (uint256)
+    {
+        uint32 v = poolTargetCapsPerDay[PoolId.wrap(poolId)];
+        return uint256(v != 0 ? v : defaultTargetCapsPerDay);
     }
 
     /// @inheritdoc IPoolPolicy
-    function getCapFreqDecayWindow(PoolId pid) external view returns (uint256) {
-        uint256 v = poolCapFreqDecayWindow[pid];
-        return v != 0 ? v : defaultCapFreqDecayWindow;
+    function getCapBudgetDecayWindow(bytes32 poolId)
+        external
+        view
+        override
+        returns (uint32)
+    {
+        uint32 v = poolCapBudgetDecayWindow[PoolId.wrap(poolId)];
+        return v != 0 ? v : defaultCapBudgetDecayWindow;
     }
 
     /// @inheritdoc IPoolPolicy
@@ -622,29 +643,59 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /// @inheritdoc IPoolPolicy
-    function getInitialSurgeFeePpm(PoolId pid) external view returns (uint256) {
-        uint256 v = poolInitialSurgeFeePpm[pid];
-        return v != 0 ? v : defaultInitialSurgeFeePpm;
-    }
-
-    /// @inheritdoc IPoolPolicy
     function getSurgeDecayPeriodSeconds(PoolId pid) external view returns (uint256) {
         uint256 v = poolSurgeDecayPeriodSeconds[pid];
         return v != 0 ? v : defaultSurgeDecayPeriodSeconds;
     }
 
     /* === Owner functions === */
-    function setMaxBaseFee(PoolId pid, uint256 f)           external onlyOwner { require(f>0,">0"); poolMaxBaseFeePpm[pid]=f; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
+    function setMaxBaseFee(PoolId pid, uint256 f) external onlyOwner {
+        require(f > 0, ">0");
+        poolMaxBaseFeePpm[pid] = uint24(f);
+        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+    }
 
     // --- Add setters for dynamic base fee feedback policy overrides ---
-    function setTargetCapsPerDay(PoolId pid, uint256 v)     external onlyOwner { require(v>0,">0"); poolTargetCapsPerDay[pid]=v; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
-    function setCapFreqDecayWindow(PoolId pid, uint256 w)   external onlyOwner { require(w>0,">0"); poolCapFreqDecayWindow[pid]=w; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
-    function setFreqScaling(PoolId pid, uint256 s)          external onlyOwner { require(s>0,">0"); poolFreqScaling[pid]=s; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
-    function setMinBaseFee(PoolId pid, uint256 f)           external onlyOwner { require(f>0,">0"); poolMinBaseFeePpm[pid]=f; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
+    function setTargetCapsPerDay(PoolId pid, uint256 v) external onlyOwner {
+        require(v > 0 && v <= type(uint32).max, "range");
+        poolTargetCapsPerDay[pid] = uint32(v);
+        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+    }
+
+    function setCapBudgetDecayWindow(PoolId pid, uint256 w) external onlyOwner {
+        require(w > 0 && w <= type(uint32).max, "range");
+        poolCapBudgetDecayWindow[pid] = uint32(w);
+        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+    }
+
+    function setFreqScaling(PoolId pid, uint256 s) external onlyOwner {
+        require(s > 0, ">0");
+        poolFreqScaling[pid] = s;
+        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+    }
+
+    function setMinBaseFee(PoolId pid, uint256 f) external onlyOwner {
+        require(f > 0, ">0");
+        poolMinBaseFeePpm[pid] = uint24(f);
+        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+    }
 
     // --- Add setters for new surge policy overrides ---
-    function setInitialSurgeFeePpm(PoolId pid, uint256 f)   external onlyOwner { require(f>0,">0"); poolInitialSurgeFeePpm[pid]=f; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
-    function setSurgeDecayPeriodSeconds(PoolId pid, uint256 s) external onlyOwner { require(s>0,">0"); poolSurgeDecayPeriodSeconds[pid]=s; emit PolicySet(pid, PolicyType.FEE, msg.sender); }
+    function setSurgeDecayPeriodSeconds(PoolId pid, uint256 s) external onlyOwner {
+        // Prevent too short or too long decay periods
+        require(s >= 60, "min 60s");
+        require(s <= 1 days, "max 1 day");
+        poolSurgeDecayPeriodSeconds[pid] = uint32(s);
+        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+    }
+
+    // Add a new function to set the surge fee multiplier
+    function setSurgeFeeMultiplierPpm(PoolId pid, uint24 multiplier) external onlyOwner {
+        require(multiplier > 0, "must be positive");
+        require(multiplier <= 3_000_000, "max 300%");
+        _surgeFeeMultiplierPpm[pid] = multiplier;
+        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+    }
 
     /* === Internal functions === */
     function setAuthorizedReinvestor(address reinvestor, bool isAuthorized) external onlyOwner {
@@ -662,8 +713,71 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      * @dev Currently returns a global default value.
      * @return The base fee update interval in seconds (currently 1 hour).
      */
-    function getBaseFeeUpdateIntervalSeconds(PoolId /*poolId*/) external view override returns (uint256) {
+    function getBaseFeeUpdateIntervalSeconds(PoolId /*poolId*/ ) external view override returns (uint256) {
         // TODO: Implement per-pool logic if needed
         return 1 hours; // Placeholder: Return 1 hour default
+    }
+
+    /// @inheritdoc IPoolPolicy
+    function getMaxStepPpm(bytes32 poolId) external view override returns (uint32) {
+        return _maxStepPpm[poolId] != 0 ? _maxStepPpm[poolId] : _globalMaxStepPpm; // now 100,000
+    }
+
+    // Implementation of new interface methods
+    function getSurgeFeeMultiplierPpm(bytes32 poolId) external view override returns (uint24) {
+        uint24 value = _surgeFeeMultiplierPpm[PoolId.wrap(poolId)];
+        return value != 0 ? value : _defaultSurgeFeeMultiplierPpm;
+    }
+
+    function getSurgeDecaySeconds(bytes32 poolId) external view override returns (uint32) {
+        uint256 value = poolSurgeDecayPeriodSeconds[PoolId.wrap(poolId)];
+        return uint32(value != 0 ? value : defaultSurgeDecayPeriodSeconds);
+    }
+
+    /**
+     * @inheritdoc IPoolPolicy
+     */
+    function isSupportedCurrency(Currency currency) external view override returns (bool) {
+        // Default implementation: all currencies are supported
+        return true;
+    }
+
+    function getDailyBudgetPpm(bytes32 /*poolId*/) external view returns (uint32) {
+        return capBudgetDailyPpm;
+    }
+
+    /// -------------------------------------------------------------------
+    ///  Gov ‑ Setters
+    /// -------------------------------------------------------------------
+
+    function setDailyBudgetPpm(uint32 _newBudget) external onlyOwner {
+        capBudgetDailyPpm = _newBudget;
+        emit DailyBudgetSet(_newBudget);
+    }
+
+    function setDecayWindow(uint32 _newWindow) external onlyOwner {
+        capBudgetDecayWindow = _newWindow;
+        emit DecayWindowSet(_newWindow);
+    }
+
+    event DailyBudgetSet(uint32 newBudget);
+    event DecayWindowSet(uint32 newWindow);
+
+    /**
+     * @notice Helper to get both budget and window values in a single call, saving gas
+     * @param id The PoolId to query
+     * @return budgetPerDay Daily budget in PPM
+     * @return decayWindow Decay window in seconds
+     */
+    function getBudgetAndWindow(PoolId id) external view returns (uint32 budgetPerDay, uint32 decayWindow) {
+        budgetPerDay = capBudgetDailyPpm;
+        decayWindow = capBudgetDecayWindow;
+    }
+
+    /**
+     * @inheritdoc IPoolPolicy
+     */
+    function getDefaultMaxTicksPerBlock(bytes32) external view override returns (uint24) {
+        return defaultMaxTicksPerBlock;
     }
 }

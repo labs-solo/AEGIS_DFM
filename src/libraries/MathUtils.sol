@@ -47,6 +47,11 @@ library MathUtils {
 
     uint256 internal constant MINIMUM_LIQUIDITY = 1000;
 
+    /// @dev absolute value of a signed int returned as uint
+    function abs(int256 x) internal pure returns (uint256) {
+        return uint256(x >= 0 ? x : -x);
+    }
+
     // For backward compatibility, expose the precision constants directly
     function PRECISION() internal pure returns (uint256) {
         return PrecisionConstants.PRECISION;
@@ -1026,10 +1031,8 @@ library MathUtils {
         int24 tickLower = TickMath.minUsableTick(tickSpacing);
         int24 tickUpper = TickMath.maxUsableTick(tickSpacing);
 
-        (uint160 sqrtA, uint160 sqrtB) = (
-            TickMath.getSqrtPriceAtTick(tickLower),
-            TickMath.getSqrtPriceAtTick(tickUpper)
-        );
+        (uint160 sqrtA, uint160 sqrtB) =
+            (TickMath.getSqrtPriceAtTick(tickLower), TickMath.getSqrtPriceAtTick(tickUpper));
         // Ensure sqrtA <= sqrtB
         if (sqrtA > sqrtB) (sqrtA, sqrtB) = (sqrtB, sqrtA);
 
@@ -1058,11 +1061,11 @@ library MathUtils {
 
     /**
      * @notice Calculates amounts and liquidity for max full-range usage, rounding amounts UP by 1 wei.
-     * @dev Rounds non-zero amounts UP by 1 wei (if balance allows) to prevent settlement 
-     *      shortfalls due to PoolManager's internal ceil-rounding. Liquidity (`liq`) is based on 
+     * @dev Rounds non-zero amounts UP by 1 wei (if balance allows) to prevent settlement
+     *      shortfalls due to PoolManager's internal ceil-rounding. Liquidity (`liq`) is based on
      *      the pre-rounded amounts to maintain consistency with standard calculations.
-     *      Note: In the extremely unlikely case where both calculated amounts `f0` and `f1` exactly equal `bal0` 
-     *      and `bal1` respectively, and the PoolManager simultaneously rounds both deltas up during settlement, 
+     *      Note: In the extremely unlikely case where both calculated amounts `f0` and `f1` exactly equal `bal0`
+     *      and `bal1` respectively, and the PoolManager simultaneously rounds both deltas up during settlement,
      *      a 1 wei shortfall *could* theoretically still occur. This function mitigates the common case.
      * @param sqrtP Current sqrt price of the pool.
      * @param tickSpacing Tick spacing of the pool.
@@ -1072,22 +1075,19 @@ library MathUtils {
      * @return use1 The amount of token1 required (potentially rounded up).
      * @return liq The maximum full-range liquidity achievable with the balances.
      */
-    function getAmountsToMaxFullRangeRoundUp(
-        uint160 sqrtP,
-        int24  tickSpacing,
-        uint256 bal0,
-        uint256 bal1
-    ) internal pure returns (uint256 use0, uint256 use1, uint128 liq) {
-        // --- MODIFIED: Use local helper for L, then SqrtPriceMath for amounts --- 
+    function getAmountsToMaxFullRangeRoundUp(uint160 sqrtP, int24 tickSpacing, uint256 bal0, uint256 bal1)
+        internal
+        pure
+        returns (uint256 use0, uint256 use1, uint128 liq)
+    {
+        // --- MODIFIED: Use local helper for L, then SqrtPriceMath for amounts ---
         // 1. get the *liquidity ceiling* for our balances using the local helper
         // Discard the amounts returned by the local helper, use different names.
-        (uint256 f0_unused, uint256 f1_unused, uint128 L) = getAmountsToMaxFullRange(
-            sqrtP, tickSpacing, bal0, bal1
-        );
-        // --- Silence unused variable warnings --- 
+        (uint256 f0_unused, uint256 f1_unused, uint128 L) = getAmountsToMaxFullRange(sqrtP, tickSpacing, bal0, bal1);
+        // --- Silence unused variable warnings ---
         f0_unused;
         f1_unused;
-        // --- End Silence --- 
+        // --- End Silence ---
         if (L == 0) return (0, 0, 0); // Bail early if no liquidity possible
 
         // 2. Calculate the *exact* amounts needed for this liquidity L using standard SqrtPriceMath.
@@ -1110,7 +1110,7 @@ library MathUtils {
             use1 = SqrtPriceMath.getAmount1Delta(sqrtA, sqrtP, L, true);
         }
 
-        // 3. top‑up by 1 wei **only if** balances allow (covers PM ceil‑rounding)
+        // 3. top‑up by 1 wei **only if** balances allow (covers PM ceil‑rounding)
         if (use0 > 0 && use0 < bal0) ++use0;
         if (use1 > 0 && use1 < bal1) ++use1;
         // --- END MODIFIED ---

@@ -14,10 +14,9 @@ import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
 // FullRange Contracts
 import {Spot} from "../src/Spot.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
-import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol";
+import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
-import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
@@ -28,6 +27,12 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 
 // Test Tokens
 import {MockERC20} from "../src/token/MockERC20.sol";
+
+// New imports
+import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
+import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
+import {HookMiner as HMiner} from "v4-periphery/src/utils/HookMiner.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -46,7 +51,7 @@ contract DeployLocalUniswapV4 is Script {
     PoolManager public poolManager;
     PoolPolicyManager public policyManager;
     FullRangeLiquidityManager public liquidityManager;
-    FullRangeDynamicFeeManager public dynamicFeeManager;
+    DynamicFeeManager public dynamicFeeManager;
     Spot public fullRange;
     TruncGeoOracleMulti public truncGeoOracle;
 
@@ -96,33 +101,25 @@ contract DeployLocalUniswapV4 is Script {
         });
         PoolId poolId = PoolIdLibrary.toId(key); // Use library for PoolId calculation
 
-        // Step 1.5: Deploy Oracle (BEFORE PolicyManager)
-        console.log("Deploying TruncGeoOracleMulti...");
-        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance);
-        console.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
-
         // Step 2: Deploy Policy Manager
-        console.log("Deploying PolicyManager...");
+        console.log("Deploying PoolPolicyManager...");
         uint24[] memory supportedTickSpacings = new uint24[](3);
         supportedTickSpacings[0] = 10;
         supportedTickSpacings[1] = 60;
         supportedTickSpacings[2] = 200;
-
         policyManager = new PoolPolicyManager(
-            governance,
-            250000, // POL_SHARE_PPM (25%)
-            250000, // FULLRANGE_SHARE_PPM (25%)
-            500000, // LP_SHARE_PPM (50%)
-            1000, // MIN_TRADING_FEE_PPM (0.1%)
-            10000, // FEE_CLAIM_THRESHOLD_PPM (1%)
-            10, // DEFAULT_POL_MULTIPLIER
-            3000, // DEFAULT_DYNAMIC_FEE_PPM (0.3%)
-            2, // TICK_SCALING_FACTOR
-            supportedTickSpacings,
-            1e17, // Protocol Interest Fee Percentage (10%)
-            address(0) // Fee Collector
+            governance,            // owner / solo governance
+            3_000,                // defaultDynamicFeePpm (0.3%)
+            supportedTickSpacings,// allowed tick-spacings
+            1e17,                 // protocol-interest-fee = 10% (scaled by 1e18)
+            address(0)            // fee collector
         );
         console.log("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
+
+        // Step 2.5: Deploy Oracle now that we have the policyManager
+        console.log("Deploying TruncGeoOracleMulti...");
+        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance, policyManager);
+        console.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
 
         // Step 3: Deploy FullRange components
         console.log("Deploying FullRange components...");
@@ -137,11 +134,9 @@ contract DeployLocalUniswapV4 is Script {
         console.log("FullRange hook deployed at:", address(fullRange));
 
         // Deploy DynamicFeeManager AFTER FullRange
-        dynamicFeeManager = new FullRangeDynamicFeeManager(
-            governance,
+        dynamicFeeManager = new DynamicFeeManager(
             IPoolPolicy(address(policyManager)),
-            IPoolManager(address(poolManager)),
-            address(fullRange) // Pass actual FullRange address
+            address(fullRange) // authorizedHook
         );
         console.log("DynamicFeeManager deployed at:", address(dynamicFeeManager));
 
@@ -196,9 +191,16 @@ contract DeployLocalUniswapV4 is Script {
         // Predict hook address first to deploy MarginManager
         bytes memory spotCreationCodePlaceholder = abi.encodePacked(
             type(Spot).creationCode, // Use Spot instead of MarginHarness
-            abi.encode(IPoolManager(address(poolManager)), policyManager, liquidityManager, _deployer) // Add _deployer as owner
+            abi.encode(
+                IPoolManager(address(poolManager)), 
+                policyManager, 
+                liquidityManager,
+                TruncGeoOracleMulti(address(0)), // Oracle placeholder (will be set later)
+                IDynamicFeeManager(address(0)),  // DynamicFeeManager placeholder (will be set later)
+                _deployer                        // Add _deployer as owner
+            )
         );
-        (address predictedHookAddress,) = HookMiner.find(
+        (address predictedHookAddress,) = HMiner.find(
             _deployer,
             flags,
             spotCreationCodePlaceholder, // Use Spot creation code
@@ -211,11 +213,13 @@ contract DeployLocalUniswapV4 is Script {
             IPoolManager(address(poolManager)),
             policyManager,
             liquidityManager,
-            _governance // <-- use parameter
+            TruncGeoOracleMulti(address(0)), // Oracle placeholder (will be set later)
+            IDynamicFeeManager(address(0)),  // DynamicFeeManager placeholder (will be set later)
+            _governance                      // <-- use parameter
         );
 
         // Recalculate salt with final args
-        (address finalHookAddress, bytes32 salt) = HookMiner.find(
+        (address finalHookAddress, bytes32 salt) = HMiner.find(
             _deployer,
             flags,
             abi.encodePacked(type(Spot).creationCode, constructorArgs), // Use Spot creation code
@@ -229,6 +233,8 @@ contract DeployLocalUniswapV4 is Script {
             poolManager,
             IPoolPolicy(address(policyManager)),
             liquidityManager,
+            TruncGeoOracleMulti(address(0)), // Will be set later via setOracleAddress
+            IDynamicFeeManager(address(0)), // Will be set later via setDynamicFeeManager
             _governance // governance injected here
         );
 

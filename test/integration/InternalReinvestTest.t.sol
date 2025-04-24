@@ -2,7 +2,7 @@
 pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {Vm}   from "forge-std/Vm.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {ForkSetup} from "./ForkSetup.t.sol";
 
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -196,13 +196,13 @@ contract InternalReinvestTest is ForkSetup {
         // 1.6) Approve the liquidityManager to pull both tokens from the hook.
         //      Without this, reinvest will revert in the transferFrom/settle step.
         {
-          address t0 = Currency.unwrap(c0);
-          address t1 = Currency.unwrap(c1);
-          // Prank as the hook to set approvals
-          vm.prank(address(hook));
-          ERC20(t0).approve(address(liquidityManager), type(uint256).max);
-          vm.prank(address(hook));
-          ERC20(t1).approve(address(liquidityManager), type(uint256).max);
+            address t0 = Currency.unwrap(c0);
+            address t1 = Currency.unwrap(c1);
+            // Prank as the hook to set approvals
+            vm.prank(address(hook));
+            ERC20(t0).approve(address(liquidityManager), type(uint256).max);
+            vm.prank(address(hook));
+            ERC20(t1).approve(address(liquidityManager), type(uint256).max);
         }
 
         (,, uint128 liqBefore) = lm.getPoolReservesAndShares(poolId);

@@ -77,33 +77,26 @@ contract DeployUnichainV4 is Script {
         console2.log("\n--- Starting Broadcast: Dependencies & Test Routers ---");
         vm.startBroadcast(deployerPrivateKey);
 
-        // Step 1.5: Deploy Oracle
-        console2.log("Deploying TruncGeoOracleMulti...");
-        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance);
-        console2.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
-
         // Step 2: Deploy Policy Manager
-        console2.log("Deploying PolicyManager...");
-        uint24[] memory supportedTickSpacings_ = new uint24[](3);
-        supportedTickSpacings_[0] = 10;
-        supportedTickSpacings_[1] = 60;
-        supportedTickSpacings_[2] = 200;
+        console2.log("Deploying PoolPolicyManager...");
+        uint24[] memory supportedTickSpacings = new uint24[](3);
+        supportedTickSpacings[0] = 10;
+        supportedTickSpacings[1] = 60;
+        supportedTickSpacings[2] = 200;
 
         policyManager = new PoolPolicyManager(
             governance,
-            250000,
-            250000,
-            500000, // Shares PPM
-            1000,
-            10000, // Fee PPMs
-            10,
-            3000,
-            2, // Multipliers & Factors
-            supportedTickSpacings_,
-            1e17, // Interest Fee
-            address(0) // Fee Collector
+            FEE,
+            supportedTickSpacings,
+            1e17,                          // Interest Fee
+            address(0)                     // Fee Collector
         );
         console2.log("PoolPolicyManager Deployed at:", address(policyManager));
+
+        // Step 2.5: Deploy Oracle (needs policyManager)
+        console2.log("Deploying TruncGeoOracleMulti...");
+        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance, policyManager);
+        console2.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
 
         // Step 3: Deploy Liquidity Manager
         console2.log("Deploying Liquidity Manager...");

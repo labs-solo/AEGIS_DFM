@@ -10,6 +10,8 @@ import {Spot} from "../src/Spot.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {HookMiner} from "../src/utils/HookMiner.sol";
+import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
+import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 
 // Script to analyze and fix the hook address issue
 contract FixUnichainHook is Script {
@@ -114,6 +116,8 @@ contract FixUnichainHook is Script {
             IPoolManager(UNICHAIN_POOL_MANAGER),
             IPoolPolicy(POLICY_MANAGER),
             IFullRangeLiquidityManager(LIQUIDITY_MANAGER),
+            TruncGeoOracleMulti(address(0)), // Will be set later
+            IDynamicFeeManager(address(0)), // Will be set later
             msg.sender
         );
         vm.stopBroadcast();
