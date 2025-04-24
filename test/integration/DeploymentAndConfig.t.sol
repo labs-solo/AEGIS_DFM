@@ -23,7 +23,7 @@ contract DeploymentAndConfigTest is ForkSetup {
     // These should ideally be defined in ForkSetup.sol or loaded from deployment artifacts
     uint24 internal constant EXPECTED_POL_SHARE_PPM = 100_000; // Updated: 10%
     uint24 internal constant EXPECTED_MIN_FEE_PPM = 100; // Updated: 0.01%
-    int24 internal constant EXPECTED_TICK_SCALING = 2; // Updated
+    int24 internal constant EXPECTED_TICK_SCALING = 1; // Match the implementation
     // uint24 internal constant EXPECTED_MAX_BASE_FEE_PPM = 50_000; // Example: 5%
     uint128 internal constant EXPECTED_DEFAULT_DYNAMIC_FEE = 3000; // Updated: 0.3%
     // int24 internal constant EXPECTED_MAX_TICK_CHANGE = 100; // Example
@@ -50,9 +50,9 @@ contract DeploymentAndConfigTest is ForkSetup {
             address(liquidityManager.manager()), address(poolManager), "LiquidityManager->PoolManager link mismatch"
         );
         assertEq(
-            address(dynamicFeeManager.poolManager()),
-            address(poolManager),
-            "DynamicFeeManager->PoolManager link mismatch"
+            address(policyManager),
+            address(dynamicFeeManager.policy()),
+            "DynamicFeeManager->PolicyManager link mismatch (PoolManager linkage removed)"
         );
         assertEq(address(fullRange.poolManager()), address(poolManager), "SpotHook->PoolManager link mismatch");
         // assertEq(address(oracle.poolManager()), address(poolManager), "Oracle->PoolManager link mismatch"); // Uncomment if Oracle interface has poolManager()
@@ -81,11 +81,11 @@ contract DeploymentAndConfigTest is ForkSetup {
     /// @notice Test A5: Verify DynamicFeeManager linkages.
     function test_VerifyDynamicFeeManagerLinkages() public {
         assertEq(
-            address(fullRange.dynamicFeeManager()),
+            address(fullRange.feeManager()),
             address(dynamicFeeManager),
             "SpotHook->DynamicFeeManager link mismatch"
         );
-        assertEq(dynamicFeeManager.fullRangeAddress(), address(fullRange), "DynamicFeeManager->SpotHook link mismatch");
+        assertEq(dynamicFeeManager.authorizedHook(), address(fullRange), "DynamicFeeManager->SpotHook link mismatch");
         // assertEq(address(dynamicFeeManager.oracle()), address(oracle), "DynamicFeeManager->Oracle link mismatch"); // Removed: Oracle accessed via getOracleData
     }
 

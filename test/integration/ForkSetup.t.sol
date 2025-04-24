@@ -20,11 +20,17 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 // Project Interfaces & Implementations
 import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
 // Removed IFullRangeLiquidityManager, IFullRangeDynamicFeeManager, ISpot, ITruncGeoOracleMulti - using implementations directly
-import {FullRangeDynamicFeeManager} from "src/FullRangeDynamicFeeManager.sol";
-import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
-import {PoolPolicyManager} from "src/PoolPolicyManager.sol";
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {Spot} from "src/Spot.sol";
+import {HookMiner} from "src/utils/HookMiner.sol";
+import {PriceHelper} from "./utils/PriceHelper.sol";
+import {PoolPolicyManager} from "src/PoolPolicyManager.sol";
+import {DefaultPoolCreationPolicy} from "src/DefaultPoolCreationPolicy.sol";
+// import {LiquidityRouter} from "src/LiquidityRouter.sol";
+// import {SwapRouter} from "src/SwapRouter.sol";
+import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
+import {IDynamicFeeManager} from "src/interfaces/IDynamicFeeManager.sol";
+import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
 import {HookMiner} from "src/utils/HookMiner.sol";
 import {PriceHelper} from "./utils/PriceHelper.sol";
 
@@ -53,15 +59,14 @@ contract ForkSetup is Test {
     IPoolManager public poolManager; // From Unichain
     PoolPolicyManager public policyManager; // Deployed in setup
     FullRangeLiquidityManager public liquidityManager; // Deployed in setup
+    DynamicFeeManager public dynamicFeeManager; // Deployed in setup
     TruncGeoOracleMulti public oracle; // Deployed in setup
     Spot public fullRange; // Deployed in setup via CREATE2 (Renamed from spot to fullRange)
-    FullRangeDynamicFeeManager public dynamicFeeManager; // Deployed in setup
 
     // --- Test Routers --- (Deployed in setup)
-    PoolModifyLiquidityTest internal lpRouter;
-    PoolSwapTest internal swapRouter;
+    PoolModifyLiquidityTest public lpRouter; // Public for access from other tests
+    PoolSwapTest public swapRouter; // Public for access from other tests
     PoolDonateTest internal donateRouter;
-    PoolSwapTest internal liquidityRouter;
 
     // --- Core V4 & Pool Identifiers ---
     PoolKey internal poolKey;
@@ -83,7 +88,7 @@ contract ForkSetup is Test {
     uint256 internal constant FUND_ETH_AMOUNT = 1000 ether;
 
     // --- Deployment Constants ---
-    uint24 internal constant FEE = 3001; // Use unique static fee for testing to avoid fork collisions
+    uint24 internal constant DEFAULT_FEE = 3000;
     int24 internal constant TICK_SPACING = 60;
     // Updated: Price for ~3000 USDC/WETH, adjusted for decimal places (6 vs 18)
     // For sqrtPriceX96, we need sqrt(price) * 2^96
@@ -129,34 +134,27 @@ contract ForkSetup is Test {
         emit log_string("\n--- Starting Full Deployment & Configuration (Pranked) ---");
         vm.startPrank(deployerEOA);
 
-        // Deploy Oracle
-        emit log_string("Deploying TruncGeoOracleMulti...");
-        oracle = new TruncGeoOracleMulti(poolManager, deployerEOA); // Governance = deployer
-        emit log_named_address("Oracle deployed at", address(oracle));
-        require(address(oracle) != address(0), "Oracle deployment failed");
-
         // Deploy PolicyManager
         emit log_string("Deploying PolicyManager...");
         uint24[] memory supportedTickSpacings_ = new uint24[](3);
         supportedTickSpacings_[0] = 10;
         supportedTickSpacings_[1] = 60;
         supportedTickSpacings_[2] = 200;
+
         policyManager = new PoolPolicyManager(
-            deployerEOA, // Governance = deployer
-            100000,
-            250000,
-            650000, // Shares: Updated POL=10%, FR=25%, LP=65%
-            100,
-            10000, // Fees: Updated Min Trading Fee=0.01%
-            10,
-            3000,
-            2, // Multipliers, Default Dynamic Fee, Tick Scaling Factor
-            supportedTickSpacings_,
-            1e17, // Interest Fee
-            deployerEOA // Fee Collector - Use deployer address instead of address(0)
+            deployerEOA,            // owner / solo governance
+            3_000,                  // defaultDynamicFeePpm (0.3%)
+            supportedTickSpacings_, // allowed tick-spacings
+            1e17,                   // protocol-interest-fee = 10% (scaled by 1e18)
+            deployerEOA             // fee collector
         );
-        emit log_named_address("PolicyManager deployed at", address(policyManager));
-        require(address(policyManager) != address(0), "PolicyManager deployment failed");
+        emit log_named_address("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
+
+        // Deploy Oracle (AFTER PolicyManager)
+        emit log_string("Deploying TruncGeoOracleMulti...");
+        oracle = new TruncGeoOracleMulti(poolManager, deployerEOA, policyManager);
+        emit log_named_address("Oracle deployed at:", address(oracle));
+        require(address(oracle) != address(0), "Oracle deployment failed");
 
         // Deploy LiquidityManager
         emit log_string("Deploying LiquidityManager...");
@@ -164,22 +162,19 @@ contract ForkSetup is Test {
         emit log_named_address("LiquidityManager deployed at", address(liquidityManager));
         require(address(liquidityManager) != address(0), "LiquidityManager deployment failed");
 
-        // Deploy Spot Hook via CREATE2 with HookMiner
-        emit log_string("Deploying Spot hook via CREATE2 with HookMiner...");
+        // Deploy DynamicFeeManager
+        emit log_string("Deploying DynamicFeeManager...");
+        dynamicFeeManager = new DynamicFeeManager(
+            IPoolPolicy(address(policyManager)),
+            deployerEOA                          // temporary hook address (non-zero)
+        );
+        emit log_named_address("DynamicFeeManager deployed at", address(dynamicFeeManager));
 
         // Define the required hook flags - exactly match Spot.sol's getHookPermissions
         uint160 requiredHookFlags = uint160(
             Hooks.AFTER_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
                 | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
                 | Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
-        );
-
-        // Get constructor arguments
-        bytes memory constructorArgs = abi.encode(
-            poolManager,
-            IPoolPolicy(address(policyManager)),
-            liquidityManager,
-            deployerEOA // new owner argument
         );
 
         // Log which hook flags are being used
@@ -222,7 +217,19 @@ contract ForkSetup is Test {
         );
         emit log_string("===========================\n");
 
-        // Use HookMiner to find a valid salt
+        /* ------------------------------------------------------------------
+         *  2) build ctor args **with the real DFM address**
+         * -----------------------------------------------------------------*/
+        bytes memory constructorArgs = abi.encode(
+            poolManager,
+            IPoolPolicy(address(policyManager)),
+            liquidityManager,
+            oracle,
+            IDynamicFeeManager(address(dynamicFeeManager)),
+            deployerEOA
+        );
+
+        // Find salt for this exact byte-code
         (address hookAddress, bytes32 salt) =
             HookMiner.find(deployerEOA, requiredHookFlags, type(Spot).creationCode, constructorArgs);
 
@@ -234,9 +241,11 @@ contract ForkSetup is Test {
             poolManager,
             IPoolPolicy(address(policyManager)),
             liquidityManager,
-            deployerEOA // 4th arg
+            oracle,                  // Now passing oracle directly in constructor 
+            IDynamicFeeManager(address(dynamicFeeManager)), // Using real DFM address
+            deployerEOA // governance/owner
         );
-
+        
         // Verify the deployment
         actualHookAddress = address(fullRange);
         require(actualHookAddress == hookAddress, "Deployed hook address does not match predicted!");
@@ -245,32 +254,34 @@ contract ForkSetup is Test {
         // Debug hook flags and validation
         debugHookFlags();
 
-        // Deploy DynamicFeeManager
-        emit log_string("Deploying DynamicFeeManager...");
-        dynamicFeeManager = new FullRangeDynamicFeeManager(
-            deployerEOA, // Governance = deployer
-            IPoolPolicy(address(policyManager)),
-            poolManager,
-            address(fullRange)
-        );
-        emit log_named_address("DynamicFeeManager deployed at", address(dynamicFeeManager));
-        require(address(dynamicFeeManager) != address(0), "DynamicFeeManager deployment failed");
+        /* 3) wire the DFM to the hook now that we know it */
+        dynamicFeeManager.setAuthorizedHook(actualHookAddress);
+        emit log_string("DynamicFeeManager successfully linked to Spot hook");
 
         // Configure Contracts
         emit log_string("Configuring contracts...");
         liquidityManager.setAuthorizedHookAddress(actualHookAddress);
-        fullRange.setDynamicFeeManager(address(dynamicFeeManager));
-        emit log_string("LiquidityManager and Hook configured.");
+        
+        // This will revert since feeManager is now immutable, but dynamicFeeManager
+        // has already been initialized with fullRange as the authorized hook
+        // fullRange.setDynamicFeeManager(address(dynamicFeeManager));
+        
+        emit log_string("LiquidityManager configured.");
 
         // Set the FeeReinvestmentManager as the reinvestment policy for the specific pool
         // NOTE: Moved poolKey/poolId generation out of try-catch
         address token0;
         address token1;
         (token0, token1) = WETH_ADDRESS < USDC_ADDRESS ? (WETH_ADDRESS, USDC_ADDRESS) : (USDC_ADDRESS, WETH_ADDRESS);
+        
+        // Only set the dynamic‑fee flag here; the static base fee comes from PoolPolicyManager
+        // uint24 dynamicFee = DEFAULT_FEE | LPFeeLibrary.DYNAMIC_FEE_FLAG; // Reverted: Invalid for initialize
+        uint24 dynamicFee = LPFeeLibrary.DYNAMIC_FEE_FLAG;
+        
         poolKey = PoolKey({
             currency0: Currency.wrap(token0),
             currency1: Currency.wrap(token1),
-            fee: FEE,
+            fee: dynamicFee, 
             tickSpacing: TICK_SPACING,
             hooks: IHooks(address(fullRange))
         });
@@ -281,15 +292,12 @@ contract ForkSetup is Test {
         lpRouter = new PoolModifyLiquidityTest(poolManager);
         swapRouter = new PoolSwapTest(poolManager);
         donateRouter = new PoolDonateTest(poolManager);
-        liquidityRouter = new PoolSwapTest(poolManager);
         emit log_named_address("Test LiquidityRouter deployed at", address(lpRouter));
         emit log_named_address("Test SwapRouter deployed at", address(swapRouter));
         emit log_named_address("Test Donate Router deployed at", address(donateRouter));
-        emit log_named_address("Test (Liquidity) Router deployed at", address(liquidityRouter));
         require(address(lpRouter) != address(0), "lpRouter deployment failed");
         require(address(swapRouter) != address(0), "swapRouter deployment failed");
         require(address(donateRouter) != address(0), "donateRouter deployment failed");
-        require(address(liquidityRouter) != address(0), "liquidityRouter deployment failed");
 
         // Stop pranking *before* initializing the pool
         vm.stopPrank();
@@ -298,13 +306,13 @@ contract ForkSetup is Test {
         // Price: 3000 USDC per 1 WETH. Input is scaled by tokenB's decimals (USDC)
         uint8 wethDecimals = 18; // Define decimals explicitly
         uint8 usdcDecimals = 6;
-        uint256 priceUSDCperWETH_scaled = 3000 * (10**usdcDecimals); // 3000 scaled by USDC decimals
+        uint256 priceUSDCperWETH_scaled = 3000 * (10 ** usdcDecimals); // 3000 scaled by USDC decimals
         uint160 calculatedSqrtPriceX96 = PriceHelper.priceToSqrtX96(
             WETH_ADDRESS,
             USDC_ADDRESS,
             priceUSDCperWETH_scaled,
             wethDecimals, // Pass decimals explicitly
-            usdcDecimals  // Pass decimals explicitly
+            usdcDecimals // Pass decimals explicitly
         );
         emit log_named_uint("Calculated SqrtPriceX96 for 3000 USDC/WETH", calculatedSqrtPriceX96);
         // Expected: 1459148524590520702994002341445
@@ -460,20 +468,17 @@ contract ForkSetup is Test {
     /// @dev Regression test for PriceHelper: Ensures WETH/USDC price matches the legacy constant.
     function testPriceHelper_USDC_WETH_Regression() public pure {
         // Legacy constant: sqrt( (1/3000) * 10^(18-6) ) * 2^96 = 1459148524590520702994002341445
-        uint256 priceUSDCperWETH_scaled = 3_000 * 1e6;   // tokenB per tokenA, scaled by decB
-        
+        uint256 priceUSDCperWETH_scaled = 3_000 * 1e6; // tokenB per tokenA, scaled by decB
+
         uint160 sqrtP = PriceHelper.priceToSqrtX96(
             address(2), // WETH   (tokenA, 18 dec) - must be > tokenB
             address(1), // USDC   (tokenB, 6  dec) - must be < tokenA
             priceUSDCperWETH_scaled, // Price of B (USDC) per A (WETH), scaled by decB (USDC)
             18, // decA (WETH)
-            6   // decB (USDC)
+            6 // decB (USDC)
         );
-        
-        assertTrue(
-            sqrtP >= TickMath.MIN_SQRT_PRICE && sqrtP < TickMath.MAX_SQRT_PRICE,
-            "sqrtP out of bounds"
-        );
+
+        assertTrue(sqrtP >= TickMath.MIN_SQRT_PRICE && sqrtP < TickMath.MAX_SQRT_PRICE, "sqrtP out of bounds");
     }
 
     /// @dev Tests PriceHelper inverse calculation: sqrtP(A/B) * sqrtP(B/A) == 2**192
@@ -485,38 +490,36 @@ contract ForkSetup is Test {
         address tokenB = address(1); // USDC placeholder (token1)
 
         // Price B per A: 3000 USDC per WETH, scaled by USDC dec (6)
-        uint256 priceBperA_scaled = 3_000 * (10**usdcDecimals);
+        uint256 priceBperA_scaled = 3_000 * (10 ** usdcDecimals);
 
         // Price A per B: (1/3000) WETH per USDC, scaled by WETH dec (18)
-        uint256 priceAperB_scaled = FullMath.mulDiv(10**usdcDecimals, 10**wethDecimals, priceBperA_scaled);
+        uint256 priceAperB_scaled = FullMath.mulDiv(10 ** usdcDecimals, 10 ** wethDecimals, priceBperA_scaled);
 
         // Calculate sqrtP(B/A)
-        uint160 sqrtP_BperA = PriceHelper.priceToSqrtX96(
-            tokenA, tokenB, priceBperA_scaled, wethDecimals, usdcDecimals
-        );
+        uint160 sqrtP_BperA = PriceHelper.priceToSqrtX96(tokenA, tokenB, priceBperA_scaled, wethDecimals, usdcDecimals);
 
         // Calculate sqrtP(A/B) using the same PriceHelper to avoid manual inversion
         uint160 sqrtP_AperB = PriceHelper.priceToSqrtX96(
             tokenB, // now base=USDC
             tokenA, // quote=WETH
-            FullMath.mulDiv(10**usdcDecimals, 10**wethDecimals, priceBperA_scaled),
+            FullMath.mulDiv(10 ** usdcDecimals, 10 ** wethDecimals, priceBperA_scaled),
             usdcDecimals,
             wethDecimals
         );
 
         // Check the inverse relationship: product should be 2**192
         // Use FullMath.mulDiv for safer multiplication
-        uint256 product  = FullMath.mulDiv(uint256(sqrtP_BperA), uint256(sqrtP_AperB), 1);
+        uint256 product = FullMath.mulDiv(uint256(sqrtP_BperA), uint256(sqrtP_AperB), 1);
         uint256 expected = uint256(1) << 192;
         // Compute the absolute difference as our tolerance
         uint256 tol = product > expected ? product - expected : expected - product;
-        
+
         // Debug logging
         console.log("sqrtP_BperA =", uint256(sqrtP_BperA));
         console.log("sqrtP_AperB =", uint256(sqrtP_AperB));
         console.log("product     =", product);
         console.log("tolerance   =", tol);
-        
+
         assertApproxEqAbs(product, expected, tol);
     }
 

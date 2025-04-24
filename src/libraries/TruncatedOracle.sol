@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.26;
 
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {MathUtils} from "./MathUtils.sol";
+import {TickMoveGuard} from "./TickMoveGuard.sol";
 
 /// @title TruncatedOracle
 /// @notice Provides price oracle data with protection against price manipulation
@@ -16,9 +15,8 @@ library TruncatedOracle {
     /// @param targetTimestamp Invalid timestamp targeted to be observed
     error TargetPredatesOldestObservation(uint32 oldestTimestamp, uint32 targetTimestamp);
 
-    /// @notice This is the max amount of ticks in either direction that the pool is allowed to move at one time
-    /// @dev Set to approximately 1% of the total tick range (MIN_TICK to MAX_TICK)
-    int24 constant MAX_ABS_TICK_MOVE = 9116; // = TickMath.MAX_TICK / 100 (rounded)
+    /// @dev emitted when the oracle had to truncate an excessive move
+    event TickCapped(int24 newTick);
 
     struct Observation {
         // the block timestamp of the observation
@@ -40,27 +38,19 @@ library TruncatedOracle {
      * @param blockTimestamp The timestamp of the new observation
      * @param tick The active tick at the time of the new observation
      * @param liquidity The total in-range liquidity at the time of the new observation
-     * @param maxAbsTickMove The maximum allowed absolute tick movement, customizable per pool
      * @return Observation The newly populated observation
      */
-    function transform(
-        Observation memory last,
-        uint32 blockTimestamp,
-        int24 tick,
-        uint128 liquidity,
-        int24 maxAbsTickMove
-    ) internal pure returns (Observation memory) {
+    function transform(Observation memory last, uint32 blockTimestamp, int24 tick, uint128 liquidity)
+        internal
+        returns (Observation memory)
+    {
         unchecked {
             uint32 delta = blockTimestamp - last.blockTimestamp;
 
             // Calculate absolute tick movement using optimized implementation
-            uint24 tickMove = MathUtils.absDiff(tick, last.prevTick);
-
-            // Cap tick movement if it exceeds the maximum allowed
-            // This is the core anti-manipulation mechanism
-            if (tickMove > uint24(maxAbsTickMove)) {
-                tick = tick > last.prevTick ? last.prevTick + maxAbsTickMove : last.prevTick - maxAbsTickMove;
-            }
+            (bool capped, int24 t) = TickMoveGuard.checkHardCapOnly(last.prevTick, tick);
+            tick = t; // use truncated tick if needed
+            if (capped) emit TickCapped(tick); // new observability
 
             return Observation({
                 blockTimestamp: blockTimestamp,
@@ -102,7 +92,6 @@ library TruncatedOracle {
     /// @param liquidity The total in-range liquidity at the time of the new observation
     /// @param cardinality The number of populated elements in the oracle array
     /// @param cardinalityNext The new length of the oracle array, independent of population
-    /// @param maxAbsTickMove The maximum allowed absolute tick movement, customizable per pool
     /// @return indexUpdated The new index of the most recently written element in the oracle array
     /// @return cardinalityUpdated The new cardinality of the oracle array
     function write(
@@ -112,8 +101,7 @@ library TruncatedOracle {
         int24 tick,
         uint128 liquidity,
         uint16 cardinality,
-        uint16 cardinalityNext,
-        int24 maxAbsTickMove
+        uint16 cardinalityNext
     ) internal returns (uint16 indexUpdated, uint16 cardinalityUpdated) {
         unchecked {
             Observation memory last = self[index];
@@ -129,7 +117,7 @@ library TruncatedOracle {
             }
 
             indexUpdated = (index + 1) % cardinalityUpdated;
-            self[indexUpdated] = transform(last, blockTimestamp, tick, liquidity, maxAbsTickMove);
+            self[indexUpdated] = transform(last, blockTimestamp, tick, liquidity);
         }
     }
 
@@ -182,7 +170,6 @@ library TruncatedOracle {
     /// @return atOrAfter The observation which occurred at, or after, the given timestamp
     function binarySearch(Observation[65535] storage self, uint32 time, uint32 target, uint16 index, uint16 cardinality)
         private
-        view
         returns (Observation memory beforeOrAt, Observation memory atOrAfter)
     {
         uint256 l = (index + 1) % cardinality; // oldest observation
@@ -220,7 +207,6 @@ library TruncatedOracle {
     /// @param index The index of the observation that was most recently written to the observations array
     /// @param liquidity The total pool liquidity at the time of the call
     /// @param cardinality The number of populated elements in the oracle array
-    /// @param maxAbsTickMove The pool-specific maximum tick movement parameter
     /// @return beforeOrAt The observation which occurred at, or before, the given timestamp
     /// @return atOrAfter The observation which occurred at, or after, the given timestamp
     function getSurroundingObservations(
@@ -230,9 +216,8 @@ library TruncatedOracle {
         int24 tick,
         uint16 index,
         uint128 liquidity,
-        uint16 cardinality,
-        int24 maxAbsTickMove
-    ) private view returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
+        uint16 cardinality
+    ) private returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
         // optimistically set before to the newest observation
         beforeOrAt = self[index];
 
@@ -243,7 +228,7 @@ library TruncatedOracle {
                 return (beforeOrAt, atOrAfter);
             } else {
                 // otherwise, we need to transform using the pool-specific tick movement cap
-                return (beforeOrAt, transform(beforeOrAt, target, tick, liquidity, maxAbsTickMove));
+                return (beforeOrAt, transform(beforeOrAt, target, tick, liquidity));
             }
         }
 
@@ -269,7 +254,6 @@ library TruncatedOracle {
     /// @param index The index of the observation that was most recently written to the observations array
     /// @param liquidity The current in-range pool liquidity
     /// @param cardinality The number of populated elements in the oracle array
-    /// @param maxAbsTickMove The pool-specific maximum tick movement parameter
     /// @return tickCumulatives The tick * time elapsed since the pool was first initialized, as of each secondsAgo
     /// @return secondsPerLiquidityCumulativeX128s The cumulative seconds / max(1, liquidity) since pool initialized
     function observe(
@@ -279,16 +263,15 @@ library TruncatedOracle {
         int24 tick,
         uint16 index,
         uint128 liquidity,
-        uint16 cardinality,
-        int24 maxAbsTickMove
-    ) internal view returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s) {
+        uint16 cardinality
+    ) internal returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s) {
         require(cardinality > 0, "I");
 
         tickCumulatives = new int48[](secondsAgos.length);
         secondsPerLiquidityCumulativeX128s = new uint144[](secondsAgos.length);
         for (uint256 i = 0; i < secondsAgos.length; i++) {
             (tickCumulatives[i], secondsPerLiquidityCumulativeX128s[i]) =
-                observeSingle(self, time, secondsAgos[i], tick, index, liquidity, cardinality, maxAbsTickMove);
+                observeSingle(self, time, secondsAgos[i], tick, index, liquidity, cardinality);
         }
     }
 
@@ -301,7 +284,6 @@ library TruncatedOracle {
     /// @param index The index of the observation that was most recently written to the observations array
     /// @param liquidity The current in-range pool liquidity
     /// @param cardinality The number of populated elements in the oracle array
-    /// @param maxAbsTickMove The pool-specific maximum tick movement parameter
     /// @return tickCumulative The tick * time elapsed since the pool was first initialized, as of secondsAgo
     /// @return secondsPerLiquidityCumulativeX128 The seconds / max(1, liquidity) since pool initialized
     function observeSingle(
@@ -311,14 +293,13 @@ library TruncatedOracle {
         int24 tick,
         uint16 index,
         uint128 liquidity,
-        uint16 cardinality,
-        int24 maxAbsTickMove
-    ) internal view returns (int48 tickCumulative, uint144 secondsPerLiquidityCumulativeX128) {
+        uint16 cardinality
+    ) internal returns (int48 tickCumulative, uint144 secondsPerLiquidityCumulativeX128) {
         if (secondsAgo == 0) {
             Observation memory last = self[index];
             if (last.blockTimestamp != time) {
                 // Use the pool-specific maximum tick movement
-                last = transform(last, time, tick, liquidity, maxAbsTickMove);
+                last = transform(last, time, tick, liquidity);
             }
             return (last.tickCumulative, last.secondsPerLiquidityCumulativeX128);
         }
@@ -326,7 +307,7 @@ library TruncatedOracle {
         uint32 target = time - secondsAgo;
 
         (Observation memory beforeOrAt, Observation memory atOrAfter) =
-            getSurroundingObservations(self, time, target, tick, index, liquidity, cardinality, maxAbsTickMove);
+            getSurroundingObservations(self, time, target, tick, index, liquidity, cardinality);
 
         if (target == beforeOrAt.blockTimestamp) {
             // we're at the left boundary

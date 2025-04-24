@@ -72,5 +72,7 @@ interface IFullRangeLiquidityManager {
     /// @param liquidity The calculated liquidity amount corresponding to total0/total1.
     /// @return liquidityMinted Amount of liquidity token minted representing the POL.
     function reinvest(PoolId poolId, uint256 total0, uint256 total1, uint128 liquidity)
-        external payable returns (uint128 liquidityMinted);
+        external
+        payable
+        returns (uint128 liquidityMinted);
 }

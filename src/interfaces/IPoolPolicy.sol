@@ -3,6 +3,7 @@ pragma solidity 0.8.26;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
 
 /**
  * @title IPoolPolicy
@@ -21,6 +22,7 @@ interface IPoolPolicy {
         ORACLE, // Added: Manages oracle behavior and thresholds
         INTEREST_FEE, // Added: Manages protocol interest fee settings
         REINVESTOR_AUTH // Added: Manages authorized reinvestor addresses
+
     }
 
     /**
@@ -214,11 +216,6 @@ interface IPoolPolicy {
     // ----------------------------------------------------------------
 
     /**
-     * @notice Returns the policy‐defined initial surge fee in PPM for the given pool.
-     */
-    function getInitialSurgeFeePpm(PoolId poolId) external view returns (uint256);
-
-    /**
      * @notice Returns the policy‐defined surge decay period (in seconds) for the given pool.
      */
     function getSurgeDecayPeriodSeconds(PoolId poolId) external view returns (uint256);
@@ -226,12 +223,17 @@ interface IPoolPolicy {
     /**
      * @notice Returns the target number of CAP events per day (equilibrium) for the given pool.
      */
-    function getTargetCapsPerDay(PoolId poolId) external view returns (uint256);
+    function getTargetCapsPerDay(bytes32 poolId) external view returns (uint256);
 
     /**
-     * @notice Returns the CAP‐frequency decay window (in seconds) for the given pool.
+     * @notice Returns the daily budget for CAP events (in parts per million) for the given pool.
      */
-    function getCapFreqDecayWindow(PoolId poolId) external view returns (uint256);
+    function getDailyBudgetPpm(bytes32 poolId) external view returns (uint32);
+
+    /**
+     * @notice Returns the budget decay window (in seconds) for the given pool.
+     */
+    function getCapBudgetDecayWindow(bytes32 poolId) external view returns (uint32);
 
     /**
      * @notice Returns the scaling factor used for CAP frequency math for the given pool.
@@ -254,4 +256,35 @@ interface IPoolPolicy {
      * @return The base fee update interval in seconds
      */
     function getBaseFeeUpdateIntervalSeconds(PoolId poolId) external view returns (uint256);
+
+    /**
+     * @notice Returns the maximum step size (in PPM) for base fee adjustments.
+     * @param poolId The pool ID in raw bytes32 format
+     * @return The maximum step size in PPM
+     */
+    function getMaxStepPpm(bytes32 poolId) external view returns (uint32);
+
+    /*──────── NEW knobs ─────────────────────────────────────────────*/
+    /// surge = base * surgeFeeMultiplierPpm / 1e6  (e.g. 1_000_000 ppm = 100 %)
+    function getSurgeFeeMultiplierPpm(bytes32 poolId) external view returns (uint24);
+
+    /// linear fade‑out period for surge fee
+    function getSurgeDecaySeconds(bytes32 poolId) external view returns (uint32);
+
+    /// @notice Checks if a currency is supported for adding to a concentrated LP position
+    /// @param currency The currency to check
+    /// @return True if the currency can be added to a concentrated LP position, false otherwise
+    function isSupportedCurrency(Currency currency) external view returns (bool);
+
+    /**
+     * @notice Helper to get both budget and window values in a single call, saving gas
+     * @param id The PoolId to query
+     * @return budgetPerDay Daily budget in PPM
+     * @return decayWindow Decay window in seconds
+     */
+    function getBudgetAndWindow(PoolId id) external view returns (uint32 budgetPerDay, uint32 decayWindow);
+
+    /*──────── NEW: default starting cap ─────────*/
+    /// @notice Initial `maxTicksPerBlock` the oracle should use for a pool.
+    function getDefaultMaxTicksPerBlock(bytes32 poolId) external view returns (uint24);
 }

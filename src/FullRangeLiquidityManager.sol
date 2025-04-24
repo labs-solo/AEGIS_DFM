@@ -1185,15 +1185,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         int256 liquidityDelta;
         address recipient;
-        if (cbData.callbackType == CallbackType.DEPOSIT ||
-            cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES) {
-            
+        if (cbData.callbackType == CallbackType.DEPOSIT || cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES) {
             liquidityDelta = int256(uint256(cbData.shares));
-            recipient      = address(this); // Tokens stay/settle within LM
-        } else if (cbData.callbackType == CallbackType.WITHDRAW ||
-                   cbData.callbackType == CallbackType.BORROW) {
+            recipient = address(this); // Tokens stay/settle within LM
+        } else if (cbData.callbackType == CallbackType.WITHDRAW || cbData.callbackType == CallbackType.BORROW) {
             liquidityDelta = -int256(uint256(cbData.shares));
-            recipient      = cbData.recipient; // Tokens sent to original caller
+            recipient = cbData.recipient; // Tokens sent to original caller
         } else {
             revert Errors.InvalidCallbackType(uint8(cbData.callbackType));
         }
@@ -1250,10 +1247,10 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      *      Amounts/liquidity are provided; this function approves PM and initiates unlock.
      *      The actual token `take` and `modifyLiquidity` happen in unlockCallback.
      */
-    // --- Reverted to take use0, use1, liq --- 
+    // --- Reverted to take use0, use1, liq ---
     function reinvest(PoolId poolId, uint256 use0, uint256 use1, uint128 liq)
         external
-        payable 
+        payable
         override
         onlyFullRange
         nonReentrant
@@ -1262,9 +1259,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // sanity checks
         PoolKey memory key = _poolKeys[poolId];
         if (key.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
-        if (liq == 0) revert Errors.ZeroAmount(); 
+        if (liq == 0) revert Errors.ZeroAmount();
 
-        // --- Reverted: Approve provided amounts --- 
+        // --- Reverted: Approve provided amounts ---
         address t0 = Currency.unwrap(key.currency0);
         address t1 = Currency.unwrap(key.currency1);
         if (use0 > 0 && t0 != address(0)) SafeTransferLib.safeApprove(ERC20(t0), address(manager), use0);
@@ -1272,13 +1269,13 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         // build callback data including amounts and liquidity
         CallbackData memory cb = CallbackData({
-            poolId:         poolId,
-            callbackType:   CallbackType.REINVEST_PROTOCOL_FEES,
-            shares:         liq, // Use provided liquidity
+            poolId: poolId,
+            callbackType: CallbackType.REINVEST_PROTOCOL_FEES,
+            shares: liq, // Use provided liquidity
             oldTotalShares: poolTotalShares[poolId],
-            amount0:        use0, // Use provided amount0
-            amount1:        use1, // Use provided amount1
-            recipient:      address(this)
+            amount0: use0, // Use provided amount0
+            amount1: use1, // Use provided amount1
+            recipient: address(this)
         });
         // --- END Reverted ---
 

@@ -12,8 +12,9 @@ import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityM
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {HookMiner} from "../src/utils/HookMiner.sol";
-import {TruncGeoOracleMulti} from "../src/oracle/TruncGeoOracleMulti.sol";
-import {FullRangeDynamicFeeManager} from "../src/FullRangeDynamicFeeManager.sol";
+import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
+import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
+import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 
 /**
  * Script to directly deploy the hook with an explicit constructor and salt.
@@ -31,7 +32,7 @@ contract DirectDeploy is Script {
     TruncGeoOracleMulti public truncGeoOracle;
     PoolPolicyManager public policyManager;
     FullRangeLiquidityManager public liquidityManager;
-    FullRangeDynamicFeeManager public dynamicFeeManager;
+    DynamicFeeManager public dynamicFeeManager;
 
     function run() public {
         // Read private key from environment
@@ -74,7 +75,11 @@ contract DirectDeploy is Script {
         // Deploy the helper contracts
         if (address(truncGeoOracle) == address(0)) {
             console.log("Deploying TruncGeoOracleMulti...");
-            truncGeoOracle = new TruncGeoOracleMulti(IPoolManager(UNICHAIN_POOL_MANAGER));
+            truncGeoOracle = new TruncGeoOracleMulti(
+                IPoolManager(UNICHAIN_POOL_MANAGER),
+                deployer,              // governance parameter
+                policyManager         // policy manager parameter
+            );
             console.log("TruncGeoOracleMulti deployed at: %s", address(truncGeoOracle));
         }
 
@@ -82,8 +87,8 @@ contract DirectDeploy is Script {
             console.log("Deploying PolicyManager...");
             // Simplified parameters for this test deployment
             address owner = deployer;
-            uint256 polSharePpm = 500000; // 50%
-            uint256 fullRangeSharePpm = 300000; // 30%
+            uint256 polSharePpm = 800000; // 80%
+            uint256 fullRangeSharePpm = 0; // 0%
             uint256 lpSharePpm = 200000; // 20%
             uint256 minimumTradingFeePpm = 1000; // 0.1%
             uint256 feeClaimThresholdPpm = 1000; // 0.1%
@@ -99,14 +104,7 @@ contract DirectDeploy is Script {
 
             policyManager = new PoolPolicyManager(
                 owner,
-                polSharePpm,
-                fullRangeSharePpm,
-                lpSharePpm,
-                minimumTradingFeePpm,
-                feeClaimThresholdPpm,
-                defaultPolMultiplier,
                 defaultDynamicFeePpm,
-                tickScalingFactor,
                 supportedTickSpacings,
                 initialProtocolFeePercentage,
                 initialFeeCollector
@@ -134,7 +132,14 @@ contract DirectDeploy is Script {
 
         // Now deploy the hook
         console.log("Deploying hook directly with CREATE2...");
-        Spot hook = new Spot{salt: salt}(IPoolManager(UNICHAIN_POOL_MANAGER), policyManager, liquidityManager, deployer);
+        Spot hook = new Spot{salt: salt}(
+            IPoolManager(UNICHAIN_POOL_MANAGER), 
+            policyManager, 
+            liquidityManager, 
+            truncGeoOracle,
+            IDynamicFeeManager(address(0)), // Will be set later
+            deployer
+        );
         console.log("Hook deployed at: %s", address(hook));
 
         // Verify it has the right address
@@ -148,10 +153,11 @@ contract DirectDeploy is Script {
 
         // Now we can continue with the rest of the initialization
         console.log("Initializing dynamic fee manager...");
-        dynamicFeeManager =
-            new FullRangeDynamicFeeManager(deployer, policyManager, IPoolManager(UNICHAIN_POOL_MANAGER), address(hook));
-        hook.setDynamicFeeManager(address(dynamicFeeManager));
-        console.log("DynamicFeeManager deployed and set: %s", address(dynamicFeeManager));
+        dynamicFeeManager = new DynamicFeeManager(
+            IPoolPolicy(address(policyManager)),
+            address(hook) // authorizedHook
+        );
+        console.log("DynamicFeeManager deployed: %s", address(dynamicFeeManager));
 
         // Authorize hook in LiquidityManager
         liquidityManager.setAuthorizedHookAddress(address(hook));

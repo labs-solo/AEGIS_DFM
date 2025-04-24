@@ -95,7 +95,7 @@ interface ISpot is IHooks {
      * @return tick The latest recorded tick
      * @return blockNumber The block number when the tick was last updated
      */
-    function getOracleData(PoolId poolId) external view returns (int24 tick, uint32 blockNumber);
+    function getOracleData(PoolId poolId) external returns (int24 tick, uint32 blockNumber);
 
     /**
      * @notice Deposits liquidity into a pool.

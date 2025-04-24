@@ -59,13 +59,9 @@ library CurrencySettlerExtension {
      * @param cur1 The second currency
      * @param recipient The recipient for positive deltas
      */
-    function handlePoolDelta(
-        IPoolManager manager,
-        BalanceDelta delta,
-        Currency cur0,
-        Currency cur1,
-        address recipient
-    ) internal {
+    function handlePoolDelta(IPoolManager manager, BalanceDelta delta, Currency cur0, Currency cur1, address recipient)
+        internal
+    {
         _handle(manager, delta.amount0(), cur0, recipient);
         _handle(manager, delta.amount1(), cur1, recipient);
     }
