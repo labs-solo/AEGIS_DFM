@@ -1,22 +1,78 @@
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.26;
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.26;
 
-import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {CurrencySettler} from "uniswap-hooks/src/utils/CurrencySettler.sol";
-import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
-import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
+import {SafeCast} from "v4-core/libraries/SafeCast.sol";
 import {Errors} from "../errors/Errors.sol";
 
 /**
  * @title CurrencySettlerExtension
- * @notice Minimal extension of Uniswap V4's CurrencySettler for vault pattern usage
- * @dev Provides a thin adapter layer between FullRange's vault pattern and Uniswap V4 settlement
+ * @notice Extension of the CurrencySettler library for use within FullRange.
+ * @dev Provides helpers to interact with the PoolManager for settling balances.
  */
 library CurrencySettlerExtension {
     using CurrencyLibrary for Currency;
     using SafeCast for uint256;
     using SafeCast for int256;
+
+    /**
+     * @notice Handles the settlement of balance deltas using the PoolManager.
+     * @param manager The IPoolManager instance.
+     * @param delta The balance delta to settle.
+     * @param currency0 The first currency.
+     * @param currency1 The second currency.
+     * @param recipient The recipient of any settled funds.
+     */
+    function handlePoolDelta(
+        IPoolManager manager,
+        BalanceDelta delta,
+        Currency currency0,
+        Currency currency1,
+        address recipient
+    ) internal {
+        if (delta.amount0() < 0) {
+            // Pool owes token0
+            CurrencySettler.settle(
+                currency0,
+                manager,
+                recipient,
+                uint256(-int256(delta.amount0())),
+                false
+            );
+        } else if (delta.amount0() > 0) {
+            // Pool is owed token0
+            CurrencySettler.take(
+                currency0,
+                manager,
+                recipient,
+                uint256(int256(delta.amount0())),
+                false
+            );
+        }
+
+        if (delta.amount1() < 0) {
+            // Pool owes token1
+            CurrencySettler.settle(
+                currency1,
+                manager,
+                recipient,
+                uint256(-int256(delta.amount1())),
+                false
+            );
+        } else if (delta.amount1() > 0) {
+            // Pool is owed token1
+            CurrencySettler.take(
+                currency1,
+                manager,
+                recipient,
+                uint256(int256(delta.amount1())),
+                false
+            );
+        }
+    }
 
     /**
      * @notice Take a currency from the pool manager
@@ -49,46 +105,5 @@ library CurrencySettlerExtension {
             // For ERC20 tokens
             CurrencySettler.settle(currency, manager, address(this), amount, false);
         }
-    }
-
-    /**
-     * @notice Handle a balance delta for both currencies in a key
-     * @param manager The pool manager
-     * @param delta The balance delta to settle
-     * @param cur0 The first currency
-     * @param cur1 The second currency
-     * @param recipient The recipient for positive deltas
-     */
-    function handlePoolDelta(IPoolManager manager, BalanceDelta delta, Currency cur0, Currency cur1, address recipient)
-        internal
-    {
-        _handle(manager, delta.amount0(), cur0, recipient);
-        _handle(manager, delta.amount1(), cur1, recipient);
-    }
-
-    /**
-     * @notice Handle a single currency delta
-     * @dev Internal helper to reduce code duplication
-     * @param m The pool manager
-     * @param amt The delta amount (positive or negative)
-     * @param cur The currency to handle
-     * @param recip The recipient for positive deltas (where PoolManager sends tokens)
-     */
-    function _handle(IPoolManager m, int128 amt, Currency cur, address recip) private {
-        if (amt < 0) {
-            // LM owes → settle (pay‑in)
-            uint256 amountToSettle = uint256(uint128(-amt));
-            if (cur.isAddressZero()) {
-                m.settle{value: amountToSettle}();
-            } else {
-                // Use Uniswap's standard CurrencySettler for ERC20s
-                CurrencySettler.settle(cur, m, address(this), amountToSettle, false);
-            }
-        } else if (amt > 0) {
-            // pool owes LM → take (pull‑out)
-            // Tell PoolManager to send tokens *to* the specified recipient
-            m.take(cur, recip, uint256(uint128(amt)));
-        }
-        // if amt == 0, do nothing
     }
 }

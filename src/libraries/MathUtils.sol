@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import {FullMath} from "v4-core/src/libraries/FullMath.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
-import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {FullMath} from "v4-core/libraries/FullMath.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {SqrtPriceMath} from "v4-core/libraries/SqrtPriceMath.sol";
+import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
 import {Errors} from "../errors/Errors.sol";
-import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
+import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 import {PrecisionConstants} from "./PrecisionConstants.sol";
 
 /**
@@ -45,7 +45,8 @@ library MathUtils {
     // Import precision constants from central library
     using PrecisionConstants for uint256;
 
-    uint256 internal constant MINIMUM_LIQUIDITY = 1000;
+    /// @notice   Exact same constant Uniswap V2/V3 use – irrevocably locked
+    uint256 internal constant MINIMUM_LIQUIDITY = 1_000;
 
     /// @dev absolute value of a signed int returned as uint
     function abs(int256 x) internal pure returns (uint256) {
@@ -406,6 +407,12 @@ library MathUtils {
         //    setting actualN = 1 made it exceed a desired amount less than 1 (though unlikely).
         actual0 = min(actual0, amount0Desired);
         actual1 = min(actual1, amount1Desired);
+
+        // A. Strict dust-prevention: if rounding drove one side to zero while the
+        // user supplied a non-zero amount we revert instead of silently topping-up.
+        if (sharesMinted > 0 && (actual0 == 0 || actual1 == 0)) {
+            revert Errors.ValidationZeroAmount("roundedAmount");
+        }
 
         // Final return values are set.
     }

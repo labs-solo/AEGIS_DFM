@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26; // Consistent pragma
 
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
 
 /*═══════════════════════════════════════╗
