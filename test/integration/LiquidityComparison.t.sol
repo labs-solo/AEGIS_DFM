@@ -114,15 +114,6 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         uint256 used0Direct = used0Direct_;
         uint256 used1Direct = used1Direct_;
 
-        // Settle both currencies after direct deposit
-        Currency currency0 = Currency.wrap(address(token0));
-        Currency currency1 = Currency.wrap(address(token1));
-        
-        // Sync and settle both currencies
-        manager_.sync(currency0);
-        manager_.sync(currency1);
-        manager_.settle();
-
         // ───────────────────────────────────────────────────────────
         // ② Same deposit through FullRangeLiquidityManager (lpProvider)
         // ───────────────────────────────────────────────────────────
@@ -170,11 +161,7 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
     }
 
     // settles the owed tokens
-    function unlockCallback(bytes calldata data)
-        external
-        override
-        returns (bytes memory)
-    {
+    function unlockCallback(bytes calldata data) external returns (bytes memory) {
         require(msg.sender == address(manager_), "only manager");
         CallbackData memory d = abi.decode(data, (CallbackData));
 
@@ -190,9 +177,21 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         used0Direct_ = uint256(uint128(-delta.amount0()));
         used1Direct_ = uint256(uint128(-delta.amount1()));
 
-        if (used0Direct_ > 0) ERC20(address(token0)).safeTransfer(address(manager_), used0Direct_);
-        if (used1Direct_ > 0) ERC20(address(token1)).safeTransfer(address(manager_), used1Direct_);
-        return "";
+        // ─── settle the two ERC-20 debts so PoolManager's books balance ───
+        Currency currency0 = Currency.wrap(address(token0));
+        Currency currency1 = Currency.wrap(address(token1));
+
+        if (used0Direct_ > 0) {
+            // CurrencySettler: sync → transfer → settle
+            currency0.settle(manager_, address(this), used0Direct_, /*burn*/ false);
+        }
+        if (used1Direct_ > 0) {
+            currency1.settle(manager_, address(this), used1Direct_, /*burn*/ false);
+        }
+
+        // Return zero delta to indicate all debts are settled
+        BalanceDelta zeroDelta;
+        return abi.encode(zeroDelta);
     }
 
     // Helper to deal and approve tokens

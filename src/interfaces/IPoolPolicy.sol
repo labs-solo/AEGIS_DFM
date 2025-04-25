@@ -223,17 +223,17 @@ interface IPoolPolicy {
     /**
      * @notice Returns the target number of CAP events per day (equilibrium) for the given pool.
      */
-    function getTargetCapsPerDay(bytes32 poolId) external view returns (uint256);
+    function getTargetCapsPerDay(PoolId poolId) external view returns (uint32);
 
     /**
      * @notice Returns the daily budget for CAP events (in parts per million) for the given pool.
      */
-    function getDailyBudgetPpm(bytes32 poolId) external view returns (uint32);
+    function getDailyBudgetPpm(PoolId poolId) external view returns (uint32);
 
     /**
      * @notice Returns the budget decay window (in seconds) for the given pool.
      */
-    function getCapBudgetDecayWindow(bytes32 poolId) external view returns (uint32);
+    function getCapBudgetDecayWindow(PoolId poolId) external view returns (uint32);
 
     /**
      * @notice Returns the scaling factor used for CAP frequency math for the given pool.
@@ -251,25 +251,32 @@ interface IPoolPolicy {
     function getMaxBaseFee(PoolId poolId) external view returns (uint256);
 
     /**
-     * @notice Returns the base fee update interval in seconds for the given pool.
-     * @param poolId The ID of the pool
-     * @return The base fee update interval in seconds
+     * @notice DEPRECATED - Returns 0. Kept for backward compatibility.
+     * @param poolId Pool ID to query.
+     * @return Base fee update interval in seconds.
      */
-    function getBaseFeeUpdateIntervalSeconds(PoolId poolId) external view returns (uint256);
+    function getBaseFeeUpdateIntervalSeconds(PoolId poolId) external view returns (uint32);
 
     /**
-     * @notice Returns the maximum step size (in PPM) for base fee adjustments.
-     * @param poolId The pool ID in raw bytes32 format
-     * @return The maximum step size in PPM
+     * @notice DEPRECATED - Returns 0. Kept for backward compatibility.
+     * @param poolId Pool ID to query.
+     * @return Maximum step size in PPM.
      */
-    function getMaxStepPpm(bytes32 poolId) external view returns (uint32);
+    function getMaxStepPpm(PoolId poolId) external view returns (uint32);
+
+    /**
+     * @notice DEPRECATED - Returns 0. Kept for backward compatibility.
+     * @param poolId Pool ID to query.
+     * @return Base fee step size in PPM.
+     */
+    function getBaseFeeStepPpm(PoolId poolId) external view returns (uint32);
 
     /*──────── NEW knobs ─────────────────────────────────────────────*/
     /// surge = base * surgeFeeMultiplierPpm / 1e6  (e.g. 1_000_000 ppm = 100 %)
-    function getSurgeFeeMultiplierPpm(bytes32 poolId) external view returns (uint24);
+    function getSurgeFeeMultiplierPpm(PoolId poolId) external view returns (uint24);
 
     /// linear fade‑out period for surge fee
-    function getSurgeDecaySeconds(bytes32 poolId) external view returns (uint32);
+    function getSurgeDecaySeconds(PoolId poolId) external view returns (uint32);
 
     /// @notice Checks if a currency is supported for adding to a concentrated LP position
     /// @param currency The currency to check
@@ -286,5 +293,5 @@ interface IPoolPolicy {
 
     /*──────── NEW: default starting cap ─────────*/
     /// @notice Initial `maxTicksPerBlock` the oracle should use for a pool.
-    function getDefaultMaxTicksPerBlock(bytes32 poolId) external view returns (uint24);
+    function getDefaultMaxTicksPerBlock(PoolId id) external view returns (uint24);
 }

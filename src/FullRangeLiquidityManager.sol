@@ -46,7 +46,7 @@ using SafeCast for int256;
  * @notice Manages full-range liquidity positions across multiple pools
  * @dev This contract handles deposit, withdrawal, and rebalancing
  */
-contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidityManager {
+contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidityManager, IUnlockCallback {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
 
@@ -907,14 +907,16 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Handle token0 transfer
         int128 amount0 = delta.amount0();
         if (amount0 < 0) {
-            uint256 amount = uint256(int256(-amount0));
+            // Convert the **negative** int128 to a positive uint256
+            // - we must cast through int256 first, then to uint256.
+            uint256 amt0 = uint256(int256(-amount0));
 
             if (currency0.isAddressZero()) {
                 // Handle native ETH
-                manager.settle{value: amount}();
+                manager.settle{value: amt0}();
             } else {
                 // Handle ERC20
-                IERC20Minimal(token0).approve(address(manager), amount);
+                SafeTransferLib.safeApprove(ERC20(token0), address(manager), amt0);
                 manager.settle();
             }
         } else if (amount0 > 0) {
@@ -925,14 +927,14 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Handle token1 transfer
         int128 amount1 = delta.amount1();
         if (amount1 < 0) {
-            uint256 amount = uint256(int256(-amount1));
+            uint256 amt1 = uint256(int256(-amount1));
 
             if (currency1.isAddressZero()) {
                 // Handle native ETH
-                manager.settle{value: amount}();
+                manager.settle{value: amt1}();
             } else {
                 // Handle ERC20
-                IERC20Minimal(token1).approve(address(manager), amount);
+                SafeTransferLib.safeApprove(ERC20(token1), address(manager), amt1);
                 manager.settle();
             }
         } else if (amount1 > 0) {
@@ -1147,7 +1149,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @param data Encoded callback data containing operation details
      * @return bytes The encoded BalanceDelta from the operation
      */
-    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+    function unlockCallback(bytes calldata data) external override returns (bytes memory) {
         // Only allow calls from the pool manager
         if (msg.sender != address(manager)) {
             revert Errors.AccessNotAuthorized(msg.sender);
@@ -1180,13 +1182,21 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             salt: bytes32(0)
         });
 
-        (BalanceDelta actualDelta,) = manager.modifyLiquidity(key, params, "");
+        // 1. Add / remove liquidity
+        (BalanceDelta delta,) = manager.modifyLiquidity(key, params, "");
 
-        // Handle settlement using CurrencySettlerExtension
-        CurrencySettlerExtension.handlePoolDelta(manager, actualDelta, key.currency0, key.currency1, recipient);
+        // Perform settlement
+        CurrencySettlerExtension.handlePoolDelta(
+            manager,
+            delta,
+            key.currency0,
+            key.currency1,
+            recipient
+        );
 
-        // Return the actual delta from modifyLiquidity
-        return abi.encode(actualDelta);
+        // Tell the PoolManager that everything is settled
+        BalanceDelta zeroDelta;
+        return abi.encode(zeroDelta);
     }
 
     /**

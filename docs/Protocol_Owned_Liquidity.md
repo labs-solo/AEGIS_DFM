@@ -334,3 +334,55 @@ The protocol's POL mechanism creates a virtuous cycle where:
 6. Over time, this creates a growing protocol-owned stake in the liquidity pools without requiring external capital
 
 This design ensures the protocol continues to accumulate POL efficiently with minimal management overhead or gas costs.
+
+## Fee Processing and Reinvestment
+
+The protocol implements a systematic approach to fee collection and reinvestment:
+
+1. **Fee Collection**: Fees are collected during swap operations and queued for processing.
+
+2. **Processing Conditions**: Fees are processed when:
+   - Sufficient time has elapsed since last processing (configurable minimum interval)
+   - Accumulated fees exceed minimum thresholds
+   - The system is not paused
+
+3. **Reinvestment Process**:
+   - Current pool reserves are analyzed to determine optimal reinvestment ratios
+   - Fees are split into protocol treasury portion and POL portion
+   - POL portion is reinvested through the FullRangeLiquidityManager
+   - Any leftover amounts are tracked for future reinvestment
+
+4. **Safety Mechanisms**:
+   - Minimum collection intervals prevent excessive gas costs
+   - Emergency pause controls
+   - Configurable thresholds for minimum reinvestment amounts
+   - Protection against price manipulation during reinvestment
+
+The system is designed to minimize management overhead while maximizing capital efficiency through automated reinvestment of collected fees.
+
+## Implementation Details
+
+The reinvestment process follows these steps:
+
+1. **Fee Processing Trigger**:
+   ```solidity
+   function processQueuedFees() external {
+       require(canProcessFees(), "Cannot process fees now");
+       // Process fees and reinvest
+   }
+   ```
+
+2. **POL Portion Handling**:
+   ```solidity
+   function _processPOLPortion(uint256 amount0, uint256 amount1) internal {
+       // Calculate optimal reinvestment amounts
+       // Execute reinvestment through FullRangeLiquidityManager
+       // Track any leftover amounts
+   }
+   ```
+
+3. **Reinvestment Execution**:
+   The FullRangeLiquidityManager handles the actual liquidity provision across the full tick range.
+
+4. **Leftover Management**:
+   Small amounts that cannot be reinvested efficiently are tracked and included in future reinvestment rounds.

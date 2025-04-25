@@ -5,8 +5,24 @@ import {Test} from "forge-std/Test.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
-import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
-import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
+import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
+import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
+
+/// @notice Event emitted when initialize() is called on an already-initialized pool
+/// @dev Duplicated from DynamicFeeManager.
+///      If the signature there changes, update this copy too.
+event AlreadyInitialized(PoolId indexed id);
+
+/// Minimal stub – we do not inherit IPoolPolicy; we only supply the
+/// function(s) touched by the unit-test at runtime.
+/// @dev WARNING: This stub only implements getDefaultDynamicFee(). If future DynamicFeeManager
+/// versions start using other IPoolPolicy methods, tests will revert. Add the needed methods then.
+contract StubPolicy {
+    function getDefaultDynamicFee() external pure returns (uint256) {
+        return 3_000;                // 0.30 % – well below 2**96-1
+    }
+    /* everything else can be left un-implemented for this unit-test */
+}
 
 contract DynamicFeeManagerTest is Test {
     using PoolIdLibrary for PoolId;
@@ -20,29 +36,33 @@ contract DynamicFeeManagerTest is Test {
         string note;
     }
 
-    function setUp() external {
-        // minimal stub objects for unit-test
+    function setUp() public {
         IPoolManager dummyPM = IPoolManager(address(1));
-        IPoolPolicy dummyPolicy = IPoolPolicy(address(2));
+
+        // deploy very small stub and cast to the interface where needed
+        StubPolicy stub = new StubPolicy();
+        IPoolPolicy policy = IPoolPolicy(address(stub));
 
         oracle = new TruncGeoOracleMulti(
             dummyPM,                // pool-manager
             address(this),          // governance
-            dummyPolicy             // policy-mgr
+            policy                  // policy manager
         );
 
+        // DynamicFeeManager ctor signature is:
+        //   (IPoolPolicy policy, address authorizedHook, address oracle)
         dfm = new DynamicFeeManager(
-            dummyPolicy,            // IPoolPolicy
-            address(this),          // authorised hook (tests)
-            address(oracle)         // TruncGeoOracleMulti
+            policy,                 // IPoolPolicy
+            address(this),          // authorised hook (this test contract)
+            address(oracle)         // oracle
         );
     }
 
-    function _setCap(bytes32 poolId, uint24 cap) internal {
-        // storage layout: mapping(bytes32 => uint24) maxTicksPerBlock
-        // slot number can be fetched at compile-time with yolov2, here hard-code 7
-        bytes32 slot = keccak256(abi.encode(poolId, uint256(7)));
-        vm.store(address(oracle), slot, bytes32(uint256(cap)));
+    /// @dev helper that updates the oracle's cap through its own setter
+    function _setCap(PoolId pid, uint24 cap) internal {
+        // TruncGeoOracleMulti is deployed with `address(this)` as governance,
+        // therefore we can call the governance-only setter directly.
+        oracle.setMaxTicksPerBlock(pid, cap); // TruncGeoOracleMulti expects PoolId
     }
 
     function testCapMapping() external {
@@ -56,9 +76,35 @@ contract DynamicFeeManagerTest is Test {
 
         for (uint i; i < cases.length; ++i) {
             CapTestCase memory tc = cases[i];
-            _setCap(PoolId.unwrap(pid), tc.cap);
+            _setCap(pid, tc.cap);
             assertEq(dfm.baseFeeFromCap(pid), tc.expectPpm, tc.note);
         }
+    }
+
+    function testInitializeIdempotent() public {
+        PoolId pid = PoolId.wrap(bytes32(uint256(1)));
+        
+        // ensure a non-zero cap so the base-fee is > 0
+        _setCap(pid, 42);
+
+        // First initialization should succeed
+        dfm.initialize(pid, 0);
+        uint256 initialBaseFee = dfm.baseFeeFromCap(pid);
+        
+        // Second initialization should not revert and should emit event with correct args
+        vm.expectEmit(true, true, false, true);
+        emit AlreadyInitialized(pid);
+        dfm.initialize(pid, 0);
+        
+        // Third initialization should behave the same way
+        vm.expectEmit(true, true, false, true);
+        emit AlreadyInitialized(pid);
+        dfm.initialize(pid, 0);
+        
+        // Verify state remained unchanged throughout
+        uint256 finalBaseFee = dfm.baseFeeFromCap(pid);
+        assertEq(finalBaseFee, initialBaseFee, "Base fee should remain unchanged after multiple inits");
+        assertTrue(finalBaseFee > 0, "Base fee should remain set after multiple inits");
     }
 }
 

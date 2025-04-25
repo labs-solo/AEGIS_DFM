@@ -87,4 +87,16 @@ The POL system aims to automatically collect a portion of the trading fees gener
 * **Ratio Maintenance:** POL reinvestment aims to maintain the pool's reserve ratio but uses the *current* ratio at the time of calculation. Large swaps between calculation and execution could alter the optimal ratio. The leftover mechanism mitigates token waste.
 * **Full Range:** The POL system, specifically `FullRangeLiquidityManager`, operates by adding liquidity across the entire possible tick range (`minUsableTick` to `maxUsableTick`).
 
+The core components of the dynamic fee and protocol-owned liquidity (POL) system are:
+1. Dynamic fee calculation based on pool volatility and utilization
+2. Protocol fee collection and reinvestment mechanism
+3. Configurable fee parameters and thresholds
+4. Safety mechanisms and rate limiting controls
+
+The intended behavior is that fees are:
+1. Calculated dynamically based on pool conditions
+2. Collected and queued for efficient processing
+3. Reinvested back into the pool as protocol-owned liquidity
+4. Managed with appropriate safety controls and limits
+
 ---
