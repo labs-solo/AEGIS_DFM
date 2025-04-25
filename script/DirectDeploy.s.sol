@@ -155,7 +155,8 @@ contract DirectDeploy is Script {
         console.log("Initializing dynamic fee manager...");
         dynamicFeeManager = new DynamicFeeManager(
             IPoolPolicy(address(policyManager)),
-            address(hook) // authorizedHook
+            address(truncGeoOracle),  // oracle address for fee derivation
+            address(hook)             // authorizedHook
         );
         console.log("DynamicFeeManager deployed: %s", address(dynamicFeeManager));
 

@@ -165,8 +165,9 @@ contract ForkSetup is Test {
         // Deploy DynamicFeeManager
         emit log_string("Deploying DynamicFeeManager...");
         dynamicFeeManager = new DynamicFeeManager(
-            IPoolPolicy(address(policyManager)),
-            deployerEOA                          // temporary hook address (non-zero)
+            policyManager,                     // ✅ IPoolPolicy
+            deployerEOA,                      // authorised hook
+            address(oracle)                    // TruncGeoOracleMulti
         );
         emit log_named_address("DynamicFeeManager deployed at", address(dynamicFeeManager));
 

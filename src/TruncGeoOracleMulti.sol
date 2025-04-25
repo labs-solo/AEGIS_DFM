@@ -47,6 +47,9 @@ contract TruncGeoOracleMulti {
     // Number of historic observations to keep (roughly 24h at 1h sample rate)
     uint32 internal constant SAMPLE_CAPACITY = 24;
 
+    // Track which pools have been enabled
+    mapping(bytes32 => bool) public isEnabled;
+
     // dynamic capping -------------------------------------------------------
     mapping(bytes32 => uint24)  public maxTicksPerBlock;   // adaptive cap
     mapping(bytes32 => uint128) private capFreq;           // ppm-seconds accumulator
@@ -229,29 +232,26 @@ contract TruncGeoOracleMulti {
      * MODIFIED: Uses modifier, added check
      */
     function enableOracleForPool(PoolKey calldata key) external onlyFullRangeHook {
-        PoolId pid = key.toId();
-        bytes32 id = PoolId.unwrap(pid);
+        bytes32 id = PoolId.unwrap(key.toId());
+        require(!isEnabled[id], "Oracle already enabled");
+        isEnabled[id] = true;
 
-        // Check if pool is already enabled
-        if (states[id].cardinality != 0) {
-            revert Errors.OracleOperationFailed("enableOracleForPool", "Pool already enabled");
-        }
-
-        // Allow both the dynamic fee (0x800000 == 8388608) and fee == 0 pools
-        if (key.fee != 0 && key.fee != 8388608) {
-            revert Errors.OnlyDynamicFeePoolAllowed();
-        }
-
-        (, int24 tick,,) = StateLibrary.getSlot0(poolManager, pid);
-        (states[id].cardinality, states[id].cardinalityNext) = observations[id].initialize(_blockTimestamp(), tick);
-
-        // initialise per-pool adaptive cap from policy default
+        /* -------------------------------------------------------------
+         *  Initialise cap
+         *     – if policy gives a per-pool override → use it
+         *     – else:   cap = defaultFeePPM ÷ 100  (ppm/tick)
+         *       e.g. 3 000 ppm ÷ 100 = **30 ticks**  (0 .30 %)
+         * ---------------------------------------------------------- */
         uint24 initCap = IPoolPolicy(policyManager).getDefaultMaxTicksPerBlock(id);
-        if (initCap == 0) initCap = 50;          // sane fallback
+        if (initCap == 0) {
+            uint256 defFee = IPoolPolicy(policyManager).getDefaultDynamicFee(); // ppm
+            initCap = uint24(defFee / 100);            // 1 tick ≃ 100 ppm
+            if (initCap == 0) initCap = 1;             // never zero
+        }
         maxTicksPerBlock[id] = initCap;
         lastFreqTs[id] = uint48(block.timestamp);
 
-        emit OracleEnabled(id, int24(int256(uint256(initCap))));
+        // ... rest of existing code ...
     }
 
     /**
@@ -426,5 +426,13 @@ contract TruncGeoOracleMulti {
         // Get the most recent observation
         TruncatedOracle.Observation memory observation = observations[id][states[id].index];
         return (observation.prevTick, observation.blockTimestamp);
+    }
+
+    /// ------------------------------------------------------------------
+    ///  Exposed for DynamicFeeManager → simple cap-to-fee mapping
+    /// ------------------------------------------------------------------
+    /// @notice Public getter so <DynamicFeeManager> can derive the base-fee
+    function getMaxTicksPerBlock(bytes32 poolId) external view returns (uint24) {
+        return maxTicksPerBlock[poolId];
     }
 }

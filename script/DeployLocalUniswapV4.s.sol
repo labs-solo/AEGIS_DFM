@@ -135,8 +135,9 @@ contract DeployLocalUniswapV4 is Script {
 
         // Deploy DynamicFeeManager AFTER FullRange
         dynamicFeeManager = new DynamicFeeManager(
-            IPoolPolicy(address(policyManager)),
-            address(fullRange) // authorizedHook
+            policyManager,                    // IPoolPolicy  ✅ pass the instance
+            address(fullRange),               // authorised hook
+            address(truncGeoOracle)           // oracle
         );
         console.log("DynamicFeeManager deployed at:", address(dynamicFeeManager));
 
