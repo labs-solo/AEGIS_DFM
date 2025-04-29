@@ -21,6 +21,8 @@ exclude_paths = ["test/old-tests"]
 remappings = [
     # Test utilities
     "forge-std/=node_modules/forge-std/src/",
+    # Note: ds-test path is specific to forge-std v1.9.x
+    # If forge-std 2.x flattens this structure, this path will need updating
     "ds-test/=node_modules/forge-std/lib/ds-test/src/",
 
     # Core math & utils

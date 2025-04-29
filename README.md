@@ -229,3 +229,8 @@ The repository uses pnpm for dependency management. CI pipelines should:
 
 The `pnpm-lock.yaml` file is tracked in the repository to ensure reproducible builds across all environments.
 
+### Dependency Notes
+
+- **Permit2**: Currently pinned to a specific Git SHA. If upstream force-pushes to that SHA, builds may break. Consider mirroring or using a tagged release for production use.
+- **Forge-std**: The `ds-test` path is specific to forge-std v1.9.x. If forge-std 2.x flattens this structure, the path will need updating.
+
