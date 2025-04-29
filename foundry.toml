@@ -31,7 +31,7 @@ remappings = [
     "@uniswap/v4-periphery/=node_modules/@uniswap/v4-periphery/src/",
 
     # Permit2 (pulled from GitHub via pnpm - ensure path exists)
-    "permit2/=node_modules/@uniswap/permit2/contracts/",
+    "permit2/=node_modules/@uniswap/permit2/src/",
 
     # OpenZeppelin (solidity-only package)
     "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",

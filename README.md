@@ -219,3 +219,13 @@ forge test                        # compile + run tests
 
 CI pipelines run the same two commands to guarantee determinism.
 
+### CI Configuration
+
+The repository uses pnpm for dependency management. CI pipelines should:
+
+1. Enable corepack: `corepack enable`
+2. Install dependencies: `pnpm install --frozen-lockfile`
+3. Run tests: `forge test`
+
+The `pnpm-lock.yaml` file is tracked in the repository to ensure reproducible builds across all environments.
+
