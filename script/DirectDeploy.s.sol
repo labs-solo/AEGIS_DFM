@@ -2,19 +2,30 @@
 pragma solidity 0.8.26;
 
 import "forge-std/Script.sol";
-import "forge-std/console.sol";
+import "forge-std/console2.sol";
 
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {Spot} from "../src/Spot.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
-import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
-import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
+// Uniswap V4 Core
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {PoolModifyLiquidityTest} from "v4-core/test/PoolModifyLiquidityTest.sol";
+import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
+import {PoolDonateTest} from "v4-core/test/PoolDonateTest.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+
+// Deployed Contracts
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
-import {HookMiner} from "../src/utils/HookMiner.sol";
+import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
+import {Spot} from "../src/Spot.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
+
+// Interfaces and Libraries
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
+import {HookMiner} from "../src/utils/HookMiner.sol";
 
 /**
  * Script to directly deploy the hook with an explicit constructor and salt.
@@ -77,8 +88,8 @@ contract DirectDeploy is Script {
             console.log("Deploying TruncGeoOracleMulti...");
             truncGeoOracle = new TruncGeoOracleMulti(
                 IPoolManager(UNICHAIN_POOL_MANAGER),
-                deployer,              // governance parameter
-                policyManager         // policy manager parameter
+                deployer, // governance parameter
+                policyManager // policy manager parameter
             );
             console.log("TruncGeoOracleMulti deployed at: %s", address(truncGeoOracle));
         }
@@ -103,11 +114,7 @@ contract DirectDeploy is Script {
             address initialFeeCollector = deployer;
 
             policyManager = new PoolPolicyManager(
-                owner,
-                defaultDynamicFeePpm,
-                supportedTickSpacings,
-                initialProtocolFeePercentage,
-                initialFeeCollector
+                owner, defaultDynamicFeePpm, supportedTickSpacings, initialProtocolFeePercentage, initialFeeCollector
             );
             console.log("PolicyManager deployed at: %s", address(policyManager));
         }
@@ -133,9 +140,9 @@ contract DirectDeploy is Script {
         // Now deploy the hook
         console.log("Deploying hook directly with CREATE2...");
         Spot hook = new Spot{salt: salt}(
-            IPoolManager(UNICHAIN_POOL_MANAGER), 
-            policyManager, 
-            liquidityManager, 
+            IPoolManager(UNICHAIN_POOL_MANAGER),
+            policyManager,
+            liquidityManager,
             truncGeoOracle,
             IDynamicFeeManager(address(0)), // Will be set later
             deployer

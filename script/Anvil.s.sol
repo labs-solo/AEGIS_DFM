@@ -8,27 +8,27 @@ pragma solidity ^0.8.19;
 
 /*
 import "forge-std/Script.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {PoolManager} from "v4-core/src/PoolManager.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
-import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
-import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
-import {Constants} from "v4-core/src/../test/utils/Constants.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {CurrencyLibrary, Currency} from "v4-core/src/types/Currency.sol";
-import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
-import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
-import {PositionManager} from "v4-periphery/src/PositionManager.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {PoolManager} from "v4-core/PoolManager.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {PoolModifyLiquidityTest} from "v4-core/test/PoolModifyLiquidityTest.sol";
+import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
+import {PoolDonateTest} from "v4-core/test/PoolDonateTest.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {MockERC20} from "solmate/test/utils/mocks/MockERC20.sol";
+import {Constants} from "v4-core/../test/utils/Constants.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {CurrencyLibrary, Currency} from "v4-core/types/Currency.sol";
+import {HookMiner} from "@uniswap/v4-periphery/utils/HookMiner.sol";
+import {IPositionManager} from "@uniswap/v4-periphery/interfaces/IPositionManager.sol";
+import {PositionManager} from "@uniswap/v4-periphery/PositionManager.sol";
 import {EasyPosm} from "../test/utils/EasyPosm.sol";
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
 import {DeployPermit2} from "../test/utils/forks/DeployPermit2.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
-import {IPositionDescriptor} from "v4-periphery/src/interfaces/IPositionDescriptor.sol";
-import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
+import {IPositionDescriptor} from "@uniswap/v4-periphery/interfaces/IPositionDescriptor.sol";
+import {IWETH9} from "@uniswap/v4-periphery/interfaces/external/IWETH9.sol";
 
 /// @notice Forge script for deploying v4 & hooks to **anvil**
 contract CounterScript is Script, DeployPermit2 {

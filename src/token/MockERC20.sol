@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: Unlicensed
 pragma solidity 0.8.26;
 
 import "solmate/src/tokens/ERC20.sol";
@@ -8,7 +8,7 @@ import "solmate/src/tokens/ERC20.sol";
  * @notice A simple ERC20 implementation for testing purposes
  */
 contract MockERC20 is ERC20 {
-    constructor(string memory name, string memory symbol, uint8 decimals) ERC20(name, symbol, decimals) {}
+    constructor(string memory _name, string memory _symbol, uint8 _decimals) ERC20(_name, _symbol, _decimals) {}
 
     /**
      * @notice Mint tokens to a specified address

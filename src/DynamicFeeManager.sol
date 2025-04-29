@@ -2,7 +2,7 @@
 pragma solidity ^0.8.26; // Consistent pragma
 
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
 
 /*═══════════════════════════════════════╗
@@ -34,41 +34,76 @@ library _P {
     ----------------------------------------------------------- */
 
     // bit offsets
-    uint256 constant BASE_OFFSET        = 96;
-    uint256 constant FREQ_LAST_OFFSET   = BASE_OFFSET + 32;      // 128
-    uint256 constant CAP_START_OFFSET   = FREQ_LAST_OFFSET + 40; // 168
-    uint256 constant LAST_FEE_OFFSET    = CAP_START_OFFSET + 40; // 208
-    uint256 constant IN_CAP_OFFSET      = 255;                   // fits
+    uint256 constant BASE_OFFSET = 96;
+    uint256 constant FREQ_LAST_OFFSET = BASE_OFFSET + 32; // 128
+    uint256 constant CAP_START_OFFSET = FREQ_LAST_OFFSET + 40; // 168
+    uint256 constant LAST_FEE_OFFSET = CAP_START_OFFSET + 40; // 208
+    uint256 constant IN_CAP_OFFSET = 255; // fits
 
     // bit masks
-    uint256 constant MASK_FREQ      = (uint256(1) << BASE_OFFSET) - 1;                    // 96-bit
-    uint256 constant MASK_BASE      = ((uint256(1) << 32) - 1) << BASE_OFFSET;            // 32-bit
-    uint256 constant MASK_FREQ_LAST = ((uint256(1) << 40) - 1) << FREQ_LAST_OFFSET;       // 40-bit
-    uint256 constant MASK_CAP_START = ((uint256(1) << 40) - 1) << CAP_START_OFFSET;       // 40-bit
-    uint256 constant MASK_LAST_FEE  = ((uint256(1) << 32) - 1) << LAST_FEE_OFFSET;        // 32-bit
-    uint256 constant MASK_IN_CAP    = uint256(1) << IN_CAP_OFFSET;                        // 1-bit
+    uint256 constant MASK_FREQ = (uint256(1) << BASE_OFFSET) - 1; // 96-bit
+    uint256 constant MASK_BASE = ((uint256(1) << 32) - 1) << BASE_OFFSET; // 32-bit
+    uint256 constant MASK_FREQ_LAST = ((uint256(1) << 40) - 1) << FREQ_LAST_OFFSET; // 40-bit
+    uint256 constant MASK_CAP_START = ((uint256(1) << 40) - 1) << CAP_START_OFFSET; // 40-bit
+    uint256 constant MASK_LAST_FEE = ((uint256(1) << 32) - 1) << LAST_FEE_OFFSET; // 32-bit
+    uint256 constant MASK_IN_CAP = uint256(1) << IN_CAP_OFFSET; // 1-bit
 
     /* -------- accessors (return sizes kept for ABI stability) -------- */
-    function base(uint256 w)      internal pure returns (uint32) { return uint32((w & MASK_BASE)      >> BASE_OFFSET);        }
-    function freq(uint256 w)      internal pure returns (uint128){ return uint128( w & MASK_FREQ);                              }
-    function inCap(uint256 w)     internal pure returns (bool)   { return (w & MASK_IN_CAP) != 0;                               }
-    function lastFee(uint256 w)   internal pure returns (uint32) { return uint32((w & MASK_LAST_FEE)  >> LAST_FEE_OFFSET);      }
-    function freqL(uint256 w)     internal pure returns (uint48) { return uint48((w & MASK_FREQ_LAST) >> FREQ_LAST_OFFSET);     }
-    function capStart(uint256 w)  internal pure returns (uint48) { return uint48((w & MASK_CAP_START) >> CAP_START_OFFSET);     }
+    function base(uint256 w) internal pure returns (uint32) {
+        return uint32((w & MASK_BASE) >> BASE_OFFSET);
+    }
+
+    function freq(uint256 w) internal pure returns (uint128) {
+        return uint128(w & MASK_FREQ);
+    }
+
+    function inCap(uint256 w) internal pure returns (bool) {
+        return (w & MASK_IN_CAP) != 0;
+    }
+
+    function lastFee(uint256 w) internal pure returns (uint32) {
+        return uint32((w & MASK_LAST_FEE) >> LAST_FEE_OFFSET);
+    }
+
+    function freqL(uint256 w) internal pure returns (uint48) {
+        return uint48((w & MASK_FREQ_LAST) >> FREQ_LAST_OFFSET);
+    }
+
+    function capStart(uint256 w) internal pure returns (uint48) {
+        return uint48((w & MASK_CAP_START) >> CAP_START_OFFSET);
+    }
 
     /* -------- setters -------- */
     function _set(uint256 w, uint256 mask, uint256 v, uint256 shift) private pure returns (uint256) {
         return (w & ~mask) | (v << shift);
     }
-    function setBase  (uint256 w, uint32  v) internal pure returns (uint256){ return _set(w, MASK_BASE,      v, BASE_OFFSET);        }
-    function setFreq  (uint256 w, uint128 v) internal pure returns (uint256){ return _set(w, MASK_FREQ,      v, 0);                  }
-    function setInCap (uint256 w, bool   y) internal pure returns (uint256){ return y ? w | MASK_IN_CAP : w & ~MASK_IN_CAP;         }
-    function setLastF (uint256 w, uint32  v) internal pure returns (uint256){ return _set(w, MASK_LAST_FEE,  v, LAST_FEE_OFFSET);    }
-    function setFreqL (uint256 w, uint40  v) internal pure returns (uint256){ return _set(w, MASK_FREQ_LAST, v, FREQ_LAST_OFFSET);   }
-    function setCapSt (uint256 w, uint40  v) internal pure returns (uint256){ return _set(w, MASK_CAP_START, v, CAP_START_OFFSET);   }
+
+    function setBase(uint256 w, uint32 v) internal pure returns (uint256) {
+        return _set(w, MASK_BASE, v, BASE_OFFSET);
+    }
+
+    function setFreq(uint256 w, uint128 v) internal pure returns (uint256) {
+        return _set(w, MASK_FREQ, v, 0);
+    }
+
+    function setInCap(uint256 w, bool y) internal pure returns (uint256) {
+        return y ? w | MASK_IN_CAP : w & ~MASK_IN_CAP;
+    }
+
+    function setLastF(uint256 w, uint32 v) internal pure returns (uint256) {
+        return _set(w, MASK_LAST_FEE, v, LAST_FEE_OFFSET);
+    }
+
+    function setFreqL(uint256 w, uint40 v) internal pure returns (uint256) {
+        return _set(w, MASK_FREQ_LAST, v, FREQ_LAST_OFFSET);
+    }
+
+    function setCapSt(uint256 w, uint40 v) internal pure returns (uint256) {
+        return _set(w, MASK_CAP_START, v, CAP_START_OFFSET);
+    }
 }
 
-using _P for uint256;   // Enable freqL(), setFreqL(), and other helpers
+using _P for uint256; // Enable freqL(), setFreqL(), and other helpers
 
 /* ───────────────────────────────────────────────────────────── */
 
@@ -96,7 +131,7 @@ contract DynamicFeeManager is IDynamicFeeManager {
 
     struct FeeState {
         uint24 baseFeePpm;
-        uint24 surgeFeePpm;         // snapshot at (re)start of cap‑event
+        uint24 surgeFeePpm; // snapshot at (re)start of cap‑event
         uint32 surgeStartTimestamp; // 0 ⇢ no active event
     }
 
@@ -109,7 +144,7 @@ contract DynamicFeeManager is IDynamicFeeManager {
     uint128 private capWeightCum;
 
     /// @dev Timestamp of last capWeightCum update.
-    uint64  private lastCapWeightUpdate;
+    uint64 private lastCapWeightUpdate;
 
     /* ─── events (from interface) ────────────────────────────── */
     // Event definition is inherited from IDynamicFeeManager
@@ -177,7 +212,7 @@ contract DynamicFeeManager is IDynamicFeeManager {
      */
     // Added access control modifier
     function notifyOracleUpdate(PoolId id, bool capped) external override onlyHook {
-        uint256 w0 = _s[id];                  // 1. load
+        uint256 w0 = _s[id]; // 1. load
         require(w0 != 0, "DFM: not init");
 
         uint32 nowTs = uint32(block.timestamp);
@@ -203,12 +238,10 @@ contract DynamicFeeManager is IDynamicFeeManager {
             w1 = w1.setInCap(true).setCapSt(uint40(nowTs));
             // one event == 1 M ppm, then apply the policy scaling (usually 1×)
             uint256 increment = uint256(_policy().getFreqScaling(id)) * 1e6;
-            uint128 f        = uint128(w1.freq());
+            uint128 f = uint128(w1.freq());
             unchecked {
                 w1 = w1.setFreq(
-                    type(uint128).max - f >= increment
-                        ? f + uint128(increment)
-                        : type(uint128).max     // saturate on overflow
+                    type(uint128).max - f >= increment ? f + uint128(increment) : type(uint128).max // saturate on overflow
                 );
             }
         } else if (wasCap) {
@@ -308,15 +341,15 @@ contract DynamicFeeManager is IDynamicFeeManager {
         /* -------------------------------------------------------------
          *  Frequency → caps/day   (now in fixed-point, 1e18 = 1 cap)
          * ---------------------------------------------------------- */
-        uint32  effWindow      = window == 0 ? 1 : window;  // avoid /0
-        uint256 scaleUnits     = policy.getFreqScaling(id);       // 1e18 by default
+        uint32 effWindow = window == 0 ? 1 : window; // avoid /0
+        uint256 scaleUnits = policy.getFreqScaling(id); // 1e18 by default
 
         // freq (integer) → 18-dec fixed-point caps
-        uint256 capsInWindowFp = uint256(w.freq()) * 1e18 / scaleUnits;  // ✅
+        uint256 capsInWindowFp = uint256(w.freq()) * 1e18 / scaleUnits; // ✅
 
         // caps/day (1e18-FP):   freq × 86 400  /  window
         uint256 perDayFp = capsInWindowFp * 86400 / effWindow;
-        uint256 targetFp = uint256(target)   * 1e18;        // target in 1e18
+        uint256 targetFp = uint256(target) * 1e18; // target in 1e18
 
         // deviation (PPM) = (perDay / target – 1)   (all fixed-point)
         int256 deviation;
@@ -329,10 +362,7 @@ contract DynamicFeeManager is IDynamicFeeManager {
         uint32 cached = _cachedStepPpm[id];
         if (cached == 0) {
             // 2) first‑time: static‑call policy then cache
-            bytes memory cd = abi.encodeWithSignature(
-                "getMaxStepPpm(bytes32)",
-                PoolId.unwrap(id)
-            );
+            bytes memory cd = abi.encodeWithSignature("getMaxStepPpm(bytes32)", PoolId.unwrap(id));
             (bool ok, bytes memory ret) = address(policy).staticcall(cd);
             if (ok && ret.length == 32) {
                 cached = uint32(uint256(bytes32(ret)));
@@ -348,8 +378,8 @@ contract DynamicFeeManager is IDynamicFeeManager {
          *   Ignore very small deviations (|Δ| < stepPpm)  → leave fee as-is  *
          * ------------------------------------------------------------------ */
         if (deviation > -int256(stepPpm) && deviation < int256(stepPpm)) {
-            newBase     = base;                 // unchanged
-            updatedWord = w.setLastF(nowTs);    // just refresh timestamp
+            newBase = base; // unchanged
+            updatedWord = w.setLastF(nowTs); // just refresh timestamp
             return (newBase, updatedWord);
         }
 
@@ -361,13 +391,13 @@ contract DynamicFeeManager is IDynamicFeeManager {
         }
 
         // Calculate desired step based on deviation
-        int256 step = int256(uint256(base)) * deviation / 1e6;   // <<< two‑step cast
+        int256 step = int256(uint256(base)) * deviation / 1e6; // <<< two‑step cast
         // Clamp step
         if (step > int256(stepCap)) step = int256(stepCap);
         if (step < -int256(stepCap)) step = -int256(stepCap);
 
         // Apply step and clamp to min/max base fee
-        int256 nb = int256(uint256(base)) + step;                // <<< two-step cast
+        int256 nb = int256(uint256(base)) + step; // <<< two-step cast
         require(minBase <= type(uint32).max, "DFM:minBase>uint32");
         require(maxBase <= type(uint32).max, "DFM:maxBase>uint32");
         if (nb < int256(minBase)) nb = int256(minBase);
@@ -387,7 +417,7 @@ contract DynamicFeeManager is IDynamicFeeManager {
         uint48 start = w.capStart();
         if (start == 0) return 0;
 
-        uint32 nowTs = uint32(block.timestamp);                  
+        uint32 nowTs = uint32(block.timestamp);
         uint32 decay = uint32(policy.getSurgeDecayPeriodSeconds(id));
         // Handle zero decay period
         if (decay == 0) {
@@ -397,7 +427,7 @@ contract DynamicFeeManager is IDynamicFeeManager {
         }
 
         // Avoid underflow if clock skewed
-        uint32 dt = nowTs > start ? nowTs - uint32(start) : 0;   
+        uint32 dt = nowTs > start ? nowTs - uint32(start) : 0;
         // No surge if decay period has passed
         if (dt >= decay) return 0;
 
@@ -417,15 +447,11 @@ contract DynamicFeeManager is IDynamicFeeManager {
         }
         uint24 maxSurge = uint24(uint256(f.baseFeePpm) * mult / 1e6);
 
-        f.surgeFeePpm         = maxSurge;                 // reset to max
-        f.surgeStartTimestamp = uint32(block.timestamp);  // restart decay
+        f.surgeFeePpm = maxSurge; // reset to max
+        f.surgeStartTimestamp = uint32(block.timestamp); // restart decay
     }
 
-    function _currentSurge(bytes32 poolId, FeeState storage f)
-        internal
-        view
-        returns (uint24)
-    {
+    function _currentSurge(bytes32 poolId, FeeState storage f) internal view returns (uint24) {
         if (f.surgeStartTimestamp == 0) return 0;
         uint32 decay = policy.getSurgeDecaySeconds(poolId);
         // Prevent division by zero
@@ -443,41 +469,41 @@ contract DynamicFeeManager is IDynamicFeeManager {
     // Helper methods for fee adjustment
     function _increaseBaseFee(PoolId id) private {
         uint256 w = _s[id];
-        
+
         // Get constraints from policy
         uint256 maxBaseFee = _policy().getMaxBaseFee(id);
         uint32 maxStepPpm = _policy().getMaxStepPpm(PoolId.unwrap(id));
-        
+
         // Calculate current base fee and max step
         uint32 currentBase = w.base();
         uint256 step = (uint256(currentBase) * maxStepPpm) / 1e6;
         if (step == 0) step = 1; // ensure at least 1 PPM increase
-        
+
         // Apply increase with max bound
         uint256 newBase = currentBase + step;
         if (newBase > maxBaseFee) newBase = maxBaseFee;
-        
+
         // Update state
         _s[id] = w.setBase(uint32(newBase)).setLastF(uint32(block.timestamp));
         lastFeeUpdate = uint64(block.timestamp);
     }
-    
+
     function _decreaseBaseFee(PoolId id) private {
         uint256 w = _s[id];
-        
+
         // Get constraints from policy
         uint256 minBaseFee = _policy().getMinBaseFee(id);
         uint32 maxStepPpm = _policy().getMaxStepPpm(PoolId.unwrap(id));
-        
+
         // Calculate current base fee and max step
         uint32 currentBase = w.base();
         uint256 step = (uint256(currentBase) * maxStepPpm) / 1e6;
         if (step == 0) step = 1; // ensure at least 1 PPM decrease
-        
+
         // Apply decrease with min bound
         uint256 newBase = currentBase > step ? currentBase - step : minBaseFee;
         if (newBase < minBaseFee) newBase = minBaseFee;
-        
+
         // Update state
         _s[id] = w.setBase(uint32(newBase)).setLastF(uint32(block.timestamp));
         lastFeeUpdate = uint64(block.timestamp);

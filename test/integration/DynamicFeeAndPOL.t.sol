@@ -4,22 +4,22 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
 import {ForkSetup} from "./ForkSetup.t.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
-import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
-import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
+import {BaseHook} from "@uniswap/v4-periphery/utils/BaseHook.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {FullMath} from "v4-core/libraries/FullMath.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
-import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
-import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
+import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
+import {IWETH9} from "@uniswap/v4-periphery/interfaces/external/IWETH9.sol";
 import {IFullRangeLiquidityManager} from "../../src/interfaces/IFullRangeLiquidityManager.sol";
 import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
 import {FullRangeLiquidityManager} from "../../src/FullRangeLiquidityManager.sol";
@@ -29,10 +29,13 @@ import {TickCheck} from "../../src/libraries/TickCheck.sol";
 import {PoolPolicyManager} from "../../src/PoolPolicyManager.sol";
 import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol";
 import {Spot} from "../../src/Spot.sol";
-import {Position} from "v4-core/src/libraries/Position.sol";
-import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
-import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
-import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
+import {Position} from "v4-core/libraries/Position.sol";
+import {LiquidityAmounts} from "@uniswap/v4-periphery/libraries/LiquidityAmounts.sol";
+import {SqrtPriceMath} from "v4-core/libraries/SqrtPriceMath.sol";
+import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
+import {PriceHelper} from "./utils/PriceHelper.sol";
+import {MockERC20} from "../../src/token/MockERC20.sol";
+import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
 /**
  * @title Dynamic Fee and POL Management Integration Tests
@@ -123,9 +126,9 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         // Adjust policy params for faster testing
         vm.startPrank(deployerEOA);
-        policyManager.setDailyBudgetPpm(1e6);            // 1 event per day (ppm)
-        policyManager.setDecayWindow(3600);              // 1‑hour window (tests)
-        policyManager.setFreqScaling(poolId, 1);         // Ensure scaling is set if needed by policy
+        policyManager.setDailyBudgetPpm(1e6); // 1 event per day (ppm)
+        policyManager.setDecayWindow(3600); // 1‑hour window (tests)
+        policyManager.setFreqScaling(poolId, 1); // Ensure scaling is set if needed by policy
         vm.stopPrank();
 
         //
@@ -230,7 +233,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
             sqrtPriceLimitX96 = uint160(uint256(currentSqrtPriceX96) * 11 / 10); // Max price limit for 1->0
         }
 
-        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+        SwapParams memory params = SwapParams({
             zeroForOne: wethIsToken0,
             amountSpecified: int256(amountIn),
             sqrtPriceLimitX96: sqrtPriceLimitX96
@@ -318,8 +321,8 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // Need much larger swaps to trigger CAP events with 1.28B totalShares of liquidity
         bool zeroForOne = Currency.unwrap(poolKey.currency0) == address(usdc);
         int256 capAmount = zeroForOne
-            ? int256(35_000 * 1e6)   // 35 000 USDC → WETH
-            : int256(12 ether);      // 12 WETH → USDC
+            ? int256(35_000 * 1e6) // 35 000 USDC → WETH
+            : int256(12 ether); // 12 WETH → USDC
 
         // Allocate enough funds for 3 swaps
         uint256 topUp = uint256(capAmount > 0 ? capAmount : -capAmount) * 3;
@@ -330,7 +333,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         vm.startPrank(lpProvider);
         try swapRouter.swap(
             poolKey,
-            IPoolManager.SwapParams({
+            SwapParams({
                 zeroForOne: zeroForOne,
                 amountSpecified: capAmount,
                 sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
@@ -339,18 +342,18 @@ contract DynamicFeeAndPOLTest is ForkSetup {
             ZERO_BYTES
         ) {} catch { /* Ignore reverts, focus on fee manager state */ }
         vm.stopPrank();
-        
+
         // Wait 1 hour (still inside decay window)
         vm.warp(block.timestamp + 3600);
         vm.roll(block.number + 1);
-        
+
         // Do 4 more CAPs in quick succession to exceed target rate
-        for (uint i = 0; i < 4; i++) {
-            console2.log("Performing swap", i+2, "to trigger CAP");
+        for (uint256 i = 0; i < 4; i++) {
+            console2.log("Performing swap", i + 2, "to trigger CAP");
             vm.startPrank(lpProvider);
             try swapRouter.swap(
                 poolKey,
-                IPoolManager.SwapParams({
+                SwapParams({
                     zeroForOne: zeroForOne,
                     amountSpecified: capAmount,
                     sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
@@ -359,24 +362,24 @@ contract DynamicFeeAndPOLTest is ForkSetup {
                 ZERO_BYTES
             ) {} catch { /* Ignore reverts, focus on fee manager state */ }
             vm.stopPrank();
-            
+
             // Small delay between swaps
             vm.warp(block.timestamp + 60);
             vm.roll(block.number + 1);
         }
-        
+
         // Warp past the fee update interval
         uint32 updateInterval = uint32(policyManager.getBaseFeeUpdateIntervalSeconds(poolId));
         console2.log("Waiting past fee update interval:", updateInterval);
         vm.warp(block.timestamp + updateInterval + 1); // Just beyond the update interval
         vm.roll(block.number + 1);
-        
+
         // Perform dust swap to trigger oracle update and fee recalculation
         console2.log("Performing dust swap to trigger fee recalculation");
         vm.startPrank(lpProvider);
         try swapRouter.swap(
             poolKey,
-            IPoolManager.SwapParams({
+            SwapParams({
                 zeroForOne: zeroForOne,
                 amountSpecified: 1, // Dust amount
                 sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
@@ -410,24 +413,24 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         // Perform minimal swap to trigger hook update after warp (using lpProvider)
         vm.startPrank(lpProvider);
-        swapRouter.swap(poolKey, IPoolManager.SwapParams({
-            zeroForOne: true, // swap USDC for WETH
-            amountSpecified: 1, // Minimal amount
-            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
-        }), PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}), bytes(""));
+        swapRouter.swap(
+            poolKey,
+            SwapParams({
+                zeroForOne: true, // swap USDC for WETH
+                amountSpecified: 1, // Minimal amount
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            bytes("")
+        );
         vm.stopPrank();
 
         // Check final fee state
         (uint256 feeAfterDelay,) = dfm.getFeeState(poolId);
-        uint256 prevBase = 3000;            // from deployment
-        uint32 stepPpm = uint32(
-            policyManager.getMaxStepPpm(PoolId.unwrap(poolId))
-        );   // == 30_000 in default cfg
+        uint256 prevBase = 3000; // from deployment
+        uint32 stepPpm = uint32(policyManager.getMaxStepPpm(PoolId.unwrap(poolId))); // == 30_000 in default cfg
         uint256 maxDown = prevBase - (prevBase * stepPpm / 1e6); // one step down
-        assertTrue(
-            feeAfterDelay <= prevBase && feeAfterDelay >= maxDown,
-            "fee moved more than one step for 0 caps"
-        );
+        assertTrue(feeAfterDelay <= prevBase && feeAfterDelay >= maxDown, "fee moved more than one step for 0 caps");
     }
 
     // _triggerCap now just performs swap, relies on caller for notification
@@ -438,11 +441,8 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         (uint160 currentSqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
         uint160 sqrtPriceLimitX96 = uint160((uint256(currentSqrtPriceX96) * 95) / 100);
 
-        IPoolManager.SwapParams memory p = IPoolManager.SwapParams({
-            zeroForOne: zeroForOne,
-            amountSpecified: amountSpecified,
-            sqrtPriceLimitX96: sqrtPriceLimitX96
-        });
+        SwapParams memory p =
+            SwapParams({zeroForOne: zeroForOne, amountSpecified: amountSpecified, sqrtPriceLimitX96: sqrtPriceLimitX96});
         PoolSwapTest.TestSettings memory settings =
             PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false});
 
@@ -531,65 +531,65 @@ contract DynamicFeeAndPOLTest is ForkSetup {
      */
     function test_polRateFullProtocol() public {
         // ... existing code ...
-        
+
         vm.startPrank(deployerEOA);
-        
+
         // Set POL rate to 100% (all fees go to protocol)
         policyManager.setPoolPOLShare(poolId, 10_000);
-        
+
         vm.stopPrank();
-        
+
         // Do a swap to test that fees now go to protocol
         uint256 swapAmount = 1 ether;
         _swapWETHToUSDC(user1, swapAmount, 0);
-        
+
         // No need to call _simulateHookNotification - Spot hook handles this now
-        
+
         // Get fee growth for LP and protocol
         // ... existing code ...
     }
-    
+
     /**
      * @notice Test that POL ratio updates take effect immediately
      */
     function test_polRateChangeImmediate() public {
         // ... existing code ...
-        
+
         // Do a few swaps before changing fee distribution
         uint256 swapAmount = 1 ether;
         _swapWETHToUSDC(user1, swapAmount, 0);
-        
+
         // No need to call _simulateHookNotification - Spot hook handles this now
-        
+
         // ... existing code ...
     }
-    
+
     /**
      * @notice Test that POL ratio of 0 means all fees go to LPs
      */
     function test_polRateZero() public {
         // ... existing code ...
-        
+
         // Do swaps to accumulate fees
         uint256 swapAmount = 1 ether;
         _swapWETHToUSDC(user1, swapAmount, 0);
-        
+
         // No need to call _simulateHookNotification - Spot hook handles this now
-        
+
         // ... existing code ...
     }
-    
+
     /**
      * @notice Test surge fee decay over time
      */
     function test_surgeFeeDecaysOverTime() public {
         // ... existing code ...
-        
+
         // Warp forward by half the decay period
         vm.warp(block.timestamp + surgeFeeDecayPeriod / 2);
-        
+
         // No need to call _simulateHookNotification - we'll just check the state directly
-        
+
         // Check that fee has decayed to roughly half
         // ... existing code ...
     }

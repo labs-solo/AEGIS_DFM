@@ -1,6 +1,10 @@
 name: test
 
-on: workflow_dispatch
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
 
 env:
   FOUNDRY_PROFILE: ci
@@ -13,9 +17,25 @@ jobs:
     name: Foundry project
     runs-on: ubuntu-latest
     steps:
+      # Node + pnpm setup
+      - name: Set up Node 20 LTS and pnpm
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'pnpm'
+      - run: corepack enable
+
       - uses: actions/checkout@v3
         with:
           submodules: recursive
+
+      # Install JS/TS deps (Solmate, OZ, Uniswap, etc.)
+      - name: Install pnpm dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Audit dependencies
+      - name: Audit dependencies
+        run: pnpm audit
 
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@v1
@@ -27,6 +47,12 @@ jobs:
           forge --version
           forge build --sizes
         id: build
+
+      # Compare snapshots
+      - name: Compare snapshots
+        run: |
+          forge snapshot
+          forge snapshot --check
 
       - name: Run Forge tests
         run: |

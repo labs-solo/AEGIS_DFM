@@ -1,20 +1,29 @@
-# Compiler files
+# Dependencies
+node_modules/
+# Keep the lockfile for deterministic builds
+!pnpm-lock.yaml
+
+# Environment variables
+.env
+!.env.example
+
+# Foundry
 cache/
 out/
-
-# Ignores development (and goerli) broadcast logs
+# Keep canonical deployment bundles, ignore local/test chain artifacts
 !/broadcast
-/broadcast/*/31337/
-/broadcast/*/5/
-/broadcast/**/dry-run/
+broadcast/*/31337/
+broadcast/*/11155111/
+broadcast/*/1301/
 
-# Dotenv file
-.env
-
-# Node modules
-node_modules/
-pnpm-lock.yaml
-
-# Scripts with sensitive API keys
-script/run_with_alchemy.sh
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
 .DS_Store
+
+# Misc
+*.log
+*.tmp
+*.bak

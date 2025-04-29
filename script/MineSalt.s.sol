@@ -5,9 +5,9 @@ import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
 // Core Contract Interfaces
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
 
 // Project-Specific Implementations
 import {Spot} from "src/Spot.sol";

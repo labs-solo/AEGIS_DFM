@@ -8,12 +8,12 @@ pragma solidity ^0.8.19;
 
 /*
 import "forge-std/Script.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 
 import {Constants} from "./base/Constants.sol";
 // Counter.sol has been removed
-import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
+import {HookMiner} from "@uniswap/v4-periphery/utils/HookMiner.sol";
 
 /// @notice Placeholder script that no longer uses Counter
 contract CounterScript is Script, Constants {

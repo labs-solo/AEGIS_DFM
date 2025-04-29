@@ -4,20 +4,21 @@ pragma solidity 0.8.26;
 /* ───────────────────────────────────────────────────────────
  *                     Core & Periphery
  * ─────────────────────────────────────────────────────────── */
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
-import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
-import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {PoolManager} from "v4-core/src/PoolManager.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
+import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
+import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {PoolManager} from "v4-core/PoolManager.sol";
 import {LibTransient} from "./libraries/LibTransient.sol";
+import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
-import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
-import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {BaseHook} from "@uniswap/v4-periphery/utils/BaseHook.sol";
+import {LiquidityAmounts} from "@uniswap/v4-periphery/libraries/LiquidityAmounts.sol";
 
 /* ───────────────────────────────────────────────────────────
  *                          Project
@@ -27,7 +28,7 @@ import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {ISpot, DepositParams, WithdrawParams} from "./interfaces/ISpot.sol";
 import {ISpotHooks} from "./interfaces/ISpotHooks.sol";
 import {ITruncGeoOracleMulti} from "./interfaces/ITruncGeoOracleMulti.sol";
-import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
+import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 
 import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
 import {DynamicFeeManager} from "./DynamicFeeManager.sol";
@@ -62,7 +63,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     /* ───────────────────────── State ───────────────────────── */
     IPoolPolicy public immutable policyManager;
     IFullRangeLiquidityManager public immutable liquidityManager;
-    
+
     TruncGeoOracleMulti public immutable truncGeoOracle;
     IDynamicFeeManager public immutable feeManager;
 
@@ -92,7 +93,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     bool public reinvestmentPaused;
 
     event ReinvestmentPauseToggled(bool paused);
-    
+
     // Add a deprecation event
     event DependencySetterDeprecated(string name);
 
@@ -192,7 +193,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     function _beforeSwap(
         address, /* sender */
         PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
+        SwapParams calldata params,
         bytes calldata /* hookData */
     ) internal override returns (bytes4, BeforeSwapDelta, uint24) {
         if (address(feeManager) == address(0)) {
@@ -213,7 +214,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     /* ─────────────────── Hook: afterSwap ────────────────────── */
     /**
      * @notice Processes the post-swap operations including oracle update and fee management
-     * @dev Critical path that forwards the CAP flag from oracle to DynamicFeeManager, 
+     * @dev Critical path that forwards the CAP flag from oracle to DynamicFeeManager,
      *      ensuring dynamic fee adjustments work properly
      * @param key The pool key identifying which pool is being interacted with
      * @param params The swap parameters including direction (zeroForOne)
@@ -222,13 +223,12 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     function _afterSwap(
         address, /* sender */
         PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
+        SwapParams calldata params,
         BalanceDelta delta,
         bytes calldata /* hookData */
     ) internal override returns (bytes4, int128) {
         // 1) Push tick to oracle, also get the CAP flag
-        (int24 tick, bool capped) =
-            truncGeoOracle.pushObservationAndCheckCap(key.toId(), params.zeroForOne);
+        (int24 tick, bool capped) = truncGeoOracle.pushObservationAndCheckCap(key.toId(), params.zeroForOne);
 
         // 2) Feed the DynamicFeeManager - using gas stipend to prevent re-entrancy
         //    - `Spot` itself is the authorised hook
@@ -246,7 +246,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     function _afterAddLiquidity(
         address, /* sender */
         PoolKey calldata, /* key */
-        IPoolManager.ModifyLiquidityParams calldata, /* params */
+        ModifyLiquidityParams calldata, /* params */
         BalanceDelta, /* delta */
         BalanceDelta, /* feesAccrued */ // Likely zero on initial add
         bytes calldata /* hookData */
@@ -261,7 +261,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     function _afterRemoveLiquidity(
         address, /* sender */
         PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata, /* params */
+        ModifyLiquidityParams calldata, /* params */
         BalanceDelta, /* delta */
         BalanceDelta feesAccrued,
         bytes calldata /* hookData */
@@ -274,7 +274,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     function beforeSwapReturnDelta(
         address sender,
         PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
+        SwapParams calldata params,
         bytes calldata hookData
     ) external override returns (bytes4, BeforeSwapDelta) {
         if (msg.sender != address(poolManager)) {
@@ -288,7 +288,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     function afterSwapReturnDelta(
         address sender,
         PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
+        SwapParams calldata params,
         BalanceDelta delta,
         bytes calldata hookData
     ) external override returns (bytes4, BalanceDelta) {
@@ -303,7 +303,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     function afterAddLiquidityReturnDelta(
         address sender,
         PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
+        ModifyLiquidityParams calldata params,
         BalanceDelta delta,
         bytes calldata hookData
     ) external override returns (bytes4, BalanceDelta) {
@@ -319,7 +319,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     function afterRemoveLiquidityReturnDelta(
         address sender,
         PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
+        ModifyLiquidityParams calldata params,
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
@@ -412,7 +412,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         bytes32 _poolId = cbData.poolId;
         if (!poolData[_poolId].initialized) revert Errors.PoolNotInitialized(_poolId);
         PoolKey memory key = poolKeys[_poolId];
-        IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
+        ModifyLiquidityParams memory params = ModifyLiquidityParams({
             tickLower: TickMath.minUsableTick(key.tickSpacing),
             tickUpper: TickMath.maxUsableTick(key.tickSpacing),
             liquidityDelta: 0,
@@ -497,7 +497,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         emit DependencySetterDeprecated("oracle");
         revert ImmutableDependencyDeprecated("oracle");
     }
-    
+
     /**
      * @notice DEPRECATED: DynamicFeeManager is now immutable and set in constructor
      * @dev This function will always revert but is kept for backwards compatibility

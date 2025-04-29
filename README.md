@@ -236,3 +236,13 @@ The `pnpm-lock.yaml` file is tracked in the repository to ensure reproducible bu
 - **Permit2**: Currently pinned to a specific Git SHA. If upstream force-pushes to that SHA, builds may break. Consider mirroring or using a tagged release for production use.
 - **Forge-std**: The `ds-test` path is specific to forge-std v1.9.x. If forge-std 2.x flattens this structure, the path will need updating.
 
+## Dependency Strategy (Pre-Audit)
+
+To ensure stability and reproducibility for the upcoming audit, core dependencies are pinned as follows:
+
+- **Uniswap V4 Core & Periphery**: Pinned to stable tag `v1.0.1`. Upgrades will be scheduled post-audit.
+- **Solmate**: Pinned to stable tag `v6.8.0`. Codebase uses the API corresponding to this version.
+- **OpenZeppelin Contracts**: Pinned to stable tag `v5.3.0`.
+
+This strategy guarantees that auditors review the exact code intended for deployment. The `pnpm-lock.yaml` file must remain unchanged during the audit period unless strictly necessary.
+

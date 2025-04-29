@@ -1,16 +1,18 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 import {Errors} from "./errors/Errors.sol";
 import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
 
 /**
  * @title PoolPolicyManager
@@ -63,9 +65,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
 
     // === Dynamic Base‐Fee Feedback Parameters ===
     /// Default: target CAP events per day (equilibrium)
-    uint32  public defaultTargetCapsPerDay;       // fits - <4 G caps/day
+    uint32 public defaultTargetCapsPerDay; // fits - <4 G caps/day
     /// Default: seconds over which freqScaled decays linearly to zero (≈6 mo)
-    uint32  public defaultCapBudgetDecayWindow;   // fits - <136 yr
+    uint32 public defaultCapBudgetDecayWindow; // fits - <136 yr
     /// Default: scaling factor for frequency (to avoid fractions; use 1e18)
     uint256 public defaultFreqScaling;
     /// Default minimum base‐fee (PPM) = 0.01%
@@ -73,8 +75,8 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     /// Default maximum base‐fee (PPM) = 3%
     uint24 public defaultMaxBaseFeePpm;
     // Per‐pool overrides:
-    mapping(PoolId => uint32)  public poolTargetCapsPerDay;
-    mapping(PoolId => uint32)  public poolCapBudgetDecayWindow;
+    mapping(PoolId => uint32) public poolTargetCapsPerDay;
+    mapping(PoolId => uint32) public poolCapBudgetDecayWindow;
     mapping(PoolId => uint256) public poolFreqScaling;
     mapping(PoolId => uint24) public poolMinBaseFeePpm;
     mapping(PoolId => uint24) public poolMaxBaseFeePpm;
@@ -132,7 +134,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
 
     /*──────────────────── adaptive-cap default ────────────────*/
     /// Default starting value for `maxTicksPerBlock`
-    uint24 public defaultMaxTicksPerBlock = 50;   // 50 ticks
+    uint24 public defaultMaxTicksPerBlock = 50; // 50 ticks
 
     /**
      * @notice Constructor initializes the policy manager with default values
@@ -160,7 +162,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         defaultDynamicFeePpm = uint24(_defaultFee);
 
         // Initialize dynamic‐base‐fee defaults
-        defaultTargetCapsPerDay     = 4;
+        defaultTargetCapsPerDay = 4;
         defaultCapBudgetDecayWindow = uint32(180 days);
         defaultFreqScaling = 1e18;
         defaultMinBaseFeePpm = 100; // 0.01%
@@ -184,7 +186,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         // Initialize Phase 4 parameters
         _setProtocolFeePercentage(_initialProtocolInterestFeePercentage);
         _setFeeCollector(_initialFeeCollector);
-        
+
         // Initialize cap budget parameters with default values
         capBudgetDailyPpm = 1e6; // 1 cap per day
         capBudgetDecayWindow = 180 days; // 6 months decay window
@@ -603,23 +605,13 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // --- Add implementations for missing IPoolPolicy functions ---
 
     /// @inheritdoc IPoolPolicy
-    function getTargetCapsPerDay(bytes32 poolId)
-        external
-        view
-        override
-        returns (uint256)
-    {
+    function getTargetCapsPerDay(bytes32 poolId) external view override returns (uint256) {
         uint32 v = poolTargetCapsPerDay[PoolId.wrap(poolId)];
         return uint256(v != 0 ? v : defaultTargetCapsPerDay);
     }
 
     /// @inheritdoc IPoolPolicy
-    function getCapBudgetDecayWindow(bytes32 poolId)
-        external
-        view
-        override
-        returns (uint32)
-    {
+    function getCapBudgetDecayWindow(bytes32 poolId) external view override returns (uint32) {
         uint32 v = poolCapBudgetDecayWindow[PoolId.wrap(poolId)];
         return v != 0 ? v : defaultCapBudgetDecayWindow;
     }
@@ -742,7 +734,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         return true;
     }
 
-    function getDailyBudgetPpm(bytes32 /*poolId*/) external view returns (uint32) {
+    function getDailyBudgetPpm(bytes32 /*poolId*/ ) external view returns (uint32) {
         return capBudgetDailyPpm;
     }
 

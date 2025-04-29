@@ -19,24 +19,36 @@ exclude_paths = ["test/old-tests"]
 # ──────────────────────────────────────────────────────────────
 
 remappings = [
-    # Test utilities
+    # Forge Std
     "forge-std/=node_modules/forge-std/src/",
-    # Note: ds-test path is specific to forge-std v1.9.x
-    # If forge-std 2.x flattens this structure, this path will need updating
     "ds-test/=node_modules/forge-std/lib/ds-test/src/",
 
-    # Core math & utils
-    "solmate/=node_modules/solmate/src/",
+    # OpenZeppelin
+    "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
 
-    # Uniswap – core & periphery
-    "@uniswap/v4-core/=node_modules/@uniswap/v4-core/src/",
+    # Uniswap v4 Core (two aliases)
+    "@uniswap/v4-core/=node_modules/@uniswap/v4-core/",
+    "v4-core/=node_modules/@uniswap/v4-core/src/",
+
+    # Uniswap v4 Periphery (two aliases, both into /src/)
     "@uniswap/v4-periphery/=node_modules/@uniswap/v4-periphery/src/",
+    "v4-periphery/=node_modules/@uniswap/v4-periphery/src/",
 
-    # Permit2 (pulled from GitHub via pnpm - ensure path exists)
+    # Permit2
     "permit2/=node_modules/@uniswap/permit2/src/",
 
-    # OpenZeppelin (solidity-only package)
-    "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+    # Hooks repo
+    "uniswap-hooks/=node_modules/uniswap-hooks/src/",
+
+    # ── Solmate ──
+    "solmate/src/=node_modules/solmate/src/",
+    "solmate/=node_modules/solmate/src/",
+
+    # Project paths
+    "src/=src/",
+    "test/=test/",
+    "core/=src/core/",
+    "periphery/=src/periphery/"
 ]
 
 # Sepolia configuration for integration testing

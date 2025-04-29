@@ -5,10 +5,13 @@ import "forge-std/Script.sol";
 import "forge-std/console.sol";
 import "forge-std/Test.sol";
 import "forge-std/console2.sol";
+import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
-import {Hooks} from "@uniswap/v4-core/libraries/Hooks.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {IHooks} from "@uniswap/v4-core/interfaces/IHooks.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+
 import {Spot} from "../src/Spot.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";

@@ -7,7 +7,7 @@ pragma solidity ^0.8.19;
  */
 
 /*
-import {Currency} from "v4-core/src/types/Currency.sol";
+import {Currency} from "v4-core/types/Currency.sol";
 
 // temporary permit2 import until we properly handle it via package (need matching versions of fork/package)
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";

@@ -7,13 +7,18 @@ pragma solidity 0.8.26;
  *         token transfers, and pool policy data assembly.
  * @dev Functions in this library are internal, so they are inlined into the calling contract (FullRange) at compile time.
  */
-import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
+import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {MathUtils} from "../libraries/MathUtils.sol";
 import {Errors} from "../errors/Errors.sol";
-import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {IPoolPolicy} from "../interfaces/IPoolPolicy.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
+import {Position} from "v4-core/libraries/Position.sol";
 
 library FullRangeUtils {
     /**

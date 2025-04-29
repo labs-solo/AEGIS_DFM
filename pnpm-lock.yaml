@@ -14,55 +14,54 @@ importers:
       '@uniswap/permit2':
         specifier: github:Uniswap/permit2#cc56ad0f3439c502c246fc5cfcc3db92bb8b7219
         version: https://codeload.github.com/Uniswap/permit2/tar.gz/cc56ad0f3439c502c246fc5cfcc3db92bb8b7219
-      '@uniswap/v4-core':
-        specifier: github:Uniswap/v4-core#d9f8bfd39070b6114f2cf6c49df570fd6f998edb
-        version: https://codeload.github.com/Uniswap/v4-core/tar.gz/d9f8bfd39070b6114f2cf6c49df570fd6f998edb
-      '@uniswap/v4-periphery':
-        specifier: github:Uniswap/v4-periphery#9628c36b4f5083d19606e63224e4041fe748edae
-        version: https://codeload.github.com/Uniswap/v4-periphery/tar.gz/9628c36b4f5083d19606e63224e4041fe748edae
-      solmate:
-        specifier: github:transmissions11/solmate#93be75e872d1430f72f3c7c1e74de443883687b6
-        version: '@rari-capital/solmate@https://codeload.github.com/transmissions11/solmate/tar.gz/93be75e872d1430f72f3c7c1e74de443883687b6'
     devDependencies:
+      '@uniswap/v4-core':
+        specifier: 1.0.1
+        version: https://codeload.github.com/Uniswap/v4-core/tar.gz/a7cf038cd568801a79a9b4cf92cd5b52c95c8585
+      '@uniswap/v4-periphery':
+        specifier: 1.0.1
+        version: https://codeload.github.com/Uniswap/v4-periphery/tar.gz/444c526b77d804590f0d7bc5a481af5a3277c952
       forge-std:
         specifier: github:foundry-rs/forge-std#v1.9.7
         version: https://codeload.github.com/foundry-rs/forge-std/tar.gz/77041d2ce690e692d6e03cc812b57d1ddaa4d505
+      solmate:
+        specifier: 6.8.0
+        version: 6.8.0
 
 packages:
 
   '@openzeppelin/contracts@5.3.0':
     resolution: {integrity: sha512-zj/KGoW7zxWUE8qOI++rUM18v+VeLTTzKs/DJFkSzHpQFPD/jKKF0TrMxBfGLl3kpdELCNccvB3zmofSzm4nlA==}
 
-  '@rari-capital/solmate@https://codeload.github.com/transmissions11/solmate/tar.gz/93be75e872d1430f72f3c7c1e74de443883687b6':
-    resolution: {tarball: https://codeload.github.com/transmissions11/solmate/tar.gz/93be75e872d1430f72f3c7c1e74de443883687b6}
-    version: 6.2.0
-
   '@uniswap/permit2@https://codeload.github.com/Uniswap/permit2/tar.gz/cc56ad0f3439c502c246fc5cfcc3db92bb8b7219':
     resolution: {tarball: https://codeload.github.com/Uniswap/permit2/tar.gz/cc56ad0f3439c502c246fc5cfcc3db92bb8b7219}
     version: 1.0.0
 
-  '@uniswap/v4-core@https://codeload.github.com/Uniswap/v4-core/tar.gz/d9f8bfd39070b6114f2cf6c49df570fd6f998edb':
-    resolution: {tarball: https://codeload.github.com/Uniswap/v4-core/tar.gz/d9f8bfd39070b6114f2cf6c49df570fd6f998edb}
+  '@uniswap/v4-core@https://codeload.github.com/Uniswap/v4-core/tar.gz/a7cf038cd568801a79a9b4cf92cd5b52c95c8585':
+    resolution: {tarball: https://codeload.github.com/Uniswap/v4-core/tar.gz/a7cf038cd568801a79a9b4cf92cd5b52c95c8585}
     version: 1.0.1
 
-  '@uniswap/v4-periphery@https://codeload.github.com/Uniswap/v4-periphery/tar.gz/9628c36b4f5083d19606e63224e4041fe748edae':
-    resolution: {tarball: https://codeload.github.com/Uniswap/v4-periphery/tar.gz/9628c36b4f5083d19606e63224e4041fe748edae}
+  '@uniswap/v4-periphery@https://codeload.github.com/Uniswap/v4-periphery/tar.gz/444c526b77d804590f0d7bc5a481af5a3277c952':
+    resolution: {tarball: https://codeload.github.com/Uniswap/v4-periphery/tar.gz/444c526b77d804590f0d7bc5a481af5a3277c952}
     version: 1.0.1
 
   forge-std@https://codeload.github.com/foundry-rs/forge-std/tar.gz/77041d2ce690e692d6e03cc812b57d1ddaa4d505:
     resolution: {tarball: https://codeload.github.com/foundry-rs/forge-std/tar.gz/77041d2ce690e692d6e03cc812b57d1ddaa4d505}
     version: 1.9.7
 
+  solmate@6.8.0:
+    resolution: {integrity: sha512-/oI8kgEvSxGG1mrFv3FmCEZd0F8Z9VzRmoYMIhzmmzt6mjtPwfdCm3oh8yOL7bMHJBSfXJuMpnMPrM0uyaKsKg==}
+
 snapshots:
 
   '@openzeppelin/contracts@5.3.0': {}
 
-  '@rari-capital/solmate@https://codeload.github.com/transmissions11/solmate/tar.gz/93be75e872d1430f72f3c7c1e74de443883687b6': {}
-
   '@uniswap/permit2@https://codeload.github.com/Uniswap/permit2/tar.gz/cc56ad0f3439c502c246fc5cfcc3db92bb8b7219': {}
 
-  '@uniswap/v4-core@https://codeload.github.com/Uniswap/v4-core/tar.gz/d9f8bfd39070b6114f2cf6c49df570fd6f998edb': {}
+  '@uniswap/v4-core@https://codeload.github.com/Uniswap/v4-core/tar.gz/a7cf038cd568801a79a9b4cf92cd5b52c95c8585': {}
 
-  '@uniswap/v4-periphery@https://codeload.github.com/Uniswap/v4-periphery/tar.gz/9628c36b4f5083d19606e63224e4041fe748edae': {}
+  '@uniswap/v4-periphery@https://codeload.github.com/Uniswap/v4-periphery/tar.gz/444c526b77d804590f0d7bc5a481af5a3277c952': {}
 
   forge-std@https://codeload.github.com/foundry-rs/forge-std/tar.gz/77041d2ce690e692d6e03cc812b57d1ddaa4d505: {}
+
+  solmate@6.8.0: {}

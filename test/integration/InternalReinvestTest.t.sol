@@ -5,11 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ForkSetup} from "./ForkSetup.t.sol";
 
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-// import {StateLibrary}   from "v4-core/src/libraries/StateLibrary.sol"; // Keep commented out
-import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+// import {StateLibrary}   from "v4-core/libraries/StateLibrary.sol"; // Keep commented out
+import {PoolId} from "v4-core/types/PoolId.sol";
+import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
 
 // Changed to absolute src imports
 import {Spot} from "src/Spot.sol";
@@ -17,10 +17,13 @@ import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityMana
 import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
 import {ISpot, DepositParams as ISpotDepositParams} from "src/interfaces/ISpot.sol";
 
-// import {IWETH9}         from "v4-periphery/src/interfaces/external/IWETH9.sol"; // Keep commented out
+// import {IWETH9}         from "@uniswap/v4-periphery/interfaces/external/IWETH9.sol"; // Keep commented out
+// import {LiquidityRouter} from "../../src/LiquidityRouter.sol"; // Commented out - File not found
+// import {SwapRouter} from "../../src/SwapRouter.sol"; // Commented out - File not found
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {CurrencySettler} from "uniswap-hooks/src/utils/CurrencySettler.sol";
+import {CurrencySettler} from "../../src/utils/CurrencySettler.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {FullRangeLiquidityManager} from "../../src/FullRangeLiquidityManager.sol";
 // import {PoolModifyLiquidityTest} from "./integration/routers/PoolModifyLiquidityTest.sol"; // Keep commented out
 
 // Remove local struct definition, use imported one
