@@ -6,9 +6,9 @@ import "forge-std/console.sol";
 import "forge-std/Test.sol";
 import "forge-std/console2.sol";
 
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {Hooks} from "@uniswap/v4-core/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {IHooks} from "@uniswap/v4-core/interfaces/IHooks.sol";
 import {Spot} from "../src/Spot.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
