@@ -1,7 +1,7 @@
 [profile.default]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}]
 solc_version = "0.8.26"
@@ -11,20 +11,12 @@ optimizer = true
 optimizer_runs = 100_000
 dotenv = true  # Enable .env file loading
 exclude_paths = ["test/old-tests"]
-remappings = [
-    "forge-std/=lib/forge-std/src/",
-    "v4-core/=lib/v4-core/src/",
-    "v4-periphery/=lib/v4-periphery/src/",
-    "solmate/=lib/solmate/src/",
-    "@openzeppelin/=lib/v4-core/lib/openzeppelin-contracts/",
-    "uniswap-hooks/=lib/uniswap-hooks/src/"
-]
 
 # Sepolia configuration for integration testing
 [profile.sepolia]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
 solc_version = "0.8.26"
@@ -38,7 +30,7 @@ chain_id = 11155111
 [profile.unichain-sepolia]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
 solc_version = "0.8.26"

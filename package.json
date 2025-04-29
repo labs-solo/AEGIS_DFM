@@ -10,7 +10,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@openzeppelin/contracts": "^5.3.0",
+    "@openzeppelin/contracts": "5.3.0",
     "@uniswap/permit2": "github:Uniswap/permit2",
     "@uniswap/v4-core": "github:Uniswap/v4-core#d9f8bfd39070b6114f2cf6c49df570fd6f998edb",
     "@uniswap/v4-periphery": "github:Uniswap/v4-periphery#9628c36b4f5083d19606e63224e4041fe748edae",
