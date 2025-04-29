@@ -58,9 +58,10 @@ Automated system for growing protocol-controlled liquidity:
 
 ### Prerequisites
 
-- Foundry (Forge, Anvil, and Cast)
-- Solidity compiler 0.8.26
-- Access to Uniswap V4 contracts
+* Node ≥ 20 LTS with **corepack** enabled (for pnpm)  
+* Foundry tool-chain (Forge, Anvil, Cast)  
+* Solidity 0.8.26 (auto-downloaded by Forge)  
+* Access to Uniswap V4 contracts
 
 ### Installation
 
@@ -72,24 +73,25 @@ cd venm
 
 2. Install dependencies:
 ```bash
-forge install
+corepack enable          # ensures pnpm is available
+pnpm install --frozen-lockfile   # installs Solidity deps into node_modules
 ```
 
 3. Compile contracts:
 ```bash
-forge build --use solc:0.8.26
+forge build
 ```
 
 ### Testing
 
-Run the test suite:
+Run the test suite (after pnpm install):
 ```bash
-forge test --use solc:0.8.26
+forge test -vvv
 ```
 
 For gas reporting:
 ```bash
-forge test --gas-report -vvv --use solc:0.8.26
+forge test --gas-report -vvv
 ```
 
 ### Deployment

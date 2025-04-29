@@ -11,11 +11,10 @@
   "license": "ISC",
   "dependencies": {
     "@openzeppelin/contracts": "5.3.0",
-    "@uniswap/permit2": "github:Uniswap/permit2",
+    "@uniswap/permit2": "github:Uniswap/permit2#cc56ad0f3439c502c246fc5cfcc3db92bb8b7219",
     "@uniswap/v4-core": "github:Uniswap/v4-core#d9f8bfd39070b6114f2cf6c49df570fd6f998edb",
     "@uniswap/v4-periphery": "github:Uniswap/v4-periphery#9628c36b4f5083d19606e63224e4041fe748edae",
-    "solmate": "^6.8.0",
-    "uniswap-hooks": "github:OpenZeppelin/uniswap-hooks"
+    "solmate": "github:transmissions11/solmate#v6"
   },
   "devDependencies": {
     "forge-std": "github:foundry-rs/forge-std#v1.9.7"

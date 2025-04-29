@@ -1,0 +1,7 @@
+forge-std/=node_modules/forge-std/src/
+ds-test/=node_modules/forge-std/lib/ds-test/src/
+solmate/=node_modules/solmate/
+@uniswap/v4-core/=node_modules/@uniswap/v4-core/src/
+@uniswap/v4-periphery/=node_modules/@uniswap/v4-periphery/src/
+permit2/=node_modules/@uniswap/permit2/src/
+@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/ 
