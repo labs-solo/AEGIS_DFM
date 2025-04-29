@@ -49,12 +49,11 @@ contract DynamicFeeManagerTest is Test {
             policy                  // policy manager
         );
 
-        // DynamicFeeManager ctor signature is:
-        //   (IPoolPolicy policy, address authorizedHook, address oracle)
+        // Mock oracle setup
         dfm = new DynamicFeeManager(
-            policy,                 // IPoolPolicy
-            address(this),          // authorised hook (this test contract)
-            address(oracle)         // oracle
+            policy,          // IPoolPolicy
+            address(oracle), // oracle
+            address(this)    // authorised hook (this test contract)
         );
     }
 

@@ -329,8 +329,8 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     /**
      * @inheritdoc IPoolPolicy
      */
-    function getDefaultDynamicFee() external pure returns (uint256) {
-        return _DEFAULT_BASE_FEE;
+    function getDefaultDynamicFee() external view override returns (uint256) {
+        return defaultDynamicFeePpm;
     }
 
     /**
@@ -700,7 +700,8 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     /*──────────────  Surge-fee default getters  ─────────────────*/
     function getSurgeFeeMultiplierPpm(PoolId pid) external view override returns (uint24) {
         uint24 v = _surgeFeeMultiplierPpm[pid];
-        return v != 0 ? v : _SURGE_MULTIPLIER_PPM;
+        // fall back to the configured default, not the old static constant
+        return v != 0 ? v : _defaultSurgeFeeMultiplierPpm;
     }
 
     function getSurgeDecaySeconds(PoolId pid) external view override returns (uint32) {

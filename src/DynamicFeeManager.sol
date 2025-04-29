@@ -83,8 +83,15 @@ contract DynamicFeeManager is IDynamicFeeManager {
     using _P for uint256;
     using PoolIdLibrary for PoolId;
 
+    /* ─── constants ─────────────────────────────────────────── */
+    /// @dev fallback base-fee when the oracle has no data yet (0.5 %)
+    uint32 internal constant DEFAULT_BASE_FEE_PPM = 5_000;
+
     /// @notice emitted when `initialize` is called on an already-initialized pool
     event AlreadyInitialized(PoolId indexed id);
+
+    /// @notice emitted when a pool is successfully initialized
+    event PoolInitialized(PoolId indexed id);
 
     /* ─── config / state ─────────────────────────────────────── */
     IPoolPolicy public immutable policy;
@@ -114,25 +121,29 @@ contract DynamicFeeManager is IDynamicFeeManager {
     }
 
     function initialize(PoolId id, int24 /*initialTick*/ ) external override {
-        require(msg.sender == owner, "DFM:auth"); // Keep owner auth for init
+        // Allow either the protocol owner **or** the hook we explicitly trust
+        // (owner set `authorizedHook` in the constructor).
+        require(
+            msg.sender == owner || msg.sender == authorizedHook,
+            "DFM:auth"
+        );
         if (_s[id] != 0) {
             emit AlreadyInitialized(id);
             return;
         }
 
-        /* ---------------------------------------------------------
-         *  Sentinel: write *something* non-zero so first notify()
-         *  doesn't revert.  We store the current timestamp into
-         *  capStart; this keeps layout forward-compatible and is
-         *  harmless for surge logic (surge ignored until in-cap).
-         * ------------------------------------------------------ */
+        // Get the initial base fee (`maxTicks * 100`) or fall back to the default
+        uint256 baseFee = uint256(oracle.getMaxTicksPerBlock(PoolId.unwrap(id))) * 100;
+        if (baseFee == 0) baseFee = DEFAULT_BASE_FEE_PPM;
+
+        // Initialize state with the base fee
         uint32 ts = uint32(block.timestamp);
-        uint256 w = 0;
-        w = w.setCapSt(uint40(ts));   // ← makes word non-zero
+        uint256 w = _s[id]; // Read existing state in case freq decay happened
+        w = w.setFreqL(uint40(ts)); // Use freqLastUpdate as non-zero marker
+        w = w.setFreq(uint96(baseFee)); // Set initial base fee
         _s[id] = w;
 
-        // emit initial state (base = cap×100, surge=0)
-        emit FeeStateChanged(id, uint24(_baseFee(id)), 0, false);
+        emit PoolInitialized(id);
     }
 
     function notifyOracleUpdate(PoolId poolId, bool tickWasCapped) external override {
@@ -165,7 +176,8 @@ contract DynamicFeeManager is IDynamicFeeManager {
 
     /* ── stateless base-fee helper ───────────────────────────────────── */
     function _baseFee(PoolId id) private view returns (uint256) {
-        return uint256(oracle.getMaxTicksPerBlock(PoolId.unwrap(id))) * 100;
+        uint256 fee = uint256(oracle.getMaxTicksPerBlock(PoolId.unwrap(id))) * 100;
+        return fee == 0 ? DEFAULT_BASE_FEE_PPM : fee;
     }
 
     /* ─── public views ───────────────────────────────────────── */

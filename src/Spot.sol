@@ -457,6 +457,10 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
                 emit PolicyInitializationFailed(_poolId, string(reason));
             }
         }
+        // Initialize the DynamicFeeManager for this pool
+        if (address(feeManager) != address(0)) {
+            feeManager.initialize(PoolId.wrap(_poolId), tick);
+        }
         if (address(liquidityManager) != address(0)) {
             liquidityManager.storePoolKey(PoolId.wrap(_poolId), key);
         }

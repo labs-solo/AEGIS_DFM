@@ -103,6 +103,11 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         oracle.enableOracleForPool(poolKey);
 
         // ---- Hook Simulation Setup ----
+        // 3) Initialize the DynamicFeeManager for this pool so getFeeState() works
+        (, int24 initTick,,) = StateLibrary.getSlot0(poolManager, pid);
+        vm.prank(deployerEOA); // Should the PolicyManager owner initialize? Or the hook? Assuming deployer for now.
+        dfm.initialize(pid, initTick);
+
         // Store the initial tick as the 'lastTick' for the first swap comparison
         lastTick[pid] = currentTick;
         // -----------------------------
