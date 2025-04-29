@@ -3,8 +3,8 @@ pragma solidity 0.8.26;
 
 // Remove unused Math and IERC20Metadata imports later if confirmed okay
 // import {Math}             from "@openzeppelin/contracts/utils/math/Math.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {FullMath} from "v4-core/libraries/FullMath.sol";
 // import {IERC20Metadata} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 library PriceHelper {

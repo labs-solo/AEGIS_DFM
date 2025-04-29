@@ -3,17 +3,17 @@ pragma solidity ^0.8.26; // Use caret for consistency
 
 import {Test, console2} from "forge-std/Test.sol"; // Added console2
 import {ForkSetup} from "./ForkSetup.t.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {ERC20} from "solmate/src/tokens/ERC20.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {ERC20} from "solmate/tokens/ERC20.sol";
 // Import the new interface and implementation
 import {IDynamicFeeManager} from "../../src/interfaces/IDynamicFeeManager.sol";
 import {DynamicFeeManager} from "../../src/DynamicFeeManager.sol";
 import {TickCheck} from "../../src/libraries/TickCheck.sol";
-import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {PoolPolicyManager} from "../../src/PoolPolicyManager.sol"; // Assuming this is still used
 
 // Renamed contract for clarity
@@ -53,20 +53,9 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // Get the initial tick
         (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, pid);
 
-        // Initialize fee data - Must be called by owner (deployerEOA from ForkSetup)
-        vm.startPrank(deployerEOA);
-        // Use the new initialize function
-        dfm.initialize(pid, currentTick);
-        vm.stopPrank();
-
-        // ---- Hook Simulation Setup ----
-        // Store the initial tick as the 'lastTick' for the first swap comparison
-        lastTick[pid] = currentTick;
-        // -----------------------------
-
         // Store initial total fee (surge is 0 initially)
         (uint256 baseFee,) = dfm.getFeeState(pid);
-        baseFeeAfterInit = baseFee;          // will be 3 000, gets clamped to 100 on first CAP
+        baseFeeAfterInit = baseFee;          // = cap × 100
         assertTrue(baseFeeAfterInit > 0, "Initial base fee should be set");
 
         // base amounts for LP deposit - ADJUSTED FOR PRICE
@@ -112,6 +101,16 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // 2) Now enable our pool in the oracle (as Spot.afterInitialize would do)
         vm.prank(address(fullRange));
         oracle.enableOracleForPool(poolKey);
+
+        // ---- Hook Simulation Setup ----
+        // 3) Initialize the DynamicFeeManager for this pool so getFeeState() works
+        (, int24 initTick,,) = StateLibrary.getSlot0(poolManager, pid);
+        vm.prank(deployerEOA); // Should the PolicyManager owner initialize? Or the hook? Assuming deployer for now.
+        dfm.initialize(pid, initTick);
+
+        // Store the initial tick as the 'lastTick' for the first swap comparison
+        lastTick[pid] = currentTick;
+        // -----------------------------
     }
 
     /// @dev Helper to trigger a CAP event by directly notifying the DynamicFeeManager
@@ -141,7 +140,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
 
         // Use new getter
         (uint256 baseFee, uint256 surgeFee) = dfm.getFeeState(pid);
-        uint256 mult = policyManager.getSurgeFeeMultiplierPpm(PoolId.unwrap(pid));
+        uint256 mult = policyManager.getSurgeFeeMultiplierPpm(pid);
         uint256 expectedSurge = baseFee * mult / 1e6;
         
         assertEq(surgeFee, expectedSurge, "surge != base*mult after cap");
@@ -168,7 +167,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
     function test_linearDecayMidway() external {
         _triggerCap(); // Start the decay
         uint256 decayPeriod = policyManager.getSurgeDecayPeriodSeconds(pid);
-        uint256 mult = policyManager.getSurgeFeeMultiplierPpm(PoolId.unwrap(pid));
+        uint256 mult = policyManager.getSurgeFeeMultiplierPpm(pid);
         
         // Get base fee after trigger
         (uint256 baseAfterCap,) = dfm.getFeeState(pid);
@@ -190,7 +189,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
     function test_recapResetsSurge() external {
         _triggerCap(); // First cap
         uint256 decayPeriod = policyManager.getSurgeDecayPeriodSeconds(pid);
-        uint256 mult = policyManager.getSurgeFeeMultiplierPpm(PoolId.unwrap(pid));
+        uint256 mult = policyManager.getSurgeFeeMultiplierPpm(pid);
         
         // Get base fee after trigger
         (uint256 baseAfterCap,) = dfm.getFeeState(pid);
@@ -237,7 +236,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
     }
 
     function test_RapidSuccessiveCapsNotCompounding() public {
-        uint256 mult = policyManager.getSurgeFeeMultiplierPpm(PoolId.unwrap(pid));
+        uint256 mult = policyManager.getSurgeFeeMultiplierPpm(pid);
 
         // 1. Trigger first cap
         _triggerCap();

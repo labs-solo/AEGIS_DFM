@@ -4,8 +4,8 @@ pragma solidity 0.8.26;
 import "forge-std/Script.sol";
 import "forge-std/console.sol";
 
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {Spot} from "../src/Spot.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
@@ -154,8 +154,9 @@ contract DirectDeploy is Script {
         // Now we can continue with the rest of the initialization
         console.log("Initializing dynamic fee manager...");
         dynamicFeeManager = new DynamicFeeManager(
-            IPoolPolicy(address(policyManager)),
-            address(hook) // authorizedHook
+            IPoolPolicy(address(policyManager)),  // policy
+            address(truncGeoOracle),             // oracle
+            address(hook)                        // authorizedHook
         );
         console.log("DynamicFeeManager deployed: %s", address(dynamicFeeManager));
 

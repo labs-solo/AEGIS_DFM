@@ -4,20 +4,20 @@ pragma solidity 0.8.26;
 /* ───────────────────────────────────────────────────────────
  *                     Core & Periphery
  * ─────────────────────────────────────────────────────────── */
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
-import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
-import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {PoolManager} from "v4-core/src/PoolManager.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
+import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
+import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {PoolManager} from "v4-core/PoolManager.sol";
 import {LibTransient} from "./libraries/LibTransient.sol";
 
-import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
-import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {BaseHook} from "v4-periphery/utils/BaseHook.sol";
+import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
 
 /* ───────────────────────────────────────────────────────────
  *                          Project
@@ -27,7 +27,7 @@ import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {ISpot, DepositParams, WithdrawParams} from "./interfaces/ISpot.sol";
 import {ISpotHooks} from "./interfaces/ISpotHooks.sol";
 import {ITruncGeoOracleMulti} from "./interfaces/ITruncGeoOracleMulti.sol";
-import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
+import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 
 import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
 import {DynamicFeeManager} from "./DynamicFeeManager.sol";
@@ -41,10 +41,10 @@ import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol";
 /* ───────────────────────────────────────────────────────────
  *                    Solmate / OpenZeppelin
  * ─────────────────────────────────────────────────────────── */
-import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
-import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
-import {Owned} from "solmate/src/auth/Owned.sol";
+import {ERC20} from "solmate/tokens/ERC20.sol";
+import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
+import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
+import {Owned} from "solmate/auth/Owned.sol";
 
 /* ───────────────────────────────────────────────────────────
  *                       Contract: Spot
@@ -420,8 +420,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         });
         if (cbData.callbackType == 1) {
             params.liquidityDelta = int256(uint256(cbData.shares));
-        } else if (cbData.callbackType == 2) {
-            params.liquidityDelta = -int256(uint256(cbData.shares));
         } else {
             revert("Unknown callback type");
         }
@@ -459,6 +457,10 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
                 emit PolicyInitializationFailed(_poolId, string(reason));
             }
         }
+        // Initialize the DynamicFeeManager for this pool
+        if (address(feeManager) != address(0)) {
+            feeManager.initialize(PoolId.wrap(_poolId), tick);
+        }
         if (address(liquidityManager) != address(0)) {
             liquidityManager.storePoolKey(PoolId.wrap(_poolId), key);
         }
@@ -476,7 +478,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         isInitialized = data.initialized;
         if (isInitialized) {
             (reserves[0], reserves[1]) = liquidityManager.getPoolReserves(poolId);
-            totalShares = liquidityManager.poolTotalShares(poolId);
+            totalShares = liquidityManager.positionTotalShares(poolId);
         }
         tokenId = uint256(_poolId);
         return (isInitialized, reserves, totalShares, tokenId);
@@ -525,46 +527,46 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         _tryReinvestInternal(poolKeys[pid], pid);
     }
 
-    function _tryReinvestInternal(PoolKey memory k, bytes32 pid) internal {
-        (uint256 bal0, uint256 bal1) = _internalBalances(k);
-        ReinvestConfig storage cfg = reinvestCfg[pid];
+    function _tryReinvestInternal(PoolKey memory key, bytes32 _poolId) internal {
+        (uint256 bal0, uint256 bal1) = _internalBalances(key);
+        ReinvestConfig storage cfg = reinvestCfg[_poolId];
 
         // 0) global pause
         if (reinvestmentPaused) {
-            emit ReinvestSkipped(pid, REASON_GLOBAL_PAUSED, bal0, bal1);
+            emit ReinvestSkipped(_poolId, REASON_GLOBAL_PAUSED, bal0, bal1);
             return;
         }
         // 1) cooldown
         if (block.timestamp < cfg.last + cfg.cooldown) {
-            emit ReinvestSkipped(pid, REASON_COOLDOWN, bal0, bal1);
+            emit ReinvestSkipped(_poolId, REASON_COOLDOWN, bal0, bal1);
             return;
         }
         // 2) threshold
         if (bal0 < cfg.minToken0 && bal1 < cfg.minToken1) {
-            emit ReinvestSkipped(pid, REASON_THRESHOLD, bal0, bal1);
+            emit ReinvestSkipped(_poolId, REASON_THRESHOLD, bal0, bal1);
             return;
         }
         // 3) price-check
-        (uint160 sqrtP,,,) = StateLibrary.getSlot0(poolManager, PoolId.wrap(pid));
+        (uint160 sqrtP,,,) = StateLibrary.getSlot0(poolManager, PoolId.wrap(_poolId));
         if (sqrtP == 0) {
-            emit ReinvestSkipped(pid, REASON_PRICE_ZERO, bal0, bal1);
+            emit ReinvestSkipped(_poolId, REASON_PRICE_ZERO, bal0, bal1);
             return;
         }
         // 4) maximize full‑range liquidity
         (uint256 use0, uint256 use1, uint128 liq) = MathUtils.getAmountsToMaxFullRangeRoundUp(
             sqrtP,
-            k.tickSpacing,
+            key.tickSpacing,
             bal0, // Use current balance 0
             bal1 // Use current balance 1
         );
         if (liq == 0) {
-            emit ReinvestSkipped(pid, REASON_LIQUIDITY_ZERO, bal0, bal1);
+            emit ReinvestSkipped(_poolId, REASON_LIQUIDITY_ZERO, bal0, bal1);
             return;
         }
 
         // 5) call LM.reinvest, passing calculated amounts and liquidity
-        address token0 = Currency.unwrap(k.currency0);
-        address token1 = Currency.unwrap(k.currency1);
+        address token0 = Currency.unwrap(key.currency0);
+        address token1 = Currency.unwrap(key.currency1);
         address lmAddress = address(liquidityManager);
 
         if (use0 > 0) {
@@ -592,17 +594,17 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
             }
         }
 
-        try liquidityManager.reinvest(PoolId.wrap(pid), use0, use1, liq) returns (uint128 _minted) {
+        try liquidityManager.reinvest(PoolId.wrap(_poolId), use0, use1, liq) returns (uint128 _minted) {
             if (_minted == 0) {
-                emit ReinvestSkipped(pid, REASON_MINTED_ZERO, bal0, bal1);
+                emit ReinvestSkipped(_poolId, REASON_MINTED_ZERO, bal0, bal1);
                 return;
             }
             // success
             cfg.last = uint64(block.timestamp);
-            emit ReinvestmentSuccess(pid, use0, use1);
+            emit ReinvestmentSuccess(_poolId, use0, use1);
         } catch (bytes memory reason) {
             // Handle potential reverts from LM (e.g., ZeroAmount error)
-            emit ReinvestSkipped(pid, string(abi.encodePacked("LM revert: ", reason)), bal0, bal1);
+            emit ReinvestSkipped(_poolId, string(abi.encodePacked("LM revert: ", reason)), bal0, bal1);
             return;
         }
     }
@@ -649,7 +651,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         bytes32 _poolId = PoolId.unwrap(poolId);
         if (poolData[_poolId].initialized) {
             (reserve0, reserve1) = liquidityManager.getPoolReserves(poolId);
-            totalShares = liquidityManager.poolTotalShares(poolId);
+            totalShares = liquidityManager.positionTotalShares(poolId);
         }
     }
 
@@ -663,5 +665,10 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     function setReinvestmentPaused(bool paused) external onlyGovernance {
         reinvestmentPaused = paused;
         emit ReinvestmentPauseToggled(paused);
+    }
+
+    function _validateAndGetTotalShares(PoolId poolId) internal view returns (uint128 totalShares) {
+        // Get total shares
+        totalShares = liquidityManager.positionTotalShares(poolId);
     }
 }

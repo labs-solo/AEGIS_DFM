@@ -17,7 +17,8 @@ remappings = [
     "v4-periphery/=lib/v4-periphery/src/",
     "solmate/=lib/solmate/src/",
     "@openzeppelin/=lib/v4-core/lib/openzeppelin-contracts/",
-    "uniswap-hooks/=lib/uniswap-hooks/src/"
+    "uniswap-hooks/=lib/uniswap-hooks/src/",
+    "@uniswap/v4-core/=lib/v4-core/src/"
 ]
 
 # Sepolia configuration for integration testing

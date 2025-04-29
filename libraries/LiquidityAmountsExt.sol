@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.26;
 
-import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
-import {TickMath}        from "v4-core/src/libraries/TickMath.sol";
+import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
+import {TickMath}        from "v4-core/libraries/TickMath.sol";
 
 library LiquidityAmountsExt {
     /**

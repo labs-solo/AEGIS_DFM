@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
-import {Owned} from "solmate/src/auth/Owned.sol";
+import {Owned} from "solmate/auth/Owned.sol";
 import {Errors} from "./errors/Errors.sol";
 import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 
 /**
@@ -21,6 +21,11 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // === Fee Policy State Variables ===
 
     // Fee allocation configuration
+    uint24 private constant _DEFAULT_BASE_FEE = 5_000;    // 0.5 %
+    uint32 private constant _SURGE_DECAY_SECS = 3_600;            // surge fade
+    uint32 private constant _DAILY_BUDGET_PPM = 5_000;            // example
+    uint32 private constant _CAP_BUDGET_DECAY_WINDOW = 15_552_000; // 180 d
+
     uint24 public polSharePpm;
     uint24 public fullRangeSharePpm;
     uint24 public lpSharePpm;
@@ -133,6 +138,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     /*──────────────────── adaptive-cap default ────────────────*/
     /// Default starting value for `maxTicksPerBlock`
     uint24 public defaultMaxTicksPerBlock = 50;   // 50 ticks
+
+    uint24 private constant _SURGE_MULTIPLIER_PPM = 10_000;    // 1× (no surge)
+    uint32 private constant _TARGET_CAPS_PER_DAY = 4;
 
     /**
      * @notice Constructor initializes the policy manager with default values
@@ -321,7 +329,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     /**
      * @inheritdoc IPoolPolicy
      */
-    function getDefaultDynamicFee() external view returns (uint256) {
+    function getDefaultDynamicFee() external view override returns (uint256) {
         return defaultDynamicFeePpm;
     }
 
@@ -603,28 +611,6 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // --- Add implementations for missing IPoolPolicy functions ---
 
     /// @inheritdoc IPoolPolicy
-    function getTargetCapsPerDay(bytes32 poolId)
-        external
-        view
-        override
-        returns (uint256)
-    {
-        uint32 v = poolTargetCapsPerDay[PoolId.wrap(poolId)];
-        return uint256(v != 0 ? v : defaultTargetCapsPerDay);
-    }
-
-    /// @inheritdoc IPoolPolicy
-    function getCapBudgetDecayWindow(bytes32 poolId)
-        external
-        view
-        override
-        returns (uint32)
-    {
-        uint32 v = poolCapBudgetDecayWindow[PoolId.wrap(poolId)];
-        return v != 0 ? v : defaultCapBudgetDecayWindow;
-    }
-
-    /// @inheritdoc IPoolPolicy
     function getFreqScaling(PoolId pid) external view returns (uint256) {
         uint256 v = poolFreqScaling[pid];
         return v != 0 ? v : defaultFreqScaling;
@@ -706,32 +692,35 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.REINVESTOR_AUTH, msg.sender); // Use correct enum member
     }
 
-    // --- Implement missing IPoolPolicy functions ---
+    /*──────────────  DEPRECATED step-engine stubs  ──────────────*/
+    function getBaseFeeStepPpm(PoolId) external pure returns (uint32) { return 0; }
+    function getMaxStepPpm(PoolId)  external pure returns (uint32) { return 0; }
+    function getBaseFeeUpdateIntervalSeconds(PoolId) external pure returns (uint32) { return 0; }
 
-    /**
-     * @notice Returns the base fee update interval in seconds for the given pool.
-     * @dev Currently returns a global default value.
-     * @return The base fee update interval in seconds (currently 1 hour).
-     */
-    function getBaseFeeUpdateIntervalSeconds(PoolId /*poolId*/ ) external view override returns (uint256) {
-        // TODO: Implement per-pool logic if needed
-        return 1 hours; // Placeholder: Return 1 hour default
+    /*──────────────  Surge-fee default getters  ─────────────────*/
+    function getSurgeFeeMultiplierPpm(PoolId pid) external view override returns (uint24) {
+        uint24 v = _surgeFeeMultiplierPpm[pid];
+        // fall back to the configured default, not the old static constant
+        return v != 0 ? v : _defaultSurgeFeeMultiplierPpm;
     }
 
-    /// @inheritdoc IPoolPolicy
-    function getMaxStepPpm(bytes32 poolId) external view override returns (uint32) {
-        return _maxStepPpm[poolId] != 0 ? _maxStepPpm[poolId] : _globalMaxStepPpm; // now 100,000
+    function getSurgeDecaySeconds(PoolId pid) external view override returns (uint32) {
+        uint32 v = poolSurgeDecayPeriodSeconds[pid];
+        return v != 0 ? v : _SURGE_DECAY_SECS;
     }
 
-    // Implementation of new interface methods
-    function getSurgeFeeMultiplierPpm(bytes32 poolId) external view override returns (uint24) {
-        uint24 value = _surgeFeeMultiplierPpm[PoolId.wrap(poolId)];
-        return value != 0 ? value : _defaultSurgeFeeMultiplierPpm;
+    /*──────────────  Oracle / cap defaults  ─────────────────────*/
+    function getTargetCapsPerDay(PoolId pid) external view override returns (uint32) {
+        uint32 v = poolTargetCapsPerDay[pid];
+        return v != 0 ? v : _TARGET_CAPS_PER_DAY;
     }
 
-    function getSurgeDecaySeconds(bytes32 poolId) external view override returns (uint32) {
-        uint256 value = poolSurgeDecayPeriodSeconds[PoolId.wrap(poolId)];
-        return uint32(value != 0 ? value : defaultSurgeDecayPeriodSeconds);
+    function getDailyBudgetPpm(PoolId pid) external view override returns (uint32) {
+        return capBudgetDailyPpm;
+    }
+
+    function getCapBudgetDecayWindow(PoolId pid) external view override returns (uint32) {
+        return _CAP_BUDGET_DECAY_WINDOW;
     }
 
     /**
@@ -740,10 +729,6 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     function isSupportedCurrency(Currency currency) external view override returns (bool) {
         // Default implementation: all currencies are supported
         return true;
-    }
-
-    function getDailyBudgetPpm(bytes32 /*poolId*/) external view returns (uint32) {
-        return capBudgetDailyPpm;
     }
 
     /// -------------------------------------------------------------------
@@ -777,7 +762,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     /**
      * @inheritdoc IPoolPolicy
      */
-    function getDefaultMaxTicksPerBlock(bytes32) external view override returns (uint24) {
+    function getDefaultMaxTicksPerBlock(PoolId) external view override returns (uint24) {
         return defaultMaxTicksPerBlock;
     }
 }

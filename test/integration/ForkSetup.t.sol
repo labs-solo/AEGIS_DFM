@@ -6,16 +6,16 @@ import "forge-std/console.sol";
 import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
 
 // Core Contract Interfaces & Libraries
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol"; // Needed for Permissions
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
-import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
-import {FullMath} from "v4-core/src/libraries/FullMath.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol"; // Needed for Permissions
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
+import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
+import {FullMath} from "v4-core/libraries/FullMath.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
 
 // Project Interfaces & Implementations
 import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
@@ -38,9 +38,9 @@ import {PriceHelper} from "./utils/PriceHelper.sol";
 // import {DeployUnichainV4} from "script/DeployUnichainV4.s.sol";
 
 // Test Routers
-import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
-import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
-import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
+import {PoolModifyLiquidityTest} from "v4-core/test/PoolModifyLiquidityTest.sol";
+import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
+import {PoolDonateTest} from "v4-core/test/PoolDonateTest.sol";
 
 /**
  * @title ForkSetup
@@ -165,61 +165,20 @@ contract ForkSetup is Test {
         // Deploy DynamicFeeManager
         emit log_string("Deploying DynamicFeeManager...");
         dynamicFeeManager = new DynamicFeeManager(
-            IPoolPolicy(address(policyManager)),
-            deployerEOA                          // temporary hook address (non-zero)
+            policyManager,       // ✅ policy
+            address(oracle),     // ✅ oracle (2nd param)
+            deployerEOA          // ✅ temporary authorisedHook
         );
         emit log_named_address("DynamicFeeManager deployed at", address(dynamicFeeManager));
 
-        // Define the required hook flags - exactly match Spot.sol's getHookPermissions
+        // Define hook flags for Spot.sol
         uint160 requiredHookFlags = uint160(
             Hooks.AFTER_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
                 | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
                 | Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
         );
 
-        // Log which hook flags are being used
-        emit log_string("\n=== Hook Permissions Needed ===");
-        emit log_named_string(
-            "beforeInitialize", requiredHookFlags & Hooks.BEFORE_INITIALIZE_FLAG != 0 ? "true" : "false"
-        );
-        emit log_named_string(
-            "afterInitialize", requiredHookFlags & Hooks.AFTER_INITIALIZE_FLAG != 0 ? "true" : "false"
-        );
-        emit log_named_string(
-            "beforeAddLiquidity", requiredHookFlags & Hooks.BEFORE_ADD_LIQUIDITY_FLAG != 0 ? "true" : "false"
-        );
-        emit log_named_string(
-            "afterAddLiquidity", requiredHookFlags & Hooks.AFTER_ADD_LIQUIDITY_FLAG != 0 ? "true" : "false"
-        );
-        emit log_named_string(
-            "beforeRemoveLiquidity", requiredHookFlags & Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG != 0 ? "true" : "false"
-        );
-        emit log_named_string(
-            "afterRemoveLiquidity", requiredHookFlags & Hooks.AFTER_REMOVE_LIQUIDITY_FLAG != 0 ? "true" : "false"
-        );
-        emit log_named_string("beforeSwap", requiredHookFlags & Hooks.BEFORE_SWAP_FLAG != 0 ? "true" : "false");
-        emit log_named_string("afterSwap", requiredHookFlags & Hooks.AFTER_SWAP_FLAG != 0 ? "true" : "false");
-        emit log_named_string("beforeDonate", requiredHookFlags & Hooks.BEFORE_DONATE_FLAG != 0 ? "true" : "false");
-        emit log_named_string("afterDonate", requiredHookFlags & Hooks.AFTER_DONATE_FLAG != 0 ? "true" : "false");
-        emit log_named_string(
-            "beforeSwapReturnDelta", requiredHookFlags & Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG != 0 ? "true" : "false"
-        );
-        emit log_named_string(
-            "afterSwapReturnDelta", requiredHookFlags & Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG != 0 ? "true" : "false"
-        );
-        emit log_named_string(
-            "afterAddLiquidityReturnDelta",
-            requiredHookFlags & Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG != 0 ? "true" : "false"
-        );
-        emit log_named_string(
-            "afterRemoveLiquidityReturnDelta",
-            requiredHookFlags & Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG != 0 ? "true" : "false"
-        );
-        emit log_string("===========================\n");
-
-        /* ------------------------------------------------------------------
-         *  2) build ctor args **with the real DFM address**
-         * -----------------------------------------------------------------*/
+        /* Build constructor args with DFM address */
         bytes memory constructorArgs = abi.encode(
             poolManager,
             IPoolPolicy(address(policyManager)),
@@ -262,30 +221,41 @@ contract ForkSetup is Test {
         emit log_string("Configuring contracts...");
         liquidityManager.setAuthorizedHookAddress(actualHookAddress);
         
-        // This will revert since feeManager is now immutable, but dynamicFeeManager
-        // has already been initialized with fullRange as the authorized hook
-        // fullRange.setDynamicFeeManager(address(dynamicFeeManager));
-        
+        /* Build poolKey & poolId for DFM initialization */
+        address token0;
+        address token1;
+        (token0, token1) = WETH_ADDRESS < USDC_ADDRESS
+            ? (WETH_ADDRESS, USDC_ADDRESS)
+            : (USDC_ADDRESS, WETH_ADDRESS);
+
+        uint24 dynamicFee = LPFeeLibrary.DYNAMIC_FEE_FLAG;
+        poolKey = PoolKey({
+            currency0: Currency.wrap(token0),
+            currency1: Currency.wrap(token1),
+            fee:        dynamicFee,
+            tickSpacing: TICK_SPACING,
+            hooks:      IHooks(address(fullRange))
+        });
+        poolId = poolKey.toId();
+
+        // Initialize DFM while still pranked as governance
+        dynamicFeeManager.initialize(poolId, 0);
+
         emit log_string("LiquidityManager configured.");
 
         // Set the FeeReinvestmentManager as the reinvestment policy for the specific pool
         // NOTE: Moved poolKey/poolId generation out of try-catch
-        address token0;
-        address token1;
-        (token0, token1) = WETH_ADDRESS < USDC_ADDRESS ? (WETH_ADDRESS, USDC_ADDRESS) : (USDC_ADDRESS, WETH_ADDRESS);
-        
-        // Only set the dynamic‑fee flag here; the static base fee comes from PoolPolicyManager
         // uint24 dynamicFee = DEFAULT_FEE | LPFeeLibrary.DYNAMIC_FEE_FLAG; // Reverted: Invalid for initialize
-        uint24 dynamicFee = LPFeeLibrary.DYNAMIC_FEE_FLAG;
+        // uint24 dynamicFee = LPFeeLibrary.DYNAMIC_FEE_FLAG;
         
-        poolKey = PoolKey({
-            currency0: Currency.wrap(token0),
-            currency1: Currency.wrap(token1),
-            fee: dynamicFee, 
-            tickSpacing: TICK_SPACING,
-            hooks: IHooks(address(fullRange))
-        });
-        poolId = poolKey.toId();
+        // poolKey = PoolKey({
+        //     currency0: Currency.wrap(token0),
+        //     currency1: Currency.wrap(token1),
+        //     fee:       dynamicFee,
+        //     tickSpacing: TICK_SPACING,
+        //     hooks: IHooks(address(fullRange))
+        // });
+        // poolId = poolKey.toId();
 
         // Deploy Test Routers (still under prank)
         emit log_string("Deploying test routers...");

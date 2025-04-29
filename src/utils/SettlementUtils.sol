@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
-import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
-import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
+import {PoolId} from "v4-core/types/PoolId.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {Errors} from "../errors/Errors.sol";
 import {FullRangeLiquidityManager} from "../FullRangeLiquidityManager.sol";
-import {ERC20} from "solmate/src/tokens/ERC20.sol";
+import {ERC20} from "solmate/tokens/ERC20.sol";
 import {MathUtils} from "../libraries/MathUtils.sol";
 
 /**
@@ -163,12 +163,24 @@ library SettlementUtils {
         uint256 feeAmount1,
         FullRangeLiquidityManager liquidityManager
     ) internal view returns (uint256 sharesFromFees) {
-        uint128 totalLiquidity = liquidityManager.poolTotalShares(poolId);
+        uint128 totalLiquidity = liquidityManager.positionTotalShares(poolId);
         if (totalLiquidity == 0) return 0;
 
         // Use MathUtils to calculate geometric shares
         sharesFromFees = MathUtils.calculateGeometricShares(feeAmount0, feeAmount1);
 
         return sharesFromFees;
+    }
+
+    /**
+     * @notice Validates and returns the total shares for a given pool
+     * @param poolId The pool ID
+     * @param liquidityManager The LiquidityManager contract to query shares from
+     * @return totalShares The total number of shares for the pool
+     */
+    function _validateAndGetTotalShares(PoolId poolId, FullRangeLiquidityManager liquidityManager) internal view returns (uint256) {
+        uint256 totalShares = liquidityManager.positionTotalShares(poolId);
+        if (totalShares == 0) revert Errors.ZeroLiquidity();
+        return totalShares;
     }
 }

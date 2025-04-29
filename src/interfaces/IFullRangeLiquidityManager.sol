@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId} from "v4-core/types/PoolId.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
 
 /**
  * @title IFullRangeLiquidityManager
@@ -55,8 +55,13 @@ interface IFullRangeLiquidityManager {
     /// lightweight reserve query that Spot uses on hot-path
     function getPoolReserves(PoolId poolId) external view returns (uint256 reserve0, uint256 reserve1);
 
-    /// expose the public getter for the mapping
-    function poolTotalShares(PoolId poolId) external view returns (uint128);
+    /**
+     * @notice Get the total shares for a pool
+     * @dev This is the total ERC-6909 shares issued for our full-range position
+     * @param poolId The pool ID
+     * @return The total shares for the pool
+     */
+    function positionTotalShares(PoolId poolId) external view returns (uint128);
 
     /// used in tests to verify balances
     function getAccountPosition(PoolId poolId, address account)

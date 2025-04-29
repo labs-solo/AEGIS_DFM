@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity =0.8.26;
 
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {Errors} from "./errors/Errors.sol";
 import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
@@ -46,6 +46,9 @@ contract TruncGeoOracleMulti {
 
     // Number of historic observations to keep (roughly 24h at 1h sample rate)
     uint32 internal constant SAMPLE_CAPACITY = 24;
+
+    // Track which pools have been enabled
+    mapping(bytes32 => bool) public isEnabled;
 
     // dynamic capping -------------------------------------------------------
     mapping(bytes32 => uint24)  public maxTicksPerBlock;   // adaptive cap
@@ -190,7 +193,7 @@ contract TruncGeoOracleMulti {
             if (capped_) capFreq[pid] += 1e6;
             return;
         }
-        uint32 window = IPoolPolicy(policyManager).getCapBudgetDecayWindow(pid);
+        uint32 window = IPoolPolicy(policyManager).getCapBudgetDecayWindow(PoolId.wrap(pid));
         uint128 f     = capFreq[pid];
         if (window > 0) {
             uint256 decay = uint256(f) * (nowTs - last) / window;
@@ -202,10 +205,10 @@ contract TruncGeoOracleMulti {
     }
 
     function _maybeRebalanceCap(bytes32 pid) private {
-        uint256 target = IPoolPolicy(policyManager).getTargetCapsPerDay(pid);
+        uint256 target = IPoolPolicy(policyManager).getTargetCapsPerDay(PoolId.wrap(pid));
         if (target == 0) return;
 
-        uint32 window = IPoolPolicy(policyManager).getCapBudgetDecayWindow(pid);
+        uint32 window = IPoolPolicy(policyManager).getCapBudgetDecayWindow(PoolId.wrap(pid));
         uint256 perDay = window == 0 ? 0 : uint256(capFreq[pid]) * 1 days / uint256(window);
 
         uint24 cap = maxTicksPerBlock[pid];
@@ -229,29 +232,44 @@ contract TruncGeoOracleMulti {
      * MODIFIED: Uses modifier, added check
      */
     function enableOracleForPool(PoolKey calldata key) external onlyFullRangeHook {
-        PoolId pid = key.toId();
-        bytes32 id = PoolId.unwrap(pid);
+        bytes32 id = PoolId.unwrap(key.toId());
+        require(!isEnabled[id], "Oracle already enabled");
+        isEnabled[id] = true;
 
-        // Check if pool is already enabled
-        if (states[id].cardinality != 0) {
-            revert Errors.OracleOperationFailed("enableOracleForPool", "Pool already enabled");
+        /* -------------------------------------------------------------
+         *  Initialise cap
+         *     – if policy gives a per-pool override → use it
+         *     – else:   cap = defaultFeePPM ÷ 100  (ppm/tick)
+         *       e.g. 3 000 ppm ÷ 100 = **30 ticks**  (0 .30 %)
+         * ---------------------------------------------------------- */
+        uint24 initCap = IPoolPolicy(policyManager).getDefaultMaxTicksPerBlock(PoolId.wrap(id));
+        if (initCap == 0) {
+            uint256 defFee = IPoolPolicy(policyManager).getDefaultDynamicFee(); // ppm
+            initCap = uint24(defFee / 100);            // 1 tick ≃ 100 ppm
+            if (initCap == 0) initCap = 1;             // never zero
         }
-
-        // Allow both the dynamic fee (0x800000 == 8388608) and fee == 0 pools
-        if (key.fee != 0 && key.fee != 8388608) {
-            revert Errors.OnlyDynamicFeePoolAllowed();
-        }
-
-        (, int24 tick,,) = StateLibrary.getSlot0(poolManager, pid);
-        (states[id].cardinality, states[id].cardinalityNext) = observations[id].initialize(_blockTimestamp(), tick);
-
-        // initialise per-pool adaptive cap from policy default
-        uint24 initCap = IPoolPolicy(policyManager).getDefaultMaxTicksPerBlock(id);
-        if (initCap == 0) initCap = 50;          // sane fallback
         maxTicksPerBlock[id] = initCap;
         lastFreqTs[id] = uint48(block.timestamp);
 
-        emit OracleEnabled(id, int24(int256(uint256(initCap))));
+        // Initialize observation slot and cardinality
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, key.toId());
+        uint128 liquidity = StateLibrary.getLiquidity(poolManager, key.toId());
+        
+        // Initialize first observation
+        observations[id][0] = TruncatedOracle.Observation({
+            blockTimestamp: _blockTimestamp(),
+            prevTick: currentTick,
+            tickCumulative: 0,
+            secondsPerLiquidityCumulativeX128: 0,
+            initialized: true
+        });
+
+        // Set initial cardinality to 1 and target to 1
+        states[id].index = 0;
+        states[id].cardinality = 1;
+        states[id].cardinalityNext = 1;
+
+        emit ObservationUpdated(id, currentTick, _blockTimestamp());
     }
 
     /**
@@ -426,5 +444,31 @@ contract TruncGeoOracleMulti {
         // Get the most recent observation
         TruncatedOracle.Observation memory observation = observations[id][states[id].index];
         return (observation.prevTick, observation.blockTimestamp);
+    }
+
+    /// ------------------------------------------------------------------
+    ///  Exposed for DynamicFeeManager → simple cap-to-fee mapping
+    /// ------------------------------------------------------------------
+    /// @notice Public getter so <DynamicFeeManager> can derive the base-fee
+    function getMaxTicksPerBlock(bytes32 poolId) external view returns (uint24) {
+        return maxTicksPerBlock[poolId];
+    }
+
+    /* ────────────────── governance / test helper ────────────────── */
+
+    /**
+     * @notice **Governance-only** override for the adaptive tick-cap.
+     *         Added to support unit-tests that need deterministic caps.
+     *         Production systems should rarely (if ever) call this,
+     *         because it bypasses the automatic feedback loop.
+     *
+     * @param pid  PoolId whose cap is being set
+     * @param cap  New max tick movement per block (must fit in uint24)
+     */
+    function setMaxTicksPerBlock(PoolId pid, uint24 cap) external {
+        if (msg.sender != governance) revert Errors.AccessOnlyGovernance(msg.sender);
+        bytes32 id = PoolId.unwrap(pid);
+        maxTicksPerBlock[id] = cap;
+        emit TickCapParamChanged(id, cap);
     }
 }

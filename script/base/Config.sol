@@ -9,8 +9,8 @@ pragma solidity ^0.8.19;
 /*
 
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {Currency} from "v4-core/types/Currency.sol";
 
 /// @notice Shared configuration between scripts
 contract Config {
