@@ -241,11 +241,11 @@ contract ForkSetup is Test {
             poolManager,
             IPoolPolicy(address(policyManager)),
             liquidityManager,
-            oracle,                  // Now passing oracle directly in constructor 
+            oracle,                  // Now passing oracle directly in constructor
             IDynamicFeeManager(address(dynamicFeeManager)), // Using real DFM address
             deployerEOA // governance/owner
         );
-        
+
         // Verify the deployment
         actualHookAddress = address(fullRange);
         require(actualHookAddress == hookAddress, "Deployed hook address does not match predicted!");
@@ -261,11 +261,11 @@ contract ForkSetup is Test {
         // Configure Contracts
         emit log_string("Configuring contracts...");
         liquidityManager.setAuthorizedHookAddress(actualHookAddress);
-        
+
         // This will revert since feeManager is now immutable, but dynamicFeeManager
         // has already been initialized with fullRange as the authorized hook
         // fullRange.setDynamicFeeManager(address(dynamicFeeManager));
-        
+
         emit log_string("LiquidityManager configured.");
 
         // Set the FeeReinvestmentManager as the reinvestment policy for the specific pool
@@ -273,15 +273,15 @@ contract ForkSetup is Test {
         address token0;
         address token1;
         (token0, token1) = WETH_ADDRESS < USDC_ADDRESS ? (WETH_ADDRESS, USDC_ADDRESS) : (USDC_ADDRESS, WETH_ADDRESS);
-        
+
         // Only set the dynamic‑fee flag here; the static base fee comes from PoolPolicyManager
         // uint24 dynamicFee = DEFAULT_FEE | LPFeeLibrary.DYNAMIC_FEE_FLAG; // Reverted: Invalid for initialize
         uint24 dynamicFee = LPFeeLibrary.DYNAMIC_FEE_FLAG;
-        
+
         poolKey = PoolKey({
             currency0: Currency.wrap(token0),
             currency1: Currency.wrap(token1),
-            fee: dynamicFee, 
+            fee: dynamicFee,
             tickSpacing: TICK_SPACING,
             hooks: IHooks(address(fullRange))
         });

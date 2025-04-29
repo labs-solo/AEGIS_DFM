@@ -192,8 +192,8 @@ contract DeployLocalUniswapV4 is Script {
         bytes memory spotCreationCodePlaceholder = abi.encodePacked(
             type(Spot).creationCode, // Use Spot instead of MarginHarness
             abi.encode(
-                IPoolManager(address(poolManager)), 
-                policyManager, 
+                IPoolManager(address(poolManager)),
+                policyManager,
                 liquidityManager,
                 TruncGeoOracleMulti(address(0)), // Oracle placeholder (will be set later)
                 IDynamicFeeManager(address(0)),  // DynamicFeeManager placeholder (will be set later)

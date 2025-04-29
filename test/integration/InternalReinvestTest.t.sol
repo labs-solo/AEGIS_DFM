@@ -20,7 +20,7 @@ import {ISpot, DepositParams as ISpotDepositParams} from "src/interfaces/ISpot.s
 // import {IWETH9}         from "v4-periphery/src/interfaces/external/IWETH9.sol"; // Keep commented out
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {CurrencySettler} from "uniswap-hooks/src/utils/CurrencySettler.sol";
-import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 // import {PoolModifyLiquidityTest} from "./integration/routers/PoolModifyLiquidityTest.sol"; // Keep commented out
 
 // Remove local struct definition, use imported one
