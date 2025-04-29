@@ -208,3 +208,14 @@ This project is licensed under the Business Source License 1.1 - see the LICENSE
 - OpenZeppelin
 - Solmate
 
+## Quick-start
+
+```bash
+# prerequisites: git ≥2.34, Foundry, corepack (ships with recent Node)
+corepack enable
+pnpm install --frozen-lockfile   # reproducible install
+forge test                        # compile + run tests
+```
+
+CI pipelines run the same two commands to guarantee determinism.
+

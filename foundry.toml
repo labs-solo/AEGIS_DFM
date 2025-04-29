@@ -12,6 +12,31 @@ optimizer_runs = 100_000
 dotenv = true  # Enable .env file loading
 exclude_paths = ["test/old-tests"]
 
+# ──────────────────────────────────────────────────────────────
+# Explicit import remappings (Forge will also scan node_modules
+# automatically, but pinning them here prevents IDE / CI drift
+# and documents paths that rely on pnpm's symlinks).
+# ──────────────────────────────────────────────────────────────
+
+remappings = [
+    # Test utilities
+    "forge-std/=node_modules/forge-std/src/",
+    "ds-test/=node_modules/forge-std/lib/ds-test/src/",
+
+    # Core math & utils
+    "solmate/=node_modules/solmate/src/",
+
+    # Uniswap – core & periphery
+    "@uniswap/v4-core/=node_modules/@uniswap/v4-core/src/",
+    "@uniswap/v4-periphery/=node_modules/@uniswap/v4-periphery/src/",
+
+    # Permit2 (pulled from GitHub via pnpm - ensure path exists)
+    "permit2/=node_modules/@uniswap/permit2/contracts/",
+
+    # OpenZeppelin (solidity-only package)
+    "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+]
+
 # Sepolia configuration for integration testing
 [profile.sepolia]
 src = "src"
