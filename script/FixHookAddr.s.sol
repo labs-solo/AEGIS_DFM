@@ -17,49 +17,69 @@ import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityM
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {HookMiner} from "../src/utils/HookMiner.sol";
+import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
+import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
+import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
+import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 
 // Utility script to display valid hook address for debugging
 contract FixHookAddr is Script {
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
 
-    function run() public pure {
-        console2.log("Fixing Hook Address for Spot");
+    function run() external {
+        // Removed console log
 
-        // Use exact checksummed address literal (final attempt)
-        address deployer = 0x7777777f279eba2a8fDba8036083534A5A82258B;
-        address poolManagerAddr = address(0x1234); // Mock address
-        address policyManagerAddr = address(0x5678); // Mock address
-        address liquidityManagerAddr = address(0x9ABC); // Mock address
+        vm.startBroadcast();
 
-        // Calculate required hook flags for Spot
-        uint160 spotFlags = uint160(
-            Hooks.AFTER_INITIALIZE_FLAG | Hooks.AFTER_ADD_LIQUIDITY_FLAG | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
-                | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+        // Dependencies (use addresses from DeployUnichainV4.s.sol or fetch if needed)
+        IPoolManager poolManager_ = IPoolManager(0x1F98400000000000000000000000000000000004);
+        IPoolPolicy policyManager_ = IPoolPolicy(vm.envAddress("DEPLOYED_POLICY_MANAGER"));
+        IFullRangeLiquidityManager liquidityManager_ = IFullRangeLiquidityManager(vm.envAddress("DEPLOYED_LIQUIDITY_MANAGER"));
+        TruncGeoOracleMulti oracle_ = TruncGeoOracleMulti(vm.envAddress("DEPLOYED_ORACLE"));
+        IDynamicFeeManager feeManager_ = IDynamicFeeManager(vm.envAddress("DEPLOYED_FEE_MANAGER"));
+        address owner_ = vm.envAddress("DEPLOYER_ADDRESS");
+
+        // Define required hook flags for Spot (using HookMiner constants)
+        uint160 spotFlags =
+            Hooks.AFTER_SWAP_FLAG |
+            Hooks.BEFORE_SWAP_FLAG;
+            /* // Previous flags, keeping for reference
+            Hooks.AFTER_INITIALIZE_FLAG |
+            Hooks.BEFORE_SWAP_FLAG |
+            Hooks.AFTER_SWAP_FLAG |
+            Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+            */
+
+        // Construct Spot creation code and constructor arguments
+        bytes memory spotBytecode = type(Spot).creationCode;
+        bytes memory spotConstructorArgs = abi.encode(
+            poolManager_, policyManager_, liquidityManager_, oracle_, feeManager_, owner_
         );
 
-        // Prepare constructor arguments for Spot
-        bytes memory spotConstructorArgs = abi.encode(poolManagerAddr, policyManagerAddr, liquidityManagerAddr);
+        // Find the correct salt for Spot
+        (address spotHookAddress, bytes32 spotSalt) = HookMiner.find(owner_, spotFlags, spotBytecode, spotConstructorArgs);
 
-        // Use known working salt for Spot
-        bytes32 spotSalt = bytes32(uint256(4803));
+        // Removed console logs
 
-        // Create the creation code
-        bytes memory spotCreationCode = abi.encodePacked(type(Spot).creationCode, spotConstructorArgs);
+        // Validate hook address
+        bool validSpotHookAddress = Hooks.isValidHookAddress(IHooks(spotHookAddress), LPFeeLibrary.DYNAMIC_FEE_FLAG);
+        // Removed console logs
+        require(validSpotHookAddress, "Predicted Spot hook address is invalid");
 
-        // Calculate the address using the known salt
-        address spotHookAddress = HookMiner.computeAddress(deployer, uint256(spotSalt), spotCreationCode);
+        // Deploy Spot with the found salt
+        Spot deployedSpot = new Spot{salt: spotSalt}(
+            poolManager_, policyManager_, liquidityManager_, oracle_, feeManager_, owner_
+        );
+        require(address(deployedSpot) == spotHookAddress, "Deployed Spot address mismatch");
+        // Removed console log
 
-        console2.log("Calculated Spot Hook Address:", spotHookAddress);
-        console2.log("Using Spot Salt:", uint256(spotSalt));
+        // Wire DynamicFeeManager to the new Spot hook by casting to implementation type
+        DynamicFeeManager(address(feeManager_)).setAuthorizedHook(spotHookAddress);
 
-        // Check address validity for Spot
-        bool validSpotHookAddress = (uint160(spotHookAddress) & uint160(Hooks.ALL_HOOK_MASK)) == spotFlags;
-        console2.log("Spot hook address valid:", validSpotHookAddress);
-        console2.log("Expected Spot flags:", uint256(spotFlags));
-        console2.log("Actual Spot flags:", uint256(uint160(spotHookAddress) & uint160(Hooks.ALL_HOOK_MASK)));
-
-        // Script completed successfully
-        console2.log("Valid deployment configuration found!");
+        vm.stopBroadcast();
     }
 }

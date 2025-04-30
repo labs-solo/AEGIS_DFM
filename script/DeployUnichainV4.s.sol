@@ -64,68 +64,39 @@ contract DeployUnichainV4 is Script {
         address deployerAddress = vm.addr(deployerPrivateKey);
         address governance = deployerAddress; // Use deployer as governance for this deployment
 
-        console2.log("=== Dependency Deployment Script Starting ===");
-        console2.log("Running on chain ID:", block.chainid);
-        console2.log("Deployer address:", deployerAddress);
-        console2.log("==========================================");
-
-        // Step 1: Use existing PoolManager
-        console2.log("Using Unichain PoolManager at:", UNICHAIN_POOL_MANAGER);
-        poolManager = IPoolManager(UNICHAIN_POOL_MANAGER);
-
-        // --- Broadcast: Deploy Dependencies & Test Routers ---
-        console2.log("\n--- Starting Broadcast: Dependencies & Test Routers ---");
         vm.startBroadcast(deployerPrivateKey);
 
-        // Step 2: Deploy Policy Manager
-        console2.log("Deploying PoolPolicyManager...");
-        uint24[] memory supportedTickSpacings = new uint24[](3);
-        supportedTickSpacings[0] = 10;
-        supportedTickSpacings[1] = 60;
-        supportedTickSpacings[2] = 200;
+        poolManager = IPoolManager(UNICHAIN_POOL_MANAGER);
 
+        // --- Deploy Dependencies ---
+
+        // Deploy PoolPolicyManager
+        uint24[] memory supportedTickSpacings_ = new uint24[](3);
+        supportedTickSpacings_[0] = 10;
+        supportedTickSpacings_[1] = 60;
+        supportedTickSpacings_[2] = 200;
         policyManager = new PoolPolicyManager(
-            governance,
-            FEE,
-            supportedTickSpacings,
-            1e17, // Interest Fee
-            address(0) // Fee Collector
+            deployerAddress,
+            3000, // defaultDynamicFeePpm
+            supportedTickSpacings_,
+            1e17, // protocolInterestFeePercentage (10%)
+            deployerAddress // feeCollector
         );
-        console2.log("PoolPolicyManager Deployed at:", address(policyManager));
 
-        // Step 2.5: Deploy Oracle (needs policyManager)
-        console2.log("Deploying TruncGeoOracleMulti...");
-        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance, policyManager);
-        console2.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
+        // Deploy TruncGeoOracleMulti
+        truncGeoOracle = new TruncGeoOracleMulti(poolManager, deployerAddress, policyManager);
 
-        // Step 3: Deploy Liquidity Manager
-        console2.log("Deploying Liquidity Manager...");
-        liquidityManager = new FullRangeLiquidityManager(poolManager, governance);
-        console2.log("LiquidityManager deployed at:", address(liquidityManager));
+        // Deploy LiquidityManager
+        liquidityManager = new FullRangeLiquidityManager(poolManager, deployerAddress);
 
-        // Step 4: Deploy test routers
-        console2.log("Deploying test routers...");
+        // --- Deploy Test Routers ---
         lpRouter = new PoolModifyLiquidityTest(poolManager);
         swapRouter = new PoolSwapTest(poolManager);
         donateRouter = new PoolDonateTest(poolManager);
-        console2.log("Test LiquidityRouter deployed at:", address(lpRouter));
-        console2.log("Test SwapRouter deployed at:", address(swapRouter));
-        console2.log("Test Donate Router deployed at:", address(donateRouter));
-
-        // Removed: Hook deployment, Dynamic Fee Manager deployment, configurations, pool initialization
 
         vm.stopBroadcast();
-        console2.log("--- Broadcast Complete ---");
 
-        // Output summary
-        console2.log("\n=== Dependency Deployment Complete ===");
-        console2.log("Using Unichain PoolManager:", address(poolManager));
-        console2.log("Deployed PolicyManager:", address(policyManager));
-        console2.log("Deployed LiquidityManager:", address(liquidityManager));
-        console2.log("Deployed TruncGeoOracleMulti:", address(truncGeoOracle));
-        console2.log("Deployed Test LP Router:", address(lpRouter));
-        console2.log("Deployed Test Swap Router:", address(swapRouter));
-        console2.log("Deployed Test Donate Router:", address(donateRouter));
+        // --- Log Deployed Addresses ---
     }
 
     // Removed: _getHookSaltConfig function (no longer needed here)

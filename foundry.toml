@@ -19,7 +19,7 @@ src = "src"
 out = "out"
 libs = ["lib"]
 ffi = true
-fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}]
+fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
 solc_version = "0.8.26"
 evm_version = "cancun"
 viaIR = true
@@ -72,3 +72,6 @@ runs = 256 # Default fuzz runs
 # Constrain amount0 and amount1 to prevent hitting known V4 core overflow reverts
 # Using approximately type(uint128).max * 10 as a large but reasonable limit
 max_inputs = { amount0 = "3402823669209384634633746074317682114550", amount1 = "3402823669209384634633746074317682114550" }
+
+[rpc_endpoints]
+unichain_mainnet = "${UNICHAIN_MAINNET_RPC_URL}"

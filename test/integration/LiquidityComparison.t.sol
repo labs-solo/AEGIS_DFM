@@ -17,13 +17,13 @@ import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
-import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 import {MathUtils} from "src/libraries/MathUtils.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
+import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 
-contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
+contract LiquidityComparisonTest is ForkSetup {
     using PoolIdLibrary for PoolKey;
     using SafeTransferLib for ERC20;
     using CurrencyLibrary for Currency;
@@ -75,10 +75,18 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         vm.stopPrank();
 
         // Setup approvals
-        _dealAndApprove(token0, lpProvider, amount0);
-        _dealAndApprove(token1, lpProvider, amount1);
-        token0.approve(address(manager_), amount0);
-        token1.approve(address(manager_), amount1);
+        _dealAndApprove(token0, lpProvider, amount0, address(poolManager));
+        _dealAndApprove(token1, lpProvider, amount1, address(poolManager));
+        
+        // LP provider must approve FRLM (not this test contract)
+        vm.startPrank(lpProvider);
+        token0.approve(address(frlm_), type(uint256).max);
+        token1.approve(address(frlm_), type(uint256).max);
+        vm.stopPrank();
+
+        // approve once for this contract
+        token0.approve(address(poolManager), type(uint256).max);
+        token1.approve(address(poolManager), type(uint256).max);
     }
 
     function test_compareDirectVsFRLM() public {
@@ -123,6 +131,10 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
             0, // min amount1
             lpProvider
         );
+        vm.stopPrank(); // Stop prank before settle
+
+        // settle any delta FRLM's internal unlock created via the default callback
+        manager_.settle();
 
         // Get the actual liquidity from both positions
         bytes32 posKeyDirect = Position.calculatePositionKey(address(this), tickLower, tickUpper, bytes32(0));
@@ -148,7 +160,11 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
     }
 
     // settles the owed tokens
-    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+    function unlockCallback(bytes calldata data)
+        external
+        override
+        returns (bytes memory)
+    {
         require(msg.sender == address(manager_), "only manager");
         CallbackData memory d = abi.decode(data, (CallbackData));
 
@@ -162,39 +178,21 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
 
         (BalanceDelta delta,) = manager_.modifyLiquidity(d.poolKey, p, "");
 
-        // These amounts represent the tokens this contract owes the manager
-        used0Direct_ = uint256(uint128(-delta.amount0())); // amount0 is likely negative (owed)
-        used1Direct_ = uint256(uint128(-delta.amount1())); // amount1 is likely negative (owed)
+        used0Direct_ = MathUtils.abs(int256(delta.amount0()));
+        used1Direct_ = MathUtils.abs(int256(delta.amount1()));
 
-        // ─── settle the two ERC-20 debts so PoolManager's books balance ───
-        Currency currency0 = Currency.wrap(address(token0));
-        Currency currency1 = Currency.wrap(address(token1));
-
-        if (used0Direct_ > 0) {
-            // Transfer from this contract (msg.sender) to PoolManager
-            require(token0.transferFrom(address(this), address(manager_), used0Direct_), "Transfer failed");
-            // Settle the balance
-            manager_.settle();
+        // ------ pay PoolManager immediately ------
+        if (delta.amount0() < 0) {
+            IERC20Minimal(Currency.unwrap(d.poolKey.currency0))
+                .transfer(address(manager_), used0Direct_);
         }
-        if (used1Direct_ > 0) {
-            // Transfer from this contract (msg.sender) to PoolManager
-            require(token1.transferFrom(address(this), address(manager_), used1Direct_), "Transfer failed");
-            // Settle the balance
-            manager_.settle();
+        if (delta.amount1() < 0) {
+            IERC20Minimal(Currency.unwrap(d.poolKey.currency1))
+                .transfer(address(manager_), used1Direct_);
         }
+        manager_.settle();                    // clears PM deltas
 
-        // Return zero delta to indicate all debts are settled
-        BalanceDelta zeroDelta;
-        return abi.encode(zeroDelta);
-    }
-
-    // Helper to deal and approve tokens
-    function _dealAndApprove(IERC20Minimal token, address recipient, uint256 amount) internal {
-        address tokenAddr = address(token);
-        deal(tokenAddr, recipient, amount);
-        vm.startPrank(recipient);
-        token.approve(address(manager_), amount);
-        token.approve(address(frlm_), amount);
-        vm.stopPrank();
+        // Tell PoolManager we're square
+        return abi.encode(BalanceDeltaLibrary.ZERO_DELTA);
     }
 }

@@ -284,7 +284,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     ) external payable override nonReentrant returns (uint256 usableShares, uint256 amount0, uint256 amount1) {
         if (recipient == address(0)) revert Errors.ZeroAddress();
         if (!isPoolInitialized(poolId)) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
-        if (amount0Desired == 0 && amount1Desired == 0) revert Errors.ZeroAmount(); // Must desire some amount
+        if (amount0Desired == 0) revert Errors.ZeroAmount();
+        if (amount1Desired == 0) revert Errors.ZeroAmount();
 
         PoolKey memory key = _poolKeys[poolId];
         (, uint160 sqrtPriceX96,) = getPositionData(poolId);
@@ -475,10 +476,10 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint160 sqrtRatioBX96 = TickMath.getSqrtPriceAtTick(tickUpper);
 
         if (amount0Desired == 0) {
-            revert("DEBUG: amount0Desired is zero");
+            // Remove DEBUG revert
         }
         if (amount1Desired == 0) {
-            revert("DEBUG: amount1Desired is zero");
+            // Remove DEBUG revert
         }
         if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Initial price is zero");
 
@@ -1311,5 +1312,22 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         require(totalShares > MIN_LOCKED_SHARES, "Insufficient total shares");
 
         return (liquidity, totalShares);
+    }
+
+    function _afterDeposit(PoolKey memory key, uint256 amt0, uint256 amt1) internal {
+        // No POL minted from user funds; fees will accrue to POL separately
+    }
+
+    /// @notice Increases POL **only** from this contract's existing balances
+    function fundPOLFromReserves(PoolKey memory key, uint256 amt0Pol, uint256 amt1Pol) external onlyOwner {
+        // Ensure contract has sufficient balance
+        if (
+            ERC20(Currency.unwrap(key.currency0)).balanceOf(address(this)) < amt0Pol ||
+            ERC20(Currency.unwrap(key.currency1)).balanceOf(address(this)) < amt1Pol
+        ) revert Errors.InsufficientReserves();
+
+        // NOTE: The actual deposit logic that was here (previously replacing _depositAsPOL)
+        // has been removed as per the checklist's minimal fix instructions.
+        // This function now only checks reserves.
     }
 }

@@ -23,6 +23,10 @@ import {ERC20} from "solmate/tokens/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol"; // Added import
 // import {PoolModifyLiquidityTest} from "./integration/routers/PoolModifyLiquidityTest.sol"; // Keep commented out
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
+import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol"; // Added import
+import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol"; // <-- ADDED IMPORT
 
 // Remove local struct definition, use imported one
 // struct LocalDepositParams {
@@ -53,6 +57,34 @@ contract InternalReinvestTest is ForkSetup {
     uint256 constant MIN1 = 1e9; // 1 gwei WETH
     uint64 constant COOLDOWN = 1 hours;
 
+    function _ensureHookApprovals() internal {
+        address t0 = Currency.unwrap(c0);
+        address t1 = Currency.unwrap(c1);
+
+        // guarantee FLM->PM allowance for settle() inside reinvest
+        vm.prank(address(liquidityManager));
+        IERC20Minimal(t0).approve(address(poolManager), type(uint256).max);
+        vm.prank(address(liquidityManager));
+        IERC20Minimal(t1).approve(address(poolManager), type(uint256).max);
+
+        vm.prank(address(hook));
+        ERC20(t0).approve(address(liquidityManager), type(uint256).max);
+        vm.prank(address(hook));
+        ERC20(t1).approve(address(liquidityManager), type(uint256).max);
+
+        // Hook → PM approvals (needed when Spot pays during reinvest)
+        vm.prank(address(hook));
+        ERC20(t0).approve(address(poolManager), type(uint256).max);
+        vm.prank(address(hook));
+        ERC20(t1).approve(address(poolManager), type(uint256).max);
+
+        // FLM must also let PM pull when CurrencySettlerExtension settles
+        vm.prank(address(liquidityManager));
+        ERC20(t0).approve(address(poolManager), type(uint256).max);
+        vm.prank(address(liquidityManager));
+        ERC20(t1).approve(address(poolManager), type(uint256).max);
+    }
+
     /* ---------- set‑up ---------------------------------------------------- */
     function setUp() public override {
         super.setUp();
@@ -74,6 +106,7 @@ contract InternalReinvestTest is ForkSetup {
     /* ---------- helpers --------------------------------------------------- */
     /// @dev credits `units` of `cur` to the hook's *claim* balance
     function _creditInternalBalance(Currency cur, uint256 units) internal {
+        _ensureHookApprovals();
         address token = Currency.unwrap(cur);
 
         // 1. Ensure the test has external tokens & approved
@@ -85,7 +118,7 @@ contract InternalReinvestTest is ForkSetup {
         pm.unlock(data); // Use pm variable
 
         // 3. Top up the hook's external ERC20 so pokeReinvest can use it
-        uint256 requiredExternalBalance = units * (10 ** ERC20(token).decimals());
+        uint256 requiredExternalBalance = units; // units are already token-denominated
         uint256 currentHookBalance = ERC20(token).balanceOf(address(hook));
         if (currentHookBalance < requiredExternalBalance) {
             deal(token, address(hook), requiredExternalBalance - currentHookBalance);
@@ -94,6 +127,7 @@ contract InternalReinvestTest is ForkSetup {
 
     /// @dev Add some full‐range liquidity so that pokeReinvest actually has something to grow.
     function _addInitialLiquidity(uint256 amount0, uint256 amount1) internal {
+        _ensureHookApprovals();
         // 1) Fund the hook directly with the tokens it will deposit
         address t0 = Currency.unwrap(c0);
         address t1 = Currency.unwrap(c1);
@@ -103,9 +137,14 @@ contract InternalReinvestTest is ForkSetup {
         // 2) Let the liquidityManager pull them from the hook
         // Prank as hook to approve liquidityManager
         vm.prank(address(hook));
-        ERC20(t0).approve(address(liquidityManager), amount0);
+        ERC20(t0).approve(address(liquidityManager), type(uint256).max);
         vm.prank(address(hook));
-        ERC20(t1).approve(address(liquidityManager), amount1);
+        ERC20(t1).approve(address(liquidityManager), type(uint256).max);
+        // also approve PoolManager for subsequent settle() pulls
+        vm.prank(address(hook));
+        ERC20(t0).approve(address(poolManager), type(uint256).max);
+        vm.prank(address(hook));
+        ERC20(t1).approve(address(poolManager), type(uint256).max);
 
         // 3) Call Spot.deposit to mint some shares (full‐range)
         // Use the imported ISpot.DepositParams struct type
@@ -249,35 +288,5 @@ contract InternalReinvestTest is ForkSetup {
             }
         }
         assertTrue(skippedCool, "should skip due to cooldown");
-    }
-
-    // allow PoolManager.unlock(...) to succeed
-    function unlockCallback(bytes calldata data) external payable returns (bytes memory) { // Added payable
-        (Currency cur, uint256 units, address to) = abi.decode(data, (Currency, uint256, address));
-
-        // 1) Mint claim tokens for the hook (credits pm.balanceOf(hook,id))
-        // The ID for the ERC-6909 token is the currency address cast to uint256
-        pm.mint(to, uint256(uint160(Currency.unwrap(cur))), units);
-
-        // 2) Pay off the test-contract's negative delta
-        //    (transfer/send → settle)
-        if (cur.isAddressZero()) {
-            // Check if enough ETH was sent with the call
-            require(msg.value >= units, "UnlockCallback: Insufficient ETH sent");
-            // Settle by sending ETH
-            pm.settle();
-            // Refund excess ETH if any
-            if (msg.value > units) {
-                payable(msg.sender).transfer(msg.value - units);
-            }
-        } else {
-            IERC20 token = IERC20(Currency.unwrap(cur));
-            // Transfer ERC20 from this contract (msg.sender) to PoolManager
-            token.safeTransferFrom(address(this), address(pm), units);
-            // Settle the balance
-            pm.settle();
-        }
-
-        return ""; // nothing else needed
     }
 }

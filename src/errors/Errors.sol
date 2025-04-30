@@ -19,6 +19,7 @@ library Errors {
     error CallerNotMarginContract();
     error AccessOnlyOwner(address caller);
     error UnauthorizedCaller(address caller);
+    error GovernanceNotInitialized();
 
     // --- Validation & Input ---
     error ValidationDeadlinePassed(uint32 deadline, uint32 blockTime);
@@ -98,6 +99,7 @@ library Errors {
     error PoolInvalidFeeOrTickSpacing(uint24 fee, int24 tickSpacing);
     error PoolTickOutOfRange(int24 tick, int24 minTick, int24 maxTick);
     error PoolInEmergencyState(bytes32 poolId);
+    error PoolInvalidStateTransition(bytes32 poolId, string currentState, string targetState);
     error OnlyDynamicFeePoolAllowed();
     error FailedToReadPoolData(PoolId poolId);
     error PoolKeyAlreadyStored(bytes32 poolId);
@@ -173,9 +175,15 @@ library Errors {
     error ETHTransferFailed(address to, uint256 amount);
     error TransferFailed();
     error TransferFromFailed();
+    error InsufficientReserves();
 
     // --- Oracle ---
     error OracleOperationFailed(string operation, string reason);
+    error OracleNotInitialized(PoolId poolId);
+    error OracleUpdateFailed(PoolId poolId, string reason);
+    error OraclePriceInvalid(uint160 sqrtPriceX96);
+    error OracleTickInvalid(int24 tick);
+    error OracleCapExceeded(PoolId poolId, int24 tick, int24 maxMove);
 
     // --- Fee Reinvestment ---
     error FeeExtractionFailed(string reason);
@@ -191,6 +199,9 @@ library Errors {
     error CacheStale(uint32 lastUpdate, uint32 currentTime, uint32 maxAge);
     error FeeReinvestNotAuthorized(address caller);
     error CannotWithdrawProtocolFees();
+    error ReinvestmentAmountTooSmall(uint256 amount0, uint256 amount1);
+    error ReinvestmentCooldownNotMet(uint64 lastReinvest, uint64 cooldown);
+    error ReinvestmentThresholdNotMet(uint256 balance0, uint256 balance1, uint256 min0, uint256 min1);
 
     // --- Margin & Vault ---
     error WithdrawalWouldMakeVaultInsolvent();
