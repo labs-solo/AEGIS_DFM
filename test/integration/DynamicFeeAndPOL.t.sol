@@ -139,23 +139,24 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
     function _setupApprovals() internal {
         vm.startPrank(user1);
-        // add PoolManager approvals for hook debt-settlements
-        weth .approve(address(poolManager), type(uint256).max);
-        usdc .approve(address(poolManager), type(uint256).max);
-        weth.approve(address(liquidityManager), type(uint256).max);
-        usdc.approve(address(liquidityManager), type(uint256).max);
+        uint256 MAX = type(uint256).max;
+        // always allow both contracts to pull
+        weth.approve(address(poolManager), MAX);
+        usdc.approve(address(poolManager), MAX);
+        weth.approve(address(liquidityManager), MAX);
+        usdc.approve(address(liquidityManager), MAX);
         vm.stopPrank();
         vm.startPrank(user2);
-        weth.approve(address(poolManager), type(uint256).max);
-        usdc.approve(address(poolManager), type(uint256).max);
-        weth.approve(address(liquidityManager), type(uint256).max);
-        usdc.approve(address(liquidityManager), type(uint256).max);
+        weth.approve(address(poolManager), MAX);
+        usdc.approve(address(poolManager), MAX);
+        weth.approve(address(liquidityManager), MAX);
+        usdc.approve(address(liquidityManager), MAX);
         vm.stopPrank();
         vm.startPrank(lpProvider);
-        weth.approve(address(poolManager), type(uint256).max);
-        usdc.approve(address(poolManager), type(uint256).max);
-        weth.approve(address(liquidityManager), type(uint256).max);
-        usdc.approve(address(liquidityManager), type(uint256).max);
+        weth.approve(address(poolManager), MAX);
+        usdc.approve(address(poolManager), MAX);
+        weth.approve(address(liquidityManager), MAX);
+        usdc.approve(address(liquidityManager), MAX);
         weth.approve(address(swapRouter), type(uint256).max);
         usdc.approve(address(swapRouter), type(uint256).max);
         weth.approve(address(lpRouter), type(uint256).max);
@@ -357,11 +358,8 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         (uint160 currentSqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
         uint160 sqrtPriceLimitX96 = uint160((uint256(currentSqrtPriceX96) * 95) / 100);
 
-        SwapParams memory params = SwapParams({
-            zeroForOne: zeroForOne,
-            amountSpecified: amountSpecified,
-            sqrtPriceLimitX96: sqrtPriceLimitX96
-        });
+        SwapParams memory params =
+            SwapParams({zeroForOne: zeroForOne, amountSpecified: amountSpecified, sqrtPriceLimitX96: sqrtPriceLimitX96});
         PoolSwapTest.TestSettings memory settings =
             PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false});
 

@@ -38,9 +38,11 @@ import {TransferUtils} from "./utils/TransferUtils.sol";
 import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
+import {LiquidityQ96, LiquidityQ96Lib} from "./types/LiquidityQ96.sol";
 
 using SafeCast for uint256;
 using SafeCast for int256;
+using LiquidityQ96Lib for LiquidityQ96;
 
 /**
  * @title FullRangeLiquidityManager
@@ -154,7 +156,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     bytes32 private constant POOLS_SLOT = bytes32(uint256(6));
     uint256 private constant POSITIONS_OFFSET = 6;
 
-    /// @notice Operation selector sent to the hook/PoolManager via `unlock`
+    /**
+     * @notice Operation selector sent to the hook/PoolManager via `unlock`
+     */
     enum CallbackType {
         DEPOSIT,
         WITHDRAW,
@@ -162,11 +166,16 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         REINVEST_PROTOCOL_FEES
     }
 
-    /// @notice Encoded in `unlock` calldata so Spot ↔︎ LM stay in sync
+    /// @dev Boundary object between LM ↔︎ PoolManager
+    /// @notice **Unit domains**
+    ///  • `shares`      – ERC-6909 share units (plain uint128)
+    ///  • `liquidity`   – Uniswap V4 liquidity (uint256 Q64.96) – never leave
+    ///    this struct raw; convert *inside* unlockCallback.
     struct CallbackData {
         PoolId poolId;
         CallbackType callbackType;
-        uint128 shares; // v4‑liquidity to add/remove
+        uint128 shares;
+        /// ERC-6909 share units (plain integer, **NOT** Q64.96)
         uint128 oldTotalShares; // bookkeeping
         uint256 amount0;
         uint256 amount1;
@@ -669,7 +678,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         delta = abi.decode(result, (BalanceDelta));
 
         // Handle delta - Pull tokens owed to this contract
-        CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, address(this), address(this));
+        CurrencySettlerExtension.handlePoolDelta(
+            manager, delta, key.currency0, key.currency1, address(this), address(this)
+        );
 
         // Transfer final tokens to user
         if (amount0Out > 0) {
@@ -1137,23 +1148,29 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         PoolKey memory key = _poolKeys[cbData.poolId];
         if (key.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(cbData.poolId));
 
-        int256 liquidityDelta;
-        address recipient;
-        if (cbData.callbackType == CallbackType.DEPOSIT || cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES) {
-            liquidityDelta = int256(uint256(cbData.shares));
-            recipient = address(this); // Tokens stay/settle within LM
-        } else if (cbData.callbackType == CallbackType.WITHDRAW || cbData.callbackType == CallbackType.BORROW) {
-            liquidityDelta = -int256(uint256(cbData.shares));
-            recipient = cbData.recipient; // Tokens sent to original caller
-        } else {
-            revert Errors.InvalidCallbackType(uint8(cbData.callbackType));
-        }
+        // ─────────────────────────────────────────────────────────────
+        //  UNIT CONVERSION ‒ shares (plain)  → liquidity (Q64.96)
+        // ─────────────────────────────────────────────────────────────
+        // uint256 liquidityQ96 = uint256(cbData.shares) << 96; // safe: 2¹²⁸ << 96 ≤ 2²²⁴-1
+        LiquidityQ96 liq = LiquidityQ96Lib.fromShares(cbData.shares);
 
-        // Modify liquidity in the pool using liquidityDelta derived from cbData.shares
+        // int256 finalLiquidityDelta = (
+        //     cbData.callbackType == CallbackType.DEPOSIT ||
+        //     cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES
+        // )
+        //     ?  int256(liquidityQ96)
+        //     : -int256(liquidityQ96);
+
+        uint256 liquidityQ96 = liq.unwrap(); // Use library to unwrap
+        // Apply sign (+ for add, − for remove/borrow)
+        int256 liqDelta = (
+            cbData.callbackType == CallbackType.DEPOSIT || cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES
+        ) ? int256(liquidityQ96) : -int256(liquidityQ96);
+
         ModifyLiquidityParams memory params = ModifyLiquidityParams({
             tickLower: TickMath.minUsableTick(key.tickSpacing),
             tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-            liquidityDelta: liquidityDelta,
+            liquidityDelta: liqDelta, // ✅ correct units & sign
             salt: bytes32(0)
         });
 
@@ -1161,7 +1178,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         (BalanceDelta delta,) = manager.modifyLiquidity(key, params, "");
 
         // Perform settlement
-        CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, address(this), address(this));
+        CurrencySettlerExtension.handlePoolDelta(
+            manager, delta, key.currency0, key.currency1, address(this), address(this)
+        );
 
         // Tell the PoolManager that everything is settled
         BalanceDelta zeroDelta;
@@ -1322,8 +1341,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     function fundPOLFromReserves(PoolKey memory key, uint256 amt0Pol, uint256 amt1Pol) external onlyOwner {
         // Ensure contract has sufficient balance
         if (
-            ERC20(Currency.unwrap(key.currency0)).balanceOf(address(this)) < amt0Pol ||
-            ERC20(Currency.unwrap(key.currency1)).balanceOf(address(this)) < amt1Pol
+            ERC20(Currency.unwrap(key.currency0)).balanceOf(address(this)) < amt0Pol
+                || ERC20(Currency.unwrap(key.currency1)).balanceOf(address(this)) < amt1Pol
         ) revert Errors.InsufficientReserves();
 
         // NOTE: The actual deposit logic that was here (previously replacing _depositAsPOL)

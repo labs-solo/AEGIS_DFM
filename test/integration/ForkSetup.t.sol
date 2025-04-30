@@ -45,6 +45,7 @@ import {PoolModifyLiquidityTest} from "v4-core/test/PoolModifyLiquidityTest.sol"
 import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
 import {PoolDonateTest} from "v4-core/test/PoolDonateTest.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
+import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
 /**
  * @title ForkSetup
@@ -112,20 +113,25 @@ contract ForkSetup is Test, IUnlockCallback {
     uint160 internal constant SQRT_RATIO_1_1 = 79228162514264337593543950336; // 2**96
 
     // Helper to deal and approve tokens to a spender (typically PoolManager or a Router)
-    function _dealAndApprove(
-        IERC20Minimal token,
-        address      holder,
-        uint256      amount,
-        address      spender
-    ) internal {
+    function _dealAndApprove(IERC20Minimal token, address holder, uint256 amount, address spender) internal {
         vm.startPrank(holder);
         deal(address(token), holder, amount); // Use vm.deal cheatcode
-        // ① the place that will pull *immediately* (PoolManager or FLM)
-        token.approve(spender,               type(uint256).max);
-        // ② PoolManager may later pull from that holder during settle()
+
+        uint256 MAX = type(uint256).max;
+
+        // ➊ primary approval requested by the caller
+        token.approve(spender, MAX);
+
+        // ➋ **always** guarantee PoolManager can pull
         if (spender != address(poolManager)) {
-            token.approve(address(poolManager), type(uint256).max);
+            token.approve(address(poolManager), MAX);
         }
+
+        // ➌ **always** guarantee LiquidityManager can pull
+        if (spender != address(liquidityManager)) {
+            token.approve(address(liquidityManager), MAX);
+        }
+
         vm.stopPrank();
     }
 
@@ -143,7 +149,7 @@ contract ForkSetup is Test, IUnlockCallback {
     function setUp() public virtual {
         // 1. Create Fork & Basic Env Setup
         require(_safeFork(), "Fork setup failed");
-        
+
         // 2. Setup Test User & Deployer EOA (Using PK=1 for CREATE2 consistency)
         testUser = vm.addr(2); // Use PK 2 for test user
         vm.deal(testUser, FUND_ETH_AMOUNT);
@@ -338,10 +344,15 @@ contract ForkSetup is Test, IUnlockCallback {
         tokens[0] = address(usdc);
         tokens[1] = address(weth);
 
-        for (uint i = 0; i < tokens.length; ++i) {
-            // Allow LiquidityManager to spend tokens for PoolManager
+        for (uint256 i = 0; i < tokens.length; ++i) {
+            // ➊ FLM → PM (already here)
             vm.prank(address(liquidityManager));
             IERC20Minimal(tokens[i]).approve(address(poolManager), type(uint256).max);
+
+            // ➋ **FLM → FLM** self-approval needed because FLM
+            //    calls `token.transferFrom(FLM, PM, …)` inside its callback.
+            vm.prank(address(liquidityManager));
+            IERC20Minimal(tokens[i]).approve(address(liquidityManager), type(uint256).max);
 
             // Allow Spot Hook to spend tokens for PoolManager
             vm.prank(address(fullRange)); // Spot hook itself
@@ -532,13 +543,10 @@ contract ForkSetup is Test, IUnlockCallback {
         return abi.encode(BalanceDeltaLibrary.ZERO_DELTA);
     }
 
-    function _initializePool(
-        address token0,
-        address token1,
-        uint24 fee,
-        int24 tickSpacing,
-        uint160 sqrtPriceX96
-    ) internal returns (PoolId) {
+    function _initializePool(address token0, address token1, uint24 fee, int24 tickSpacing, uint160 sqrtPriceX96)
+        internal
+        returns (PoolId)
+    {
         // ... existing code ...
         // Remove the commented line about dynamicFee
         // ... existing code ...

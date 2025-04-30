@@ -38,27 +38,51 @@ library CurrencySettlerExtension {
         address caller,
         address recipient
     ) internal {
+        int128 amount0 = delta.amount0();
+        int128 amount1 = delta.amount1();
+
         // ────────────────────────────
         // 1) Handle NEGATIVE deltas (we owe the pool manager)
-        //    - Transfer/send required amount, then call settle
+        //    - Pay *all* debts first
         // ────────────────────────────
-        if (delta.amount0() < 0) {
-            uint256 amount0ToSettle = uint256(int256(-delta.amount0()));
-            _settleOwed(manager, cur0, caller, amount0ToSettle);
+        if (amount0 < 0) {
+            uint256 amount0ToSettle = uint256(int256(-amount0));
+            if (cur0.isAddressZero()) {
+                revert("Native ETH settlement requires direct payable call");
+            } else {
+                IERC20Minimal token0 = IERC20Minimal(Currency.unwrap(cur0));
+                require(
+                    token0.transferFrom(caller, address(manager), amount0ToSettle), "CSE: token0 transferFrom failed"
+                );
+            }
         }
-        if (delta.amount1() < 0) {
-            uint256 amount1ToSettle = uint256(int256(-delta.amount1()));
-            _settleOwed(manager, cur1, caller, amount1ToSettle);
+        if (amount1 < 0) {
+            uint256 amount1ToSettle = uint256(int256(-amount1));
+            if (cur1.isAddressZero()) {
+                revert("Native ETH settlement requires direct payable call");
+            } else {
+                IERC20Minimal token1 = IERC20Minimal(Currency.unwrap(cur1));
+                require(
+                    token1.transferFrom(caller, address(manager), amount1ToSettle), "CSE: token1 transferFrom failed"
+                );
+            }
         }
 
         // ────────────────────────────
-        // 2) Handle POSITIVE deltas (pool owes us – pull via `take`)
+        // 2) Settle ONCE if any negative delta was paid
         // ────────────────────────────
-        if (delta.amount0() > 0) {
-            manager.take(cur0, recipient, uint128(uint256(int256(delta.amount0()))));
+        if (amount0 < 0 || amount1 < 0) {
+            manager.settle(); // Call settle only after all transfers are done
         }
-        if (delta.amount1() > 0) {
-            manager.take(cur1, recipient, uint128(uint256(int256(delta.amount1()))));
+
+        // ────────────────────────────
+        // 3) Handle POSITIVE deltas (pool owes us – pull via `take`)
+        // ────────────────────────────
+        if (amount0 > 0) {
+            manager.take(cur0, recipient, uint128(uint256(int256(amount0))));
+        }
+        if (amount1 > 0) {
+            manager.take(cur1, recipient, uint128(uint256(int256(amount1))));
         }
     }
 

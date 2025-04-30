@@ -70,11 +70,12 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         deal(address(usdc), address(this), amt0 + largeUsdc);
         deal(address(weth), address(this), amt1 + largeWeth);
 
-        // Approve both LiquidityManager *and* PoolManager
-        ERC20(address(usdc)).approve(address(liquidityManager), type(uint256).max);
-        ERC20(address(weth)).approve(address(liquidityManager), type(uint256).max);
-        ERC20(address(usdc)).approve(address(poolManager),    type(uint256).max);
-        ERC20(address(weth)).approve(address(poolManager),    type(uint256).max);
+        uint256 MAX = type(uint256).max;
+        // always allow both contracts to pull
+        ERC20(address(usdc)).approve(address(liquidityManager), MAX);
+        ERC20(address(weth)).approve(address(liquidityManager), MAX);
+        ERC20(address(usdc)).approve(address(poolManager), MAX);
+        ERC20(address(weth)).approve(address(poolManager), MAX);
 
         // Deposit full-range liquidity
         liquidityManager.deposit(pid, amt0, amt1, 0, 0, address(this));
@@ -301,7 +302,9 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // 50% through decay period, fee should have decayed about 50%
         (uint256 feeAfter50Percent, uint256 timestampAfter50Percent) = dfm.getFeeState(pid);
         assertTrue(feeAfter50Percent < feeAfter10Percent, "Fee did not decay further after 50%");
-        assertApproxEqRel(feeAfter50Percent - feeAfter10Percent, (feeAfterCap - feeAfter10Percent) / 2, 1e16, "Decay not ~50%"); // Allow 1% tolerance
+        assertApproxEqRel(
+            feeAfter50Percent - feeAfter10Percent, (feeAfterCap - feeAfter10Percent) / 2, 1e16, "Decay not ~50%"
+        ); // Allow 1% tolerance
 
         // Fast-forward to 100% of decay period (complete decay)
         vm.warp(block.timestamp + (policyManager.getSurgeDecayPeriodSeconds(pid) / 2)); // Now 100% through

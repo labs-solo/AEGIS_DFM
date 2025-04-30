@@ -61,28 +61,21 @@ contract InternalReinvestTest is ForkSetup {
         address t0 = Currency.unwrap(c0);
         address t1 = Currency.unwrap(c1);
 
-        // guarantee FLM->PM allowance for settle() inside reinvest
-        vm.prank(address(liquidityManager));
-        IERC20Minimal(t0).approve(address(poolManager), type(uint256).max);
-        vm.prank(address(liquidityManager));
-        IERC20Minimal(t1).approve(address(poolManager), type(uint256).max);
+        uint256 MAX = type(uint256).max;
 
-        vm.prank(address(hook));
-        ERC20(t0).approve(address(liquidityManager), type(uint256).max);
-        vm.prank(address(hook));
-        ERC20(t1).approve(address(liquidityManager), type(uint256).max);
-
-        // Hook → PM approvals (needed when Spot pays during reinvest)
-        vm.prank(address(hook));
-        ERC20(t0).approve(address(poolManager), type(uint256).max);
-        vm.prank(address(hook));
-        ERC20(t1).approve(address(poolManager), type(uint256).max);
-
-        // FLM must also let PM pull when CurrencySettlerExtension settles
+        // ── LiquidityManager (FLM) must allow PM to pull during settle()
         vm.prank(address(liquidityManager));
-        ERC20(t0).approve(address(poolManager), type(uint256).max);
+        IERC20Minimal(t0).approve(address(poolManager), MAX);
         vm.prank(address(liquidityManager));
-        ERC20(t1).approve(address(poolManager), type(uint256).max);
+        IERC20Minimal(t1).approve(address(poolManager), MAX);
+
+        // ── Hook must let FLM pull for deposits *and* PM pull for debt settlement
+        vm.startPrank(address(hook));
+        ERC20(t0).approve(address(liquidityManager), MAX);
+        ERC20(t1).approve(address(liquidityManager), MAX);
+        ERC20(t0).approve(address(poolManager), MAX);
+        ERC20(t1).approve(address(poolManager), MAX);
+        vm.stopPrank();
     }
 
     /* ---------- set‑up ---------------------------------------------------- */

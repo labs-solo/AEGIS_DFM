@@ -36,16 +36,15 @@ contract FixHookAddr is Script {
         // Dependencies (use addresses from DeployUnichainV4.s.sol or fetch if needed)
         IPoolManager poolManager_ = IPoolManager(0x1F98400000000000000000000000000000000004);
         IPoolPolicy policyManager_ = IPoolPolicy(vm.envAddress("DEPLOYED_POLICY_MANAGER"));
-        IFullRangeLiquidityManager liquidityManager_ = IFullRangeLiquidityManager(vm.envAddress("DEPLOYED_LIQUIDITY_MANAGER"));
+        IFullRangeLiquidityManager liquidityManager_ =
+            IFullRangeLiquidityManager(vm.envAddress("DEPLOYED_LIQUIDITY_MANAGER"));
         TruncGeoOracleMulti oracle_ = TruncGeoOracleMulti(vm.envAddress("DEPLOYED_ORACLE"));
         IDynamicFeeManager feeManager_ = IDynamicFeeManager(vm.envAddress("DEPLOYED_FEE_MANAGER"));
         address owner_ = vm.envAddress("DEPLOYER_ADDRESS");
 
         // Define required hook flags for Spot (using HookMiner constants)
-        uint160 spotFlags =
-            Hooks.AFTER_SWAP_FLAG |
-            Hooks.BEFORE_SWAP_FLAG;
-            /* // Previous flags, keeping for reference
+        uint160 spotFlags = Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_SWAP_FLAG;
+        /* // Previous flags, keeping for reference
             Hooks.AFTER_INITIALIZE_FLAG |
             Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
@@ -56,12 +55,12 @@ contract FixHookAddr is Script {
 
         // Construct Spot creation code and constructor arguments
         bytes memory spotBytecode = type(Spot).creationCode;
-        bytes memory spotConstructorArgs = abi.encode(
-            poolManager_, policyManager_, liquidityManager_, oracle_, feeManager_, owner_
-        );
+        bytes memory spotConstructorArgs =
+            abi.encode(poolManager_, policyManager_, liquidityManager_, oracle_, feeManager_, owner_);
 
         // Find the correct salt for Spot
-        (address spotHookAddress, bytes32 spotSalt) = HookMiner.find(owner_, spotFlags, spotBytecode, spotConstructorArgs);
+        (address spotHookAddress, bytes32 spotSalt) =
+            HookMiner.find(owner_, spotFlags, spotBytecode, spotConstructorArgs);
 
         // Removed console logs
 
@@ -71,9 +70,8 @@ contract FixHookAddr is Script {
         require(validSpotHookAddress, "Predicted Spot hook address is invalid");
 
         // Deploy Spot with the found salt
-        Spot deployedSpot = new Spot{salt: spotSalt}(
-            poolManager_, policyManager_, liquidityManager_, oracle_, feeManager_, owner_
-        );
+        Spot deployedSpot =
+            new Spot{salt: spotSalt}(poolManager_, policyManager_, liquidityManager_, oracle_, feeManager_, owner_);
         require(address(deployedSpot) == spotHookAddress, "Deployed Spot address mismatch");
         // Removed console log
 

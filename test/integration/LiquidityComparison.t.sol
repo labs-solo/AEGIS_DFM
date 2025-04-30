@@ -77,7 +77,7 @@ contract LiquidityComparisonTest is ForkSetup {
         // Setup approvals
         _dealAndApprove(token0, lpProvider, amount0, address(poolManager));
         _dealAndApprove(token1, lpProvider, amount1, address(poolManager));
-        
+
         // LP provider must approve FRLM (not this test contract)
         vm.startPrank(lpProvider);
         token0.approve(address(frlm_), type(uint256).max);
@@ -134,7 +134,7 @@ contract LiquidityComparisonTest is ForkSetup {
         vm.stopPrank(); // Stop prank before settle
 
         // settle any delta FRLM's internal unlock created via the default callback
-        manager_.settle();
+        manager_.settle(); // one is enough
 
         // Get the actual liquidity from both positions
         bytes32 posKeyDirect = Position.calculatePositionKey(address(this), tickLower, tickUpper, bytes32(0));
@@ -160,11 +160,7 @@ contract LiquidityComparisonTest is ForkSetup {
     }
 
     // settles the owed tokens
-    function unlockCallback(bytes calldata data)
-        external
-        override
-        returns (bytes memory)
-    {
+    function unlockCallback(bytes calldata data) external override returns (bytes memory) {
         require(msg.sender == address(manager_), "only manager");
         CallbackData memory d = abi.decode(data, (CallbackData));
 
@@ -182,15 +178,18 @@ contract LiquidityComparisonTest is ForkSetup {
         used1Direct_ = MathUtils.abs(int256(delta.amount1()));
 
         // ------ pay PoolManager immediately ------
+        Currency cur0 = d.poolKey.currency0;
+        Currency cur1 = d.poolKey.currency1;
+
         if (delta.amount0() < 0) {
-            IERC20Minimal(Currency.unwrap(d.poolKey.currency0))
-                .transfer(address(manager_), used0Direct_);
+            IERC20Minimal(Currency.unwrap(cur0)).transfer(address(manager_), used0Direct_);
+            manager_.sync(cur0); // tell PM its reserves changed
         }
         if (delta.amount1() < 0) {
-            IERC20Minimal(Currency.unwrap(d.poolKey.currency1))
-                .transfer(address(manager_), used1Direct_);
+            IERC20Minimal(Currency.unwrap(cur1)).transfer(address(manager_), used1Direct_);
+            manager_.sync(cur1);
         }
-        manager_.settle();                    // clears PM deltas
+        manager_.settle(); // now clears PM deltas
 
         // Tell PoolManager we're square
         return abi.encode(BalanceDeltaLibrary.ZERO_DELTA);
