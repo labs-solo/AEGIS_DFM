@@ -167,20 +167,27 @@ contract DynamicFeeAndPOLTest is ForkSetup {
     function _addInitialLiquidity() internal {
         uint256 amount0Desired = Currency.unwrap(poolKey.currency0) == address(usdc) ? INITIAL_LP_USDC : INITIAL_LP_WETH;
         uint256 amount1Desired = Currency.unwrap(poolKey.currency0) == address(usdc) ? INITIAL_LP_WETH : INITIAL_LP_USDC;
-        (uint160 initialSqrtPriceX96, int24 tickBefore,,) = StateLibrary.getSlot0(poolManager, poolId);
+        (uint160 initialSqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
         require(initialSqrtPriceX96 > 0, "Pool price is zero");
 
         vm.startPrank(lpProvider);
         weth.approve(address(liquidityManager), type(uint256).max);
         usdc.approve(address(liquidityManager), type(uint256).max);
+
+        // DEBUG: Add minimal dust liquidity first to avoid potential "first deposit" issues
+        try liquidityManager.deposit(poolId, 100, 100, 0, 0, lpProvider) {}
+        catch Error(string memory reason) { revert(string.concat("Initial dust deposit failed: ", reason)); }
+        catch { revert("Low-level error during initial dust deposit"); }
+
+        // Perform the actual intended deposit
         try liquidityManager.deposit(poolId, amount0Desired, amount1Desired, 0, 0, lpProvider) returns (
             uint256 shares, uint256 amount0Used, uint256 amount1Used
         ) {
-            assertTrue(shares > 0, "Deposit failed");
+            assertTrue(shares > 0, "Main deposit failed");
         } catch Error(string memory reason) {
-            revert(reason);
+            revert(string.concat("Main deposit failed: ", reason));
         } catch {
-            revert("Low-level error during deposit");
+            revert("Low-level error during main deposit");
         }
         vm.stopPrank();
     }

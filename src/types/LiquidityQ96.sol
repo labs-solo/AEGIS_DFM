@@ -12,6 +12,11 @@ library LiquidityQ96Lib {
         return LiquidityQ96.unwrap(l);
     }
 
+    /// @dev Convert Q64.96 liquidity -> uint128 for PoolManager calls.
+    function toUint128(LiquidityQ96 l) internal pure returns (uint128) {
+        return uint128(LiquidityQ96.unwrap(l) >> 96);
+    }
+
     /// @dev Convert ERC-6909 `shares` -> Q64.96 liquidity.
     function fromShares(uint128 shares) internal pure returns (LiquidityQ96) {
         return LiquidityQ96.wrap(uint256(shares) << 96);

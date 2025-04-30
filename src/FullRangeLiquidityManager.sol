@@ -353,7 +353,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
 
         uint128 oldTotalSharesInternal = totalSharesInternal;
-        uint128 newTotalSharesInternal = oldTotalSharesInternal + v4LiquidityForPM + uint128(calcResult.lockedAmount);
+        uint128 newTotalSharesInternal = oldTotalSharesInternal + sharesToAdd + uint128(calcResult.lockedAmount);
         positionTotalShares[poolId] = newTotalSharesInternal;
 
         // ─── lock the first MIN_LOCKED_SHARES by minting to address(0) ───
@@ -431,8 +431,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             _handleFirstDepositInternal(sqrtPriceX96, tickSpacing, amount0Desired, amount1Desired, result);
         } else {
             // Subsequent deposits - calculate liquidity (shares) based on one amount and reserves ratio
-            // if (reserve0 == 0 || reserve1 == 0) revert Errors.ValidationInvalidInput("Reserves are zero"); // Commented out - Reserves can be zero initially
-
             uint256 shares0 = MathUtils.calculateProportional(amount0Desired, totalSharesInternal, reserve0, true);
             uint256 shares1 = MathUtils.calculateProportional(amount1Desired, totalSharesInternal, reserve1, true);
             uint256 optimalShares = shares0 < shares1 ? shares0 : shares1;
@@ -449,18 +447,25 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             if (actual0 > MAX_RESERVE) actual0 = MAX_RESERVE;
             if (actual1 > MAX_RESERVE) actual1 = MAX_RESERVE;
 
+            // Cap actual amounts at desired amounts to prevent transferring more than available
+            actual0 = actual0 > amount0Desired ? amount0Desired : actual0;
+            actual1 = actual1 > amount1Desired ? amount1Desired : actual1;
+
+            // Recalculate V4 liquidity based on the potentially capped actual amounts
+            result.v4LiquidityForCallback = LiquidityAmounts.getLiquidityForAmounts(
+                sqrtPriceX96,
+                TickMath.getSqrtPriceAtTick(TickMath.minUsableTick(tickSpacing)), // lower bound
+                TickMath.getSqrtPriceAtTick(TickMath.maxUsableTick(tickSpacing)), // upper bound
+                actual0,
+                actual1
+            );
+            if (result.v4LiquidityForCallback == 0) revert Errors.ZeroAmount(); // Check again after recalc
+
             // Assign to struct fields
             result.actual0 = actual0;
             result.actual1 = actual1;
             result.sharesToAdd = shares; // Use the calculated 'shares' variable
             result.lockedAmount = lockedSharesAmount;
-            result.v4LiquidityForCallback = LiquidityAmounts.getLiquidityForAmounts(
-                sqrtPriceX96,
-                TickMath.getSqrtPriceAtTick(TickMath.minUsableTick(tickSpacing)),
-                TickMath.getSqrtPriceAtTick(TickMath.maxUsableTick(tickSpacing)),
-                actual0,
-                actual1
-            );
         }
     }
 
@@ -492,21 +497,17 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
         if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Initial price is zero");
 
-        // Calculate liquidity using BOTH desired amounts
+        // Use desired amounts directly as actual amounts for transfers and V2 share calculation
+        uint256 actual0 = amount0Desired;
+        uint256 actual1 = amount1Desired;
+
+        // Calculate V4 liquidity based on these actual amounts
         uint128 v4LiquidityForCallback = LiquidityAmounts.getLiquidityForAmounts(
-            sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, amount0Desired, amount1Desired
+            sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, actual0, actual1
         );
         if (v4LiquidityForCallback == 0) revert Errors.ZeroAmount();
 
-        // Calculate actual amounts needed for this liquidity
-        uint256 actual0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtRatioBX96, v4LiquidityForCallback, true);
-        uint256 actual1 = SqrtPriceMath.getAmount1Delta(sqrtRatioAX96, sqrtPriceX96, v4LiquidityForCallback, true);
-
-        // Cap actual amounts at desired amounts (safety check)
-        actual0 = actual0 > amount0Desired ? amount0Desired : actual0;
-        actual1 = actual1 > amount1Desired ? amount1Desired : actual1;
-
-        // V2 Share Calculation
+        // V2 Share Calculation (uses actual0, actual1 as defined above)
         uint128 minLiq128 = MIN_LIQUIDITY;
         uint256 totalV2Shares = MathUtils.sqrt(actual0 * actual1);
 
@@ -519,7 +520,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             revert Errors.InitialDepositTooSmall(minLiq128, totalV2Shares.toUint128());
         }
 
-        // Populate Result Struct
+        // Populate Result Struct (uses actual0, actual1 defined above and original v4LiquidityForCallback)
         result.actual0 = actual0;
         result.actual1 = actual1;
         result.sharesToAdd = usableV2Shares.toUint128();
@@ -681,6 +682,14 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         CurrencySettlerExtension.handlePoolDelta(
             manager, delta, key.currency0, key.currency1, address(this), address(this)
         );
+
+        // Explicitly settle based on v0.3.x interface rules:
+        // Each parameter-less settle() call clears ONE positive delta entry.
+        // We must call it twice if both might be positive, ignoring revert on second if only one was.
+        manager.settle();                 // pops first positive entry (if any)
+        try manager.settle() { } catch {  // pops second positive entry (if any)
+            /* map was already empty or only had one entry - ignore */
+        }
 
         // Transfer final tokens to user
         if (amount0Out > 0) {
@@ -1148,41 +1157,44 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         PoolKey memory key = _poolKeys[cbData.poolId];
         if (key.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(cbData.poolId));
 
-        // ─────────────────────────────────────────────────────────────
-        //  UNIT CONVERSION ‒ shares (plain)  → liquidity (Q64.96)
-        // ─────────────────────────────────────────────────────────────
-        // uint256 liquidityQ96 = uint256(cbData.shares) << 96; // safe: 2¹²⁸ << 96 ≤ 2²²⁴-1
-        LiquidityQ96 liq = LiquidityQ96Lib.fromShares(cbData.shares);
+        // cbData.shares contains the V4 liquidity (uint128) directly
+        uint128 liquidityV4 = cbData.shares;
 
-        // int256 finalLiquidityDelta = (
-        //     cbData.callbackType == CallbackType.DEPOSIT ||
-        //     cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES
-        // )
-        //     ?  int256(liquidityQ96)
-        //     : -int256(liquidityQ96);
-
-        uint256 liquidityQ96 = liq.unwrap(); // Use library to unwrap
-        // Apply sign (+ for add, − for remove/borrow)
-        int256 liqDelta = (
-            cbData.callbackType == CallbackType.DEPOSIT || cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES
-        ) ? int256(liquidityQ96) : -int256(liquidityQ96);
+        // Apply sign (+ for add, − for remove/borrow) and cast to int256
+        // We need to cast uint128 -> uint256 first before casting to int256
+        int256 finalLiquidityDelta = (
+            cbData.callbackType == CallbackType.DEPOSIT ||
+            cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES
+        )
+            ? int256(uint256(liquidityV4))
+            : -int256(uint256(liquidityV4));
 
         ModifyLiquidityParams memory params = ModifyLiquidityParams({
             tickLower: TickMath.minUsableTick(key.tickSpacing),
             tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-            liquidityDelta: liqDelta, // ✅ correct units & sign
+            liquidityDelta: finalLiquidityDelta, // ✅ Use correctly scaled V4 liquidity
             salt: bytes32(0)
         });
 
         // 1. Add / remove liquidity
         (BalanceDelta delta,) = manager.modifyLiquidity(key, params, "");
 
-        // Perform settlement
+        // Perform settlement using the standard CurrencySettlerExtension
+        // This helper handles both paying owed amounts (positive delta)
+        // and receiving owed amounts (negative delta).
         CurrencySettlerExtension.handlePoolDelta(
             manager, delta, key.currency0, key.currency1, address(this), address(this)
         );
 
-        // Tell the PoolManager that everything is settled
+        // Explicitly settle based on v0.3.x interface rules:
+        // Each parameter-less settle() call clears ONE positive delta entry.
+        // We must call it twice if both might be positive, ignoring revert on second if only one was.
+        manager.settle();                 // pops first positive entry (if any)
+        try manager.settle() { } catch {  // pops second positive entry (if any)
+            /* map was already empty or only had one entry - ignore */
+        }
+
+        // Tell the PoolManager that everything is settled (by returning zero delta)
         BalanceDelta zeroDelta;
         return abi.encode(zeroDelta);
     }
