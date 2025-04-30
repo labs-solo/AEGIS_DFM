@@ -683,13 +683,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             manager, delta, key.currency0, key.currency1, address(this), address(this)
         );
 
-        // Explicitly settle based on v0.3.x interface rules:
-        // Each parameter-less settle() call clears ONE positive delta entry.
-        // We must call it twice if both might be positive, ignoring revert on second if only one was.
-        manager.settle();                 // pops first positive entry (if any)
-        try manager.settle() { } catch {  // pops second positive entry (if any)
-            /* map was already empty or only had one entry - ignore */
-        }
+        // Settlement is now handled internally by handlePoolDelta
 
         // Transfer final tokens to user
         if (amount0Out > 0) {
@@ -1140,61 +1134,66 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
 
     /**
-     * @notice Callback function called by PoolManager during unlock operations
-     * @param data Encoded callback data containing operation details
-     * @return bytes The encoded BalanceDelta from the operation
+     * @notice Called by PoolManager after modifyLiquidity or swap operations
+     * @dev Decodes callback data, handles liquidity changes, and settles token balances.
      */
-    function unlockCallback(bytes calldata data) external override returns (bytes memory) {
-        // Only allow calls from the pool manager
-        if (msg.sender != address(manager)) {
-            revert Errors.AccessNotAuthorized(msg.sender);
+    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+        // Revert if PoolManager is not the caller
+        if (msg.sender != address(manager)) revert Errors.AccessOnlyPoolManager();
+
+        // ---------------------------------------------------------------
+        // ⓪ Parse callback data
+        // ---------------------------------------------------------------
+        (CallbackType callbackType, PoolId poolId, uint128 shares, uint128 oldTotalShares, address recipient) =
+            abi.decode(data, (CallbackType, PoolId, uint128, uint128, address));
+
+        PoolKey memory key = _poolKeys[poolId];
+
+        // ---------------------------------------------------------------
+        // ❶ Compute the balance delta from the core callback
+        // ---------------------------------------------------------------
+        int24 tickLower = TickMath.minUsableTick(key.tickSpacing);
+        int24 tickUpper = TickMath.maxUsableTick(key.tickSpacing);
+
+        // Calculate modifyLiquidity delta based on callback type
+        BalanceDelta delta;
+        if (callbackType == CallbackType.DEPOSIT) {
+            delta = manager.modifyLiquidity(key, IPoolManager.ModifyLiquidityParams({tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: int256(int128(shares))}));
+        } else if (callbackType == CallbackType.WITHDRAW) {
+            delta = manager.modifyLiquidity(key, IPoolManager.ModifyLiquidityParams({tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: -int256(int128(shares))}));
+        } else {
+            revert Errors.InvalidCallbackType();
         }
 
-        // Decode the callback data
-        CallbackData memory cbData = abi.decode(data, (CallbackData));
+        // ---------------------------------------------------------------
+        // ❷ Pay / collect tokens between PoolManager and this contract
+        // ---------------------------------------------------------------
 
-        // Verify the pool ID exists
-        PoolKey memory key = _poolKeys[cbData.poolId];
-        if (key.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(cbData.poolId));
-
-        // cbData.shares contains the V4 liquidity (uint128) directly
-        uint128 liquidityV4 = cbData.shares;
-
-        // Apply sign (+ for add, − for remove/borrow) and cast to int256
-        // We need to cast uint128 -> uint256 first before casting to int256
-        int256 finalLiquidityDelta = (
-            cbData.callbackType == CallbackType.DEPOSIT ||
-            cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES
-        )
-            ? int256(uint256(liquidityV4))
-            : -int256(uint256(liquidityV4));
-
-        ModifyLiquidityParams memory params = ModifyLiquidityParams({
-            tickLower: TickMath.minUsableTick(key.tickSpacing),
-            tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-            liquidityDelta: finalLiquidityDelta, // ✅ Use correctly scaled V4 liquidity
-            salt: bytes32(0)
-        });
-
-        // 1. Add / remove liquidity
-        (BalanceDelta delta,) = manager.modifyLiquidity(key, params, "");
-
-        // Perform settlement using the standard CurrencySettlerExtension
-        // This helper handles both paying owed amounts (positive delta)
-        // and receiving owed amounts (negative delta).
         CurrencySettlerExtension.handlePoolDelta(
-            manager, delta, key.currency0, key.currency1, address(this), address(this)
+            manager,
+            delta,
+            key.currency0,
+            key.currency1,
+            address(this),          // payer / receiver is always the LM itself
+            address(this)
         );
 
-        // Explicitly settle based on v0.3.x interface rules:
-        // Each parameter-less settle() call clears ONE positive delta entry.
-        // We must call it twice if both might be positive, ignoring revert on second if only one was.
-        manager.settle();                 // pops first positive entry (if any)
-        try manager.settle() { } catch {  // pops second positive entry (if any)
-            /* map was already empty or only had one entry - ignore */
-        }
+        // ---------------------------------------------------------------
+        // ❸ Zero-arg settlement (v4-core ≤ 0.3.x)
+        // ---------------------------------------------------------------
+        //
+        // - Each call to `settle()` pops *one* positive entry from the pool's
+        //   internal "owed balances" map.
+        // - A full-range liquidity add can leave *up to two* positive entries
+        //   (one per token) after handlePoolDelta().
+        // - We therefore call `settle()` twice, swallowing the revert that
+        //   signals the map was already empty on the second call.
 
-        // Tell the PoolManager that everything is settled (by returning zero delta)
+        manager.settle();               // pop first positive balance (if any)
+        try manager.settle() {          // pop second, or revert & get ignored
+        } catch { /* map already empty → nothing to do */ }
+
+        // Tell the PoolManager we are done – must always return 0/0
         BalanceDelta zeroDelta;
         return abi.encode(zeroDelta);
     }
