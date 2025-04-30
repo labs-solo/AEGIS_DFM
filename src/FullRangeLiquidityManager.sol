@@ -37,6 +37,7 @@ import {IHooks} from "v4-core/interfaces/IHooks.sol";
 import {TransferUtils} from "./utils/TransferUtils.sol";
 import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
 using SafeCast for uint256;
 using SafeCast for int256;
@@ -101,11 +102,11 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
     // ────────────────────────── CONSTANTS ──────────────────────────
     // Legacy V2/V3 analogue – still used to compute the very first mint
-    uint128 private constant MIN_LIQUIDITY          = 1_000;
+    uint128 private constant MIN_LIQUIDITY = 1_000;
     // Permanently locked seed supply (identical to UNIv2's MIN_LIQUIDITY)
-    uint128 private constant MIN_LOCKED_SHARES      = 1_000;
+    uint128 private constant MIN_LOCKED_SHARES = 1_000;
     // V4 liquidity that must always remain in the position (for pool dust-lock checks)
-    uint128 private constant MIN_LOCKED_LIQUIDITY   = 1_000;
+    uint128 private constant MIN_LOCKED_LIQUIDITY = 1_000;
 
     // Permanently-locked ERC-6909 shares (min-liquidity analogue)
     mapping(PoolId => uint128) public lockedShares;
@@ -371,7 +372,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
             callbackType: CallbackType.DEPOSIT,
-            shares: v4LiquidityForPM,  // Use V4 liquidity amount for modifyLiquidity
+            shares: v4LiquidityForPM, // Use V4 liquidity amount for modifyLiquidity
             oldTotalShares: oldTotalSharesInternal,
             amount0: amount0,
             amount1: amount1,
@@ -387,13 +388,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
 
         emit LiquidityAdded(
-            poolId,
-            recipient,
-            amount0,
-            amount1,
-            oldTotalSharesInternal,
-            uint128(usableShares),
-            block.timestamp
+            poolId, recipient, amount0, amount1, oldTotalSharesInternal, uint128(usableShares), block.timestamp
         );
         emit PoolStateUpdated(poolId, newTotalSharesInternal, uint8(CallbackType.DEPOSIT));
 
@@ -551,19 +546,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         // declare the variable that will receive the 3rd tuple element
         uint128 v4LiquidityToWithdraw;
-        (amount0, amount1, v4LiquidityToWithdraw) = _calculateWithdrawAmounts(
-            totalShares,
-            sharesToBurn,
-            reserve0,
-            reserve1,
-            minLocked,
-            totalShares
-        );
+        (amount0, amount1, v4LiquidityToWithdraw) =
+            _calculateWithdrawAmounts(totalShares, sharesToBurn, reserve0, reserve1, minLocked, totalShares);
 
         if (amount0 < amount0Min || amount1 < amount1Min) {
             revert Errors.SlippageExceeded(
-                (amount0 < amount0Min) ? amount0Min : amount1Min,
-                (amount0 < amount0Min) ? amount0 : amount1
+                (amount0 < amount0Min) ? amount0Min : amount1Min, (amount0 < amount0Min) ? amount0 : amount1
             );
         }
 
@@ -597,13 +585,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
 
         emit LiquidityRemoved(
-            poolId,
-            recipient,
-            amount0,
-            amount1,
-            oldTotalShares,
-            sharesToBurn.toUint128(),
-            block.timestamp
+            poolId, recipient, amount0, amount1, oldTotalShares, sharesToBurn.toUint128(), block.timestamp
         );
         emit PoolStateUpdated(poolId, newTotalShares, uint8(CallbackType.WITHDRAW));
 
@@ -657,12 +639,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Calculate withdrawal amounts and V4 liquidity to remove
         uint128 v4LiquidityToRemove;
         (amount0Out, amount1Out, v4LiquidityToRemove) = _calculateWithdrawAmounts(
-            totalSharesInternal,
-            sharesToBurn,
-            reserve0,
-            reserve1,
-            minLocked,
-            totalSharesInternal
+            totalSharesInternal, sharesToBurn, reserve0, reserve1, minLocked, totalSharesInternal
         );
 
         PoolKey memory key = _poolKeys[poolId];
@@ -691,7 +668,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         delta = abi.decode(result, (BalanceDelta));
 
         // Handle delta - Pull tokens owed to this contract
-        CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, address(this));
+        CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, address(this), address(this));
 
         // Transfer final tokens to user
         if (amount0Out > 0) {
@@ -794,9 +771,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint128 totalUsableShares = uint128(totalShares_global - lockedS);
         if (totalUsableShares == 0) revert Errors.InsufficientShares(sharesToBurn, 0);
 
-        v4LiquidityToWithdraw = MathUtils
-            .calculateProportional(totalV4Liquidity, sharesToBurn, totalUsableShares, false)
-            .toUint128();
+        v4LiquidityToWithdraw =
+            MathUtils.calculateProportional(totalV4Liquidity, sharesToBurn, totalUsableShares, false).toUint128();
 
         amount0 = MathUtils.calculateProportional(reserve0, v4LiquidityToWithdraw, totalV4Liquidity, false);
         amount1 = MathUtils.calculateProportional(reserve1, v4LiquidityToWithdraw, totalV4Liquidity, false);
@@ -1089,10 +1065,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         emit ProtocolFeesReinvested(poolId, address(this), polAmount0, polAmount1);
 
         // Convert liquidity minted → ERC-6909 shares using current ratio
-        uint128 positionLiquidity_before = positionTotalShares[poolId];  // Store initial liquidity
-        uint128 newShares = uint128(
-            FullMath.mulDiv(shares, positionTotalShares[poolId], positionLiquidity_before)
-        );
+        uint128 positionLiquidity_before = positionTotalShares[poolId]; // Store initial liquidity
+        uint128 newShares = uint128(FullMath.mulDiv(shares, positionTotalShares[poolId], positionLiquidity_before));
         positionTotalShares[poolId] += newShares;
         positions.mint(address(this), PoolTokenIdUtils.toTokenId(poolId), newShares);
 
@@ -1175,7 +1149,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
 
         // Modify liquidity in the pool using liquidityDelta derived from cbData.shares
-        IPoolManager.ModifyLiquidityParams memory params = IPoolManager.ModifyLiquidityParams({
+        ModifyLiquidityParams memory params = ModifyLiquidityParams({
             tickLower: TickMath.minUsableTick(key.tickSpacing),
             tickUpper: TickMath.maxUsableTick(key.tickSpacing),
             liquidityDelta: liquidityDelta,
@@ -1186,13 +1160,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         (BalanceDelta delta,) = manager.modifyLiquidity(key, params, "");
 
         // Perform settlement
-        CurrencySettlerExtension.handlePoolDelta(
-            manager,
-            delta,
-            key.currency0,
-            key.currency1,
-            recipient
-        );
+        CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, address(this), address(this));
 
         // Tell the PoolManager that everything is settled
         BalanceDelta zeroDelta;
@@ -1334,14 +1302,14 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             bytes32(0)
         );
         liquidity = StateLibrary.getPositionLiquidity(manager, poolId, posKey);
-        
+
         // Get tracked shares
         totalShares = positionTotalShares[poolId];
-        
+
         // Ensure we have more than just locked liquidity
         require(liquidity > MIN_LOCKED_LIQUIDITY, "Insufficient pool liquidity");
         require(totalShares > MIN_LOCKED_SHARES, "Insufficient total shares");
-        
+
         return (liquidity, totalShares);
     }
 }

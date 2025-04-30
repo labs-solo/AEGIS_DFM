@@ -178,7 +178,11 @@ library SettlementUtils {
      * @param liquidityManager The LiquidityManager contract to query shares from
      * @return totalShares The total number of shares for the pool
      */
-    function _validateAndGetTotalShares(PoolId poolId, FullRangeLiquidityManager liquidityManager) internal view returns (uint256) {
+    function _validateAndGetTotalShares(PoolId poolId, FullRangeLiquidityManager liquidityManager)
+        internal
+        view
+        returns (uint256)
+    {
         uint256 totalShares = liquidityManager.positionTotalShares(poolId);
         if (totalShares == 0) revert Errors.ZeroLiquidity();
         return totalShares;

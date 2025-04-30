@@ -81,9 +81,7 @@ contract DeploymentAndConfigTest is ForkSetup {
     /// @notice Test A5: Verify DynamicFeeManager linkages.
     function test_VerifyDynamicFeeManagerLinkages() public {
         assertEq(
-            address(fullRange.feeManager()),
-            address(dynamicFeeManager),
-            "SpotHook->DynamicFeeManager link mismatch"
+            address(fullRange.feeManager()), address(dynamicFeeManager), "SpotHook->DynamicFeeManager link mismatch"
         );
         assertEq(dynamicFeeManager.authorizedHook(), address(fullRange), "DynamicFeeManager->SpotHook link mismatch");
         // assertEq(address(dynamicFeeManager.oracle()), address(oracle), "DynamicFeeManager->Oracle link mismatch"); // Removed: Oracle accessed via getOracleData

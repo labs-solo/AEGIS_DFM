@@ -19,8 +19,9 @@ import {ISpot, DepositParams as ISpotDepositParams} from "src/interfaces/ISpot.s
 
 // import {IWETH9}         from "v4-periphery/interfaces/external/IWETH9.sol"; // Keep commented out
 import {ERC20} from "solmate/tokens/ERC20.sol";
-import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
-import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
+// import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol"; // Removed import
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol"; // Added import
 // import {PoolModifyLiquidityTest} from "./integration/routers/PoolModifyLiquidityTest.sol"; // Keep commented out
 
 // Remove local struct definition, use imported one
@@ -35,6 +36,7 @@ import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
 
 contract InternalReinvestTest is ForkSetup {
     using CurrencyLibrary for Currency;
+    using SafeERC20 for IERC20; // Updated to use IERC20 instead of IERC20Minimal
 
     address internal keeper = makeAddr("keeper");
     address internal feeSink = makeAddr("feeSink");
@@ -250,7 +252,7 @@ contract InternalReinvestTest is ForkSetup {
     }
 
     // allow PoolManager.unlock(...) to succeed
-    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+    function unlockCallback(bytes calldata data) external payable returns (bytes memory) { // Added payable
         (Currency cur, uint256 units, address to) = abi.decode(data, (Currency, uint256, address));
 
         // 1) Mint claim tokens for the hook (credits pm.balanceOf(hook,id))
@@ -258,8 +260,23 @@ contract InternalReinvestTest is ForkSetup {
         pm.mint(to, uint256(uint160(Currency.unwrap(cur))), units);
 
         // 2) Pay off the test-contract's negative delta
-        //    (sync → transfer → settle)
-        CurrencySettler.settle(cur, pm, address(this), units, false);
+        //    (transfer/send → settle)
+        if (cur.isAddressZero()) {
+            // Check if enough ETH was sent with the call
+            require(msg.value >= units, "UnlockCallback: Insufficient ETH sent");
+            // Settle by sending ETH
+            pm.settle();
+            // Refund excess ETH if any
+            if (msg.value > units) {
+                payable(msg.sender).transfer(msg.value - units);
+            }
+        } else {
+            IERC20 token = IERC20(Currency.unwrap(cur));
+            // Transfer ERC20 from this contract (msg.sender) to PoolManager
+            token.safeTransferFrom(address(this), address(pm), units);
+            // Settle the balance
+            pm.settle();
+        }
 
         return ""; // nothing else needed
     }

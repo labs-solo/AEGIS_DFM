@@ -108,11 +108,11 @@ contract DeployLocalUniswapV4 is Script {
         supportedTickSpacings[1] = 60;
         supportedTickSpacings[2] = 200;
         policyManager = new PoolPolicyManager(
-            governance,            // owner / solo governance
-            3_000,                // defaultDynamicFeePpm (0.3%)
-            supportedTickSpacings,// allowed tick-spacings
-            1e17,                 // protocol-interest-fee = 10% (scaled by 1e18)
-            address(0)            // fee collector
+            governance, // owner / solo governance
+            3_000, // defaultDynamicFeePpm (0.3%)
+            supportedTickSpacings, // allowed tick-spacings
+            1e17, // protocol-interest-fee = 10% (scaled by 1e18)
+            address(0) // fee collector
         );
         console.log("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
@@ -135,9 +135,9 @@ contract DeployLocalUniswapV4 is Script {
 
         // Deploy DynamicFeeManager AFTER FullRange
         dynamicFeeManager = new DynamicFeeManager(
-            policyManager,                    // policy
-            address(truncGeoOracle),         // oracle
-            address(fullRange)               // authorizedHook
+            policyManager, // policy
+            address(truncGeoOracle), // oracle
+            address(fullRange) // authorizedHook
         );
         console.log("DynamicFeeManager deployed at:", address(dynamicFeeManager));
 
@@ -193,12 +193,12 @@ contract DeployLocalUniswapV4 is Script {
         bytes memory spotCreationCodePlaceholder = abi.encodePacked(
             type(Spot).creationCode, // Use Spot instead of MarginHarness
             abi.encode(
-                IPoolManager(address(poolManager)), 
-                policyManager, 
+                IPoolManager(address(poolManager)),
+                policyManager,
                 liquidityManager,
                 TruncGeoOracleMulti(address(0)), // Oracle placeholder (will be set later)
-                IDynamicFeeManager(address(0)),  // DynamicFeeManager placeholder (will be set later)
-                _deployer                        // Add _deployer as owner
+                IDynamicFeeManager(address(0)), // DynamicFeeManager placeholder (will be set later)
+                _deployer // Add _deployer as owner
             )
         );
         (address predictedHookAddress,) = HMiner.find(
@@ -215,8 +215,8 @@ contract DeployLocalUniswapV4 is Script {
             policyManager,
             liquidityManager,
             TruncGeoOracleMulti(address(0)), // Oracle placeholder (will be set later)
-            IDynamicFeeManager(address(0)),  // DynamicFeeManager placeholder (will be set later)
-            _governance                      // <-- use parameter
+            IDynamicFeeManager(address(0)), // DynamicFeeManager placeholder (will be set later)
+            _governance // <-- use parameter
         );
 
         // Recalculate salt with final args

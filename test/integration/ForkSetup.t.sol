@@ -142,11 +142,11 @@ contract ForkSetup is Test {
         supportedTickSpacings_[2] = 200;
 
         policyManager = new PoolPolicyManager(
-            deployerEOA,            // owner / solo governance
-            3_000,                  // defaultDynamicFeePpm (0.3%)
+            deployerEOA, // owner / solo governance
+            3_000, // defaultDynamicFeePpm (0.3%)
             supportedTickSpacings_, // allowed tick-spacings
-            1e17,                   // protocol-interest-fee = 10% (scaled by 1e18)
-            deployerEOA             // fee collector
+            1e17, // protocol-interest-fee = 10% (scaled by 1e18)
+            deployerEOA // fee collector
         );
         emit log_named_address("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
@@ -165,9 +165,9 @@ contract ForkSetup is Test {
         // Deploy DynamicFeeManager
         emit log_string("Deploying DynamicFeeManager...");
         dynamicFeeManager = new DynamicFeeManager(
-            policyManager,       // ✅ policy
-            address(oracle),     // ✅ oracle (2nd param)
-            deployerEOA          // ✅ temporary authorisedHook
+            policyManager, // ✅ policy
+            address(oracle), // ✅ oracle (2nd param)
+            deployerEOA // ✅ temporary authorisedHook
         );
         emit log_named_address("DynamicFeeManager deployed at", address(dynamicFeeManager));
 
@@ -200,11 +200,11 @@ contract ForkSetup is Test {
             poolManager,
             IPoolPolicy(address(policyManager)),
             liquidityManager,
-            oracle,                  // Now passing oracle directly in constructor 
+            oracle, // Now passing oracle directly in constructor
             IDynamicFeeManager(address(dynamicFeeManager)), // Using real DFM address
             deployerEOA // governance/owner
         );
-        
+
         // Verify the deployment
         actualHookAddress = address(fullRange);
         require(actualHookAddress == hookAddress, "Deployed hook address does not match predicted!");
@@ -220,21 +220,19 @@ contract ForkSetup is Test {
         // Configure Contracts
         emit log_string("Configuring contracts...");
         liquidityManager.setAuthorizedHookAddress(actualHookAddress);
-        
+
         /* Build poolKey & poolId for DFM initialization */
         address token0;
         address token1;
-        (token0, token1) = WETH_ADDRESS < USDC_ADDRESS
-            ? (WETH_ADDRESS, USDC_ADDRESS)
-            : (USDC_ADDRESS, WETH_ADDRESS);
+        (token0, token1) = WETH_ADDRESS < USDC_ADDRESS ? (WETH_ADDRESS, USDC_ADDRESS) : (USDC_ADDRESS, WETH_ADDRESS);
 
         uint24 dynamicFee = LPFeeLibrary.DYNAMIC_FEE_FLAG;
         poolKey = PoolKey({
             currency0: Currency.wrap(token0),
             currency1: Currency.wrap(token1),
-            fee:        dynamicFee,
+            fee: dynamicFee,
             tickSpacing: TICK_SPACING,
-            hooks:      IHooks(address(fullRange))
+            hooks: IHooks(address(fullRange))
         });
         poolId = poolKey.toId();
 
@@ -247,7 +245,7 @@ contract ForkSetup is Test {
         // NOTE: Moved poolKey/poolId generation out of try-catch
         // uint24 dynamicFee = DEFAULT_FEE | LPFeeLibrary.DYNAMIC_FEE_FLAG; // Reverted: Invalid for initialize
         // uint24 dynamicFee = LPFeeLibrary.DYNAMIC_FEE_FLAG;
-        
+
         // poolKey = PoolKey({
         //     currency0: Currency.wrap(token0),
         //     currency1: Currency.wrap(token1),

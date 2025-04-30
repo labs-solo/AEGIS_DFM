@@ -33,6 +33,7 @@ import {Position} from "v4-core/libraries/Position.sol";
 import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
 import {SqrtPriceMath} from "v4-core/libraries/SqrtPriceMath.sol";
 import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
+import {SwapParams} from "v4-core/types/PoolOperation.sol";
 
 /**
  * @title Dynamic Fee and POL Management Integration Tests
@@ -118,9 +119,9 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         // Adjust policy params for faster testing
         vm.startPrank(deployerEOA);
-        policyManager.setDailyBudgetPpm(1e6);            // 1 event per day (ppm)
-        policyManager.setDecayWindow(3600);              // 1‑hour window (tests)
-        policyManager.setFreqScaling(poolId, 1);         // Ensure scaling is set if needed by policy
+        policyManager.setDailyBudgetPpm(1e6); // 1 event per day (ppm)
+        policyManager.setDecayWindow(3600); // 1‑hour window (tests)
+        policyManager.setFreqScaling(poolId, 1); // Ensure scaling is set if needed by policy
         vm.stopPrank();
 
         //
@@ -225,7 +226,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
             sqrtPriceLimitX96 = uint160(uint256(currentSqrtPriceX96) * 11 / 10); // Max price limit for 1->0
         }
 
-        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
+        SwapParams memory params = SwapParams({
             zeroForOne: wethIsToken0,
             amountSpecified: int256(amountIn),
             sqrtPriceLimitX96: sqrtPriceLimitX96
@@ -313,8 +314,8 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // Need much larger swaps to trigger CAP events with 1.28B totalShares of liquidity
         bool zeroForOne = Currency.unwrap(poolKey.currency0) == address(usdc);
         int256 capAmount = zeroForOne
-            ? int256(35_000 * 1e6)   // 35 000 USDC → WETH
-            : int256(12 ether);      // 12 WETH → USDC
+            ? int256(35_000 * 1e6) // 35 000 USDC → WETH
+            : int256(12 ether); // 12 WETH → USDC
 
         // Allocate enough funds for 3 swaps
         uint256 topUp = uint256(capAmount > 0 ? capAmount : -capAmount) * 3;
@@ -325,7 +326,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         vm.startPrank(lpProvider);
         try swapRouter.swap(
             poolKey,
-            IPoolManager.SwapParams({
+            SwapParams({
                 zeroForOne: zeroForOne,
                 amountSpecified: capAmount,
                 sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1
@@ -334,15 +335,11 @@ contract DynamicFeeAndPOLTest is ForkSetup {
             ZERO_BYTES
         ) {} catch { /* Ignore reverts, focus on fee manager state */ }
         vm.stopPrank();
-        
+
         // Check final fee state
         (uint256 newBase,) = dfm.getFeeState(poolId);
         console2.log("Base fee after CAP events:", newBase);
-        assertEq(
-            newBase,
-            oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId)) * 100,
-            "base-fee != cap x 100"
-        );
+        assertEq(newBase, oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId)) * 100, "base-fee != cap x 100");
     }
 
     function test_B3_BaseFee_Decreases_When_Caps_Too_Rare() public {
@@ -363,21 +360,22 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         // Perform minimal swap to trigger hook update after warp
         vm.startPrank(lpProvider);
-        swapRouter.swap(poolKey, IPoolManager.SwapParams({
-            zeroForOne: true, // swap USDC for WETH
-            amountSpecified: 1, // Minimal amount
-            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
-        }), PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}), bytes(""));
+        swapRouter.swap(
+            poolKey,
+            SwapParams({
+                zeroForOne: true, // swap USDC for WETH
+                amountSpecified: 1, // Minimal amount
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            }),
+            PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false}),
+            bytes("")
+        );
         vm.stopPrank();
 
         // Check final fee state
         (uint256 feeAfterDelay,) = dfm.getFeeState(poolId);
         console2.log("Base fee after delay:", feeAfterDelay);
-        assertEq(
-            feeAfterDelay,
-            oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId)) * 100,
-            "base-fee != cap x 100"
-        );
+        assertEq(feeAfterDelay, oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId)) * 100, "base-fee != cap x 100");
     }
 
     // _triggerCap now just performs swap, relies on caller for notification
@@ -388,7 +386,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         (uint160 currentSqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
         uint160 sqrtPriceLimitX96 = uint160((uint256(currentSqrtPriceX96) * 95) / 100);
 
-        IPoolManager.SwapParams memory p = IPoolManager.SwapParams({
+        SwapParams memory params = SwapParams({
             zeroForOne: zeroForOne,
             amountSpecified: amountSpecified,
             sqrtPriceLimitX96: sqrtPriceLimitX96
@@ -398,7 +396,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         // Perform swap using lpProvider for funds
         vm.startPrank(lpProvider);
-        try swapRouter.swap(poolKey, p, settings, ZERO_BYTES) {}
+        try swapRouter.swap(poolKey, params, settings, ZERO_BYTES) {}
         catch Error(string memory reason) {
             console2.log("[_triggerCap_SwapOnly] Swap reverted:", reason);
         } catch {
@@ -481,65 +479,65 @@ contract DynamicFeeAndPOLTest is ForkSetup {
      */
     function test_polRateFullProtocol() public {
         // ... existing code ...
-        
+
         vm.startPrank(deployerEOA);
-        
+
         // Set POL rate to 100% (all fees go to protocol)
         policyManager.setPoolPOLShare(poolId, 10_000);
-        
+
         vm.stopPrank();
-        
+
         // Do a swap to test that fees now go to protocol
         uint256 swapAmount = 1 ether;
         _swapWETHToUSDC(user1, swapAmount, 0);
-        
+
         // No need to call _simulateHookNotification - Spot hook handles this now
-        
+
         // Get fee growth for LP and protocol
         // ... existing code ...
     }
-    
+
     /**
      * @notice Test that POL ratio updates take effect immediately
      */
     function test_polRateChangeImmediate() public {
         // ... existing code ...
-        
+
         // Do a few swaps before changing fee distribution
         uint256 swapAmount = 1 ether;
         _swapWETHToUSDC(user1, swapAmount, 0);
-        
+
         // No need to call _simulateHookNotification - Spot hook handles this now
-        
+
         // ... existing code ...
     }
-    
+
     /**
      * @notice Test that POL ratio of 0 means all fees go to LPs
      */
     function test_polRateZero() public {
         // ... existing code ...
-        
+
         // Do swaps to accumulate fees
         uint256 swapAmount = 1 ether;
         _swapWETHToUSDC(user1, swapAmount, 0);
-        
+
         // No need to call _simulateHookNotification - Spot hook handles this now
-        
+
         // ... existing code ...
     }
-    
+
     /**
      * @notice Test surge fee decay over time
      */
     function test_surgeFeeDecaysOverTime() public {
         // ... existing code ...
-        
+
         // Warp forward by half the decay period
         vm.warp(block.timestamp + surgeFeeDecayPeriod / 2);
-        
+
         // No need to call _simulateHookNotification - we'll just check the state directly
-        
+
         // Check that fee has decayed to roughly half
         // ... existing code ...
     }
@@ -547,19 +545,11 @@ contract DynamicFeeAndPOLTest is ForkSetup {
     function testFeeStateChanges() public {
         // Get initial fee state
         (uint256 newBase, uint256 surgeFee) = dfm.getFeeState(poolId);
-        assertEq(
-            newBase,
-            oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId)) * 100,
-            "base-fee != cap x 100"
-        );
+        assertEq(newBase, oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId)) * 100, "base-fee != cap x 100");
 
         // Warp forward and check fee state again
         vm.warp(block.timestamp + 3600);
         (uint256 feeAfterDelay,) = dfm.getFeeState(poolId);
-        assertEq(
-            feeAfterDelay,
-            oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId)) * 100,
-            "base-fee != cap x 100"
-        );
+        assertEq(feeAfterDelay, oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId)) * 100, "base-fee != cap x 100");
     }
 }

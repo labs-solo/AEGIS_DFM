@@ -1,4 +1,20 @@
 [profile.default]
+remappings = [
+  # solmate (longest prefix first)
+  "solmate/=node_modules/solmate/src/",
+
+  # openzeppelin  - corrected path
+  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+
+  # core test libs
+  "forge-std/=node_modules/forge-std/src/",
+  "ds-test/=node_modules/ds-test/src/",
+
+  # uniswap v4
+  "v4-core/=node_modules/v4-core/src/",
+  "@uniswap/v4-core/=node_modules/v4-core/",
+  "v4-periphery/=node_modules/v4-periphery/src/",
+]
 src = "src"
 out = "out"
 libs = ["lib"]
@@ -11,21 +27,18 @@ optimizer = true
 optimizer_runs = 100_000
 dotenv = true  # Enable .env file loading
 exclude_paths = ["test/old-tests"]
-remappings = [
-    "forge-std/=lib/forge-std/src/",
-    "v4-core/=lib/v4-core/src/",
-    "v4-periphery/=lib/v4-periphery/src/",
-    "solmate/=lib/solmate/src/",
-    "@openzeppelin/=lib/v4-core/lib/openzeppelin-contracts/",
-    "uniswap-hooks/=lib/uniswap-hooks/src/",
-    "@uniswap/v4-core/=lib/v4-core/src/"
-]
+
+# ──────────────────────────────────────────────────────────────
+# Explicit import remappings (Forge will also scan node_modules
+# automatically, but pinning them here prevents IDE / CI drift
+# and documents paths that rely on pnpm's symlinks).
+# ──────────────────────────────────────────────────────────────
 
 # Sepolia configuration for integration testing
 [profile.sepolia]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
 solc_version = "0.8.26"
@@ -39,7 +52,7 @@ chain_id = 11155111
 [profile.unichain-sepolia]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
 solc_version = "0.8.26"

@@ -21,9 +21,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // === Fee Policy State Variables ===
 
     // Fee allocation configuration
-    uint24 private constant _DEFAULT_BASE_FEE = 5_000;    // 0.5 %
-    uint32 private constant _SURGE_DECAY_SECS = 3_600;            // surge fade
-    uint32 private constant _DAILY_BUDGET_PPM = 5_000;            // example
+    uint24 private constant _DEFAULT_BASE_FEE = 5_000; // 0.5 %
+    uint32 private constant _SURGE_DECAY_SECS = 3_600; // surge fade
+    uint32 private constant _DAILY_BUDGET_PPM = 5_000; // example
     uint32 private constant _CAP_BUDGET_DECAY_WINDOW = 15_552_000; // 180 d
 
     uint24 public polSharePpm;
@@ -68,9 +68,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
 
     // === Dynamic Base‐Fee Feedback Parameters ===
     /// Default: target CAP events per day (equilibrium)
-    uint32  public defaultTargetCapsPerDay;       // fits - <4 G caps/day
+    uint32 public defaultTargetCapsPerDay; // fits - <4 G caps/day
     /// Default: seconds over which freqScaled decays linearly to zero (≈6 mo)
-    uint32  public defaultCapBudgetDecayWindow;   // fits - <136 yr
+    uint32 public defaultCapBudgetDecayWindow; // fits - <136 yr
     /// Default: scaling factor for frequency (to avoid fractions; use 1e18)
     uint256 public defaultFreqScaling;
     /// Default minimum base‐fee (PPM) = 0.01%
@@ -78,8 +78,8 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     /// Default maximum base‐fee (PPM) = 3%
     uint24 public defaultMaxBaseFeePpm;
     // Per‐pool overrides:
-    mapping(PoolId => uint32)  public poolTargetCapsPerDay;
-    mapping(PoolId => uint32)  public poolCapBudgetDecayWindow;
+    mapping(PoolId => uint32) public poolTargetCapsPerDay;
+    mapping(PoolId => uint32) public poolCapBudgetDecayWindow;
     mapping(PoolId => uint256) public poolFreqScaling;
     mapping(PoolId => uint24) public poolMinBaseFeePpm;
     mapping(PoolId => uint24) public poolMaxBaseFeePpm;
@@ -137,9 +137,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
 
     /*──────────────────── adaptive-cap default ────────────────*/
     /// Default starting value for `maxTicksPerBlock`
-    uint24 public defaultMaxTicksPerBlock = 50;   // 50 ticks
+    uint24 public defaultMaxTicksPerBlock = 50; // 50 ticks
 
-    uint24 private constant _SURGE_MULTIPLIER_PPM = 10_000;    // 1× (no surge)
+    uint24 private constant _SURGE_MULTIPLIER_PPM = 10_000; // 1× (no surge)
     uint32 private constant _TARGET_CAPS_PER_DAY = 4;
 
     /**
@@ -168,7 +168,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         defaultDynamicFeePpm = uint24(_defaultFee);
 
         // Initialize dynamic‐base‐fee defaults
-        defaultTargetCapsPerDay     = 4;
+        defaultTargetCapsPerDay = 4;
         defaultCapBudgetDecayWindow = uint32(180 days);
         defaultFreqScaling = 1e18;
         defaultMinBaseFeePpm = 100; // 0.01%
@@ -192,7 +192,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         // Initialize Phase 4 parameters
         _setProtocolFeePercentage(_initialProtocolInterestFeePercentage);
         _setFeeCollector(_initialFeeCollector);
-        
+
         // Initialize cap budget parameters with default values
         capBudgetDailyPpm = 1e6; // 1 cap per day
         capBudgetDecayWindow = 180 days; // 6 months decay window
@@ -693,9 +693,17 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /*──────────────  DEPRECATED step-engine stubs  ──────────────*/
-    function getBaseFeeStepPpm(PoolId) external pure returns (uint32) { return 0; }
-    function getMaxStepPpm(PoolId)  external pure returns (uint32) { return 0; }
-    function getBaseFeeUpdateIntervalSeconds(PoolId) external pure returns (uint32) { return 0; }
+    function getBaseFeeStepPpm(PoolId) external pure returns (uint32) {
+        return 0;
+    }
+
+    function getMaxStepPpm(PoolId) external pure returns (uint32) {
+        return 0;
+    }
+
+    function getBaseFeeUpdateIntervalSeconds(PoolId) external pure returns (uint32) {
+        return 0;
+    }
 
     /*──────────────  Surge-fee default getters  ─────────────────*/
     function getSurgeFeeMultiplierPpm(PoolId pid) external view override returns (uint24) {

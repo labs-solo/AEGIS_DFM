@@ -43,38 +43,64 @@ library _P {
     ----------------------------------------------------------- */
 
     // bit offsets
-    uint256 constant BASE_OFFSET        = 96;
-    uint256 constant FREQ_LAST_OFFSET   = BASE_OFFSET + 32;      // 128
-    uint256 constant CAP_START_OFFSET   = FREQ_LAST_OFFSET + 40; // 168
-    uint256 constant LAST_FEE_OFFSET    = CAP_START_OFFSET + 40; // 208
-    uint256 constant IN_CAP_OFFSET      = 255;                   // fits
+    uint256 constant BASE_OFFSET = 96;
+    uint256 constant FREQ_LAST_OFFSET = BASE_OFFSET + 32; // 128
+    uint256 constant CAP_START_OFFSET = FREQ_LAST_OFFSET + 40; // 168
+    uint256 constant LAST_FEE_OFFSET = CAP_START_OFFSET + 40; // 208
+    uint256 constant IN_CAP_OFFSET = 255; // fits
 
     // bit masks
-    uint256 constant MASK_FREQ      = (uint256(1) << BASE_OFFSET) - 1;                    // 96-bit
-    uint256 constant MASK_BASE      = ((uint256(1) << 32) - 1) << BASE_OFFSET;            // 32-bit
-    uint256 constant MASK_FREQ_LAST = ((uint256(1) << 40) - 1) << FREQ_LAST_OFFSET;       // 40-bit
-    uint256 constant MASK_CAP_START = ((uint256(1) << 40) - 1) << CAP_START_OFFSET;       // 40-bit
-    uint256 constant MASK_LAST_FEE  = ((uint256(1) << 32) - 1) << LAST_FEE_OFFSET;        // 32-bit
-    uint256 constant MASK_IN_CAP    = uint256(1) << IN_CAP_OFFSET;                        // 1-bit
+    uint256 constant MASK_FREQ = (uint256(1) << BASE_OFFSET) - 1; // 96-bit
+    uint256 constant MASK_BASE = ((uint256(1) << 32) - 1) << BASE_OFFSET; // 32-bit
+    uint256 constant MASK_FREQ_LAST = ((uint256(1) << 40) - 1) << FREQ_LAST_OFFSET; // 40-bit
+    uint256 constant MASK_CAP_START = ((uint256(1) << 40) - 1) << CAP_START_OFFSET; // 40-bit
+    uint256 constant MASK_LAST_FEE = ((uint256(1) << 32) - 1) << LAST_FEE_OFFSET; // 32-bit
+    uint256 constant MASK_IN_CAP = uint256(1) << IN_CAP_OFFSET; // 1-bit
 
     /* -------- accessors (return sizes kept for ABI stability) -------- */
-    function freq(uint256 w)      internal pure returns (uint96) { return uint96(w & MASK_FREQ);                              }
-    function freqL(uint256 w)     internal pure returns (uint48) { return uint48((w & MASK_FREQ_LAST) >> FREQ_LAST_OFFSET);     }
-    function capStart(uint256 w)  internal pure returns (uint48) { return uint48((w & MASK_CAP_START) >> CAP_START_OFFSET);     }
-    function lastFee(uint256 w)   internal pure returns (uint32) { return uint32((w & MASK_LAST_FEE)  >> LAST_FEE_OFFSET);      }
-    function inCap(uint256 w)     internal pure returns (bool)   { return (w & MASK_IN_CAP) != 0;                               }
+    function freq(uint256 w) internal pure returns (uint96) {
+        return uint96(w & MASK_FREQ);
+    }
+
+    function freqL(uint256 w) internal pure returns (uint48) {
+        return uint48((w & MASK_FREQ_LAST) >> FREQ_LAST_OFFSET);
+    }
+
+    function capStart(uint256 w) internal pure returns (uint48) {
+        return uint48((w & MASK_CAP_START) >> CAP_START_OFFSET);
+    }
+
+    function lastFee(uint256 w) internal pure returns (uint32) {
+        return uint32((w & MASK_LAST_FEE) >> LAST_FEE_OFFSET);
+    }
+
+    function inCap(uint256 w) internal pure returns (bool) {
+        return (w & MASK_IN_CAP) != 0;
+    }
 
     /* -------- setters (internal only) -------- */
     function _set(uint256 w, uint256 mask, uint256 v, uint256 shift) private pure returns (uint256) {
         return (w & ~mask) | (v << shift);
     }
-    function setFreq  (uint256 w, uint96  v) internal pure returns (uint256){ return _set(w, MASK_FREQ,      v, 0);                  }
-    function setFreqL (uint256 w, uint40  v) internal pure returns (uint256){ return _set(w, MASK_FREQ_LAST, v, FREQ_LAST_OFFSET);   }
-    function setCapSt (uint256 w, uint40  v) internal pure returns (uint256){ return _set(w, MASK_CAP_START, v, CAP_START_OFFSET);   }
-    function setInCap (uint256 w, bool   y) internal pure returns (uint256){ return y ? w | MASK_IN_CAP : w & ~MASK_IN_CAP;         }
+
+    function setFreq(uint256 w, uint96 v) internal pure returns (uint256) {
+        return _set(w, MASK_FREQ, v, 0);
+    }
+
+    function setFreqL(uint256 w, uint40 v) internal pure returns (uint256) {
+        return _set(w, MASK_FREQ_LAST, v, FREQ_LAST_OFFSET);
+    }
+
+    function setCapSt(uint256 w, uint40 v) internal pure returns (uint256) {
+        return _set(w, MASK_CAP_START, v, CAP_START_OFFSET);
+    }
+
+    function setInCap(uint256 w, bool y) internal pure returns (uint256) {
+        return y ? w | MASK_IN_CAP : w & ~MASK_IN_CAP;
+    }
 }
 
-using _P for uint256;   // Enable freqL(), setFreqL(), and other helpers
+using _P for uint256; // Enable freqL(), setFreqL(), and other helpers
 
 /* ───────────────────────────────────────────────────────────── */
 
@@ -106,15 +132,11 @@ contract DynamicFeeManager is IDynamicFeeManager {
     mapping(PoolId => uint256) private _s;
 
     /* ─── constructor / init ─────────────────────────────────── */
-    constructor(
-        IPoolPolicy _policyManager,
-        address _oracle,
-        address _authorizedHook
-    ) {
+    constructor(IPoolPolicy _policyManager, address _oracle, address _authorizedHook) {
         require(address(_policyManager) != address(0), "DFM: policy 0");
         require(_oracle != address(0), "DFM: oracle 0");
         require(_authorizedHook != address(0), "DFM: hook 0");
-        policy = _policyManager;          // immutable handle for surge-knobs
+        policy = _policyManager; // immutable handle for surge-knobs
         oracle = TruncGeoOracleMulti(_oracle);
         owner = msg.sender;
         authorizedHook = _authorizedHook;
@@ -123,10 +145,7 @@ contract DynamicFeeManager is IDynamicFeeManager {
     function initialize(PoolId id, int24 /*initialTick*/ ) external override {
         // Allow either the protocol owner **or** the hook we explicitly trust
         // (owner set `authorizedHook` in the constructor).
-        require(
-            msg.sender == owner || msg.sender == authorizedHook,
-            "DFM:auth"
-        );
+        require(msg.sender == owner || msg.sender == authorizedHook, "DFM:auth");
         if (_s[id] != 0) {
             emit AlreadyInitialized(id);
             return;
@@ -150,7 +169,7 @@ contract DynamicFeeManager is IDynamicFeeManager {
         require(msg.sender == authorizedHook, "DFM:!auth");
 
         uint256 w1 = _s[poolId];
-        require(w1 != 0, "DFM: not init");     // initialised?
+        require(w1 != 0, "DFM: not init"); // initialised?
 
         uint48 nowTs = uint48(block.timestamp);
 
@@ -164,12 +183,7 @@ contract DynamicFeeManager is IDynamicFeeManager {
         }
 
         // always emit – base-fee depends on oracle and may change every block
-        emit FeeStateChanged(
-            poolId,
-            uint24(_baseFee(poolId)),
-            _surge(poolId, w1),
-            w1.inCap()
-        );
+        emit FeeStateChanged(poolId, uint24(_baseFee(poolId)), _surge(poolId, w1), w1.inCap());
 
         _s[poolId] = w1; // Final single SSTORE
     }

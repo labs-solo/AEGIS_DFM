@@ -32,10 +32,10 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
 
     // Store the last tick to compare during swap simulation
     mapping(PoolId => int24) public lastTick;
-    
+
     // Cached base‐fee after initialise/decay calc (will be 100 PPM after 1st notify)
     uint256 internal baseFeeAfterInit;
-    
+
     // Flag to show info during test setup
     bool public showTickInfo = true;
 
@@ -55,7 +55,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
 
         // Store initial total fee (surge is 0 initially)
         (uint256 baseFee,) = dfm.getFeeState(pid);
-        baseFeeAfterInit = baseFee;          // = cap × 100
+        baseFeeAfterInit = baseFee; // = cap × 100
         assertTrue(baseFeeAfterInit > 0, "Initial base fee should be set");
 
         // base amounts for LP deposit - ADJUSTED FOR PRICE
@@ -116,15 +116,15 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
     /// @dev Helper to trigger a CAP event by directly notifying the DynamicFeeManager
     function _triggerCap() internal {
         console2.log("--- Triggering CAP event (direct notification) ---");
-        
+
         // Use the Spot hook reference directly
         address hook = address(fullRange);
-        
+
         // Directly notify the DynamicFeeManager with capped=true, simulating a price cap event
         // This bypasses the complex swap and oracle logic while still testing the fee mechanism
         vm.prank(hook);
         dfm.notifyOracleUpdate(pid, true);
-        
+
         console2.log("CAP event triggered - Dynamic fee manager notified with capped=true");
     }
 
@@ -142,7 +142,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         (uint256 baseFee, uint256 surgeFee) = dfm.getFeeState(pid);
         uint256 mult = policyManager.getSurgeFeeMultiplierPpm(pid);
         uint256 expectedSurge = baseFee * mult / 1e6;
-        
+
         assertEq(surgeFee, expectedSurge, "surge != base*mult after cap");
         assertEq(baseFee + surgeFee, baseFee + expectedSurge, "total fee inconsistent");
     }
@@ -168,7 +168,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         _triggerCap(); // Start the decay
         uint256 decayPeriod = policyManager.getSurgeDecayPeriodSeconds(pid);
         uint256 mult = policyManager.getSurgeFeeMultiplierPpm(pid);
-        
+
         // Get base fee after trigger
         (uint256 baseAfterCap,) = dfm.getFeeState(pid);
         uint256 initialSurge = baseAfterCap * mult / 1e6;
@@ -178,7 +178,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         vm.roll(block.number + 1);
 
         (uint256 baseFee, uint256 surgeFee) = dfm.getFeeState(pid);
-        uint256 expectedSurge = initialSurge / 2;          // 50 %
+        uint256 expectedSurge = initialSurge / 2; // 50 %
 
         assertTrue(surgeFee > 0 && surgeFee < initialSurge, "Midpoint decay out of range");
         // Use approx comparison due to integer math / block timing
@@ -190,7 +190,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         _triggerCap(); // First cap
         uint256 decayPeriod = policyManager.getSurgeDecayPeriodSeconds(pid);
         uint256 mult = policyManager.getSurgeFeeMultiplierPpm(pid);
-        
+
         // Get base fee after trigger
         (uint256 baseAfterCap,) = dfm.getFeeState(pid);
         uint256 initialSurge = baseAfterCap * mult / 1e6;
@@ -286,24 +286,24 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // Get fee immediately after cap
         (uint256 feeAfterCap, uint256 timestampAfterCap) = dfm.getFeeState(pid);
         console2.log("Fee immediately after cap:", feeAfterCap);
-        
+
         // Fast-forward by 10% of decay period
         vm.warp(block.timestamp + (policyManager.getSurgeDecayPeriodSeconds(pid) / 10));
-        
+
         // 10% through decay period, fee should have decayed about 10%
         (uint256 feeAfter10Percent, uint256 timestampAfter10Percent) = dfm.getFeeState(pid);
         console2.log("Fee after 10% decay:", feeAfter10Percent);
-        
+
         // Fast-forward to 50% of decay period
         vm.warp(block.timestamp + (4 * policyManager.getSurgeDecayPeriodSeconds(pid) / 10)); // Now 50% through
-        
+
         // 50% through decay period, fee should have decayed about 50%
         (uint256 feeAfter50Percent, uint256 timestampAfter50Percent) = dfm.getFeeState(pid);
         console2.log("Fee after 50% decay:", feeAfter50Percent);
-        
+
         // Fast-forward to 100% of decay period (complete decay)
         vm.warp(block.timestamp + (policyManager.getSurgeDecayPeriodSeconds(pid) / 2)); // Now 100% through
-        
+
         // 100% through decay period, fee should be back to base level
         (uint256 feeAfter100Percent, uint256 timestampAfter100Percent) = dfm.getFeeState(pid);
         console2.log("Fee after 100% decay:", feeAfter100Percent);
@@ -319,17 +319,17 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // Get initial surge fee timestamp for later comparison
         (uint256 feeAfterCap, uint256 surgeTimestampStart) = dfm.getFeeState(pid);
         console2.log("Fee immediately after cap:", feeAfterCap);
-        
+
         // Fast-forward slightly (25% of decay)
         vm.warp(block.timestamp + (policyManager.getSurgeDecayPeriodSeconds(pid) / 4));
-        
+
         // Do a small swap that shouldn't trigger a cap
         // ... existing code ...
-        
+
         // Verify timestamp didn't change (decay timer wasn't reset)
         (uint256 feeAfterSwap, uint256 surgeTimestampAfterSwap) = dfm.getFeeState(pid);
         console2.log("Fee after non-capped swap:", feeAfterSwap);
-        
+
         // ... existing code ...
     }
 
@@ -343,21 +343,21 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // Get initial fee state
         (uint256 feeAfterCap, uint256 surgeTimestampStart) = dfm.getFeeState(pid);
         console2.log("Fee immediately after first cap:", feeAfterCap);
-        
+
         // Fast-forward through 50% of decay
         vm.warp(block.timestamp + (policyManager.getSurgeDecayPeriodSeconds(pid) / 2));
-        
+
         // Get fee at 50% decay
         (uint256 feePartialDecay,) = dfm.getFeeState(pid);
         console2.log("Fee after 50% decay:", feePartialDecay);
-        
+
         // Trigger a second cap
         _triggerCap();
-        
+
         // Get new fee state after second cap
         (uint256 feeAfterSecondCap, uint256 surgeTimestampReset) = dfm.getFeeState(pid);
         console2.log("Fee immediately after second cap:", feeAfterSecondCap);
-        
+
         // ... existing code ...
     }
 }

@@ -77,8 +77,8 @@ contract DirectDeploy is Script {
             console.log("Deploying TruncGeoOracleMulti...");
             truncGeoOracle = new TruncGeoOracleMulti(
                 IPoolManager(UNICHAIN_POOL_MANAGER),
-                deployer,              // governance parameter
-                policyManager         // policy manager parameter
+                deployer, // governance parameter
+                policyManager // policy manager parameter
             );
             console.log("TruncGeoOracleMulti deployed at: %s", address(truncGeoOracle));
         }
@@ -103,11 +103,7 @@ contract DirectDeploy is Script {
             address initialFeeCollector = deployer;
 
             policyManager = new PoolPolicyManager(
-                owner,
-                defaultDynamicFeePpm,
-                supportedTickSpacings,
-                initialProtocolFeePercentage,
-                initialFeeCollector
+                owner, defaultDynamicFeePpm, supportedTickSpacings, initialProtocolFeePercentage, initialFeeCollector
             );
             console.log("PolicyManager deployed at: %s", address(policyManager));
         }
@@ -133,9 +129,9 @@ contract DirectDeploy is Script {
         // Now deploy the hook
         console.log("Deploying hook directly with CREATE2...");
         Spot hook = new Spot{salt: salt}(
-            IPoolManager(UNICHAIN_POOL_MANAGER), 
-            policyManager, 
-            liquidityManager, 
+            IPoolManager(UNICHAIN_POOL_MANAGER),
+            policyManager,
+            liquidityManager,
             truncGeoOracle,
             IDynamicFeeManager(address(0)), // Will be set later
             deployer
@@ -154,9 +150,9 @@ contract DirectDeploy is Script {
         // Now we can continue with the rest of the initialization
         console.log("Initializing dynamic fee manager...");
         dynamicFeeManager = new DynamicFeeManager(
-            IPoolPolicy(address(policyManager)),  // policy
-            address(truncGeoOracle),             // oracle
-            address(hook)                        // authorizedHook
+            IPoolPolicy(address(policyManager)), // policy
+            address(truncGeoOracle), // oracle
+            address(hook) // authorizedHook
         );
         console.log("DynamicFeeManager deployed: %s", address(dynamicFeeManager));
 

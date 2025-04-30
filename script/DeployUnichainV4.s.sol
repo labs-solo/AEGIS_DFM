@@ -88,8 +88,8 @@ contract DeployUnichainV4 is Script {
             governance,
             FEE,
             supportedTickSpacings,
-            1e17,                          // Interest Fee
-            address(0)                     // Fee Collector
+            1e17, // Interest Fee
+            address(0) // Fee Collector
         );
         console2.log("PoolPolicyManager Deployed at:", address(policyManager));
 

@@ -6,6 +6,7 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 import {BalanceDelta} from "v4-core/types/BalanceDelta.sol";
 import {BeforeSwapDelta} from "v4-core/types/BeforeSwapDelta.sol";
 import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
 /**
  * @title ISpotHooks
@@ -24,7 +25,7 @@ interface ISpotHooks is IHooks {
     function beforeSwapReturnDelta(
         address sender,
         PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
+        SwapParams calldata params,
         bytes calldata hookData
     ) external returns (bytes4, BeforeSwapDelta);
 
@@ -41,7 +42,7 @@ interface ISpotHooks is IHooks {
     function afterSwapReturnDelta(
         address sender,
         PoolKey calldata key,
-        IPoolManager.SwapParams calldata params,
+        SwapParams calldata params,
         BalanceDelta delta,
         bytes calldata hookData
     ) external returns (bytes4, BalanceDelta);
@@ -59,7 +60,7 @@ interface ISpotHooks is IHooks {
     function afterAddLiquidityReturnDelta(
         address sender,
         PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
+        ModifyLiquidityParams calldata params,
         BalanceDelta delta,
         bytes calldata hookData
     ) external returns (bytes4, BalanceDelta);
@@ -78,9 +79,12 @@ interface ISpotHooks is IHooks {
     function afterRemoveLiquidityReturnDelta(
         address sender,
         PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
+        ModifyLiquidityParams calldata params,
         BalanceDelta delta,
         BalanceDelta feesAccrued,
         bytes calldata hookData
     ) external returns (bytes4, BalanceDelta);
+
+    // NOTE: do **not** declare `beforeSwap` here – BaseHook already implements
+    // it and is non-virtual, so redeclaring would create an override clash.
 }

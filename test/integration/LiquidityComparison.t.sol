@@ -20,14 +20,15 @@ import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol"
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 import {MathUtils} from "src/libraries/MathUtils.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
-import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
 contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
     using PoolIdLibrary for PoolKey;
     using SafeTransferLib for ERC20;
     using CurrencyLibrary for Currency;
     using BalanceDeltaLibrary for BalanceDelta;
-    using CurrencySettler for Currency;
+    using SafeERC20 for IERC20Minimal;
 
     address public lpProvider;
     uint128 public constant MIN_LIQUIDITY = 1_000;
@@ -41,15 +42,15 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
     // handy aliases to the objects ForkSetup already deploys
     IPoolManager internal manager_;
     FullRangeLiquidityManager internal frlm_;
-    IERC20Minimal internal token0;   // USDC in this test-pool
-    IERC20Minimal internal token1;   // WETH in this test-pool
+    IERC20Minimal internal token0; // USDC in this test-pool
+    IERC20Minimal internal token1; // WETH in this test-pool
 
     // Callback data for direct minting
     struct CallbackData {
         PoolKey poolKey;
-        int24  tickLower;
-        int24  tickUpper;
-        uint128 liquidity;   // precalculated
+        int24 tickLower;
+        int24 tickUpper;
+        uint128 liquidity; // precalculated
     }
 
     function setUp() public override {
@@ -58,14 +59,14 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
 
         // wire-up the live contracts from ForkSetup
         manager_ = poolManager;
-        frlm_    = liquidityManager;
-        token0   = usdc;
-        token1   = weth;
+        frlm_ = liquidityManager;
+        token0 = usdc;
+        token1 = weth;
 
         // Fund test account
         vm.startPrank(deployerEOA);
-        uint256 amount0 = 29_999_999_973;   // 29 999 999 .973  USDC (6 dec)
-        uint256 amount1 = 10 ether;         // 10 WETH
+        uint256 amount0 = 29_999_999_973; // 29 999 999 .973  USDC (6 dec)
+        uint256 amount1 = 10 ether; // 10 WETH
         deal(address(token0), lpProvider, amount0);
         deal(address(token1), lpProvider, amount1);
         // also give the test-contract its own funds (for the "direct" path)
@@ -82,8 +83,8 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
 
     function test_compareDirectVsFRLM() public {
         // Test constants
-        uint256 amount0 = 29_999_999_973;   // 29 999 999 .973  USDC (6 dec)
-        uint256 amount1 = 10 ether;         // 10 WETH
+        uint256 amount0 = 29_999_999_973; // 29 999 999 .973  USDC (6 dec)
+        uint256 amount1 = 10 ether; // 10 WETH
 
         // Get current pool price
         (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(manager_, poolKey.toId());
@@ -103,12 +104,8 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         // ───────────────────────────────────────────────────────────
         // ① Direct PoolManager liquidity addition through unlock callback
         // ───────────────────────────────────────────────────────────
-        CallbackData memory cbData = CallbackData({
-            poolKey:   poolKey,
-            tickLower: tickLower,
-            tickUpper: tickUpper,
-            liquidity: liquidity
-        });
+        CallbackData memory cbData =
+            CallbackData({poolKey: poolKey, tickLower: tickLower, tickUpper: tickUpper, liquidity: liquidity});
 
         manager_.unlock(abi.encode(cbData));
         uint256 used0Direct = used0Direct_;
@@ -128,13 +125,11 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         );
 
         // Get the actual liquidity from both positions
-        bytes32 posKeyDirect = Position.calculatePositionKey(
-            address(this), tickLower, tickUpper, bytes32(0)
-        );
+        bytes32 posKeyDirect = Position.calculatePositionKey(address(this), tickLower, tickUpper, bytes32(0));
         uint128 liqDirect = StateLibrary.getPositionLiquidity(manager_, poolKey.toId(), posKeyDirect);
-        
+
         (uint128 liqFrlm,,) = frlm_.getPositionData(poolKey.toId());
-        
+
         // Account for MIN_LIQUIDITY if this is first deposit
         uint128 totalShares = frlm_.positionTotalShares(poolKey.toId());
         if (totalShares == shares) {
@@ -144,18 +139,10 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
 
         // Compare liquidity values (should match exactly)
         assertEq(liqDirect, liqFrlm, "liquidity mismatch");
-        
+
         // Compare token amounts used (allow ±1 wei difference due to FRLM rounding)
-        assertLe(
-            MathUtils.abs(int256(used0Direct) - int256(used0Frlm)),
-            1,
-            "token0 diff exceeds 1 wei"
-        );
-        assertLe(
-            MathUtils.abs(int256(used1Direct) - int256(used1Frlm)),
-            1,
-            "token1 diff exceeds 1 wei"
-        );
+        assertLe(MathUtils.abs(int256(used0Direct) - int256(used0Frlm)), 1, "token0 diff exceeds 1 wei");
+        assertLe(MathUtils.abs(int256(used1Direct) - int256(used1Frlm)), 1, "token1 diff exceeds 1 wei");
 
         vm.stopPrank();
     }
@@ -165,7 +152,8 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         require(msg.sender == address(manager_), "only manager");
         CallbackData memory d = abi.decode(data, (CallbackData));
 
-        IPoolManager.ModifyLiquidityParams memory p = IPoolManager.ModifyLiquidityParams({
+        // Construct the ModifyLiquidityParams struct
+        ModifyLiquidityParams memory p = ModifyLiquidityParams({
             tickLower: d.tickLower,
             tickUpper: d.tickUpper,
             liquidityDelta: int256(uint256(d.liquidity)),
@@ -174,19 +162,25 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
 
         (BalanceDelta delta,) = manager_.modifyLiquidity(d.poolKey, p, "");
 
-        used0Direct_ = uint256(uint128(-delta.amount0()));
-        used1Direct_ = uint256(uint128(-delta.amount1()));
+        // These amounts represent the tokens this contract owes the manager
+        used0Direct_ = uint256(uint128(-delta.amount0())); // amount0 is likely negative (owed)
+        used1Direct_ = uint256(uint128(-delta.amount1())); // amount1 is likely negative (owed)
 
         // ─── settle the two ERC-20 debts so PoolManager's books balance ───
         Currency currency0 = Currency.wrap(address(token0));
         Currency currency1 = Currency.wrap(address(token1));
 
         if (used0Direct_ > 0) {
-            // CurrencySettler: sync → transfer → settle
-            currency0.settle(manager_, address(this), used0Direct_, /*burn*/ false);
+            // Transfer from this contract (msg.sender) to PoolManager
+            require(token0.transferFrom(address(this), address(manager_), used0Direct_), "Transfer failed");
+            // Settle the balance
+            manager_.settle();
         }
         if (used1Direct_ > 0) {
-            currency1.settle(manager_, address(this), used1Direct_, /*burn*/ false);
+            // Transfer from this contract (msg.sender) to PoolManager
+            require(token1.transferFrom(address(this), address(manager_), used1Direct_), "Transfer failed");
+            // Settle the balance
+            manager_.settle();
         }
 
         // Return zero delta to indicate all debts are settled
@@ -203,4 +197,4 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         token.approve(address(frlm_), amount);
         vm.stopPrank();
     }
-} 
+}
