@@ -18,7 +18,7 @@
     "test": "./scripts/test.sh",
     "format": "forge fmt",
     "clean": "forge clean",
-    "postinstall": "patch-package && mkdir -p node_modules/solmate/src && ln -sf . node_modules/solmate/src/src"
+    "postinstall": "patch-package && ./scripts/fix_solmate_imports.sh"
   },
   "devDependencies": {
     "@openzeppelin/contracts": "5.3.0",
