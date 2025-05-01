@@ -166,26 +166,38 @@ contract DynamicFeeManager is IDynamicFeeManager {
     }
 
     function notifyOracleUpdate(PoolId poolId, bool tickWasCapped) external override {
-        require(msg.sender == authorizedHook, "DFM:!auth");
+        _requireHookAuth(); // Ensure only authorized hook can call
 
-        uint256 w1 = _s[poolId];
-        require(w1 != 0, "DFM: not init"); // initialised?
+        uint256 w = _s[poolId];
+        require(w != 0, "DFM: not init");
 
-        uint48 nowTs = uint48(block.timestamp);
+        uint32 nowTs = uint32(block.timestamp);
+        uint256 w1 = w; // copy to save gas
 
-        // ---- CAP-event toggle ----------------------------------------
-        if (tickWasCapped && !w1.inCap()) {
-            // start new CAP event
+        // ---- CAP-event handling ---------------------------------------
+        if (tickWasCapped) {
+            /**
+             * OPTION B – Every capped-swap **resets** the surge-timer.
+             * `inCap` stays true; we simply stamp a fresh `capStart`
+             * so `_surge()` returns the full surge again.
+             */
             w1 = w1.setInCap(true).setCapSt(uint40(nowTs));
-        } else if (!tickWasCapped && w1.inCap()) {
-            // leave CAP window; keep capStart for surge-decay
-            w1 = w1.setInCap(false);
+        } else if (w1.inCap()) {
+            /**
+             * Only clear `inCap` once the surge component has fully
+             * decayed to zero.  This prevents premature exit while a
+             * residual fee bump is still active.
+             */
+            if (_surge(poolId, w1) == 0) {
+                w1 = w1.setInCap(false);
+            }
         }
 
-        // always emit – base-fee depends on oracle and may change every block
-        emit FeeStateChanged(poolId, uint24(_baseFee(poolId)), _surge(poolId, w1), w1.inCap());
-
-        _s[poolId] = w1; // Final single SSTORE
+        // Save updated state if changed
+        if (w1 != w) {
+            _s[poolId] = w1;
+            emit FeeStateChanged(poolId, _baseFee(poolId), _surge(poolId, w1), w1.inCap());
+        }
     }
 
     /* ── stateless base-fee helper ───────────────────────────────────── */
@@ -247,5 +259,9 @@ contract DynamicFeeManager is IDynamicFeeManager {
         require(msg.sender == owner, "DFM:!owner");
         require(newHook != address(0), "DFM:hook 0");
         authorizedHook = newHook;
+    }
+
+    function _requireHookAuth() internal view {
+        require(msg.sender == authorizedHook, "DFM:!auth");
     }
 }

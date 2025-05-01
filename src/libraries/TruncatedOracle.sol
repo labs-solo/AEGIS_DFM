@@ -45,7 +45,10 @@ library TruncatedOracle {
         returns (Observation memory)
     {
         unchecked {
-            uint32 delta = blockTimestamp - last.blockTimestamp;
+            // --- wrap-safe delta ------------------------------------------------
+            uint32 delta = blockTimestamp >= last.blockTimestamp
+                ? blockTimestamp - last.blockTimestamp
+                : blockTimestamp + (type(uint32).max - last.blockTimestamp) + 1;
 
             // Calculate absolute tick movement using optimized implementation
             (bool capped, int24 t) = TickMoveGuard.checkHardCapOnly(last.prevTick, tick);
@@ -218,6 +221,21 @@ library TruncatedOracle {
         uint128 liquidity,
         uint16 cardinality
     ) private returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
+        // ===== fast-path: ring length 1  =====
+        if (cardinality == 1) {
+            Observation memory only = self[index];
+
+            // target newer  ➜ simulate forward
+            if (lte(time, only.blockTimestamp, target)) {
+                if (only.blockTimestamp == target) return (only, only);
+                return (only, transform(only, target, tick, liquidity));
+            }
+
+            // target older  ➜ invalid
+            revert TargetPredatesOldestObservation(only.blockTimestamp, target);
+        }
+
+        // ----- normal multi-element path -----
         // optimistically set before to the newest observation
         beforeOrAt = self[index];
 
@@ -295,16 +313,24 @@ library TruncatedOracle {
         uint128 liquidity,
         uint16 cardinality
     ) internal returns (int48 tickCumulative, uint144 secondsPerLiquidityCumulativeX128) {
-        if (secondsAgo == 0) {
+        if (cardinality == 0) revert OracleCardinalityCannotBeZero();
+
+        // base case: target is the current block? Handle large secondsAgo here.
+        if (secondsAgo == 0 || secondsAgo > type(uint32).max) {
             Observation memory last = self[index];
             if (last.blockTimestamp != time) {
-                // Use the pool-specific maximum tick movement
                 last = transform(last, time, tick, liquidity);
             }
             return (last.tickCumulative, last.secondsPerLiquidityCumulativeX128);
         }
 
-        uint32 target = time - secondsAgo;
+        // Safe subtraction logic applied *before* getSurroundingObservations
+        uint32 target;
+        unchecked {
+            target = time >= secondsAgo
+                ? time - secondsAgo
+                : time + uint32(type(uint32).max - secondsAgo) + 1;
+        }
 
         (Observation memory beforeOrAt, Observation memory atOrAfter) =
             getSurroundingObservations(self, time, target, tick, index, liquidity, cardinality);
@@ -316,9 +342,21 @@ library TruncatedOracle {
             // we're at the right boundary
             return (atOrAfter.tickCumulative, atOrAfter.secondsPerLiquidityCumulativeX128);
         } else {
+            // ----------  NORMALISE for wrap-around ----------
+            // Bring all three timestamps into the same "era" (≥ beforeOrAt)
+            uint32 base = beforeOrAt.blockTimestamp;
+            uint32 norm = base; // avoids stack-too-deep
+            uint32 bTs  = beforeOrAt.blockTimestamp;
+            uint32 aTs  = atOrAfter.blockTimestamp;
+            uint32 tTs  = target;
+
+            if (aTs < norm) aTs += type(uint32).max + 1;
+            if (tTs < norm) tTs += type(uint32).max + 1;
+
+            // Use the normalised copies for deltas below
             // we're in the middle
-            uint32 observationTimeDelta = atOrAfter.blockTimestamp - beforeOrAt.blockTimestamp;
-            uint32 targetDelta = target - beforeOrAt.blockTimestamp;
+            uint32 observationTimeDelta = aTs - bTs;
+            uint32 targetDelta         = tTs - bTs;
 
             return (
                 beforeOrAt.tickCumulative
