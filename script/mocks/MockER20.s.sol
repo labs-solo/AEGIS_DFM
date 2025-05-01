@@ -9,7 +9,7 @@ pragma solidity ^0.8.19;
 /*
 
 import "forge-std/Script.sol";
-import {MockERC20} from "solmate/test/utils/mocks/MockERC20.sol";
+import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
 contract MockToken is MockERC20 {
     constructor(string memory _name, string memory _symbol) MockERC20(_name, _symbol, 18) {}

@@ -1,7 +1,7 @@
 [profile.default]
 remappings = [
   # solmate (longest prefix first)
-  "solmate/=node_modules/solmate/src/",
+  "solmate/=node_modules/solmate/",
 
   # openzeppelin - ensure both @openzeppelin/contracts and openzeppelin point to src
   "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",

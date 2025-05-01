@@ -43,9 +43,9 @@ import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol";
 /* ───────────────────────────────────────────────────────────
  *                    Solmate / OpenZeppelin
  * ─────────────────────────────────────────────────────────── */
-import {ERC20} from "solmate/tokens/ERC20.sol";
-import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
-import {Owned} from "solmate/auth/Owned.sol";
+import {ERC20} from "solmate/src/tokens/ERC20.sol";
+import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
+import {Owned} from "solmate/src/auth/Owned.sol";
 
 /* ───────────────────────────────────────────────────────────
  *                       Contract: Spot

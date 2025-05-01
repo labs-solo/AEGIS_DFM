@@ -18,13 +18,13 @@ import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
 import {ISpot, DepositParams as ISpotDepositParams} from "src/interfaces/ISpot.sol";
 
 // import {IWETH9}         from "v4-periphery/interfaces/external/IWETH9.sol"; // Keep commented out
-import {ERC20} from "solmate/tokens/ERC20.sol";
+import {ERC20} from "solmate/src/tokens/ERC20.sol";
 // import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol"; // Removed import
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol"; // Added import
 // import {PoolModifyLiquidityTest} from "./integration/routers/PoolModifyLiquidityTest.sol"; // Keep commented out
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
+import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol"; // Added import
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol"; // <-- ADDED IMPORT
 

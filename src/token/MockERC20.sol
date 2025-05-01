@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import "solmate/tokens/ERC20.sol";
+import "solmate/src/tokens/ERC20.sol";
 
 /**
  * @title MockERC20
