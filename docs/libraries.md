@@ -295,4 +295,86 @@ PrecisionConstants.sol is a centralized library that defines standard precision-
 3. Consider expansion:
    - Evaluate if additional precision constants are needed
    - Consider adding related utility functions
-   - Consider creating specialized versions for different precision needs 
+   - Consider creating specialized versions for different precision needs
+
+## TickCheck.sol
+
+### Overview
+
+TickCheck.sol is a utility library designed for tick-math operations in Uniswap V4 pools, specifically focused on validating tick movements and fee calculations. The library was intentionally kept separate from DynamicFeeManager to keep its bytecode lean, and is meant to be used by external hooks and tests.
+
+### Function Analysis
+
+#### Available Functions
+
+1. `abs(int256 x)`
+   - Purpose: Calculates the absolute value of a signed integer
+   - Use case: Helper function for tick difference calculations
+   - Implementation: Simple comparison and negation if needed
+   - Current usage: Only used internally by the `exceeds` function, not called directly from other contracts
+
+2. `maxMove(uint256 feePpm, uint256 scale)`
+   - Purpose: Calculates the maximum allowed tick movement for a given fee rate
+   - Use case: Determining tick movement limits based on pool fees
+   - Implementation: 
+     - Calculates scaled fee movement (feePpm * scale / 1e6)
+     - Caps result at maximum int24 value (8,388,607)
+   - Current usage: Currently unused in the codebase
+   - Parameters:
+     - `feePpm`: Fee in parts per million
+     - `scale`: Scaling factor for the calculation
+
+3. `exceeds(int24 a, int24 b, int24 maxChange)`
+   - Purpose: Checks if the absolute difference between two ticks exceeds a maximum change
+   - Use case: Validating tick movements in price updates
+   - Implementation: Uses `abs` to compare tick difference against maxChange
+   - Current usage: Currently unused in the codebase
+   - Parameters:
+     - `a`: First tick value
+     - `b`: Second tick value
+     - `maxChange`: Maximum allowed difference
+
+### Recommendations
+
+1. **Usage Evaluation**:
+   - The library is currently unused in the codebase
+   - Evaluate whether tick movement validation is needed for current or planned features
+   - Consider removing if there are no immediate plans for use
+
+2. **Integration Opportunities**:
+   - Review DynamicFeeManager implementation for potential integration points
+   - Consider using these validations in pool hooks where price manipulation is a concern
+   - Evaluate use in test suites for tick-based assertions
+
+3. **Documentation Enhancement**:
+   - Add examples of proper usage scenarios
+   - Document the relationship with DynamicFeeManager
+   - Add explanations of the mathematical principles behind tick movement limits
+
+4. **Feature Expansion**:
+   - Consider adding functions for common tick manipulation patterns
+   - Add safety checks for edge cases
+   - Consider adding events for monitoring tick movements
+
+5. **Gas Optimization**:
+   - Review the use of int256 in `abs` when only int24 values are being compared
+   - Consider using unchecked blocks where appropriate
+   - Evaluate if the scale parameter in maxMove could be a constant
+
+### Next Steps
+
+1. Determine the library's role:
+   - Review planned features that might need tick movement validation
+   - Assess if the current implementation meets those needs
+   - Decide whether to expand or remove the library
+
+2. If keeping the library:
+   - Add comprehensive test coverage
+   - Integrate with relevant contracts
+   - Enhance documentation with examples
+   - Consider adding more tick-math utilities
+
+3. If removing:
+   - Document the decision and rationale
+   - Ensure no planned features would benefit from these utilities
+   - Consider if parts should be preserved in test helpers 
