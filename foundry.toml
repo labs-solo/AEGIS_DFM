@@ -31,7 +31,7 @@ solc_version = "0.8.26"
 evm_version = "cancun"
 viaIR = true
 optimizer = true
-optimizer_runs = 100_000
+optimizer_runs = 10_000
 dotenv = true  # Enable .env file loading
 exclude_paths = ["test/old-tests"]
 
