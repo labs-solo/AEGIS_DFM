@@ -158,4 +158,65 @@ Based on the analysis, here are some recommendations for the MathUtils library:
 
 2. Document decisions and rationale for keeping any currently unused functions.
 
-3. Consider creating separate specialized libraries for distinct feature sets (e.g., fee calculations, liquidity management). 
+3. Consider creating separate specialized libraries for distinct feature sets (e.g., fee calculations, liquidity management).
+
+## LibTransient.sol
+
+### Overview
+
+LibTransient.sol is a minimal wrapper library for EIP-1153 transient storage operations. Transient storage is a feature introduced in EIP-1153 that provides temporary storage that only persists within the same transaction, offering a more gas-efficient alternative to regular storage for temporary values.
+
+### Function Analysis
+
+#### Available Functions
+
+1. `setUint256(bytes32 key, uint256 value)`
+   - Purpose: Sets a uint256 value in transient storage using a bytes32 key
+   - Use case: When you need to store temporary uint256 values that only need to persist within the same transaction
+   - Implementation: Uses assembly to directly call the `tstore` EVM opcode
+   - Current usage: Currently unused in the codebase
+
+2. `getUint256(bytes32 key)`
+   - Purpose: Retrieves a uint256 value from transient storage using a bytes32 key
+   - Use case: When you need to read temporary uint256 values that were stored earlier in the same transaction
+   - Implementation: Uses assembly to directly call the `tload` EVM opcode
+   - Current usage: Currently unused in the codebase
+
+### Recommendations
+
+1. **Usage Evaluation**: 
+   - The library is currently unused in the codebase
+   - Evaluate whether transient storage functionality is needed for any current or planned features
+   - Consider removing if there are no immediate plans for use
+
+2. **Feature Expansion**:
+   - If keeping the library, consider adding support for other common types (bool, address, etc.)
+   - Add helper functions for common patterns (e.g., increment/decrement operations)
+   - Add batch operations for gas optimization
+
+3. **Documentation Enhancement**:
+   - Add examples of appropriate use cases
+   - Document gas savings compared to regular storage
+   - Add warnings about the transient nature of the storage
+
+4. **Testing Requirements**:
+   - If kept, add comprehensive tests including:
+     - Basic set/get operations
+     - Cross-function persistence
+     - Cross-contract behavior
+     - Gas comparison tests
+
+### Next Steps
+
+1. Determine if transient storage is needed for any current or planned features:
+   - Review gas optimization opportunities in existing code
+   - Identify patterns where temporary storage is used
+
+2. If keeping the library:
+   - Expand functionality to support more types and operations
+   - Add comprehensive documentation and testing
+   - Create examples of proper usage
+
+3. If not needed:
+   - Remove the library to reduce codebase complexity
+   - Document the decision for future reference 
