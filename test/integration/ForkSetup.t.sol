@@ -194,6 +194,9 @@ contract ForkSetup is Test {
         );
         emit log_named_address("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
+        // Ensure global pause is disabled by default
+        policyManager.setGlobalPaused(false);
+
         // Deploy Oracle (AFTER PolicyManager)
         emit log_string("Deploying TruncGeoOracleMulti...");
         oracle = new TruncGeoOracleMulti(poolManager, deployerEOA, policyManager);
