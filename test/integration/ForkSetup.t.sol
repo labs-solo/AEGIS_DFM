@@ -194,9 +194,6 @@ contract ForkSetup is Test {
         );
         emit log_named_address("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
-        // Ensure global pause is disabled by default
-        policyManager.setGlobalPaused(false);
-
         // Deploy Oracle (AFTER PolicyManager)
         emit log_string("Deploying TruncGeoOracleMulti...");
         oracle = new TruncGeoOracleMulti(poolManager, deployerEOA, policyManager);
@@ -267,6 +264,10 @@ contract ForkSetup is Test {
         // Configure Contracts
         emit log_string("Configuring contracts...");
         liquidityManager.setAuthorizedHookAddress(actualHookAddress);
+
+        // Ensure reinvestment is not paused by default
+        vm.prank(deployerEOA);
+        fullRange.setReinvestmentPaused(false);
 
         /* Build poolKey & poolId for DFM initialization */
         address token0;
