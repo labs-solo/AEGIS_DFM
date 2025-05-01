@@ -5,11 +5,11 @@ import "forge-std/Script.sol";
 // import {Strings} from "@openzeppelin/contracts/utils/Strings.sol"; // Removed
 
 // Uniswap V4 Core
-import {PoolManager} from "v4-core/PoolManager.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {PoolModifyLiquidityTest} from "v4-core/test/PoolModifyLiquidityTest.sol";
-import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
-import {PoolDonateTest} from "v4-core/test/PoolDonateTest.sol";
+import {PoolManager} from "v4-core/src/PoolManager.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
+import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
+import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
 
 // FullRange Contracts
 import {Spot} from "../src/Spot.sol";
@@ -17,13 +17,13 @@ import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
-import {Hooks} from "v4-core/libraries/Hooks.sol";
-import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 
 // Test Tokens
 import {MockERC20} from "../src/token/MockERC20.sol";
@@ -31,8 +31,8 @@ import {MockERC20} from "../src/token/MockERC20.sol";
 // New imports
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
-import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
-import {HookMiner as HMiner} from "v4-periphery/utils/HookMiner.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
+import {HookMiner as HMiner} from "v4-periphery/src/utils/HookMiner.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -125,7 +125,8 @@ contract DeployLocalUniswapV4 is Script {
         console.log("Deploying FullRange components...");
 
         // Deploy Liquidity Manager
-        liquidityManager = new FullRangeLiquidityManager(IPoolManager(address(poolManager)), IPoolPolicy(address(0)), governance);
+        liquidityManager =
+            new FullRangeLiquidityManager(IPoolManager(address(poolManager)), IPoolPolicy(address(0)), governance);
         console.log("LiquidityManager deployed at:", address(liquidityManager));
 
         // Deploy Spot hook (which is MarginHarness in this script)

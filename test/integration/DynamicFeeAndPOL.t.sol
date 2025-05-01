@@ -4,22 +4,22 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
 import "./ForkSetup.t.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
-import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
-import {IHooks} from "v4-core/interfaces/IHooks.sol";
-import {Hooks} from "v4-core/libraries/Hooks.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
-import {BaseHook} from "v4-periphery/utils/BaseHook.sol";
-import {TickMath} from "v4-core/libraries/TickMath.sol";
-import {FullMath} from "v4-core/libraries/FullMath.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
+import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
-import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
-import {IWETH9} from "v4-periphery/interfaces/external/IWETH9.sol";
+import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
+import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
 import {IFullRangeLiquidityManager} from "../../src/interfaces/IFullRangeLiquidityManager.sol";
 import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
 import {FullRangeLiquidityManager} from "../../src/FullRangeLiquidityManager.sol";
@@ -29,13 +29,13 @@ import {TickCheck} from "../../src/libraries/TickCheck.sol";
 import {PoolPolicyManager} from "../../src/PoolPolicyManager.sol";
 import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol";
 import {Spot} from "../../src/Spot.sol";
-import {Position} from "v4-core/libraries/Position.sol";
-import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
-import {SqrtPriceMath} from "v4-core/libraries/SqrtPriceMath.sol";
-import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
-import {SwapParams} from "v4-core/types/PoolOperation.sol";
+import {Position} from "v4-core/src/libraries/Position.sol";
+import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
+import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
+import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMoveGuard} from "src/libraries/TickMoveGuard.sol";
-import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
+import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {INITIAL_LP_USDC, INITIAL_LP_WETH} from "../utils/TestConstants.sol";
 
 /**
@@ -248,8 +248,8 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // current >1 B notional liquidity seeded in the pool.
         bool zeroForOne = Currency.unwrap(poolKey.currency0) == address(usdc);
         int256 capAmount = zeroForOne
-            ? int256(150_000 * 1e6)  // 150 k USDC → WETH
-            : int256(50 ether);      // 50 WETH   → USDC
+            ? int256(150_000 * 1e6) // 150 k USDC → WETH
+            : int256(50 ether); // 50 WETH   → USDC
 
         // Allocate enough funds for 3 swaps
         uint256 topUp = uint256(capAmount > 0 ? capAmount : -capAmount) * 3;
@@ -374,7 +374,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         uint256 wethToDeposit = 10 ether;
         require(usdc.balanceOf(lpProvider) >= usdcToDeposit, "LP lacks USDC");
         require(weth.balanceOf(lpProvider) >= wethToDeposit, "LP lacks WETH");
-        
+
         // Isolated deposit – governance provides funds so we avoid allowance issues
         (, uint256 usdcUsed, uint256 wethUsed) =
             _addLiquidityAsGovernance(poolId, usdcToDeposit, wethToDeposit, 0, 0, lpProvider);

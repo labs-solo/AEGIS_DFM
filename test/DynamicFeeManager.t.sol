@@ -2,8 +2,8 @@
 pragma solidity ^0.8.26;
 
 import {Test} from "forge-std/Test.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";

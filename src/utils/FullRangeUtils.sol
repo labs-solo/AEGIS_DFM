@@ -7,14 +7,14 @@ pragma solidity 0.8.26;
  *         token transfers, and pool policy data assembly.
  * @dev Functions in this library are internal, so they are inlined into the calling contract (FullRange) at compile time.
  */
-import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
+import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {MathUtils} from "../libraries/MathUtils.sol";
 import {Errors} from "../errors/Errors.sol";
-import {PoolId} from "v4-core/types/PoolId.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {IPoolPolicy} from "../interfaces/IPoolPolicy.sol";
-import {FullMath} from "v4-core/libraries/FullMath.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 
 library FullRangeUtils {
     /**
@@ -39,12 +39,11 @@ library FullRangeUtils {
      * @notice Calculate withdrawal amounts based on shares to burn.
      * @dev Uses MathUtils for precise computation of output amounts.
      */
-    function computeWithdrawAmounts(
-        uint128 totalShares,
-        uint256 sharesToBurn,
-        uint256 reserve0,
-        uint256 reserve1
-    ) internal pure returns (uint256 amount0Out, uint256 amount1Out) {
+    function computeWithdrawAmounts(uint128 totalShares, uint256 sharesToBurn, uint256 reserve0, uint256 reserve1)
+        internal
+        pure
+        returns (uint256 amount0Out, uint256 amount1Out)
+    {
         // withdraw proportionally: reserve * sharesBurned / totalShares
         amount0Out = FullMath.mulDiv(reserve0, sharesToBurn, totalShares);
         amount1Out = FullMath.mulDiv(reserve1, sharesToBurn, totalShares);

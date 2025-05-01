@@ -3,17 +3,17 @@ pragma solidity ^0.8.26; // Use caret for consistency
 
 import {Test, console2} from "forge-std/Test.sol"; // Added console2
 import {ForkSetup} from "./ForkSetup.t.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 // Import the new interface and implementation
 import {IDynamicFeeManager} from "../../src/interfaces/IDynamicFeeManager.sol";
 import {DynamicFeeManager} from "../../src/DynamicFeeManager.sol";
 import {TickCheck} from "../../src/libraries/TickCheck.sol";
-import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
-import {TickMath} from "v4-core/libraries/TickMath.sol";
-import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
+import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {PoolPolicyManager} from "../../src/PoolPolicyManager.sol"; // Assuming this is still used
 
 // Renamed contract for clarity

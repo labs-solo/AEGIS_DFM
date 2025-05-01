@@ -5,11 +5,11 @@ import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ForkSetup} from "./ForkSetup.t.sol";
 
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-// import {StateLibrary}   from "v4-core/libraries/StateLibrary.sol"; // Keep commented out
-import {PoolId} from "v4-core/types/PoolId.sol";
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+// import {StateLibrary}   from "v4-core/src/libraries/StateLibrary.sol"; // Keep commented out
+import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
 // Changed to absolute src imports
 import {Spot} from "src/Spot.sol";
@@ -23,10 +23,10 @@ import {ERC20} from "solmate/tokens/ERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol"; // Added import
 // import {PoolModifyLiquidityTest} from "./integration/routers/PoolModifyLiquidityTest.sol"; // Keep commented out
-import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
-import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol"; // Added import
-import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol"; // <-- ADDED IMPORT
+import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol"; // Added import
+import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol"; // <-- ADDED IMPORT
 
 // Remove local struct definition, use imported one
 // struct LocalDepositParams {

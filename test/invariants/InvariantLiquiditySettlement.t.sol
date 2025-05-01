@@ -4,13 +4,13 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 // TODO: User needs to implement or import the Fixture helper library
 // import {Fixture} from "../path/to/Fixture.sol";
-import {PoolManager} from "v4-core/PoolManager.sol";
+import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {FullRangeLiquidityManager} from "../../src/FullRangeLiquidityManager.sol"; // Adjusted path assuming test/invariants
-import {PoolKey, PoolIdLibrary} from "v4-core/types/PoolKey.sol";
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
-import {BalanceDelta} from "v4-core/types/BalanceDelta.sol"; // Needed for Fixture.lastSettlementDelta return type
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
+import {PoolKey, PoolIdLibrary} from "v4-core/src/types/PoolKey.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol"; // Needed for Fixture.lastSettlementDelta return type
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 
 contract InvariantLiquiditySettlement is Test {
     using PoolIdLibrary for PoolKey;
