@@ -377,4 +377,100 @@ TickCheck.sol is a utility library designed for tick-math operations in Uniswap 
 3. If removing:
    - Document the decision and rationale
    - Ensure no planned features would benefit from these utilities
-   - Consider if parts should be preserved in test helpers 
+   - Consider if parts should be preserved in test helpers
+
+## TickMoveGuard.sol
+
+### Overview
+
+TickMoveGuard.sol is a library that serves as the single source of truth for validating and limiting tick movements in Uniswap V4 pools. It provides functionality to truncate excessive tick movements to a specified cap, helping prevent price manipulation and ensure price stability.
+
+### Function Analysis
+
+#### Constants
+
+1. `HARD_ABS_CAP`
+   - Value: 9,116 ticks
+   - Purpose: Legacy absolute cap representing approximately 1% of the full Uniswap-V4 tick range
+   - Use case: Default maximum tick movement when no custom cap is specified
+
+#### Private Functions
+
+1. `_abs(int256 x)`
+   - Purpose: Internal helper to calculate absolute value of a signed integer
+   - Use case: Supporting tick difference calculations
+   - Implementation: Simple comparison and negation if needed
+   - Current usage: Used internally by the `truncate` function
+
+#### Public Functions
+
+1. `truncate(int24 lastTick, int24 currentTick, uint24 cap)`
+   - Purpose: Truncates tick movement to a caller-supplied absolute cap
+   - Use case: Limiting price movements in oracle implementations
+   - Implementation: Calculates tick difference and caps if it exceeds the limit
+   - Current usage: Used in `TruncGeoOracleMulti.sol`
+   - Parameters:
+     - `lastTick`: Previous tick value
+     - `currentTick`: New tick value
+     - `cap`: Maximum allowed tick movement
+   - Returns:
+     - `capped`: Whether truncation was necessary
+     - `newTick`: The resulting tick value
+
+2. `checkHardCapOnly(int24 lastTick, int24 currentTick)`
+   - Purpose: Legacy wrapper that uses the hard-coded HARD_ABS_CAP
+   - Use case: Backward compatibility for existing implementations
+   - Implementation: Calls `truncate` with HARD_ABS_CAP
+   - Current usage: Used in:
+     - `TruncGeoOracleMulti.sol`
+     - `TruncatedOracle.sol`
+
+3. `check(int24 lastTick, int24 currentTick, uint256 feePpm, uint256 scale)`
+   - Purpose: Legacy wrapper maintaining old interface signature
+   - Use case: Backward compatibility for existing implementations
+   - Implementation: Ignores feePpm and scale parameters, uses HARD_ABS_CAP
+   - Current usage: No direct usage found in codebase
+
+### Recommendations
+
+1. **Interface Consolidation**:
+   - Consider deprecating `check` function since it's unused
+   - Evaluate if `checkHardCapOnly` can be replaced with direct `truncate` calls
+   - Document migration path for users of legacy functions
+
+2. **Functionality Enhancement**:
+   - Consider adding events for monitoring truncated movements
+   - Add functions for analyzing tick movement patterns
+   - Consider adding configurable caps based on time windows
+
+3. **Gas Optimization**:
+   - Review the use of int256 in `_abs` when only int24 values are used
+   - Consider using unchecked blocks where appropriate
+   - Evaluate if constant values can be optimized
+
+4. **Documentation Enhancement**:
+   - Add examples of proper usage
+   - Document the rationale behind the HARD_ABS_CAP value
+   - Add warnings about potential edge cases
+
+### Next Steps
+
+1. Code Cleanup:
+   - Remove or deprecate unused `check` function
+   - Consider consolidating the three similar functions into one
+   - Add deprecation notices for legacy functions
+
+2. Feature Development:
+   - Evaluate needs for additional tick movement controls
+   - Consider adding more sophisticated capping mechanisms
+   - Add monitoring capabilities for truncated movements
+
+3. Testing Enhancement:
+   - Add comprehensive tests for edge cases
+   - Add gas optimization tests
+   - Add integration tests with oracle implementations
+
+4. Documentation:
+   - Create migration guide for users of legacy functions
+   - Document best practices for cap values
+   - Add examples of integration with oracle systems 
