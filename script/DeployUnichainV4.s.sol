@@ -87,7 +87,7 @@ contract DeployUnichainV4 is Script {
         truncGeoOracle = new TruncGeoOracleMulti(poolManager, deployerAddress, policyManager);
 
         // Deploy LiquidityManager
-        liquidityManager = new FullRangeLiquidityManager(poolManager, deployerAddress);
+        liquidityManager = new FullRangeLiquidityManager(poolManager, IPoolPolicy(address(0)), deployerAddress);
 
         // --- Deploy Test Routers ---
         lpRouter = new PoolModifyLiquidityTest(poolManager);

@@ -30,7 +30,7 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
     using BalanceDeltaLibrary for BalanceDelta;
     using CurrencySettler for Currency;
 
-    address public lpProvider;
+    // lpProvider inherited from ForkSetup
     uint128 public constant MIN_LIQUIDITY = 1_000;
 
     // ──────────────────────────────────────────────
@@ -55,7 +55,6 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
 
     function setUp() public override {
         super.setUp();
-        lpProvider = makeAddr("lpProvider");
 
         // wire-up the live contracts from ForkSetup
         manager_ = poolManager;
@@ -118,8 +117,11 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         // ───────────────────────────────────────────────────────────
         // ② Same deposit through FullRangeLiquidityManager (lpProvider)
         // ───────────────────────────────────────────────────────────
-        vm.startPrank(lpProvider);
-        (uint256 shares, uint256 used0Frlm, uint256 used1Frlm) = frlm_.deposit(
+        uint256 shares;
+        uint256 used0FRLM;
+        uint256 used1FRLM;
+
+        (shares, used0FRLM, used1FRLM) = _addLiquidityAsGovernance(
             poolKey.toId(),
             amount0,
             amount1,
@@ -147,18 +149,10 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         assertEq(liqDirect, liqFrlm, "liquidity mismatch");
         
         // Compare token amounts used (allow ±1 wei difference due to FRLM rounding)
-        assertLe(
-            SignedMath.abs(int256(used0Direct) - int256(used0Frlm)),
-            1,
-            "token0 diff exceeds 1 wei"
-        );
-        assertLe(
-            SignedMath.abs(int256(used1Direct) - int256(used1Frlm)),
-            1,
-            "token1 diff exceeds 1 wei"
-        );
-
-        vm.stopPrank();
+        uint256 diff0 = SignedMath.abs(int256(used0Direct) - int256(used0FRLM));
+        uint256 diff1 = SignedMath.abs(int256(used1Direct) - int256(used1FRLM));
+        assertLe(diff0, 1, "token0 diff exceeds 1 wei");
+        assertLe(diff1, 1, "token1 diff exceeds 1 wei");
     }
 
     // settles the owed tokens

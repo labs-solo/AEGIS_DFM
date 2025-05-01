@@ -150,7 +150,8 @@ contract InternalReinvestTest is ForkSetup {
             deadline: block.timestamp + 1 hours
         });
 
-        // Call deposit from the test contract context (no prank)
+        // Call deposit from governance
+        vm.prank(deployerEOA); // Use governance for deposit
         hook.deposit(params);
     }
 

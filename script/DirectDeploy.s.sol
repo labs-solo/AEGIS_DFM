@@ -110,7 +110,7 @@ contract DirectDeploy is Script {
 
         if (address(liquidityManager) == address(0)) {
             console.log("Deploying LiquidityManager...");
-            liquidityManager = new FullRangeLiquidityManager(IPoolManager(UNICHAIN_POOL_MANAGER), deployer);
+            liquidityManager = new FullRangeLiquidityManager(IPoolManager(UNICHAIN_POOL_MANAGER), IPoolPolicy(address(0)), deployer);
             console.log("LiquidityManager deployed at: %s", address(liquidityManager));
         }
 

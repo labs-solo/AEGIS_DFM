@@ -125,7 +125,7 @@ contract DeployLocalUniswapV4 is Script {
         console.log("Deploying FullRange components...");
 
         // Deploy Liquidity Manager
-        liquidityManager = new FullRangeLiquidityManager(IPoolManager(address(poolManager)), governance);
+        liquidityManager = new FullRangeLiquidityManager(IPoolManager(address(poolManager)), IPoolPolicy(address(0)), governance);
         console.log("LiquidityManager deployed at:", address(liquidityManager));
 
         // Deploy Spot hook (which is MarginHarness in this script)

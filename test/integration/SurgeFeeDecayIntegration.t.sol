@@ -78,7 +78,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         ERC20(address(weth)).approve(address(poolManager), MAX);
 
         // Deposit full-range liquidity
-        liquidityManager.deposit(pid, amt0, amt1, 0, 0, address(this));
+        _addLiquidityAsGovernance(pid, amt0, amt1, 0, 0, address(this));
 
         // Pre-funding and approvals for PoolManager and swapper remain the same
         deal(address(usdc), address(swapper), 100_000 * 1e6);
