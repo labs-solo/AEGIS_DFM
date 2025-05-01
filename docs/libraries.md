@@ -219,4 +219,80 @@ LibTransient.sol is a minimal wrapper library for EIP-1153 transient storage ope
 
 3. If not needed:
    - Remove the library to reduce codebase complexity
-   - Document the decision for future reference 
+   - Document the decision for future reference
+
+## PrecisionConstants.sol
+
+### Overview
+
+PrecisionConstants.sol is a centralized library that defines standard precision-related constants used throughout the protocol. Its primary purpose is to ensure consistency in scaling factors across all contracts, particularly for calculations involving percentages, ratios, and high-precision mathematics.
+
+### Function Analysis
+
+#### Available Constants
+
+1. `PRECISION`
+   - Value: 1e18 (10^18)
+   - Purpose: Standard high-precision scaling factor
+   - Use cases: 
+     - Interest rate calculations
+     - LTV (Loan-to-Value) ratios
+     - Other high-precision decimal calculations
+   - Current usage: 
+     - Used in `PoolPolicyManager.sol` for percentage validation
+     - Used in `MathUtils.sol` as a precision constant
+
+2. `PPM_SCALE`
+   - Value: 1e6 (10^6)
+   - Purpose: Parts-per-million scaling factor
+   - Use cases:
+     - Fee percentage calculations
+     - Allocation share computations
+     - General percentage-based calculations
+   - Current usage:
+     - Used in `MathUtils.sol` as a scaling factor
+
+3. `ONE_HUNDRED_PERCENT_PPM`
+   - Value: 1e6 (1,000,000)
+   - Purpose: Represents 100% in parts-per-million format
+   - Use cases:
+     - Percentage calculations
+     - Input validation for percentage-based parameters
+   - Current usage: Currently unused in the codebase
+
+### Recommendations
+
+1. **Constant Usage Standardization**:
+   - Review all percentage and precision calculations in the codebase
+   - Ensure consistent use of these constants instead of magic numbers
+   - Consider deprecating `ONE_HUNDRED_PERCENT_PPM` since it's identical to `PPM_SCALE`
+
+2. **Documentation Enhancement**:
+   - Add examples of proper usage for each constant
+   - Document the rationale behind the chosen precision levels
+   - Add warnings about potential overflow scenarios
+
+3. **Validation Utilities**:
+   - Consider adding helper functions for common validation patterns
+   - Example: isValidPercentage(), isWithinPrecision()
+
+4. **Gas Optimization**:
+   - Consider if uint128 could be used instead of uint256 for any constants
+   - Evaluate if some calculations could use lower precision safely
+
+### Next Steps
+
+1. Audit current usage:
+   - Review all mathematical operations in the codebase
+   - Identify any inconsistent precision handling
+   - Replace magic numbers with these constants
+
+2. Documentation:
+   - Create usage guidelines for the team
+   - Document common pitfalls and best practices
+   - Add inline examples in the library
+
+3. Consider expansion:
+   - Evaluate if additional precision constants are needed
+   - Consider adding related utility functions
+   - Consider creating specialized versions for different precision needs 
