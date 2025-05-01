@@ -3,17 +3,24 @@ remappings = [
   # solmate (longest prefix first)
   "solmate/=node_modules/solmate/src/",
 
-  # openzeppelin  - corrected path
+  # openzeppelin - ensure both @openzeppelin/contracts and openzeppelin point to src
   "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "openzeppelin/=node_modules/@openzeppelin/contracts/", # Keep this low-priority fallback
 
   # core test libs
   "forge-std/=node_modules/forge-std/src/",
   "ds-test/=node_modules/ds-test/src/",
 
-  # uniswap v4
-  "v4-core/=node_modules/v4-core/src/",
-  "@uniswap/v4-core/=node_modules/v4-core/",
-  "v4-periphery/=node_modules/v4-periphery/src/",
+  # uniswap v4 - ensure all variations point to the correct src dir
+  "v4-core/=node_modules/@uniswap/v4-core/src/",
+  "@uniswap/v4-core/=node_modules/@uniswap/v4-core/src/",
+
+  # uniswap v4 periphery - ensure all variations point to the correct src dir
+  "v4-periphery/=node_modules/@uniswap/v4-periphery/src/",
+  "@uniswap/v4-periphery/=node_modules/@uniswap/v4-periphery/src/",
+
+  # uniswap hooks (locally cloned)
+  "uniswap-hooks/=lib/uniswap-hooks/src/",
 ]
 src = "src"
 out = "out"

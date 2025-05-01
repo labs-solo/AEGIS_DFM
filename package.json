@@ -29,8 +29,6 @@
     "patch-package": "^8.0.0",
     "permit2": "git+https://github.com/Uniswap/permit2.git#main",
     "prettier": "^3.3.3",
-    "solmate": "github:transmissions11/solmate#main",
-    "v4-core": "github:Uniswap/v4-core#main",
-    "v4-periphery": "github:Uniswap/v4-periphery#main"
+    "solmate": "github:transmissions11/solmate#main"
   }
 }

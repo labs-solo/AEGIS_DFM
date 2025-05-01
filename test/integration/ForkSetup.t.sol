@@ -22,30 +22,20 @@ import {ERC20} from "solmate/tokens/ERC20.sol";
 
 // Project Interfaces & Implementations
 import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
-// Removed IFullRangeLiquidityManager, IFullRangeDynamicFeeManager, ISpot, ITruncGeoOracleMulti - using implementations directly
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {Spot} from "src/Spot.sol";
 import {HookMiner} from "src/utils/HookMiner.sol";
 import {PriceHelper} from "./utils/PriceHelper.sol";
 import {PoolPolicyManager} from "src/PoolPolicyManager.sol";
 import {DefaultPoolCreationPolicy} from "src/DefaultPoolCreationPolicy.sol";
-// import {LiquidityRouter} from "src/LiquidityRouter.sol";
-// import {SwapRouter} from "src/SwapRouter.sol";
 import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "src/interfaces/IDynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
-import {HookMiner} from "src/utils/HookMiner.sol";
-import {PriceHelper} from "./utils/PriceHelper.sol";
-
-// Removed Deployment Script Import
-// import {DeployUnichainV4} from "script/DeployUnichainV4.s.sol";
 
 // Test Routers
 import {PoolModifyLiquidityTest} from "v4-core/test/PoolModifyLiquidityTest.sol";
 import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
 import {PoolDonateTest} from "v4-core/test/PoolDonateTest.sol";
-import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
-import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
 /**
  * @title ForkSetup
@@ -53,7 +43,7 @@ import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
  * @dev Handles environment setup and FULL deployment (dependencies, hook, dynamic fee manager,
  *      configuration, pool init, test routers) within the test setup using vm.prank.
  */
-contract ForkSetup is Test, IUnlockCallback {
+contract ForkSetup is Test {
     using CurrencyLibrary for Currency;
     using PoolIdLibrary for PoolKey;
     using BalanceDeltaLibrary for BalanceDelta;
@@ -534,13 +524,6 @@ contract ForkSetup is Test, IUnlockCallback {
         console.log("tolerance   =", tol);
 
         assertApproxEqAbs(product, expected, tol);
-    }
-
-    /// @notice Baseline callback – does **nothing**.
-    /// Every contract that calls `PoolManager.unlock` must settle in *its own*
-    /// callback.  Leaving a non-zero delta will make the test fail immediately.
-    function unlockCallback(bytes calldata) external virtual override returns (bytes memory) {
-        return abi.encode(BalanceDeltaLibrary.ZERO_DELTA);
     }
 
     function _initializePool(address token0, address token1, uint24 fee, int24 tickSpacing, uint160 sqrtPriceX96)

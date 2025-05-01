@@ -130,21 +130,28 @@ library SettlementUtils {
         if (delta0 > 0) {
             // Take tokens from the pool (pool owes tokens to us)
             manager.take(Currency.wrap(token0), recipient, uint256(int256(delta0)));
-        } else if (delta0 < 0) {
-            // Pay tokens to the pool (we owe tokens to the pool)
-            uint256 amountToSend = uint256(-delta0);
-            ERC20(token0).safeApprove(address(manager), amountToSend);
-            manager.settle();
         }
 
         // Handle token1 settlement
         if (delta1 > 0) {
             // Take tokens from the pool (pool owes tokens to us)
             manager.take(Currency.wrap(token1), recipient, uint256(int256(delta1)));
-        } else if (delta1 < 0) {
-            // Pay tokens to the pool (we owe tokens to the pool)
-            uint256 amountToSend = uint256(-delta1);
-            ERC20(token1).safeApprove(address(manager), amountToSend);
+        }
+
+        // Handle negative deltas (we owe tokens to pool)
+        if (delta0 < 0 || delta1 < 0) {
+            // We need to settle negative delta values
+            if (delta0 < 0) {
+                uint256 amountToSend = uint256(-delta0);
+                ERC20(token0).safeApprove(address(manager), amountToSend);
+            }
+
+            if (delta1 < 0) {
+                uint256 amountToSend = uint256(-delta1);
+                ERC20(token1).safeApprove(address(manager), amountToSend);
+            }
+
+            // Call settle once for both currencies if needed
             manager.settle();
         }
     }
