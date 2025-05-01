@@ -4,7 +4,7 @@ pragma solidity 0.8.26;
 import {IPoolCreationPolicy} from "./interfaces/IPoolCreationPolicy.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {Owned} from "solmate/auth/Owned.sol";
+import {Owned} from "solmate/src/auth/Owned.sol";
 import {Errors} from "./errors/Errors.sol";
 
 /**

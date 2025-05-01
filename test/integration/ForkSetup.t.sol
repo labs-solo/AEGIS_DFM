@@ -18,8 +18,8 @@ import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
-import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
-import {ERC20} from "solmate/tokens/ERC20.sol";
+import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
+import {ERC20} from "solmate/src/tokens/ERC20.sol";
 
 // Project Interfaces & Implementations
 import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
@@ -140,20 +140,64 @@ contract ForkSetup is Test {
         vm.stopPrank();
     }
 
-    function _safeFork() internal returns (bool) {
-        try vm.createSelectFork("unichain_mainnet") returns (uint256) {
-            return true;
-        } catch {
-            // If we can't create the fork, skip the test by assuming false
-            emit log_string("WARNING: unichain_mainnet RPC not configured - skipping test");
-            vm.assume(false);
-            return false;
+    /**
+     * @dev Creates & selects a fork while emitting helpful logs.
+     *
+     *  • honours an **optional** `FORK_BLOCK_NUMBER` env-var; use latest head if unset<br>
+     *  • prints the chosen RPC alias / block for reproducibility<br>
+     *  • reverts with a clear message if `vm.createSelectFork` ever returns `0`
+     */
+    function _safeFork() internal returns (uint256 forkId) {
+        string memory rpcAlias = "unichain_mainnet";            // defined in foundry.toml
+
+        // /* ------------------------------------------------------------------ */ // <-- REMOVE
+        // /*  Resolve the block to fork                                         */ // <-- REMOVE
+        // /* ------------------------------------------------------------------ */ // <-- REMOVE
+        // //   – We read the env-var as a **string** with a graceful fallback, // <-- REMOVE
+        // //     then convert to uint.  No try/catch → no compile issues. // <-- REMOVE
+        // // // <-- REMOVE
+        // //     .env example:  FORK_BLOCK_NUMBER=13900000 // <-- REMOVE
+        // // // <-- REMOVE
+        // uint256 forkBlock = vm.parseUint( // <-- REMOVE
+        //     vm.envOr("FORK_BLOCK_NUMBER", "0")  // "0" ⇒ use latest head // <-- REMOVE
+        // ); // <-- REMOVE
+
+        // ── read optional env-var without try/catch ────────────────────── // <-- ADD
+        uint256 forkBlock = 0; // <-- ADD
+        if (vm.envExists("FORK_BLOCK_NUMBER")) { // <-- ADD
+            forkBlock = vm.envUint("FORK_BLOCK_NUMBER"); // <-- ADD
+        } // <-- ADD
+
+        emit log_named_string("Selected fork RPC alias",  rpcAlias);
+        emit log_named_uint   ("Selected fork block number", forkBlock);
+
+        /* ------------------------------------------------------------------ */
+        /*  Create the fork                                                   */
+        /* ------------------------------------------------------------------ */
+        if (forkBlock != 0) {
+            // First try the exact historical block
+            forkId = vm.createSelectFork(rpcAlias, forkBlock);
+
+            // If the provider cannot serve that height, fall back to head
+            if (forkId == 0) {
+                emit log_string("WARN: Failed to fork at specific block, falling back to latest.");
+                forkId = vm.createSelectFork(rpcAlias);
+            }
+        } else {
+            // No block specified → fork the latest
+            forkId = vm.createSelectFork(rpcAlias);
         }
+
+        require(
+            forkId != 0,
+            "Fork setup failed: vm.createSelectFork returned 0"
+        );
     }
 
     function setUp() public virtual {
         // 1. Create Fork & Basic Env Setup
-        require(_safeFork(), "Fork setup failed");
+        uint256 forkId = _safeFork();
+        require(forkId > 0, "Fork setup failed, invalid forkId");
 
         // 2. Setup Test User & Deployer EOA (Using PK=1 for CREATE2 consistency)
         testUser = vm.addr(2); // Use PK 2 for test user
@@ -211,7 +255,7 @@ contract ForkSetup is Test {
         dynamicFeeManager = new DynamicFeeManager(
             policyManager, // ✅ policy
             address(oracle), // ✅ oracle (2nd param)
-            deployerEOA // ✅ temporary authorisedHook
+            deployerEOA // ✅ temporary authorisedHook - we'll update this after Spot deployment
         );
         emit log_named_address("DynamicFeeManager deployed at", address(dynamicFeeManager));
 
@@ -264,6 +308,17 @@ contract ForkSetup is Test {
         // Configure Contracts
         emit log_string("Configuring contracts...");
         liquidityManager.setAuthorizedHookAddress(actualHookAddress);
+
+        // End the current prank before starting a new one
+        vm.stopPrank();
+
+        // Ensure reinvestment is not paused by default
+        vm.startPrank(deployerEOA);
+        fullRange.setReinvestmentPaused(false);
+        vm.stopPrank();
+
+        // Start a new prank for the remaining setup
+        vm.startPrank(deployerEOA);
 
         /* Build poolKey & poolId for DFM initialization */
         address token0;
