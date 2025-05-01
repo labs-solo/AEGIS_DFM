@@ -20,15 +20,15 @@ import {MockERC20} from "solmate/test/utils/mocks/MockERC20.sol";
 import {Constants} from "v4-core/../test/utils/Constants.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {CurrencyLibrary, Currency} from "v4-core/types/Currency.sol";
-import {HookMiner} from "v4-periphery/utils/HookMiner.sol";
-import {IPositionManager} from "v4-periphery/interfaces/IPositionManager.sol";
-import {PositionManager} from "v4-periphery/PositionManager.sol";
+import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
+import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 import {EasyPosm} from "../test/utils/EasyPosm.sol";
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
 import {DeployPermit2} from "../test/utils/forks/DeployPermit2.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
-import {IPositionDescriptor} from "v4-periphery/interfaces/IPositionDescriptor.sol";
-import {IWETH9} from "v4-periphery/interfaces/external/IWETH9.sol";
+import {IPositionDescriptor} from "v4-periphery/src/interfaces/IPositionDescriptor.sol";
+import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
 import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
 /// @notice Forge script for deploying v4 & hooks to **anvil**
@@ -80,10 +80,10 @@ contract CounterScript is Script, DeployPermit2 {
 
     function deployPosm(IPoolManager poolManager) public returns (IPositionManager) {
         anvilPermit2();
-        
+
         // Use a more direct approach with hexadecimal constants to bypass type checking
         address posmAddr = deployPosmImpl(address(poolManager), address(permit2));
-        
+
         return IPositionManager(posmAddr);
     }
 
@@ -98,14 +98,14 @@ contract CounterScript is Script, DeployPermit2 {
             address(0), // descriptor
             address(0)  // WETH
         );
-        
+
         bytes memory combinedBytecode = abi.encodePacked(bytecode, constructorArgs);
-        
+
         address deployedAddress;
         assembly {
             deployedAddress := create(0, add(combinedBytecode, 32), mload(combinedBytecode))
         }
-        
+
         require(deployedAddress != address(0), "PositionManager deployment failed");
         return deployedAddress;
     }

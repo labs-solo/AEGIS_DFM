@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.26;
 
-import {PoolId} from "v4-core/types/PoolId.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
 /**
  * @notice Interface for FullRangeLiquidityManager (Phase 1: POL-Only)
  */
 interface IFullRangeLiquidityManager {
-
     /* ───────── GOVERNANCE-ONLY API ───────── */
 
     function deposit(
@@ -20,13 +19,9 @@ interface IFullRangeLiquidityManager {
         address recipient
     ) external payable returns (uint256 shares, uint256 amount0, uint256 amount1);
 
-    function withdraw(
-        PoolId poolId,
-        uint256 sharesToBurn,
-        uint256 amount0Min,
-        uint256 amount1Min,
-        address recipient
-    ) external returns (uint256 amount0, uint256 amount1);
+    function withdraw(PoolId poolId, uint256 sharesToBurn, uint256 amount0Min, uint256 amount1Min, address recipient)
+        external
+        returns (uint256 amount0, uint256 amount1);
 
     /* ───────── HOOK-ONLY API ───────── */
 
@@ -71,5 +66,4 @@ interface IFullRangeLiquidityManager {
         external
         view
         returns (bool initialized, uint256 shares);
-
 }

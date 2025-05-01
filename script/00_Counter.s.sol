@@ -13,7 +13,7 @@ import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
 
 import {Constants} from "./base/Constants.sol";
 // Counter.sol has been removed
-import {HookMiner} from "v4-periphery/utils/HookMiner.sol";
+import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 
 /// @notice Placeholder script that no longer uses Counter
 contract CounterScript is Script, Constants {

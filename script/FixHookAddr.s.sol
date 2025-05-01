@@ -4,12 +4,12 @@ pragma solidity 0.8.26;
 import "forge-std/Script.sol";
 import "forge-std/console2.sol";
 
-import {Hooks} from "v4-core/libraries/Hooks.sol";
-import {PoolManager} from "v4-core/PoolManager.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {PoolManager} from "v4-core/src/PoolManager.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 
 import {Spot} from "../src/Spot.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
@@ -19,8 +19,8 @@ import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {HookMiner} from "../src/utils/HookMiner.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
-import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
-import {IHooks} from "v4-core/interfaces/IHooks.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 
 // Utility script to display valid hook address for debugging

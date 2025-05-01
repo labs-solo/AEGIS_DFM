@@ -4,23 +4,23 @@ pragma solidity 0.8.26;
 /* ───────────────────────────────────────────────────────────
  *                     Core & Periphery
  * ─────────────────────────────────────────────────────────── */
-import {Hooks} from "v4-core/libraries/Hooks.sol";
-import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
-import {CurrencyDelta} from "v4-core/libraries/CurrencyDelta.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
-import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
-import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/types/BeforeSwapDelta.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {SwapParams} from "v4-core/types/PoolOperation.sol";
-import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
-import {TickMath} from "v4-core/libraries/TickMath.sol";
-import {PoolManager} from "v4-core/PoolManager.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {CurrencyDelta} from "v4-core/src/libraries/CurrencyDelta.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
+import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
+import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {PoolManager} from "v4-core/src/PoolManager.sol";
 
-import {BaseHook} from "v4-periphery/utils/BaseHook.sol";
-import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
-import {SqrtPriceMath} from "v4-core/libraries/SqrtPriceMath.sol";
+import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
+import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
 
 /* ───────────────────────────────────────────────────────────
  *                          Project
@@ -30,7 +30,7 @@ import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {ISpot, DepositParams, WithdrawParams} from "./interfaces/ISpot.sol";
 import {ISpotHooks} from "./interfaces/ISpotHooks.sol";
 import {ITruncGeoOracleMulti} from "./interfaces/ITruncGeoOracleMulti.sol";
-import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
+import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 
 import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
 import {DynamicFeeManager} from "./DynamicFeeManager.sol";
@@ -64,7 +64,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     /* ───────────────────────── State ───────────────────────── */
     IPoolPolicy public immutable policyManager;
     IFullRangeLiquidityManager public immutable liquidityManager;
-    
+
     TruncGeoOracleMulti public immutable truncGeoOracle;
     IDynamicFeeManager public immutable feeManager;
 
@@ -94,7 +94,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     bool public reinvestmentPaused;
 
     event ReinvestmentPauseToggled(bool paused);
-    
+
     // Add a deprecation event
     event DependencySetterDeprecated(string name);
 
@@ -215,7 +215,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     /* ─────────────────── Hook: afterSwap ────────────────────── */
     /**
      * @notice Processes the post-swap operations including oracle update and fee management
-     * @dev Critical path that forwards the CAP flag from oracle to DynamicFeeManager, 
+     * @dev Critical path that forwards the CAP flag from oracle to DynamicFeeManager,
      *      ensuring dynamic fee adjustments work properly
      * @param key The pool key identifying which pool is being interacted with
      * @param params The swap parameters including direction (zeroForOne)
@@ -229,8 +229,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         bytes calldata /* hookData */
     ) internal override returns (bytes4, int128) {
         // 1) Push tick to oracle, also get the CAP flag
-        (int24 tick, bool capped) =
-            truncGeoOracle.pushObservationAndCheckCap(key.toId(), params.zeroForOne);
+        (int24 tick, bool capped) = truncGeoOracle.pushObservationAndCheckCap(key.toId(), params.zeroForOne);
 
         // 2) Feed the DynamicFeeManager - using gas stipend to prevent re-entrancy
         //    - `Spot` itself is the authorised hook
@@ -427,9 +426,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
 
         // Handle settlement using CurrencySettlerExtension
         // For reinvest (add liquidity), delta will be negative, triggering settleCurrency
-        CurrencySettlerExtension.handlePoolDelta(
-            poolManager, delta, key.currency0, key.currency1, address(this)
-        );
+        CurrencySettlerExtension.handlePoolDelta(poolManager, delta, key.currency0, key.currency1, address(this));
 
         return abi.encode(delta);
     }
@@ -501,7 +498,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         emit DependencySetterDeprecated("oracle");
         revert ImmutableDependencyDeprecated("oracle");
     }
-    
+
     /**
      * @notice DEPRECATED: DynamicFeeManager is now immutable and set in constructor
      * @dev This function will always revert but is kept for backwards compatibility
@@ -530,7 +527,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     }
 
     function _tryReinvestInternal(PoolKey memory key, bytes32 _poolId) internal {
-        // --- Use CurrencyDelta library to fetch internal balances --- 
+        // --- Use CurrencyDelta library to fetch internal balances ---
         int256 delta0 = key.currency0.getDelta(address(this));
         int256 delta1 = key.currency1.getDelta(address(this));
         uint256 bal0 = delta0 > 0 ? uint256(delta0) : 0; // Direct cast from positive int256
@@ -560,13 +557,8 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
             return;
         }
         // 4) maximize full-range liquidity (current price first, then lower/upper bounds)
-        uint128 liq = LiquidityAmounts.getLiquidityForAmounts(
-            sqrtP,
-            TickMath.MIN_SQRT_PRICE,
-            TickMath.MAX_SQRT_PRICE,
-            bal0,
-            bal1
-        );
+        uint128 liq =
+            LiquidityAmounts.getLiquidityForAmounts(sqrtP, TickMath.MIN_SQRT_PRICE, TickMath.MAX_SQRT_PRICE, bal0, bal1);
         // 5) derive token amounts needed (ceiling so we never under-fund)
         uint256 use0 = SqrtPriceMath.getAmount0Delta(
             TickMath.MIN_SQRT_PRICE,
@@ -664,12 +656,10 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         totalShares = liquidityManager.positionTotalShares(poolId);
     }
 
-    function _addLiquidity(
-        PoolKey memory key,
-        int24 tickLower,
-        int24 tickUpper,
-        uint128 liquidity
-    ) internal returns (BalanceDelta delta) {
+    function _addLiquidity(PoolKey memory key, int24 tickLower, int24 tickUpper, uint128 liquidity)
+        internal
+        returns (BalanceDelta delta)
+    {
         ModifyLiquidityParams memory params = ModifyLiquidityParams({
             tickLower: tickLower,
             tickUpper: tickUpper,

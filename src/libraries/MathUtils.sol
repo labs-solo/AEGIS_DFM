@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import {FullMath} from "v4-core/libraries/FullMath.sol";
-import {TickMath} from "v4-core/libraries/TickMath.sol";
-import {SqrtPriceMath} from "v4-core/libraries/SqrtPriceMath.sol";
-import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
+import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {Errors} from "../errors/Errors.sol";
 import {FixedPointMathLib} from "solmate/utils/FixedPointMathLib.sol";
 import {PrecisionConstants} from "./PrecisionConstants.sol";
