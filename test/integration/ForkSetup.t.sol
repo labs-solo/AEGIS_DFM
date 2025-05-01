@@ -1,22 +1,23 @@
-// SPDX-License-Identifier: MIT
-pragma solidity 0.8.26;
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.26;
 
-import "forge-std/Test.sol";
-import "forge-std/console.sol";
-import {Strings} from "@openzeppelin/contracts/utils/Strings.sol";
+import {Test} from "forge-std/Test.sol";
+import {console2} from "forge-std/console2.sol";
+import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
+import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
+import {INITIAL_LP_USDC, INITIAL_LP_WETH} from "../utils/TestConstants.sol";
 
 // Core Contract Interfaces & Libraries
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
-import {Hooks} from "v4-core/libraries/Hooks.sol"; // Needed for Permissions
-import {IHooks} from "v4-core/interfaces/IHooks.sol";
-import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
-import {LPFeeLibrary} from "v4-core/libraries/LPFeeLibrary.sol";
-import {FullMath} from "v4-core/libraries/FullMath.sol";
-import {TickMath} from "v4-core/libraries/TickMath.sol";
-import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol"; // Needed for Permissions
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 
@@ -33,9 +34,9 @@ import {IDynamicFeeManager} from "src/interfaces/IDynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
 
 // Test Routers
-import {PoolModifyLiquidityTest} from "v4-core/test/PoolModifyLiquidityTest.sol";
-import {PoolSwapTest} from "v4-core/test/PoolSwapTest.sol";
-import {PoolDonateTest} from "v4-core/test/PoolDonateTest.sol";
+import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
+import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
+import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
 
 /**
  * @title ForkSetup
@@ -102,6 +103,20 @@ contract ForkSetup is Test {
     bytes public constant ZERO_BYTES = bytes("");
     uint160 internal constant SQRT_RATIO_1_1 = 79228162514264337593543950336; // 2**96
 
+    // Test constants
+    uint256 constant INITIAL_USDC_BALANCE = 100_000e6; // 100k USDC
+    uint256 constant INITIAL_WETH_BALANCE = 100 ether; // 100 WETH
+    uint256 constant EXTRA_USDC_FOR_ISOLATED = 50_000e6; // 50k USDC
+    uint256 constant EXTRA_WETH_FOR_ISOLATED = 50 ether; // 50 WETH
+
+    // Test accounts
+    address user1;
+    address user2;
+    address lpProvider;
+
+    // Token contracts
+    // REMOVED: Duplicate declarations of weth and usdc
+
     // Helper to deal and approve tokens to a spender (typically PoolManager or a Router)
     function _dealAndApprove(IERC20Minimal token, address holder, uint256 amount, address spender) internal {
         vm.startPrank(holder);
@@ -142,6 +157,10 @@ contract ForkSetup is Test {
 
         // 2. Setup Test User & Deployer EOA (Using PK=1 for CREATE2 consistency)
         testUser = vm.addr(2); // Use PK 2 for test user
+        user1 = makeAddr("user1");
+        user2 = makeAddr("user2");
+        lpProvider = makeAddr("lpProvider");
+
         vm.deal(testUser, FUND_ETH_AMOUNT);
         emit log_named_address("Test User", testUser);
 
@@ -183,7 +202,7 @@ contract ForkSetup is Test {
 
         // Deploy LiquidityManager
         emit log_string("Deploying LiquidityManager...");
-        liquidityManager = new FullRangeLiquidityManager(poolManager, deployerEOA); // Governance = deployer
+        liquidityManager = new FullRangeLiquidityManager(poolManager, IPoolPolicy(address(0)), deployerEOA); // Governance = deployer
         emit log_named_address("LiquidityManager deployed at", address(liquidityManager));
         require(address(liquidityManager) != address(0), "LiquidityManager deployment failed");
 
@@ -326,6 +345,34 @@ contract ForkSetup is Test {
 
         // Grant initial allowances from contracts
         // _bootstrapPoolManagerAllowances(); // <-- REMOVED FROM HERE
+
+        // Fund test accounts with tokens
+        vm.startPrank(deployerEOA);
+        uint256 totalUsdcNeeded = (INITIAL_USDC_BALANCE * 2) + INITIAL_LP_USDC + EXTRA_USDC_FOR_ISOLATED;
+        deal(USDC_ADDRESS, deployerEOA, totalUsdcNeeded);
+        uint256 totalWethNeeded = (INITIAL_WETH_BALANCE * 2) + INITIAL_LP_WETH + EXTRA_WETH_FOR_ISOLATED;
+        deal(WETH_ADDRESS, deployerEOA, totalWethNeeded);
+        IWETH9(WETH_ADDRESS).deposit{value: totalWethNeeded}();
+
+        // Transfer tokens to test accounts
+        IERC20Minimal(WETH_ADDRESS).transfer(user1, INITIAL_WETH_BALANCE);
+        IERC20Minimal(USDC_ADDRESS).transfer(user1, INITIAL_USDC_BALANCE);
+        IERC20Minimal(WETH_ADDRESS).transfer(user2, INITIAL_WETH_BALANCE);
+        IERC20Minimal(USDC_ADDRESS).transfer(user2, INITIAL_USDC_BALANCE);
+        IERC20Minimal(WETH_ADDRESS).transfer(lpProvider, EXTRA_WETH_FOR_ISOLATED);
+        IERC20Minimal(USDC_ADDRESS).transfer(lpProvider, EXTRA_USDC_FOR_ISOLATED);
+        vm.stopPrank();
+
+        // Set up approvals for all test accounts
+        _dealAndApprove(IERC20Minimal(WETH_ADDRESS), user1, INITIAL_WETH_BALANCE, address(poolManager));
+        _dealAndApprove(IERC20Minimal(USDC_ADDRESS), user1, INITIAL_USDC_BALANCE, address(poolManager));
+        _dealAndApprove(IERC20Minimal(WETH_ADDRESS), user2, INITIAL_WETH_BALANCE, address(poolManager));
+        _dealAndApprove(IERC20Minimal(USDC_ADDRESS), user2, INITIAL_USDC_BALANCE, address(poolManager));
+        _dealAndApprove(IERC20Minimal(WETH_ADDRESS), lpProvider, EXTRA_WETH_FOR_ISOLATED, address(poolManager));
+        _dealAndApprove(IERC20Minimal(USDC_ADDRESS), lpProvider, EXTRA_USDC_FOR_ISOLATED, address(poolManager));
+
+        // Bootstrap contract-level allowances
+        _bootstrapPoolManagerAllowances();
     }
 
     // Add this helper to grant initial allowances from contracts to PoolManager
@@ -518,10 +565,10 @@ contract ForkSetup is Test {
         uint256 tol = product > expected ? product - expected : expected - product;
 
         // Debug logging
-        console.log("sqrtP_BperA =", uint256(sqrtP_BperA));
-        console.log("sqrtP_AperB =", uint256(sqrtP_AperB));
-        console.log("product     =", product);
-        console.log("tolerance   =", tol);
+        console2.log("sqrtP_BperA =", uint256(sqrtP_BperA));
+        console2.log("sqrtP_AperB =", uint256(sqrtP_AperB));
+        console2.log("product     =", product);
+        console2.log("tolerance   =", tol);
 
         assertApproxEqAbs(product, expected, tol);
     }
@@ -533,5 +580,75 @@ contract ForkSetup is Test {
         // ... existing code ...
         // Remove the commented line about dynamicFee
         // ... existing code ...
+    }
+
+    /// @notice Helper function to add liquidity through governance
+    function _addLiquidityAsGovernance(
+        PoolId _poolId,
+        uint256 amt0,
+        uint256 amt1,
+        uint256 min0,
+        uint256 min1,
+        address recipient
+    ) internal returns (uint256 shares, uint256 used0, uint256 used1) {
+        // ------------------------------------------------------------------
+        // Ensure the governor actually *owns* – and has approved – the tokens
+        // ------------------------------------------------------------------
+        PoolKey memory k = poolKey; // same for every call within a test-run
+        address t0 = Currency.unwrap(k.currency0);
+        address t1 = Currency.unwrap(k.currency1);
+
+        // Fund the governor unconditionally (simpler & safer for fuzz).
+        if (amt0 > 0) deal(t0, deployerEOA, amt0);
+        if (amt1 > 0) deal(t1, deployerEOA, amt1);
+
+        vm.startPrank(deployerEOA);
+        IERC20Minimal(t0).approve(address(liquidityManager), type(uint256).max);
+        IERC20Minimal(t1).approve(address(liquidityManager), type(uint256).max);
+
+        (shares, used0, used1) = liquidityManager.deposit(_poolId, amt0, amt1, min0, min1, recipient);
+        vm.stopPrank();
+
+        return (shares, used0, used1);
+    }
+
+    /// @notice Helper function to withdraw liquidity through governance
+    function _withdrawLiquidityAsGovernance(
+        PoolId _poolId,
+        uint256 sharesToBurn,
+        uint256 min0,
+        uint256 min1,
+        address recipient
+    ) internal returns (uint256 amt0, uint256 amt1) {
+        vm.startPrank(deployerEOA); // deployerEOA is governance
+        (amt0, amt1) = liquidityManager.withdraw(_poolId, sharesToBurn, min0, min1, recipient);
+        vm.stopPrank();
+        return (amt0, amt1);
+    }
+
+    /// @notice Helper function to add initial liquidity to the pool
+    function addInitialLiquidity() internal {
+        uint256 amount0 = Currency.unwrap(poolKey.currency0) == USDC_ADDRESS ? INITIAL_LP_USDC : INITIAL_LP_WETH;
+        uint256 amount1 = Currency.unwrap(poolKey.currency0) == USDC_ADDRESS ? INITIAL_LP_WETH : INITIAL_LP_USDC;
+
+        // Use governance to add liquidity
+        _addLiquidityAsGovernance(
+            poolId,
+            amount0,
+            amount1,
+            0, // min0
+            0, // min1
+            deployerEOA // recipient is governance
+        );
+    }
+
+    function _checkPriceHelper(uint160 sqrtP_BperA, uint160 sqrtP_AperB) internal {
+        uint256 product = uint256(sqrtP_BperA) * uint256(sqrtP_AperB);
+        uint256 tol = uint256(2 ** 96) * uint256(2 ** 96);
+
+        console2.log("sqrtP_BperA =", uint256(sqrtP_BperA));
+        console2.log("sqrtP_AperB =", uint256(sqrtP_AperB));
+        console2.log("product     =", product);
+        console2.log("tolerance   =", tol);
     }
 }

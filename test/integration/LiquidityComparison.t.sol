@@ -4,24 +4,24 @@ pragma solidity ^0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
 import {ForkSetup} from "./ForkSetup.t.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
-import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
-import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol";
-import {IHooks} from "v4-core/interfaces/IHooks.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {Position} from "v4-core/libraries/Position.sol";
-import {TickMath} from "v4-core/libraries/TickMath.sol";
-import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
+import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {Position} from "v4-core/src/libraries/Position.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
-import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
-import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
+import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
+import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {SignedMath} from "@openzeppelin/contracts/utils/math/SignedMath.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
-import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
+import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 
 contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
     using PoolIdLibrary for PoolKey;
@@ -30,7 +30,7 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
     using BalanceDeltaLibrary for BalanceDelta;
     using CurrencySettler for Currency;
 
-    address public lpProvider;
+    // lpProvider inherited from ForkSetup
     uint128 public constant MIN_LIQUIDITY = 1_000;
 
     // ──────────────────────────────────────────────
@@ -42,31 +42,30 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
     // handy aliases to the objects ForkSetup already deploys
     IPoolManager internal manager_;
     FullRangeLiquidityManager internal frlm_;
-    IERC20Minimal internal token0;   // USDC in this test-pool
-    IERC20Minimal internal token1;   // WETH in this test-pool
+    IERC20Minimal internal token0; // USDC in this test-pool
+    IERC20Minimal internal token1; // WETH in this test-pool
 
     // Callback data for direct minting
     struct CallbackData {
         PoolKey poolKey;
-        int24  tickLower;
-        int24  tickUpper;
-        uint128 liquidity;   // precalculated
+        int24 tickLower;
+        int24 tickUpper;
+        uint128 liquidity; // precalculated
     }
 
     function setUp() public override {
         super.setUp();
-        lpProvider = makeAddr("lpProvider");
 
         // wire-up the live contracts from ForkSetup
         manager_ = poolManager;
-        frlm_    = liquidityManager;
-        token0   = usdc;
-        token1   = weth;
+        frlm_ = liquidityManager;
+        token0 = usdc;
+        token1 = weth;
 
         // Fund test account
         vm.startPrank(deployerEOA);
-        uint256 amount0 = 29_999_999_973;   // 29 999 999 .973  USDC (6 dec)
-        uint256 amount1 = 10 ether;         // 10 WETH
+        uint256 amount0 = 29_999_999_973; // 29 999 999 .973  USDC (6 dec)
+        uint256 amount1 = 10 ether; // 10 WETH
         deal(address(token0), lpProvider, amount0);
         deal(address(token1), lpProvider, amount1);
         // also give the test-contract its own funds (for the "direct" path)
@@ -83,8 +82,8 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
 
     function test_compareDirectVsFRLM() public {
         // Test constants
-        uint256 amount0 = 29_999_999_973;   // 29 999 999 .973  USDC (6 dec)
-        uint256 amount1 = 10 ether;         // 10 WETH
+        uint256 amount0 = 29_999_999_973; // 29 999 999 .973  USDC (6 dec)
+        uint256 amount1 = 10 ether; // 10 WETH
 
         // Get current pool price
         (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(manager_, poolKey.toId());
@@ -104,12 +103,8 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         // ───────────────────────────────────────────────────────────
         // ① Direct PoolManager liquidity addition through unlock callback
         // ───────────────────────────────────────────────────────────
-        CallbackData memory cbData = CallbackData({
-            poolKey:   poolKey,
-            tickLower: tickLower,
-            tickUpper: tickUpper,
-            liquidity: liquidity
-        });
+        CallbackData memory cbData =
+            CallbackData({poolKey: poolKey, tickLower: tickLower, tickUpper: tickUpper, liquidity: liquidity});
 
         manager_.unlock(abi.encode(cbData));
         uint256 used0Direct = used0Direct_;
@@ -118,8 +113,11 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         // ───────────────────────────────────────────────────────────
         // ② Same deposit through FullRangeLiquidityManager (lpProvider)
         // ───────────────────────────────────────────────────────────
-        vm.startPrank(lpProvider);
-        (uint256 shares, uint256 used0Frlm, uint256 used1Frlm) = frlm_.deposit(
+        uint256 shares;
+        uint256 used0FRLM;
+        uint256 used1FRLM;
+
+        (shares, used0FRLM, used1FRLM) = _addLiquidityAsGovernance(
             poolKey.toId(),
             amount0,
             amount1,
@@ -129,13 +127,11 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         );
 
         // Get the actual liquidity from both positions
-        bytes32 posKeyDirect = Position.calculatePositionKey(
-            address(this), tickLower, tickUpper, bytes32(0)
-        );
+        bytes32 posKeyDirect = Position.calculatePositionKey(address(this), tickLower, tickUpper, bytes32(0));
         uint128 liqDirect = StateLibrary.getPositionLiquidity(manager_, poolKey.toId(), posKeyDirect);
-        
+
         (uint128 liqFrlm,,) = frlm_.getPositionData(poolKey.toId());
-        
+
         // Account for MIN_LIQUIDITY if this is first deposit
         uint128 totalShares = frlm_.positionTotalShares(poolKey.toId());
         if (totalShares == shares) {
@@ -145,20 +141,12 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
 
         // Compare liquidity values (should match exactly)
         assertEq(liqDirect, liqFrlm, "liquidity mismatch");
-        
-        // Compare token amounts used (allow ±1 wei difference due to FRLM rounding)
-        assertLe(
-            SignedMath.abs(int256(used0Direct) - int256(used0Frlm)),
-            1,
-            "token0 diff exceeds 1 wei"
-        );
-        assertLe(
-            SignedMath.abs(int256(used1Direct) - int256(used1Frlm)),
-            1,
-            "token1 diff exceeds 1 wei"
-        );
 
-        vm.stopPrank();
+        // Compare token amounts used (allow ±1 wei difference due to FRLM rounding)
+        uint256 diff0 = SignedMath.abs(int256(used0Direct) - int256(used0FRLM));
+        uint256 diff1 = SignedMath.abs(int256(used1Direct) - int256(used1FRLM));
+        assertLe(diff0, 1, "token0 diff exceeds 1 wei");
+        assertLe(diff1, 1, "token1 diff exceeds 1 wei");
     }
 
     // settles the owed tokens

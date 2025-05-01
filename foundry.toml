@@ -12,15 +12,15 @@ remappings = [
   "ds-test/=node_modules/ds-test/src/",
 
   # uniswap v4 - ensure all variations point to the correct src dir
-  "v4-core/=node_modules/@uniswap/v4-core/src/",
-  "@uniswap/v4-core/=node_modules/@uniswap/v4-core/src/",
+  "v4-core/=node_modules/@uniswap/v4-core/",
+  "@uniswap/v4-core/=node_modules/@uniswap/v4-core/",
 
   # uniswap v4 periphery - ensure all variations point to the correct src dir
-  "v4-periphery/=node_modules/@uniswap/v4-periphery/src/",
-  "@uniswap/v4-periphery/=node_modules/@uniswap/v4-periphery/src/",
+  "v4-periphery/=node_modules/@uniswap/v4-periphery/",
+  "@uniswap/v4-periphery/=node_modules/@uniswap/v4-periphery/",
 
   # uniswap hooks (locally cloned)
-  "uniswap-hooks/=lib/uniswap-hooks/src/",
+  "uniswap-hooks/=node_modules/uniswap-hooks/src/",
 ]
 src = "src"
 out = "out"

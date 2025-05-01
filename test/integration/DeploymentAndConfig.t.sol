@@ -3,11 +3,11 @@ pragma solidity 0.8.26;
 
 import {Test} from "forge-std/Test.sol";
 import {ForkSetup} from "./ForkSetup.t.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {IPoolManager} from "v4-core/interfaces/IPoolManager.sol";
-import {StateLibrary} from "v4-core/libraries/StateLibrary.sol"; // Import StateLibrary
-import {IHooks} from "v4-core/interfaces/IHooks.sol"; // Import IHooks
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol"; // Import Currency
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol"; // Import StateLibrary
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol"; // Import IHooks
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol"; // Import Currency
 // Import other necessary interfaces if ForkSetup doesn't expose all needed variables
 // import {IPoolPolicyManager} from "../interfaces/IPoolPolicyManager.sol"; // Example if needed
 // import {ILiquidityManager} from "../interfaces/ILiquidityManager.sol"; // Example if needed

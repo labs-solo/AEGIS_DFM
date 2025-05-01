@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
-import {PoolKey} from "v4-core/types/PoolKey.sol";
-import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {Owned} from "solmate/auth/Owned.sol";
 import {Errors} from "./errors/Errors.sol";
 import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
-import {Hooks} from "v4-core/libraries/Hooks.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 
 /**
