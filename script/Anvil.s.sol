@@ -29,6 +29,7 @@ import {DeployPermit2} from "../test/utils/forks/DeployPermit2.sol";
 import {IERC20} from "forge-std/interfaces/IERC20.sol";
 import {IPositionDescriptor} from "v4-periphery/interfaces/IPositionDescriptor.sol";
 import {IWETH9} from "v4-periphery/interfaces/external/IWETH9.sol";
+import {SwapParams, ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 
 /// @notice Forge script for deploying v4 & hooks to **anvil**
 contract CounterScript is Script, DeployPermit2 {
@@ -159,8 +160,12 @@ contract CounterScript is Script, DeployPermit2 {
 
     function _exampleAddLiquidity(PoolKey memory poolKey, int24 tickLower, int24 tickUpper) internal {
         // provisions full-range liquidity twice. Two different periphery contracts used for example purposes.
-        IPoolManager.ModifyLiquidityParams memory liqParams =
-            IPoolManager.ModifyLiquidityParams(tickLower, tickUpper, 100 ether, 0);
+        ModifyLiquidityParams memory liqParams = ModifyLiquidityParams({
+            tickLower: tickLower,
+            tickUpper: tickUpper,
+            liquidityDelta: int256(100 ether),
+            salt: bytes32(0)
+        });
         lpRouter.modifyLiquidity(poolKey, liqParams, "");
 
         posm.mint(poolKey, tickLower, tickUpper, 100e18, 10_000e18, 10_000e18, msg.sender, block.timestamp + 300, "");
@@ -169,10 +174,11 @@ contract CounterScript is Script, DeployPermit2 {
     function _exampleSwap(PoolKey memory poolKey) internal {
         bool zeroForOne = true;
         int256 amountSpecified = 1 ether;
-        IPoolManager.SwapParams memory params = IPoolManager.SwapParams({
-            zeroForOne: zeroForOne,
-            amountSpecified: amountSpecified,
-            sqrtPriceLimitX96: zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1 // unlimited impact
+        int256 sqrtPriceLimitX96 = zeroForOne ? TickMath.MIN_SQRT_PRICE + 1 : TickMath.MAX_SQRT_PRICE - 1;
+        SwapParams memory params = SwapParams({
+            zeroForOne: true,
+            amountSpecified: int256(amountSpecified),
+            sqrtPriceLimitX96: sqrtPriceLimitX96
         });
         PoolSwapTest.TestSettings memory testSettings =
             PoolSwapTest.TestSettings({takeClaims: false, settleUsingBurn: false});

@@ -17,10 +17,11 @@ import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
-import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
-import {MathUtils} from "src/libraries/MathUtils.sol";
+import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
+import {SignedMath} from "@openzeppelin/contracts/utils/math/SignedMath.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
+import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
 
 contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
     using PoolIdLibrary for PoolKey;
@@ -147,12 +148,12 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         
         // Compare token amounts used (allow ±1 wei difference due to FRLM rounding)
         assertLe(
-            MathUtils.abs(int256(used0Direct) - int256(used0Frlm)),
+            SignedMath.abs(int256(used0Direct) - int256(used0Frlm)),
             1,
             "token0 diff exceeds 1 wei"
         );
         assertLe(
-            MathUtils.abs(int256(used1Direct) - int256(used1Frlm)),
+            SignedMath.abs(int256(used1Direct) - int256(used1Frlm)),
             1,
             "token1 diff exceeds 1 wei"
         );
@@ -161,11 +162,11 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
     }
 
     // settles the owed tokens
-    function unlockCallback(bytes calldata data) external returns (bytes memory) {
+    function unlockCallback(bytes calldata data) external override returns (bytes memory) {
         require(msg.sender == address(manager_), "only manager");
         CallbackData memory d = abi.decode(data, (CallbackData));
 
-        IPoolManager.ModifyLiquidityParams memory p = IPoolManager.ModifyLiquidityParams({
+        ModifyLiquidityParams memory p = ModifyLiquidityParams({
             tickLower: d.tickLower,
             tickUpper: d.tickUpper,
             liquidityDelta: int256(uint256(d.liquidity)),
@@ -174,12 +175,13 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
 
         (BalanceDelta delta,) = manager_.modifyLiquidity(d.poolKey, p, "");
 
-        used0Direct_ = uint256(uint128(-delta.amount0()));
-        used1Direct_ = uint256(uint128(-delta.amount1()));
+        // Calculate amounts owed *by this contract* (negative delta means we owe)
+        used0Direct_ = delta.amount0() < 0 ? uint256(int256(-delta.amount0())) : 0;
+        used1Direct_ = delta.amount1() < 0 ? uint256(int256(-delta.amount1())) : 0;
 
-        // ─── settle the two ERC-20 debts so PoolManager's books balance ───
-        Currency currency0 = Currency.wrap(address(token0));
-        Currency currency1 = Currency.wrap(address(token1));
+        // ─── Settle using CurrencySettler from uniswap-hooks ───
+        Currency currency0 = d.poolKey.currency0;
+        Currency currency1 = d.poolKey.currency1;
 
         if (used0Direct_ > 0) {
             // CurrencySettler: sync → transfer → settle
@@ -203,4 +205,4 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         token.approve(address(frlm_), amount);
         vm.stopPrank();
     }
-} 
+}

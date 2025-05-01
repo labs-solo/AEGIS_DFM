@@ -16,3 +16,6 @@ node_modules/
 
 # Scripts with sensitive API keys
 script/run_with_alchemy.sh
+
+# macOS system files
+.DS_Store

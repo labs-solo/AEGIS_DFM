@@ -19,9 +19,14 @@ import {ISpot, DepositParams as ISpotDepositParams} from "src/interfaces/ISpot.s
 
 // import {IWETH9}         from "v4-periphery/interfaces/external/IWETH9.sol"; // Keep commented out
 import {ERC20} from "solmate/tokens/ERC20.sol";
-import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
-import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
+// import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol"; // Removed import
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol"; // Added import
 // import {PoolModifyLiquidityTest} from "./integration/routers/PoolModifyLiquidityTest.sol"; // Keep commented out
+import {TickMath} from "v4-core/libraries/TickMath.sol";
+import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
+import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol"; // Added import
+import {IERC20Minimal} from "v4-core/interfaces/external/IERC20Minimal.sol"; // <-- ADDED IMPORT
 
 // Remove local struct definition, use imported one
 // struct LocalDepositParams {
@@ -35,6 +40,7 @@ import {IERC20} from "openzeppelin/token/ERC20/IERC20.sol";
 
 contract InternalReinvestTest is ForkSetup {
     using CurrencyLibrary for Currency;
+    using SafeERC20 for IERC20; // Updated to use IERC20 instead of IERC20Minimal
 
     address internal keeper = makeAddr("keeper");
     address internal feeSink = makeAddr("feeSink");
@@ -50,6 +56,27 @@ contract InternalReinvestTest is ForkSetup {
     uint256 constant MIN0 = 1; // 1 USDC
     uint256 constant MIN1 = 1e9; // 1 gwei WETH
     uint64 constant COOLDOWN = 1 hours;
+
+    function _ensureHookApprovals() internal {
+        address t0 = Currency.unwrap(c0);
+        address t1 = Currency.unwrap(c1);
+
+        uint256 MAX = type(uint256).max;
+
+        // ── LiquidityManager (FLM) must allow PM to pull during settle()
+        vm.prank(address(liquidityManager));
+        IERC20Minimal(t0).approve(address(poolManager), MAX);
+        vm.prank(address(liquidityManager));
+        IERC20Minimal(t1).approve(address(poolManager), MAX);
+
+        // ── Hook must let FLM pull for deposits *and* PM pull for debt settlement
+        vm.startPrank(address(hook));
+        ERC20(t0).approve(address(liquidityManager), MAX);
+        ERC20(t1).approve(address(liquidityManager), MAX);
+        ERC20(t0).approve(address(poolManager), MAX);
+        ERC20(t1).approve(address(poolManager), MAX);
+        vm.stopPrank();
+    }
 
     /* ---------- set‑up ---------------------------------------------------- */
     function setUp() public override {
@@ -72,6 +99,7 @@ contract InternalReinvestTest is ForkSetup {
     /* ---------- helpers --------------------------------------------------- */
     /// @dev credits `units` of `cur` to the hook's *claim* balance
     function _creditInternalBalance(Currency cur, uint256 units) internal {
+        _ensureHookApprovals();
         address token = Currency.unwrap(cur);
 
         // 1. Ensure the test has external tokens & approved
@@ -83,7 +111,7 @@ contract InternalReinvestTest is ForkSetup {
         pm.unlock(data); // Use pm variable
 
         // 3. Top up the hook's external ERC20 so pokeReinvest can use it
-        uint256 requiredExternalBalance = units * (10 ** ERC20(token).decimals());
+        uint256 requiredExternalBalance = units; // units are already token-denominated
         uint256 currentHookBalance = ERC20(token).balanceOf(address(hook));
         if (currentHookBalance < requiredExternalBalance) {
             deal(token, address(hook), requiredExternalBalance - currentHookBalance);
@@ -92,6 +120,7 @@ contract InternalReinvestTest is ForkSetup {
 
     /// @dev Add some full‐range liquidity so that pokeReinvest actually has something to grow.
     function _addInitialLiquidity(uint256 amount0, uint256 amount1) internal {
+        _ensureHookApprovals();
         // 1) Fund the hook directly with the tokens it will deposit
         address t0 = Currency.unwrap(c0);
         address t1 = Currency.unwrap(c1);
@@ -101,9 +130,14 @@ contract InternalReinvestTest is ForkSetup {
         // 2) Let the liquidityManager pull them from the hook
         // Prank as hook to approve liquidityManager
         vm.prank(address(hook));
-        ERC20(t0).approve(address(liquidityManager), amount0);
+        ERC20(t0).approve(address(liquidityManager), type(uint256).max);
         vm.prank(address(hook));
-        ERC20(t1).approve(address(liquidityManager), amount1);
+        ERC20(t1).approve(address(liquidityManager), type(uint256).max);
+        // also approve PoolManager for subsequent settle() pulls
+        vm.prank(address(hook));
+        ERC20(t0).approve(address(poolManager), type(uint256).max);
+        vm.prank(address(hook));
+        ERC20(t1).approve(address(poolManager), type(uint256).max);
 
         // 3) Call Spot.deposit to mint some shares (full‐range)
         // Use the imported ISpot.DepositParams struct type
@@ -247,20 +281,5 @@ contract InternalReinvestTest is ForkSetup {
             }
         }
         assertTrue(skippedCool, "should skip due to cooldown");
-    }
-
-    // allow PoolManager.unlock(...) to succeed
-    function unlockCallback(bytes calldata data) external returns (bytes memory) {
-        (Currency cur, uint256 units, address to) = abi.decode(data, (Currency, uint256, address));
-
-        // 1) Mint claim tokens for the hook (credits pm.balanceOf(hook,id))
-        // The ID for the ERC-6909 token is the currency address cast to uint256
-        pm.mint(to, uint256(uint160(Currency.unwrap(cur))), units);
-
-        // 2) Pay off the test-contract's negative delta
-        //    (sync → transfer → settle)
-        CurrencySettler.settle(cur, pm, address(this), units, false);
-
-        return ""; // nothing else needed
     }
 }

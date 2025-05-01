@@ -1,9 +1,32 @@
 [profile.default]
+remappings = [
+  # solmate (longest prefix first)
+  "solmate/=node_modules/solmate/src/",
+
+  # openzeppelin - ensure both @openzeppelin/contracts and openzeppelin point to src
+  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
+  "openzeppelin/=node_modules/@openzeppelin/contracts/", # Keep this low-priority fallback
+
+  # core test libs
+  "forge-std/=node_modules/forge-std/src/",
+  "ds-test/=node_modules/ds-test/src/",
+
+  # uniswap v4 - ensure all variations point to the correct src dir
+  "v4-core/=node_modules/@uniswap/v4-core/src/",
+  "@uniswap/v4-core/=node_modules/@uniswap/v4-core/src/",
+
+  # uniswap v4 periphery - ensure all variations point to the correct src dir
+  "v4-periphery/=node_modules/@uniswap/v4-periphery/src/",
+  "@uniswap/v4-periphery/=node_modules/@uniswap/v4-periphery/src/",
+
+  # uniswap hooks (locally cloned)
+  "uniswap-hooks/=lib/uniswap-hooks/src/",
+]
 src = "src"
 out = "out"
 libs = ["lib"]
 ffi = true
-fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}]
+fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
 solc_version = "0.8.26"
 evm_version = "cancun"
 viaIR = true
@@ -11,21 +34,18 @@ optimizer = true
 optimizer_runs = 100_000
 dotenv = true  # Enable .env file loading
 exclude_paths = ["test/old-tests"]
-remappings = [
-    "forge-std/=lib/forge-std/src/",
-    "v4-core/=lib/v4-core/src/",
-    "v4-periphery/=lib/v4-periphery/src/",
-    "solmate/=lib/solmate/src/",
-    "@openzeppelin/=lib/v4-core/lib/openzeppelin-contracts/",
-    "uniswap-hooks/=lib/uniswap-hooks/src/",
-    "@uniswap/v4-core/=lib/v4-core/src/"
-]
+
+# ──────────────────────────────────────────────────────────────
+# Explicit import remappings (Forge will also scan node_modules
+# automatically, but pinning them here prevents IDE / CI drift
+# and documents paths that rely on pnpm's symlinks).
+# ──────────────────────────────────────────────────────────────
 
 # Sepolia configuration for integration testing
 [profile.sepolia]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
 solc_version = "0.8.26"
@@ -39,7 +59,7 @@ chain_id = 11155111
 [profile.unichain-sepolia]
 src = "src"
 out = "out"
-libs = ["lib"]
+libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
 solc_version = "0.8.26"
@@ -59,3 +79,6 @@ runs = 256 # Default fuzz runs
 # Constrain amount0 and amount1 to prevent hitting known V4 core overflow reverts
 # Using approximately type(uint128).max * 10 as a large but reasonable limit
 max_inputs = { amount0 = "3402823669209384634633746074317682114550", amount1 = "3402823669209384634633746074317682114550" }
+
+[rpc_endpoints]
+unichain_mainnet = "${UNICHAIN_MAINNET_RPC_URL}"

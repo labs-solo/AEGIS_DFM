@@ -51,9 +51,9 @@ contract TruncGeoOracleMulti {
     mapping(bytes32 => bool) public isEnabled;
 
     // dynamic capping -------------------------------------------------------
-    mapping(bytes32 => uint24)  public maxTicksPerBlock;   // adaptive cap
-    mapping(bytes32 => uint128) private capFreq;           // ppm-seconds accumulator
-    mapping(bytes32 => uint48)  private lastFreqTs;        // last decay update
+    mapping(bytes32 => uint24) public maxTicksPerBlock; // adaptive cap
+    mapping(bytes32 => uint128) private capFreq; // ppm-seconds accumulator
+    mapping(bytes32 => uint48) private lastFreqTs; // last decay update
 
     struct ObservationState {
         uint16 index;
@@ -85,11 +85,7 @@ contract TruncGeoOracleMulti {
      * @param _governance The initial governance address for setting the hook
      * @param _policyManager The policy manager contract
      */
-    constructor(
-        IPoolManager _poolManager,
-        address _governance,
-        IPoolPolicy _policyManager
-    ) {
+    constructor(IPoolManager _poolManager, address _governance, IPoolPolicy _policyManager) {
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
         if (_governance == address(0)) revert Errors.ZeroAddress();
         if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
@@ -130,10 +126,7 @@ contract TruncGeoOracleMulti {
     /// @param zeroForOne Direction of the swap (needed for cap logic)
     /// @return tick      The truncated/stored tick
     /// @return capped    True if the tick move exceeded the policy cap
-    function pushObservationAndCheckCap(
-        PoolId id,
-        bool   zeroForOne
-    )
+    function pushObservationAndCheckCap(PoolId id, bool zeroForOne)
         external
         onlyHook
         returns (int24 tick, bool capped)
@@ -143,12 +136,9 @@ contract TruncGeoOracleMulti {
     }
 
     /* ─────────────── internal logic for observation pushing ───────────── */
-    function _pushObservation(
-        PoolId id,
-        bool   zeroForOne
-    ) internal returns (int24 tick, bool capped) {
+    function _pushObservation(PoolId id, bool zeroForOne) internal returns (int24 tick, bool capped) {
         bytes32 poolId = PoolId.unwrap(id);
-        
+
         // Check if pool is enabled in oracle
         if (states[poolId].cardinality == 0) {
             revert Errors.OracleOperationFailed("pushObservation", "Pool not enabled in oracle");
@@ -159,7 +149,7 @@ contract TruncGeoOracleMulti {
 
         // Get the most recent observation for comparison
         TruncatedOracle.Observation memory lastObs = observations[poolId][states[poolId].index];
-        
+
         // Apply adaptive cap
         uint24 cap = maxTicksPerBlock[poolId];
         (capped, tick) = TickMoveGuard.truncate(lastObs.prevTick, currentTick, cap);
@@ -171,30 +161,30 @@ contract TruncGeoOracleMulti {
         // Update the observation with the potentially capped tick
         uint128 liquidity = StateLibrary.getLiquidity(poolManager, id);
         (states[poolId].index, states[poolId].cardinality) = observations[poolId].write(
-            states[poolId].index, 
-            _blockTimestamp(), 
-            tick, 
-            liquidity, 
-            states[poolId].cardinality, 
+            states[poolId].index,
+            _blockTimestamp(),
+            tick,
+            liquidity,
+            states[poolId].cardinality,
             states[poolId].cardinalityNext
         );
 
         if (capped) emit TickCapped(poolId, tick);
         emit ObservationUpdated(poolId, tick, _blockTimestamp());
-        
+
         return (tick, capped);
     }
 
     /* ───────────── adaptive-cap helpers ───────────── */
     function _updateFreq(bytes32 pid, bool capped_) private {
-        uint48 nowTs  = uint48(block.timestamp);
-        uint48 last   = lastFreqTs[pid];
+        uint48 nowTs = uint48(block.timestamp);
+        uint48 last = lastFreqTs[pid];
         if (nowTs == last) {
             if (capped_) capFreq[pid] += 1e6;
             return;
         }
         uint32 window = IPoolPolicy(policyManager).getCapBudgetDecayWindow(PoolId.wrap(pid));
-        uint128 f     = capFreq[pid];
+        uint128 f = capFreq[pid];
         if (window > 0) {
             uint256 decay = uint256(f) * (nowTs - last) / window;
             f -= uint128(decay > f ? f : decay);
@@ -213,10 +203,12 @@ contract TruncGeoOracleMulti {
 
         uint24 cap = maxTicksPerBlock[pid];
         bool changed;
-        if (perDay > target * 115 / 100 && cap < 250_000) {        // too many caps → loosen cap
+        if (perDay > target * 115 / 100 && cap < 250_000) {
+            // too many caps → loosen cap
             cap = uint24(uint256(cap) * 125 / 100);
             changed = true;
-        } else if (perDay < target * 85 / 100 && cap > 1) {        // too quiet → tighten cap
+        } else if (perDay < target * 85 / 100 && cap > 1) {
+            // too quiet → tighten cap
             cap = uint24(uint256(cap) * 80 / 100);
             if (cap == 0) cap = 1;
             changed = true;
@@ -245,8 +237,8 @@ contract TruncGeoOracleMulti {
         uint24 initCap = IPoolPolicy(policyManager).getDefaultMaxTicksPerBlock(PoolId.wrap(id));
         if (initCap == 0) {
             uint256 defFee = IPoolPolicy(policyManager).getDefaultDynamicFee(); // ppm
-            initCap = uint24(defFee / 100);            // 1 tick ≃ 100 ppm
-            if (initCap == 0) initCap = 1;             // never zero
+            initCap = uint24(defFee / 100); // 1 tick ≃ 100 ppm
+            if (initCap == 0) initCap = 1; // never zero
         }
         maxTicksPerBlock[id] = initCap;
         lastFreqTs[id] = uint48(block.timestamp);
@@ -254,7 +246,7 @@ contract TruncGeoOracleMulti {
         // Initialize observation slot and cardinality
         (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, key.toId());
         uint128 liquidity = StateLibrary.getLiquidity(poolManager, key.toId());
-        
+
         // Initialize first observation
         observations[id][0] = TruncatedOracle.Observation({
             blockTimestamp: _blockTimestamp(),

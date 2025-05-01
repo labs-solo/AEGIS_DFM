@@ -60,36 +60,69 @@ Automated system for growing protocol-controlled liquidity:
 
 - Foundry (Forge, Anvil, and Cast)
 - Solidity compiler 0.8.26
-- Access to Uniswap V4 contracts
+- `pnpm` (Node.js package manager)
 
-### Installation
+### Installation: PNPM-Managed Dependencies
 
-1. Clone the repository:
+This project uses `pnpm` to manage **all** dependencies, including Solidity libraries like Uniswap V4 Core, Periphery, Forge Std, etc. These are fetched directly from their respective repositories (or npm) and stored within the `node_modules` directory. There are no Git submodules or manually managed libraries in the `lib/` folder.
+
+1.  Clone the repository:
+    ```bash
+    git clone https://github.com/labs-solo/venm.git
+    cd venm
+    ```
+
+2.  Install all dependencies using pnpm:
+    ```bash
+    pnpm install -w # Fetches all JS and Solidity dependencies
+    ```
+    This command populates the `node_modules` directory and ensures `foundry` can find the necessary libraries via the remappings defined in `remappings.txt`.
+
+### Development Workflow
+
+All standard development tasks are managed via `pnpm` scripts which utilize Foundry commands internally.
+
+1.  **Build**: Compile the contracts using the dependencies in `node_modules`.
+    ```bash
+    pnpm run build
+    ```
+    (This runs `./scripts/build.sh`, which executes `pnpm install` then `forge build`)
+
+2.  **Test**: Run the test suite against the compiled contracts.
+    ```bash
+    pnpm run test
+    ```
+    (This runs `./scripts/test.sh`, which executes `pnpm install` then `forge test`)
+
+3.  **Format**: Format the Solidity code using Forge's formatter.
+    ```bash
+    pnpm run format
+    ```
+
+4.  **Clean**: Remove Foundry build artifacts (`cache/` and `out/`).
+    ```bash
+    pnpm run clean
+    ```
+
+### Testing Instructions
+
+Run the full test suite using the pnpm script:
 ```bash
-git clone https://github.com/labs-solo/venm.git
-cd venm
+pnpm run test
 ```
 
-2. Install dependencies:
+To run tests with gas reporting:
 ```bash
-forge install
+forge test --gas-report -vvv
 ```
 
-3. Compile contracts:
-```bash
-forge build --use solc:0.8.26
-```
+### Build Process
 
-### Testing
+The build process relies entirely on the dependencies installed by `pnpm` into `node_modules`. `forge build` uses `remappings.txt` to locate these libraries.
 
-Run the test suite:
+To perform a clean build:
 ```bash
-forge test --use solc:0.8.26
-```
-
-For gas reporting:
-```bash
-forge test --gas-report -vvv --use solc:0.8.26
+pnpm run clean && pnpm run build
 ```
 
 ### Deployment

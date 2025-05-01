@@ -92,4 +92,4 @@ library CurrencySettlerExtension {
             CurrencySettler.settle(currency, manager, address(this), amount, false);
         }
     }
-}
+} 
