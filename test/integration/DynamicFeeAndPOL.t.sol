@@ -175,20 +175,10 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         usdc.approve(address(liquidityManager), type(uint256).max);
 
         // DEBUG: Add minimal dust liquidity first to avoid potential "first deposit" issues
-        try liquidityManager.deposit(poolId, 100, 100, 0, 0, lpProvider) {}
-        catch Error(string memory reason) { revert(string.concat("Initial dust deposit failed: ", reason)); }
-        catch { revert("Low-level error during initial dust deposit"); }
+        liquidityManager.deposit(poolId, 100000, 100000, 0, 0, lpProvider);
 
         // Perform the actual intended deposit
-        try liquidityManager.deposit(poolId, amount0Desired, amount1Desired, 0, 0, lpProvider) returns (
-            uint256 shares, uint256 amount0Used, uint256 amount1Used
-        ) {
-            assertTrue(shares > 0, "Main deposit failed");
-        } catch Error(string memory reason) {
-            revert(string.concat("Main deposit failed: ", reason));
-        } catch {
-            revert("Low-level error during main deposit");
-        }
+        liquidityManager.deposit(poolId, amount0Desired, amount1Desired, 0, 0, lpProvider);
         vm.stopPrank();
     }
 

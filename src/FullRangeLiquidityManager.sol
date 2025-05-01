@@ -1122,15 +1122,16 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
 
     /**
-     * @notice Update total shares for a pool
-     * @param poolId The pool ID
-     * @param newTotalShares The new total shares value
+     * @notice Called by PoolManager after it mutates liquidity
+     * @param poolId         The Pool ID that was just updated
+     * @param newTotalShares The new total‐shares value from the core
      */
-    function updateTotalShares(PoolId poolId, uint128 newTotalShares) external pure {
-        poolId;
-        newTotalShares; // silence
-        // Implementation specific to your needs
-        revert("Not implemented");
+    function updateTotalShares(PoolId poolId, uint128 newTotalShares) external {
+        // only the PoolManager may tell us the new share count
+        if (msg.sender != address(manager)) revert Errors.AccessOnlyPoolManager(msg.sender);
+
+        // record it so our next deposit/withdraw sees the right totalShares
+        positionTotalShares[poolId] = newTotalShares;
     }
 
     /**
@@ -1138,8 +1139,10 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @dev Decodes callback data, handles liquidity changes, and settles token balances.
      */
     function unlockCallback(bytes calldata data) external returns (bytes memory) {
-        // Revert if PoolManager is not the caller
-        if (msg.sender != address(manager)) revert Errors.AccessOnlyPoolManager();
+        // the PoolManager is the only contract that may enter this callback
+        // `AccessOnlyPoolManager(address caller)` takes *one* argument – supply it
+        // supply the caller so the revert carries context
+        if (msg.sender != address(manager)) revert Errors.AccessOnlyPoolManager(msg.sender);
 
         // ---------------------------------------------------------------
         // ⓪ Parse callback data
@@ -1158,11 +1161,35 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Calculate modifyLiquidity delta based on callback type
         BalanceDelta delta;
         if (callbackType == CallbackType.DEPOSIT) {
-            delta = manager.modifyLiquidity(key, IPoolManager.ModifyLiquidityParams({tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: int256(int128(shares))}));
+            // --- call into PoolManager ---
+            (delta,) = manager.modifyLiquidity(
+                key,
+                ModifyLiquidityParams({
+                    tickLower: tickLower,
+                    tickUpper: tickUpper,
+                    liquidityDelta: int256(int128(shares)),
+                    salt: bytes32(0)
+                }),
+                bytes("")                    // hookData – none for first deposit
+            );
         } else if (callbackType == CallbackType.WITHDRAW) {
-            delta = manager.modifyLiquidity(key, IPoolManager.ModifyLiquidityParams({tickLower: tickLower, tickUpper: tickUpper, liquidityDelta: -int256(int128(shares))}));
+            // --- call into PoolManager ---
+            (delta,) = manager.modifyLiquidity(
+                key,
+                ModifyLiquidityParams({
+                    tickLower: tickLower,
+                    tickUpper: tickUpper,
+                    liquidityDelta: -int256(int128(shares)),
+                    salt: bytes32(0)
+                }),
+                bytes("")                    // hookData – none for first deposit
+            );
         } else {
-            revert Errors.InvalidCallbackType();
+            // Invalid callback type
+            // `InvalidCallbackType(uint8 badType)` expects a single **uint8**.
+            // Cast the 4-byte selector down to uint8 (truncating is fine: only the
+            // low-order byte is used by the error enum).
+            revert Errors.InvalidCallbackType(uint8(uint32(msg.sig)));
         }
 
         // ---------------------------------------------------------------
