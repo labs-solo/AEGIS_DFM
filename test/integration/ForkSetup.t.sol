@@ -265,9 +265,13 @@ contract ForkSetup is Test {
         emit log_string("Configuring contracts...");
         liquidityManager.setAuthorizedHookAddress(actualHookAddress);
 
+        // End the current prank before starting a new one
+        vm.stopPrank();
+
         // Ensure reinvestment is not paused by default
-        vm.prank(deployerEOA);
+        vm.startPrank(deployerEOA);
         fullRange.setReinvestmentPaused(false);
+        vm.stopPrank();
 
         /* Build poolKey & poolId for DFM initialization */
         address token0;
