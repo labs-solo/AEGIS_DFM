@@ -18,7 +18,7 @@ import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
 import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
-import {MathUtils} from "src/libraries/MathUtils.sol";
+import {SignedMath} from "@openzeppelin/contracts/utils/math/SignedMath.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
 import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
 import {IUnlockCallback} from "v4-core/interfaces/callback/IUnlockCallback.sol";
@@ -148,12 +148,12 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         
         // Compare token amounts used (allow ±1 wei difference due to FRLM rounding)
         assertLe(
-            MathUtils.abs(int256(used0Direct) - int256(used0Frlm)),
+            SignedMath.abs(int256(used0Direct) - int256(used0Frlm)),
             1,
             "token0 diff exceeds 1 wei"
         );
         assertLe(
-            MathUtils.abs(int256(used1Direct) - int256(used1Frlm)),
+            SignedMath.abs(int256(used1Direct) - int256(used1Frlm)),
             1,
             "token1 diff exceeds 1 wei"
         );

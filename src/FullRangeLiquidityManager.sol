@@ -429,21 +429,19 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             // Subsequent deposits - calculate liquidity (shares) based on one amount and reserves ratio
             // if (reserve0 == 0 || reserve1 == 0) revert Errors.ValidationInvalidInput("Reserves are zero"); // Commented out - Reserves can be zero initially
 
-            uint256 shares0 = MathUtils.calculateProportional(amount0Desired, totalSharesInternal, reserve0, true);
-            uint256 shares1 = MathUtils.calculateProportional(amount1Desired, totalSharesInternal, reserve1, true);
+            // 1) compute how many "shares" to mint, rounding down to never exceed desired amounts
+            uint256 shares0 = FullMath.mulDiv(amount0Desired, totalSharesInternal, reserve0);
+            uint256 shares1 = FullMath.mulDiv(amount1Desired, totalSharesInternal, reserve1);
             uint256 optimalShares = shares0 < shares1 ? shares0 : shares1;
             uint128 shares = optimalShares.toUint128(); // Assign to 'shares'
             if (shares == 0) revert Errors.ZeroAmount();
 
             // Calculate actual amounts based on the determined shares and reserves ratio
-            uint256 actual0 = MathUtils.calculateProportional(reserve0, uint256(shares), totalSharesInternal, true);
-            uint256 actual1 = MathUtils.calculateProportional(reserve1, uint256(shares), totalSharesInternal, true);
+            // 2) draw tokens from the pool for those shares, rounding down to never exceed what's available
+            uint256 actual0 = FullMath.mulDiv(reserve0, shares, totalSharesInternal);
+            uint256 actual1 = FullMath.mulDiv(reserve1, shares, totalSharesInternal);
 
             uint128 lockedSharesAmount = 0; // No locking for subsequent deposits
-
-            // Cap amounts at MAX_RESERVE if needed
-            if (actual0 > MAX_RESERVE) actual0 = MAX_RESERVE;
-            if (actual1 > MAX_RESERVE) actual1 = MAX_RESERVE;
 
             // Assign to struct fields
             result.actual0 = actual0;
@@ -504,7 +502,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         // V2 Share Calculation
         uint128 minLiq128 = MIN_LIQUIDITY;
-        uint256 totalV2Shares = MathUtils.sqrt(actual0 * actual1);
+        uint256 totalV2Shares = Math.sqrt(actual0 * actual1);
 
         if (totalV2Shares < minLiq128) {
             revert Errors.InitialDepositTooSmall(minLiq128, totalV2Shares.toUint128());
@@ -799,12 +797,11 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint128 totalUsableShares = uint128(totalShares_global - lockedS);
         if (totalUsableShares == 0) revert Errors.InsufficientShares(sharesToBurn, 0);
 
-        v4LiquidityToWithdraw = MathUtils
-            .calculateProportional(totalV4Liquidity, sharesToBurn, totalUsableShares, false)
-            .toUint128();
+        // Safely cast the uint256 result of mulDivRoundingUp to uint128
+        v4LiquidityToWithdraw = FullMath.mulDivRoundingUp(totalV4Liquidity, sharesToBurn, totalUsableShares).toUint128();
 
-        amount0 = MathUtils.calculateProportional(reserve0, v4LiquidityToWithdraw, totalV4Liquidity, false);
-        amount1 = MathUtils.calculateProportional(reserve1, v4LiquidityToWithdraw, totalV4Liquidity, false);
+        amount0 = FullMath.mulDiv(reserve0, v4LiquidityToWithdraw, totalV4Liquidity);
+        amount1 = FullMath.mulDiv(reserve1, v4LiquidityToWithdraw, totalV4Liquidity);
     }
 
     /**
@@ -1013,8 +1010,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId);
 
         // Calculate amounts based on shares
-        amount0 = MathUtils.calculateProportional(reserve0, sharesToBorrow, totalSharesInternal, false);
-        amount1 = MathUtils.calculateProportional(reserve1, sharesToBorrow, totalSharesInternal, false);
+        amount0 = FullMath.mulDiv(reserve0, sharesToBorrow, totalSharesInternal);
+        amount1 = FullMath.mulDiv(reserve1, sharesToBorrow, totalSharesInternal);
 
         // Prepare callback data
         CallbackData memory callbackData = CallbackData({
@@ -1064,8 +1061,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId);
 
         // Calculate shares based on the ratio of provided amounts to current reserves
-        uint256 s0 = reserve0 > 0 ? MathUtils.calculateProportional(polAmount0, totalSharesInternal, reserve0, true) : 0;
-        uint256 s1 = reserve1 > 0 ? MathUtils.calculateProportional(polAmount1, totalSharesInternal, reserve1, true) : 0;
+        uint256 s0 = reserve0 > 0 ? FullMath.mulDivRoundingUp(polAmount0, totalSharesInternal, reserve0) : 0;
+        uint256 s1 = reserve1 > 0 ? FullMath.mulDivRoundingUp(polAmount1, totalSharesInternal, reserve1) : 0;
 
         // Use the smaller share amount to maintain ratio
         shares = s0 < s1 ? s0 : s1;
@@ -1114,8 +1111,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (totalShares == 0) return (0, 0);
 
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId);
-        amount0 = MathUtils.calculateProportional(reserve0, shares, totalShares, false);
-        amount1 = MathUtils.calculateProportional(reserve1, shares, totalShares, false);
+        amount0 = FullMath.mulDiv(reserve0, shares, totalShares);
+        amount1 = FullMath.mulDiv(reserve1, shares, totalShares);
     }
 
     /**

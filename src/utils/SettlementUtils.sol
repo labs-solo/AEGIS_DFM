@@ -10,7 +10,7 @@ import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {Errors} from "../errors/Errors.sol";
 import {FullRangeLiquidityManager} from "../FullRangeLiquidityManager.sol";
 import {ERC20} from "solmate/tokens/ERC20.sol";
-import {MathUtils} from "../libraries/MathUtils.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 
 /**
  * @title SettlementUtils
@@ -173,8 +173,8 @@ library SettlementUtils {
         uint128 totalLiquidity = liquidityManager.positionTotalShares(poolId);
         if (totalLiquidity == 0) return 0;
 
-        // Use MathUtils to calculate geometric shares
-        sharesFromFees = MathUtils.calculateGeometricShares(feeAmount0, feeAmount1);
+        // use OpenZeppelin Math.sqrt for geometric mean
+        sharesFromFees = Math.sqrt(feeAmount0 * feeAmount1);
 
         return sharesFromFees;
     }

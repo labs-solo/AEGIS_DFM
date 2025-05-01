@@ -14,6 +14,7 @@ import {MathUtils} from "../libraries/MathUtils.sol";
 import {Errors} from "../errors/Errors.sol";
 import {PoolId} from "v4-core/types/PoolId.sol";
 import {IPoolPolicy} from "../interfaces/IPoolPolicy.sol";
+import {FullMath} from "v4-core/libraries/FullMath.sol";
 
 library FullRangeUtils {
     /**
@@ -38,12 +39,15 @@ library FullRangeUtils {
      * @notice Calculate withdrawal amounts based on shares to burn.
      * @dev Uses MathUtils for precise computation of output amounts.
      */
-    function computeWithdrawAmounts(uint128 totalShares, uint256 sharesToBurn, uint256 reserve0, uint256 reserve1)
-        internal
-        pure
-        returns (uint256 amount0Out, uint256 amount1Out)
-    {
-        return MathUtils.computeWithdrawAmountsWithPrecision(totalShares, sharesToBurn, reserve0, reserve1);
+    function computeWithdrawAmounts(
+        uint128 totalShares,
+        uint256 sharesToBurn,
+        uint256 reserve0,
+        uint256 reserve1
+    ) internal pure returns (uint256 amount0Out, uint256 amount1Out) {
+        // withdraw proportionally: reserve * sharesBurned / totalShares
+        amount0Out = FullMath.mulDiv(reserve0, sharesToBurn, totalShares);
+        amount1Out = FullMath.mulDiv(reserve1, sharesToBurn, totalShares);
     }
 
     /**

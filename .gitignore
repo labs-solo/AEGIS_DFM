@@ -14,11 +14,8 @@ out/
 # Node modules
 node_modules/
 
-# pnpm store
-.pnpm-store/
-
-# pnpm lockfile
-pnpm-lock.yaml
-
 # Scripts with sensitive API keys
 script/run_with_alchemy.sh
+
+# macOS system files
+.DS_Store

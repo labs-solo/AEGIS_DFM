@@ -7,6 +7,7 @@ pragma solidity 0.8.26;
 import {Hooks} from "v4-core/libraries/Hooks.sol";
 import {StateLibrary} from "v4-core/libraries/StateLibrary.sol";
 import {Currency, CurrencyLibrary} from "v4-core/types/Currency.sol";
+import {CurrencyDelta} from "v4-core/libraries/CurrencyDelta.sol";
 import {PoolKey} from "v4-core/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/types/PoolId.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/types/BalanceDelta.sol";
@@ -16,10 +17,10 @@ import {SwapParams} from "v4-core/types/PoolOperation.sol";
 import {ModifyLiquidityParams} from "v4-core/types/PoolOperation.sol";
 import {TickMath} from "v4-core/libraries/TickMath.sol";
 import {PoolManager} from "v4-core/PoolManager.sol";
-import {LibTransient} from "./libraries/LibTransient.sol";
 
 import {BaseHook} from "v4-periphery/utils/BaseHook.sol";
 import {LiquidityAmounts} from "v4-periphery/libraries/LiquidityAmounts.sol";
+import {SqrtPriceMath} from "v4-core/libraries/SqrtPriceMath.sol";
 
 /* ───────────────────────────────────────────────────────────
  *                          Project
@@ -35,7 +36,6 @@ import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
 import {DynamicFeeManager} from "./DynamicFeeManager.sol";
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
-import {MathUtils} from "./libraries/MathUtils.sol";
 import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
 import {Errors} from "./errors/Errors.sol";
 import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol";
@@ -44,7 +44,6 @@ import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol";
  *                    Solmate / OpenZeppelin
  * ─────────────────────────────────────────────────────────── */
 import {ERC20} from "solmate/tokens/ERC20.sol";
-import {SafeTransferLib} from "solmate/utils/SafeTransferLib.sol";
 import {ReentrancyGuard} from "solmate/utils/ReentrancyGuard.sol";
 import {Owned} from "solmate/auth/Owned.sol";
 
@@ -55,6 +54,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     using PoolIdLibrary for PoolKey;
     using PoolIdLibrary for PoolId;
     using CurrencyLibrary for Currency;
+    using CurrencyDelta for Currency;
     using BalanceDeltaLibrary for BalanceDelta;
 
     /* ───────────── Custom errors for gas optimization ───────────── */
@@ -530,7 +530,12 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     }
 
     function _tryReinvestInternal(PoolKey memory key, bytes32 _poolId) internal {
-        (uint256 bal0, uint256 bal1) = _internalBalances(key);
+        // --- Use CurrencyDelta library to fetch internal balances --- 
+        int256 delta0 = key.currency0.getDelta(address(this));
+        int256 delta1 = key.currency1.getDelta(address(this));
+        uint256 bal0 = delta0 > 0 ? uint256(delta0) : 0; // Direct cast from positive int256
+        uint256 bal1 = delta1 > 0 ? uint256(delta1) : 0; // Direct cast from positive int256
+
         ReinvestConfig storage cfg = reinvestCfg[_poolId];
 
         // 0) global pause
@@ -554,50 +559,41 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
             emit ReinvestSkipped(_poolId, REASON_PRICE_ZERO, bal0, bal1);
             return;
         }
-        // 4) maximize full‑range liquidity
-        (uint256 use0, uint256 use1, uint128 liq) = MathUtils.getAmountsToMaxFullRangeRoundUp(
+        // 4) maximize full-range liquidity (current price first, then lower/upper bounds)
+        uint128 liq = LiquidityAmounts.getLiquidityForAmounts(
             sqrtP,
-            key.tickSpacing,
-            bal0, // Use current balance 0
-            bal1 // Use current balance 1
+            TickMath.MIN_SQRT_PRICE,
+            TickMath.MAX_SQRT_PRICE,
+            bal0,
+            bal1
         );
+        // 5) derive token amounts needed (ceiling so we never under-fund)
+        uint256 use0 = SqrtPriceMath.getAmount0Delta(
+            TickMath.MIN_SQRT_PRICE,
+            TickMath.MAX_SQRT_PRICE,
+            liq,
+            true // rounding up
+        );
+        uint256 use1 = SqrtPriceMath.getAmount1Delta(
+            TickMath.MIN_SQRT_PRICE,
+            TickMath.MAX_SQRT_PRICE,
+            liq,
+            true // rounding up
+        );
+
         if (liq == 0) {
             emit ReinvestSkipped(_poolId, REASON_LIQUIDITY_ZERO, bal0, bal1);
-            return;
+            return; // Return early if calculated liquidity is zero
         }
 
-        // 5) call LM.reinvest, passing calculated amounts and liquidity
-        address token0 = Currency.unwrap(key.currency0);
-        address token1 = Currency.unwrap(key.currency1);
-        address lmAddress = address(liquidityManager);
+        // 6) move internal credit -> LM in one shot using poolManager.take
+        if (use0 > 0) poolManager.take(key.currency0, address(liquidityManager), use0);
+        if (use1 > 0) poolManager.take(key.currency1, address(liquidityManager), use1);
 
-        if (use0 > 0) {
-            if (token0 == address(0)) {
-                // Native ETH
-                // Send ETH via call. Ensure Spot has enough ETH balance.
-                (bool success,) = lmAddress.call{value: use0}("");
-                require(success, "ETH transfer to LM failed");
-            } else {
-                // ERC20
-                // Transfer ERC20 from Spot to LM
-                SafeTransferLib.safeTransfer(ERC20(token0), lmAddress, use0);
-            }
-        }
-        if (use1 > 0) {
-            if (token1 == address(0)) {
-                // Native ETH
-                // Send ETH via call. Ensure Spot has enough ETH balance.
-                (bool success,) = lmAddress.call{value: use1}("");
-                require(success, "ETH transfer to LM failed");
-            } else {
-                // ERC20
-                // Transfer ERC20 from Spot to LM
-                SafeTransferLib.safeTransfer(ERC20(token1), lmAddress, use1);
-            }
-        }
-
-        try liquidityManager.reinvest(PoolId.wrap(_poolId), use0, use1, liq) returns (uint128 _minted) {
-            if (_minted == 0) {
+        // 7) Inform LM – tokens already waiting there internally via take()
+        //    Pass 0 for amounts as they are handled by `take` now.
+        try liquidityManager.reinvest(PoolId.wrap(_poolId), 0, 0, liq) returns (uint128 mintedShares) {
+            if (mintedShares == 0) {
                 emit ReinvestSkipped(_poolId, REASON_MINTED_ZERO, bal0, bal1);
                 return;
             }
@@ -605,15 +601,9 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
             cfg.last = uint64(block.timestamp);
             emit ReinvestmentSuccess(_poolId, use0, use1);
         } catch (bytes memory reason) {
-            // Handle potential reverts from LM (e.g., ZeroAmount error)
             emit ReinvestSkipped(_poolId, string(abi.encodePacked("LM revert: ", reason)), bal0, bal1);
             return;
         }
-    }
-
-    function _internalBalances(PoolKey memory k) internal view returns (uint256 bal0, uint256 bal1) {
-        bal0 = CurrencyLibrary.balanceOf(k.currency0, address(this));
-        bal1 = CurrencyLibrary.balanceOf(k.currency1, address(this));
     }
 
     function isValidContract(address _addr) internal view returns (bool) {
