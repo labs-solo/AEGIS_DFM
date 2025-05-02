@@ -101,12 +101,17 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         //
         // ── HOOK / ORACLE WIRING ────────────────────────────
         //
-        // 1) Tell oracle which Spot hook to trust
-        vm.prank(deployerEOA);
-        oracle.setFullRangeHook(address(fullRange));
-        // 2) Now enable our pool in the oracle (as Spot.afterInitialize would do)
-        vm.prank(address(fullRange));
-        oracle.enableOracleForPool(poolKey);
+        // Wiring is now handled correctly in ForkSetup.setUp()
+        // The lines below redeploying the oracle were incorrect and are removed.
+
+        // Ensure pool is enabled in the oracle deployed by ForkSetup
+        // This might already be handled if the hook deployed by ForkSetup calls enableOracleForPool
+        // or if the pool initialization logic triggers it.
+        // Adding a check or explicit call if needed:
+        if (!oracle.isEnabled(PoolId.unwrap(poolId))) {
+             vm.prank(address(fullRange)); // Prank as the hook deployed in ForkSetup
+             oracle.enableOracleForPool(poolKey);
+        }
     }
 
     function _setupApprovals() internal {

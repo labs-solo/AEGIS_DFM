@@ -21,6 +21,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
+import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
 
 // Unused imports removed: Spot, FullRangeDynamicFeeManager, DefaultPoolCreationPolicy, HookMiner, Hooks, IERC20
 
@@ -83,8 +84,19 @@ contract DeployUnichainV4 is Script {
             deployerAddress // feeCollector
         );
 
-        // Deploy TruncGeoOracleMulti
-        truncGeoOracle = new TruncGeoOracleMulti(poolManager, deployerAddress, policyManager);
+        // ─── NEW flow: deploy hook first, then pass address to oracle ───
+        DummyFullRangeHook fullRangeHook = new DummyFullRangeHook(address(0));
+
+        truncGeoOracle = new TruncGeoOracleMulti(
+            poolManager,
+            governance,
+            policyManager,
+            address(fullRangeHook)      // immutable binding
+        );
+
+        // Optional: if hook needs to know oracle addr, redeploy / init
+        // Assuming DummyFullRangeHook now has a setOracle method
+        // fullRangeHook.setOracle(address(truncGeoOracle)); 
 
         // Deploy LiquidityManager
         liquidityManager = new FullRangeLiquidityManager(poolManager, IPoolPolicy(address(0)), deployerAddress);

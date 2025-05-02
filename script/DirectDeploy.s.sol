@@ -15,6 +15,7 @@ import {HookMiner} from "../src/utils/HookMiner.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
+import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
 
 /**
  * Script to directly deploy the hook with an explicit constructor and salt.
@@ -75,11 +76,15 @@ contract DirectDeploy is Script {
         // Deploy the helper contracts
         if (address(truncGeoOracle) == address(0)) {
             console.log("Deploying TruncGeoOracleMulti...");
+            DummyFullRangeHook fullRangeHook = new DummyFullRangeHook(address(0)); // Deploy hook first
             truncGeoOracle = new TruncGeoOracleMulti(
                 IPoolManager(UNICHAIN_POOL_MANAGER),
                 deployer, // governance parameter
-                policyManager // policy manager parameter
+                policyManager,
+                address(fullRangeHook) // Hook Address
             );
+             // Assuming DummyFullRangeHook now has setOracle
+            // fullRangeHook.setOracle(address(truncGeoOracle));
             console.log("TruncGeoOracleMulti deployed at: %s", address(truncGeoOracle));
         }
 

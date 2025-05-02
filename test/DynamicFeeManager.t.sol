@@ -7,6 +7,12 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
+import {MockPoolManager} from "mocks/MockPoolManager.sol";
+import {MockPolicyManager} from "mocks/MockPolicyManager.sol";
+import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
 /// @notice Event emitted when initialize() is called on an already-initialized pool
 /// @dev Duplicated from DynamicFeeManager.
@@ -29,6 +35,10 @@ contract DynamicFeeManagerTest is Test {
 
     TruncGeoOracleMulti oracle;
     DynamicFeeManager dfm;
+    MockPoolManager poolManager;
+    MockPolicyManager policyManager;
+    PoolKey poolKey;
+    PoolId poolId;
 
     struct CapTestCase {
         uint24 cap;
@@ -43,18 +53,44 @@ contract DynamicFeeManagerTest is Test {
         StubPolicy stub = new StubPolicy();
         IPoolPolicy policy = IPoolPolicy(address(stub));
 
-        oracle = new TruncGeoOracleMulti(
-            dummyPM, // pool-manager
-            address(this), // governance
-            policy // policy manager
-        );
+        poolManager = new MockPoolManager();
+        policyManager = new MockPolicyManager();
 
-        // Mock oracle setup
-        dfm = new DynamicFeeManager(
-            policy, // IPoolPolicy
-            address(oracle), // oracle
-            address(this) // authorised hook (this test contract)
+        // Deploy Dummy Hook first
+        DummyFullRangeHook fullRange = new DummyFullRangeHook(address(0));
+        // Deploy Oracle with hook address
+        oracle = new TruncGeoOracleMulti(
+            IPoolManager(address(poolManager)),
+            address(this), // governance
+            policyManager,
+            address(fullRange) // hook address
         );
+        // Set oracle address on hook (if needed by tests)
+        // fullRange.setOracle(address(oracle));
+
+        // Deploy DFM
+        dfm = new DynamicFeeManager(policyManager, address(oracle), address(fullRange));
+
+        // ... (rest of setup like poolKey, poolId, enableOracle)
+        address token0 = address(0xA11CE);
+        address token1 = address(0xB0B);
+        poolKey = PoolKey({ // Define poolKey
+            currency0: Currency.wrap(token0),
+            currency1: Currency.wrap(token1),
+            fee: 3000,
+            tickSpacing: 60,
+            hooks: IHooks(address(fullRange))
+        });
+        poolId = poolKey.toId();
+
+        // Enable oracle for the pool
+        vm.prank(address(fullRange));
+        oracle.enableOracleForPool(poolKey);
+
+        // Initialize DFM for the pool
+        (, int24 initialTick,,) = poolManager.getSlot0(poolId);
+        vm.prank(address(this)); // Assuming deployer/governance can initialize
+        dfm.initialize(poolId, initialTick);
     }
 
     /// @dev helper that updates the oracle's cap through its own setter
