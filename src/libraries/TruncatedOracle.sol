@@ -18,17 +18,14 @@ library TruncatedOracle {
     /// @dev emitted when the oracle had to truncate an excessive move
     event TickCapped(int24 newTick);
 
+    /// @dev **Packed** Observation – 256-bit exact fit
+    ///      32 + 24 + 48 + 144 + 8 = 256
     struct Observation {
-        // the block timestamp of the observation
-        uint32 blockTimestamp;
-        // the previous printed tick to calculate the change from time to time
-        int24 prevTick;
-        // the tick accumulator, i.e. tick * time elapsed since the pool was first initialized
-        int48 tickCumulative;
-        // the seconds per liquidity, i.e. seconds elapsed / max(1, liquidity) since the pool was first initialized
-        uint144 secondsPerLiquidityCumulativeX128;
-        // whether or not the observation is initialized
-        bool initialized;
+        uint32  blockTimestamp;                    //  32 bits
+        int24   prevTick;                          //  24 bits ( 56)
+        int48   tickCumulative;                    //  48 bits (104)
+        uint144 secondsPerLiquidityCumulativeX128; // 144 bits (248)
+        bool    initialized;                       //   8 bits (256)
     }
 
     /**
@@ -329,9 +326,7 @@ library TruncatedOracle {
         // Safe subtraction logic applied *before* getSurroundingObservations
         uint32 target;
         unchecked {
-            target = time >= secondsAgo
-                ? time - secondsAgo
-                : time + uint32(type(uint32).max - secondsAgo) + 1;
+            target = time >= secondsAgo ? time - secondsAgo : time + (type(uint32).max - secondsAgo) + 1;
         }
 
         (Observation memory beforeOrAt, Observation memory atOrAfter) =
@@ -362,15 +357,17 @@ library TruncatedOracle {
 
             return (
                 beforeOrAt.tickCumulative
-                    + ((atOrAfter.tickCumulative - beforeOrAt.tickCumulative) / int48(uint48(observationTimeDelta)))
-                        * int48(uint48(targetDelta)),
+                    + int48(
+                        (int256(atOrAfter.tickCumulative) - int256(beforeOrAt.tickCumulative))
+                            * int256(uint256(targetDelta))
+                            / int256(uint256(observationTimeDelta))
+                    ),
                 beforeOrAt.secondsPerLiquidityCumulativeX128
                     + uint144(
-                        (
-                            uint256(
-                                atOrAfter.secondsPerLiquidityCumulativeX128 - beforeOrAt.secondsPerLiquidityCumulativeX128
-                            ) * targetDelta
-                        ) / observationTimeDelta
+                        (uint256(atOrAfter.secondsPerLiquidityCumulativeX128)
+                            - uint256(beforeOrAt.secondsPerLiquidityCumulativeX128))
+                            * uint256(targetDelta)
+                            / uint256(observationTimeDelta)
                     )
             );
         }
