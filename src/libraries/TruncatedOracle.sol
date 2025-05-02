@@ -47,6 +47,11 @@ library TruncatedOracle {
                 ? blockTimestamp - last.blockTimestamp
                 : blockTimestamp + (type(uint32).max - last.blockTimestamp) + 1;
 
+            // ---------- 🟢  NEW GAS OPT  ----------------------------------------
+            // If no time elapsed within the same block, there is nothing to update.
+            // Returning early avoids ~200-300 gas (two mul/adds + struct writes).
+            if (delta == 0) return last;
+
             // Calculate absolute tick movement using optimized implementation
             (bool capped, int24 t) = TickMoveGuard.checkHardCapOnly(last.prevTick, tick);
             if (capped) {
