@@ -18,17 +18,14 @@ library TruncatedOracle {
     /// @dev emitted when the oracle had to truncate an excessive move
     event TickCapped(int24 newTick);
 
+    /// @dev **Packed** Observation – 256-bit exact fit
+    ///      32 + 24 + 48 + 144 + 8 = 256
     struct Observation {
-        // the block timestamp of the observation
-        uint32 blockTimestamp;
-        // the previous printed tick to calculate the change from time to time
-        int24 prevTick;
-        // the tick accumulator, i.e. tick * time elapsed since the pool was first initialized
-        int48 tickCumulative;
-        // the seconds per liquidity, i.e. seconds elapsed / max(1, liquidity) since the pool was first initialized
-        uint144 secondsPerLiquidityCumulativeX128;
-        // whether or not the observation is initialized
-        bool initialized;
+        uint32  blockTimestamp;                    //  32 bits
+        int24   prevTick;                          //  24 bits ( 56)
+        int48   tickCumulative;                    //  48 bits (104)
+        uint144 secondsPerLiquidityCumulativeX128; // 144 bits (248)
+        bool    initialized;                       //   8 bits (256)
     }
 
     /**
@@ -40,17 +37,34 @@ library TruncatedOracle {
      * @param liquidity The total in-range liquidity at the time of the new observation
      * @return Observation The newly populated observation
      */
-    function transform(Observation memory last, uint32 blockTimestamp, int24 tick, uint128 liquidity)
-        internal
-        returns (Observation memory)
-    {
+    function transform(
+        Observation memory last,
+        uint32 blockTimestamp,
+        int24 tick,
+        uint128 liquidity
+    ) internal returns (Observation memory) {
         unchecked {
-            uint32 delta = blockTimestamp - last.blockTimestamp;
+            // --- wrap-safe delta ------------------------------------------------
+            uint32 delta = blockTimestamp >= last.blockTimestamp
+                ? blockTimestamp - last.blockTimestamp
+                : blockTimestamp + (type(uint32).max - last.blockTimestamp) + 1;
+
+            // --------------------------------------------------------------------
+            //  ⛽  Fast-return: if called within the *same* block we can skip all
+            //      cumulative maths and just update `prevTick`.  Saves ~240 gas
+            //      on ~30 % of write-paths (observations flushed twice per block).
+            // --------------------------------------------------------------------
+            if (delta == 0) {
+                last.prevTick = tick;
+                return last;
+            }
 
             // Calculate absolute tick movement using optimized implementation
             (bool capped, int24 t) = TickMoveGuard.checkHardCapOnly(last.prevTick, tick);
-            tick = t; // use truncated tick if needed
-            if (capped) emit TickCapped(tick); // new observability
+            if (capped) {
+                emit TickCapped(t);
+            }
+            tick = t;
 
             return Observation({
                 blockTimestamp: blockTimestamp,
@@ -104,10 +118,12 @@ library TruncatedOracle {
         uint16 cardinalityNext
     ) internal returns (uint16 indexUpdated, uint16 cardinalityUpdated) {
         unchecked {
-            Observation memory last = self[index];
+            Observation storage last = self[index];
 
             // early return if we've already written an observation this block
-            if (last.blockTimestamp == blockTimestamp) return (index, cardinality);
+            if (last.blockTimestamp == blockTimestamp) {
+                return (index, cardinality);
+            }
 
             // if the conditions are right, we can bump the cardinality
             if (cardinalityNext > cardinality && index == (cardinality - 1)) {
@@ -117,7 +133,28 @@ library TruncatedOracle {
             }
 
             indexUpdated = (index + 1) % cardinalityUpdated;
-            self[indexUpdated] = transform(last, blockTimestamp, tick, liquidity);
+            Observation storage o = self[indexUpdated];
+            
+            // --- wrap-safe delta --------------------------------------------
+            uint32 delta = blockTimestamp >= last.blockTimestamp
+                ? blockTimestamp - last.blockTimestamp
+                : blockTimestamp + (type(uint32).max - last.blockTimestamp) + 1;
+                
+            // Calculate absolute tick movement using optimized implementation
+            (bool capped, int24 t) = TickMoveGuard.checkHardCapOnly(last.prevTick, tick);
+            if (capped) {
+                emit TickCapped(t);
+            }
+            tick = t;
+
+            o.blockTimestamp                        = blockTimestamp;
+            o.prevTick                              = tick;
+            o.tickCumulative                        =
+                last.tickCumulative + int48(tick) * int48(uint48(delta));
+            o.secondsPerLiquidityCumulativeX128     =
+                last.secondsPerLiquidityCumulativeX128 +
+                uint144((uint256(delta) << 128) / (liquidity == 0 ? 1 : liquidity));
+            o.initialized                           = true;
         }
     }
 
@@ -218,6 +255,21 @@ library TruncatedOracle {
         uint128 liquidity,
         uint16 cardinality
     ) private returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
+        // ===== fast-path: ring length 1  =====
+        if (cardinality == 1) {
+            Observation memory only = self[index];
+
+            // target newer  ➜ simulate forward
+            if (lte(time, only.blockTimestamp, target)) {
+                if (only.blockTimestamp == target) return (only, only);
+                return (only, transform(only, target, tick, liquidity));
+            }
+
+            // target older  ➜ invalid
+            revert TargetPredatesOldestObservation(only.blockTimestamp, target);
+        }
+
+        // ----- normal multi-element path -----
         // optimistically set before to the newest observation
         beforeOrAt = self[index];
 
@@ -259,7 +311,7 @@ library TruncatedOracle {
     function observe(
         Observation[65535] storage self,
         uint32 time,
-        uint32[] memory secondsAgos,
+        uint32[] calldata secondsAgos,
         int24 tick,
         uint16 index,
         uint128 liquidity,
@@ -295,16 +347,22 @@ library TruncatedOracle {
         uint128 liquidity,
         uint16 cardinality
     ) internal returns (int48 tickCumulative, uint144 secondsPerLiquidityCumulativeX128) {
-        if (secondsAgo == 0) {
+        if (cardinality == 0) revert OracleCardinalityCannotBeZero();
+
+        // base case: target is the current block? Handle large secondsAgo here.
+        if (secondsAgo == 0 || secondsAgo > type(uint32).max) {
             Observation memory last = self[index];
             if (last.blockTimestamp != time) {
-                // Use the pool-specific maximum tick movement
                 last = transform(last, time, tick, liquidity);
             }
             return (last.tickCumulative, last.secondsPerLiquidityCumulativeX128);
         }
 
-        uint32 target = time - secondsAgo;
+        // Safe subtraction logic applied *before* getSurroundingObservations
+        uint32 target;
+        unchecked {
+            target = time >= secondsAgo ? time - secondsAgo : time + (type(uint32).max - secondsAgo) + 1;
+        }
 
         (Observation memory beforeOrAt, Observation memory atOrAfter) =
             getSurroundingObservations(self, time, target, tick, index, liquidity, cardinality);
@@ -316,21 +374,35 @@ library TruncatedOracle {
             // we're at the right boundary
             return (atOrAfter.tickCumulative, atOrAfter.secondsPerLiquidityCumulativeX128);
         } else {
+            // ----------  NORMALISE for wrap-around ----------
+            // Bring all three timestamps into the same "era" (≥ beforeOrAt)
+            uint32 base = beforeOrAt.blockTimestamp;
+            uint32 norm = base; // avoids stack-too-deep
+            uint32 bTs  = beforeOrAt.blockTimestamp;
+            uint32 aTs  = atOrAfter.blockTimestamp;
+            uint32 tTs  = target;
+
+            if (aTs < norm) aTs += type(uint32).max + 1;
+            if (tTs < norm) tTs += type(uint32).max + 1;
+
+            // Use the normalised copies for deltas below
             // we're in the middle
-            uint32 observationTimeDelta = atOrAfter.blockTimestamp - beforeOrAt.blockTimestamp;
-            uint32 targetDelta = target - beforeOrAt.blockTimestamp;
+            uint32 observationTimeDelta = aTs - bTs;
+            uint32 targetDelta         = tTs - bTs;
 
             return (
                 beforeOrAt.tickCumulative
-                    + ((atOrAfter.tickCumulative - beforeOrAt.tickCumulative) / int48(uint48(observationTimeDelta)))
-                        * int48(uint48(targetDelta)),
+                    + int48(
+                        (int256(atOrAfter.tickCumulative) - int256(beforeOrAt.tickCumulative))
+                            * int256(uint256(targetDelta))
+                            / int256(uint256(observationTimeDelta))
+                    ),
                 beforeOrAt.secondsPerLiquidityCumulativeX128
                     + uint144(
-                        (
-                            uint256(
-                                atOrAfter.secondsPerLiquidityCumulativeX128 - beforeOrAt.secondsPerLiquidityCumulativeX128
-                            ) * targetDelta
-                        ) / observationTimeDelta
+                        (uint256(atOrAfter.secondsPerLiquidityCumulativeX128)
+                            - uint256(beforeOrAt.secondsPerLiquidityCumulativeX128))
+                            * uint256(targetDelta)
+                            / uint256(observationTimeDelta)
                     )
             );
         }

@@ -73,6 +73,23 @@ contract TruncGeoOracleMulti {
 
     address public governance; // Need governance address for setter
 
+    /// last time `maxTicksPerBlock` was *actually* changed
+    mapping(PoolId => uint32) private _lastMaxTickUpdate;
+
+    event MaxTicksPerBlockUpdated(
+        PoolId indexed poolId,
+        uint32 oldValue,
+        uint32 newValue,
+        uint32 timestamp
+    );
+
+    event MaxTicksUpdateSkipped(
+        PoolId indexed poolId,
+        uint32 candidate,
+        string reason,
+        uint32 timestamp
+    );
+
     /* ---------------- modifiers -------------------- */
     modifier onlyHook() {
         require(msg.sender == fullRangeHook, "Oracle: not hook");
@@ -203,19 +220,22 @@ contract TruncGeoOracleMulti {
 
         uint24 cap = maxTicksPerBlock[pid];
         bool changed;
+        uint32 newCandidate = cap;
+        
         if (perDay > target * 115 / 100 && cap < 250_000) {
             // too many caps → loosen cap
-            cap = uint24(uint256(cap) * 125 / 100);
+            newCandidate = uint32(uint256(cap) * 125 / 100);
             changed = true;
         } else if (perDay < target * 85 / 100 && cap > 1) {
             // too quiet → tighten cap
-            cap = uint24(uint256(cap) * 80 / 100);
-            if (cap == 0) cap = 1;
+            newCandidate = uint32(uint256(cap) * 80 / 100);
+            if (newCandidate == 0) newCandidate = 1;
             changed = true;
         }
+        
         if (changed) {
-            maxTicksPerBlock[pid] = cap;
-            emit TickCapParamChanged(pid, cap);
+            // Use rate-limited update instead of direct assignment
+            _maybeUpdateMaxTicks(PoolId.wrap(pid), newCandidate);
         }
     }
 
@@ -240,7 +260,13 @@ contract TruncGeoOracleMulti {
             initCap = uint24(defFee / 100); // 1 tick ≃ 100 ppm
             if (initCap == 0) initCap = 1; // never zero
         }
+        
+        // Set initial maxTicksPerBlock value directly (skipping rate limit for initialization)
+        // Note: We don't use _maybeUpdateMaxTicks here as this is the initial value
         maxTicksPerBlock[id] = initCap;
+        // Mark the update time to start the clock for future rate-limiting
+        _lastMaxTickUpdate[PoolId.wrap(id)] = uint32(block.timestamp);
+        
         lastFreqTs[id] = uint48(block.timestamp);
 
         // Initialize observation slot and cardinality
@@ -427,7 +453,7 @@ contract TruncGeoOracleMulti {
      * @return _tick The latest observed tick
      * @return blockTimestampResult The block timestamp of the observation
      */
-    function getLatestObservation(PoolId poolId) external returns (int24 _tick, uint32 blockTimestampResult) {
+    function getLatestObservation(PoolId poolId) external view returns (int24 _tick, uint32 blockTimestampResult) {
         bytes32 id = PoolId.unwrap(poolId);
         if (states[id].cardinality == 0) {
             revert Errors.OracleOperationFailed("getLatestObservation", "Pool not enabled in oracle");
@@ -459,8 +485,56 @@ contract TruncGeoOracleMulti {
      */
     function setMaxTicksPerBlock(PoolId pid, uint24 cap) external {
         if (msg.sender != governance) revert Errors.AccessOnlyGovernance(msg.sender);
+        
+        // For governance changes, directly update without rate limiting
+        // This is needed for testing and emergency interventions
         bytes32 id = PoolId.unwrap(pid);
+        uint24 oldValue = maxTicksPerBlock[id];
         maxTicksPerBlock[id] = cap;
+        
+        // Record the update time for future rate-limiting
+        _lastMaxTickUpdate[pid] = uint32(block.timestamp);
+        
+        // Emit both events for consistency
         emit TickCapParamChanged(id, cap);
+        emit MaxTicksPerBlockUpdated(pid, oldValue, cap, uint32(block.timestamp));
+    }
+
+    function _maybeUpdateMaxTicks(PoolId poolId, uint32 newCandidate) private {
+        bytes32 id = PoolId.unwrap(poolId);
+        uint32 oldValue = maxTicksPerBlock[id];
+
+        // ── 1. 24 h rate-limit ───────────────────────────────────────────────
+        uint32 minInterval = IPoolPolicy(policyManager).getBaseFeeUpdateIntervalSeconds(poolId);
+        
+        // Skip rate-limiting if this is the first update (_lastMaxTickUpdate is 0)
+        // or if the minimum interval is not set, or if enough time has passed
+        if (minInterval != 0 && _lastMaxTickUpdate[poolId] != 0 && block.timestamp < _lastMaxTickUpdate[poolId] + minInterval) {
+            emit MaxTicksUpdateSkipped(poolId, newCandidate, "too-early", uint32(block.timestamp));
+            return;
+        }
+
+        // ── 2. Step-size clamp (ppm) ─────────────────────────────────────────
+        uint32 stepPpm   = IPoolPolicy(policyManager).getBaseFeeStepPpm(poolId);  // default 2 %/day
+        uint32 maxDelta  = (oldValue * stepPpm) / 1_000_000;
+        uint32 upperBand = oldValue + maxDelta;
+        uint32 lowerBand = oldValue > maxDelta ? oldValue - maxDelta : 0;
+
+        uint32 adjusted = newCandidate;
+        if (newCandidate > upperBand)       adjusted = upperBand;
+        else if (newCandidate < lowerBand)  adjusted = lowerBand;
+
+        if (adjusted == oldValue) {
+            emit MaxTicksUpdateSkipped(poolId, newCandidate, "inside-band", uint32(block.timestamp));
+            return;
+        }
+
+        // ── 3. Persist & log ────────────────────────────────────────────────
+        maxTicksPerBlock[id] = uint24(adjusted);
+        _lastMaxTickUpdate[poolId] = uint32(block.timestamp);
+
+        emit MaxTicksPerBlockUpdated(poolId, oldValue, adjusted, uint32(block.timestamp));
+        // Also emit the legacy event for backward compatibility
+        emit TickCapParamChanged(id, uint24(adjusted));
     }
 }

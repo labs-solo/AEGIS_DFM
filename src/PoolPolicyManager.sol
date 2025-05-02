@@ -20,6 +20,9 @@ import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 contract PoolPolicyManager is IPoolPolicy, Owned {
     // === Fee Policy State Variables ===
 
+    // Maximum step for base fee updates (10% per step)
+    uint32 internal constant MAX_STEP_PPM = 100_000;
+
     // Fee allocation configuration
     uint24 private constant _DEFAULT_BASE_FEE = 5_000; // 0.5 %
     uint32 private constant _SURGE_DECAY_SECS = 3_600; // surge fade
@@ -141,6 +144,20 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
 
     uint24 private constant _SURGE_MULTIPLIER_PPM = 10_000; // 1× (no surge)
     uint32 private constant _TARGET_CAPS_PER_DAY = 4;
+
+    /*──────────────  Base-fee step-engine parameters  ──────────────*/
+
+    uint32 internal constant _DEF_BASE_FEE_STEP_PPM            = 20_000;   // 2 %
+    uint32 internal constant _DEF_BASE_FEE_UPDATE_INTERVAL_SECS = 1 days;  // 86 400 s
+
+    mapping(PoolId => uint32) private _baseFeeStepPpm;            // 0 ⇒ default
+    mapping(PoolId => uint32) private _baseFeeUpdateIntervalSecs; // 0 ⇒ default
+
+    event BaseFeeParamsSet(
+        PoolId indexed poolId,
+        uint32        stepPpm,
+        uint32        updateIntervalSecs
+    );
 
     /**
      * @notice Constructor initializes the policy manager with default values
@@ -692,17 +709,37 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.REINVESTOR_AUTH, msg.sender); // Use correct enum member
     }
 
-    /*──────────────  DEPRECATED step-engine stubs  ──────────────*/
-    function getBaseFeeStepPpm(PoolId) external pure returns (uint32) {
-        return 0;
+    /*─── IPoolPolicy - step-engine getters ───*/
+    function getBaseFeeStepPpm(PoolId pid) public view override returns (uint32) {
+        uint32 val = _baseFeeStepPpm[pid];
+        return val == 0 ? _DEF_BASE_FEE_STEP_PPM : val;
     }
 
-    function getMaxStepPpm(PoolId) external pure returns (uint32) {
-        return 0;
+    // kept for backwards compatibility – alias to the function above
+    function getMaxStepPpm(PoolId pid) external view override returns (uint32) {
+        return getBaseFeeStepPpm(pid);
     }
 
-    function getBaseFeeUpdateIntervalSeconds(PoolId) external pure returns (uint32) {
-        return 0;
+    function getBaseFeeUpdateIntervalSeconds(PoolId pid)
+        public
+        view
+        override
+        returns (uint32)
+    {
+        uint32 val = _baseFeeUpdateIntervalSecs[pid];
+        return val == 0 ? _DEF_BASE_FEE_UPDATE_INTERVAL_SECS : val;
+    }
+
+    /*─── Governance setter ───*/
+    function setBaseFeeParams(
+        PoolId pid,
+        uint32 stepPpm,
+        uint32 updateIntervalSecs
+    ) external onlyOwner {
+        require(stepPpm <= MAX_STEP_PPM, "stepPpm too large");
+        _baseFeeStepPpm[pid]            = stepPpm;
+        _baseFeeUpdateIntervalSecs[pid] = updateIntervalSecs;
+        emit BaseFeeParamsSet(pid, stepPpm, updateIntervalSecs);
     }
 
     /*──────────────  Surge-fee default getters  ─────────────────*/

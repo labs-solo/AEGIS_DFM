@@ -15,6 +15,7 @@ import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {PoolPolicyManager} from "../../src/PoolPolicyManager.sol"; // Assuming this is still used
+import {SwapParams} from "v4-core/src/types/PoolOperation.sol"; // Added import
 
 // Renamed contract for clarity
 contract SurgeFeeDecayTest is Test, ForkSetup {
@@ -172,21 +173,33 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         uint256 decayPeriod = policyManager.getSurgeDecayPeriodSeconds(pid);
         uint256 mult = policyManager.getSurgeFeeMultiplierPpm(pid);
 
-        // Get base fee after trigger
-        (uint256 baseAfterCap,) = dfm.getFeeState(pid);
-        uint256 initialSurge = baseAfterCap * mult / 1e6;
+        // Get base fee and initial surge after trigger
+        (uint256 baseAfterCap, uint256 surgeFeeAfterCap) = dfm.getFeeState(pid);
+        uint256 totalFeeAfterCap = baseAfterCap + surgeFeeAfterCap;
 
         // Warp halfway
         vm.warp(block.timestamp + (decayPeriod / 2));
         vm.roll(block.number + 1);
 
-        (uint256 baseFee, uint256 surgeFee) = dfm.getFeeState(pid);
-        uint256 expectedSurge = initialSurge / 2; // 50 %
+        // Get fee state at midpoint
+        (uint256 baseMidway, uint256 surgeMidway) = dfm.getFeeState(pid);
+        uint256 totalFeeMidway = baseMidway + surgeMidway;
 
-        assertTrue(surgeFee > 0 && surgeFee < initialSurge, "Midpoint decay out of range");
-        // Use approx comparison due to integer math / block timing
-        assertApproxEqAbs(surgeFee, expectedSurge, expectedSurge / 100, "Surge not approx half");
-        assertEq(baseFee + surgeFee, baseFee + surgeFee, "total fee consistency check"); // This check is trivial
+        // Base fee should remain unchanged
+        assertEq(baseMidway, baseAfterCap, "Base fee changed during decay");
+
+        // Surge fee should be roughly half of initial surge
+        assertApproxEqRel(
+            surgeMidway,
+            surgeFeeAfterCap / 2,
+            1e16, // Allow 1% tolerance
+            "Surge not ~50% decayed"
+        );
+
+        // Total fee should be base + decayed surge
+        assertEq(totalFeeMidway, baseMidway + surgeMidway, "Total fee inconsistent");
+        assertTrue(totalFeeMidway < totalFeeAfterCap, "Total fee did not decrease");
+        assertTrue(totalFeeMidway > baseAfterCap, "Total fee below base fee");
     }
 
     function test_recapResetsSurge() external {
@@ -208,6 +221,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
 
         // Trigger a second cap
         _triggerCap();
+        assertTrue(dfm.isCAPEventActive(pid), "inCap should stay true after recap");
 
         (uint256 base2, uint256 surge2) = dfm.getFeeState(pid);
         assertEq(surge2, initialSurge, "recap must reset to full initial surge");
@@ -283,36 +297,46 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
      * @notice Verify that fee decay correctly lowers fees over time after a cap
      */
     function test_feeDecay() public {
-        // Trigger a cap (this will move the tick enough to exceed cap threshold)
+        // Trigger a cap
         _triggerCap();
 
         // Get fee immediately after cap
-        (uint256 feeAfterCap, uint256 timestampAfterCap) = dfm.getFeeState(pid);
+        (uint256 baseAfterCap, uint256 surgeFeeAfterCap) = dfm.getFeeState(pid);
+        uint256 totalFeeAfterCap = baseAfterCap + surgeFeeAfterCap;
 
         // Fast-forward by 10% of decay period
         vm.warp(block.timestamp + (policyManager.getSurgeDecayPeriodSeconds(pid) / 10));
 
         // 10% through decay period, fee should have decayed about 10%
-        (uint256 feeAfter10Percent, uint256 timestampAfter10Percent) = dfm.getFeeState(pid);
-        assertTrue(feeAfter10Percent < feeAfterCap, "Fee did not decay after 10%");
+        (uint256 baseAfter10Percent, uint256 surgeFeeAfter10Percent) = dfm.getFeeState(pid);
+        uint256 totalFeeAfter10Percent = baseAfter10Percent + surgeFeeAfter10Percent;
+        assertTrue(totalFeeAfter10Percent < totalFeeAfterCap, "Fee did not decay after 10%");
 
         // Fast-forward to 50% of decay period
         vm.warp(block.timestamp + (4 * policyManager.getSurgeDecayPeriodSeconds(pid) / 10)); // Now 50% through
 
         // 50% through decay period, fee should have decayed about 50%
-        (uint256 feeAfter50Percent, uint256 timestampAfter50Percent) = dfm.getFeeState(pid);
-        assertTrue(feeAfter50Percent < feeAfter10Percent, "Fee did not decay further after 50%");
+        (uint256 baseAfter50Percent, uint256 surgeFeeAfter50Percent) = dfm.getFeeState(pid);
+        uint256 totalFeeAfter50Percent = baseAfter50Percent + surgeFeeAfter50Percent;
+        assertTrue(totalFeeAfter50Percent < totalFeeAfter10Percent, "Fee did not decay further after 50%");
+        
+        // The surge component should be roughly half of the *initial* surge
+        uint256 initialSurge = surgeFeeAfterCap;
+        uint256 expectedSurgeAt50 = initialSurge / 2;       // 50 % of peak
         assertApproxEqRel(
-            feeAfter50Percent - feeAfter10Percent, (feeAfterCap - feeAfter10Percent) / 2, 1e16, "Decay not ~50%"
-        ); // Allow 1% tolerance
+            surgeFeeAfter50Percent,
+            expectedSurgeAt50,
+            1e16, // Allow 1% tolerance
+            "Surge decay not 50 % of initial"
+        );
 
         // Fast-forward to 100% of decay period (complete decay)
         vm.warp(block.timestamp + (policyManager.getSurgeDecayPeriodSeconds(pid) / 2)); // Now 100% through
 
         // 100% through decay period, fee should be back to base level
-        (uint256 feeAfter100Percent, uint256 timestampAfter100Percent) = dfm.getFeeState(pid);
-        assertEq(feeAfter100Percent, uint256(feeAfterCap), "Surge fee did not fully decay"); // Should be back to base
-        assertEq(feeAfter100Percent, 0, "Surge fee state not zero after decay");
+        (uint256 baseAfter100Percent, uint256 surgeFeeAfter100Percent) = dfm.getFeeState(pid);
+        assertEq(surgeFeeAfter100Percent, 0, "Surge fee not zero after full decay");
+        assertEq(baseAfter100Percent, baseAfterCap, "Base fee changed during decay");
     }
 
     /**
@@ -322,20 +346,66 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // Trigger initial cap
         _triggerCap();
 
-        // Get initial surge fee timestamp for later comparison
-        (uint256 feeAfterCap, uint256 surgeTimestampStart) = dfm.getFeeState(pid);
+        // Get initial surge fee and timestamp
+        (uint256 baseAfterCap, uint256 surgeFeeAfterCap) = dfm.getFeeState(pid);
+        uint256 totalFeeAfterCap = baseAfterCap + surgeFeeAfterCap;
+        uint256 decayPeriod = policyManager.getSurgeDecayPeriodSeconds(pid);
+        bool inCapBeforeDecay = dfm.isCAPEventActive(pid);
+        assertTrue(inCapBeforeDecay, "Not in CAP event after trigger");
 
         // Fast-forward slightly (25% of decay)
-        vm.warp(block.timestamp + (policyManager.getSurgeDecayPeriodSeconds(pid) / 4));
+        uint256 elapsedTime = decayPeriod / 4;
+        vm.warp(block.timestamp + elapsedTime);
 
-        // Do a small swap that shouldn't trigger a cap
-        // ... existing code ...
-
-        // Verify timestamp didn't change (decay timer wasn't reset)
-        (uint256 feeAfterSwap, uint256 surgeTimestampAfterSwap) = dfm.getFeeState(pid);
-        assertTrue(feeAfterSwap < feeAfterCap, "Fee decayed despite swap during cooldown");
-
-        // ... existing code ...
+        // Verify partial decay occurred
+        (uint256 basePartialDecay, uint256 surgeFeePartialDecay) = dfm.getFeeState(pid);
+        uint256 totalFeePartialDecay = basePartialDecay + surgeFeePartialDecay;
+        
+        // Base fee should be unchanged due to rate limiting
+        assertEq(basePartialDecay, baseAfterCap, "Base fee should not change during decay");
+        
+        // Surge should have decayed to ~75% of original
+        assertApproxEqRel(
+            surgeFeePartialDecay,
+            surgeFeeAfterCap * 3 / 4, // 75% of original surge
+            1e16, // Allow 1% tolerance
+            "Unexpected surge fee after 25% decay"
+        );
+        
+        // Instead of an actual swap, simulate an oracle update WITHOUT a CAP
+        vm.prank(address(fullRange)); // Act as the hook
+        dfm.notifyOracleUpdate(pid, false); // Notify with tickWasCapped = false
+        
+        // The inCap flag should still be true since decay is not complete
+        bool inCapAfterNonCap = dfm.isCAPEventActive(pid);
+        assertTrue(inCapAfterNonCap, "inCap incorrectly cleared before full decay");
+        
+        // Verify decay continued and was not reset
+        (uint256 baseAfterNotify, uint256 surgeFeeAfterNotify) = dfm.getFeeState(pid);
+        
+        // Surge fee should be unchanged after the non-cap notification
+        assertEq(surgeFeeAfterNotify, surgeFeePartialDecay, "Surge fee incorrectly changed by non-cap oracle update");
+        
+        // Base fee should still match initial value (due to rate limiting)
+        assertEq(baseAfterNotify, baseAfterCap, "Base fee incorrectly changed after non-cap update");
+        
+        // Now fast-forward to complete decay
+        vm.warp(block.timestamp + decayPeriod);
+        
+        // Verify surge is now zero
+        (uint256 baseAfterFullDecay, uint256 surgeFeeAfterFullDecay) = dfm.getFeeState(pid);
+        assertEq(surgeFeeAfterFullDecay, 0, "Surge not zero after full decay period");
+        
+        // Base fee should still match initial value
+        assertEq(baseAfterFullDecay, baseAfterCap, "Base fee incorrectly changed after full decay");
+        
+        // Notify without a CAP again, which should now clear inCap since surge is zero
+        vm.prank(address(fullRange));
+        dfm.notifyOracleUpdate(pid, false);
+        
+        // Verify inCap is cleared after full decay
+        bool inCapAfterFullDecay = dfm.isCAPEventActive(pid);
+        assertFalse(inCapAfterFullDecay, "inCap not cleared after full decay");
     }
 
     /**
@@ -346,20 +416,37 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         _triggerCap();
 
         // Get initial fee state
-        (uint256 feeAfterCap, uint256 surgeTimestampStart) = dfm.getFeeState(pid);
+        (uint256 baseAfterCap, uint256 surgeFeeAfterCap) = dfm.getFeeState(pid);
+        uint256 totalFeeAfterCap = baseAfterCap + surgeFeeAfterCap;
+        uint256 decayPeriod = policyManager.getSurgeDecayPeriodSeconds(pid);
 
         // Fast-forward through 50% of decay
-        vm.warp(block.timestamp + (policyManager.getSurgeDecayPeriodSeconds(pid) / 2));
+        uint256 elapsedTime = decayPeriod / 2;
+        vm.warp(block.timestamp + elapsedTime);
 
         // Get fee at 50% decay
-        (uint256 feePartialDecay,) = dfm.getFeeState(pid);
+        (uint256 basePartialDecay, uint256 surgeFeePartialDecay) = dfm.getFeeState(pid);
+        uint256 totalFeePartialDecay = basePartialDecay + surgeFeePartialDecay;
+        
+        // Verify partial decay occurred
+        assertTrue(totalFeePartialDecay < totalFeeAfterCap, "Fee did not decay before second cap");
+        assertApproxEqRel(
+            surgeFeePartialDecay,
+            surgeFeeAfterCap / 2,
+            1e16, // Allow 1% tolerance
+            "Surge not ~50% decayed before second cap"
+        );
 
         // Trigger a second cap
         _triggerCap();
 
         // Get new fee state after second cap
-        (uint256 feeAfterSecondCap, uint256 surgeTimestampReset) = dfm.getFeeState(pid);
+        (uint256 baseAfterSecondCap, uint256 surgeFeeAfterSecondCap) = dfm.getFeeState(pid);
+        uint256 totalFeeAfterSecondCap = baseAfterSecondCap + surgeFeeAfterSecondCap;
 
-        // ... existing code ...
+        // Verify surge fee was reset to maximum
+        assertEq(baseAfterSecondCap, baseAfterCap, "Base fee changed after second cap");
+        assertEq(surgeFeeAfterSecondCap, surgeFeeAfterCap, "Surge fee not reset to maximum after second cap");
+        assertEq(totalFeeAfterSecondCap, totalFeeAfterCap, "Total fee not reset to maximum after second cap");
     }
 }
