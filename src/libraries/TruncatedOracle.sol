@@ -52,8 +52,10 @@ library TruncatedOracle {
 
             // Calculate absolute tick movement using optimized implementation
             (bool capped, int24 t) = TickMoveGuard.checkHardCapOnly(last.prevTick, tick);
-            tick = t; // use truncated tick if needed
-            if (capped) emit TickCapped(tick); // new observability
+            if (capped) {
+                emit TickCapped(t);
+            }
+            tick = t;
 
             return Observation({
                 blockTimestamp: blockTimestamp,
