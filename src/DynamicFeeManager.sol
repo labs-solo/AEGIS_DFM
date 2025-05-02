@@ -168,11 +168,15 @@ contract DynamicFeeManager is IDynamicFeeManager {
     function notifyOracleUpdate(PoolId poolId, bool tickWasCapped) external override {
         _requireHookAuth(); // Ensure only authorized hook can call
 
-        uint256 w = _s[poolId];
+        uint256  w  = _s[poolId];
         require(w != 0, "DFM: not init");
 
-        uint32 nowTs = uint32(block.timestamp);
-        uint256 w1 = w; // copy to save gas
+        uint32   nowTs    = uint32(block.timestamp);
+        uint256  w1       = w;              // scratch copy (cheaper mutations)
+
+        // ── cache fee snapshot *before* state mutation ───────────────────────
+        uint256 oldBase  = _baseFee(poolId);
+        uint256 oldSurge = _surge(poolId, w1);
 
         // ---- CAP-event handling ---------------------------------------
         if (tickWasCapped) {
@@ -193,10 +197,16 @@ contract DynamicFeeManager is IDynamicFeeManager {
             }
         }
 
-        // Save updated state if changed
+        // ── persist + emit only when *fee* actually changed ─────────────
         if (w1 != w) {
-            _s[poolId] = w1;
-            emit FeeStateChanged(poolId, _baseFee(poolId), _surge(poolId, w1), w1.inCap());
+            _s[poolId] = w1;                              // single SSTORE
+
+            uint256 newBase  = _baseFee(poolId);
+            uint256 newSurge = _surge(poolId, w1);
+
+            if (newBase != oldBase || newSurge != oldSurge) {
+                emit FeeStateChanged(poolId, newBase, newSurge, w1.inCap());
+            }
         }
     }
 
