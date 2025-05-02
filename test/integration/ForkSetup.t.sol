@@ -32,6 +32,7 @@ import {DefaultPoolCreationPolicy} from "src/DefaultPoolCreationPolicy.sol";
 import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "src/interfaces/IDynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
+import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
 
 // Test Routers
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
@@ -240,7 +241,20 @@ contract ForkSetup is Test {
 
         // Deploy Oracle (AFTER PolicyManager)
         emit log_string("Deploying TruncGeoOracleMulti...");
-        oracle = new TruncGeoOracleMulti(poolManager, deployerEOA, policyManager);
+        // Deploy Dummy Hook first
+        // Note: fullRange is declared as Spot type, but we need Dummy for this pattern.
+        //       We will need to adjust the type or use a temporary variable.
+        //       Using temporary variable `tempHook` for clarity.
+        DummyFullRangeHook tempHook = new DummyFullRangeHook(address(0));
+        oracle = new TruncGeoOracleMulti(
+            poolManager,
+            deployerEOA, // Governance is deployerEOA in setup
+            policyManager,
+            address(tempHook) // Pass dummy hook address
+        );
+        // Set the oracle address on the hook
+        // tempHook.setOracle(address(oracle));
+
         emit log_named_address("Oracle deployed at:", address(oracle));
         require(address(oracle) != address(0), "Oracle deployment failed");
 
@@ -297,6 +311,12 @@ contract ForkSetup is Test {
         actualHookAddress = address(fullRange);
         require(actualHookAddress == hookAddress, "Deployed hook address does not match predicted!");
         emit log_named_address("Spot Hook deployed successfully at", actualHookAddress);
+
+        // Now, if 'fullRange' (which is Spot type) needs the oracle, set it.
+        // This assumes Spot has a setOracleAddress method. If not, adjust.
+        // vm.prank(deployerEOA); // Assuming deployer is owner/governance of Spot
+        // fullRange.setOracleAddress(address(oracle)); 
+        // vm.stopPrank();
 
         // Debug hook flags and validation
         debugHookFlags();

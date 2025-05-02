@@ -213,7 +213,7 @@ contract TruncatedOracleTest is Test {
         h.push(START + 10, 12, ONE_LIQ);
         h.push(START + 20, 22, ONE_LIQ);
 
-        uint32 nowTs = START + 20;
+        uint32 nowTs = START + 20;     
         uint32 secondsAgoTooLarge = 25; // older than oldest
         vm.expectRevert();
         h.observeSingle(nowTs, secondsAgoTooLarge, 22, ONE_LIQ);

@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: UNLICENSED
+// SPDX-License-Identifier: BUSL-1.1
 pragma solidity =0.8.26;
 
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -39,7 +39,7 @@ contract TruncGeoOracleMulti {
     IPoolManager public immutable poolManager;
 
     // The authorized Spot hook address - critical for secure mutual authentication
-    address public fullRangeHook;
+    address public immutable fullRangeHook;
 
     // The policy manager for getting configuration
     IPoolPolicy public immutable policyManager;
@@ -102,7 +102,12 @@ contract TruncGeoOracleMulti {
      * @param _governance The initial governance address for setting the hook
      * @param _policyManager The policy manager contract
      */
-    constructor(IPoolManager _poolManager, address _governance, IPoolPolicy _policyManager) {
+    constructor(
+        IPoolManager _poolManager,
+        address      _governance,
+        IPoolPolicy  _policyManager,
+        address      _fullRangeHook      // <<< NEW mandatory arg
+    ) {
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
         if (_governance == address(0)) revert Errors.ZeroAddress();
         if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
@@ -110,30 +115,8 @@ contract TruncGeoOracleMulti {
         poolManager = _poolManager;
         governance = _governance;
         policyManager = _policyManager;
-    }
-
-    // NEW FUNCTION: Setter for Spot hook address
-    /**
-     * @notice Sets the trusted Spot hook address after deployment.
-     * @param _hook The address of the Spot hook contract.
-     */
-    function setFullRangeHook(address _hook) external {
-        // Only allow governance to set this once
-        if (msg.sender != governance) revert Errors.AccessOnlyGovernance(msg.sender);
-        if (fullRangeHook != address(0)) revert Errors.AlreadyInitialized("FullRangeHook");
-        if (_hook == address(0)) revert Errors.ZeroAddress();
-        fullRangeHook = _hook;
-    }
-
-    modifier onlyFullRangeHook() {
-        // ADDED Check: Ensure hook address is set before checking msg.sender
-        if (fullRangeHook == address(0)) {
-            revert Errors.NotInitialized("FullRangeHook");
-        }
-        if (msg.sender != fullRangeHook) {
-            revert Errors.AccessNotAuthorized(msg.sender);
-        }
-        _;
+        require(_fullRangeHook != address(0), "hook=0");
+        fullRangeHook = _fullRangeHook;
     }
 
     /* ─────────────────── external API ─────────────────── */
@@ -243,7 +226,7 @@ contract TruncGeoOracleMulti {
      * @notice Enables oracle functionality for a pool.
      * MODIFIED: Uses modifier, added check
      */
-    function enableOracleForPool(PoolKey calldata key) external onlyFullRangeHook {
+    function enableOracleForPool(PoolKey calldata key) external onlyHook {
         bytes32 id = PoolId.unwrap(key.toId());
         require(!isEnabled[id], "Oracle already enabled");
         isEnabled[id] = true;
@@ -294,7 +277,7 @@ contract TruncGeoOracleMulti {
      * @notice Updates oracle observations for a pool.
      * MODIFIED: Uses modifier, added check
      */
-    function updateObservation(PoolKey calldata key) external onlyFullRangeHook {
+    function updateObservation(PoolKey calldata key) external onlyHook {
         // Check moved to modifier
         // if (msg.sender != fullRangeHook) { ... }
 

@@ -33,6 +33,7 @@ import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityM
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {HookMiner as HMiner} from "v4-periphery/src/utils/HookMiner.sol";
+import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -118,7 +119,15 @@ contract DeployLocalUniswapV4 is Script {
 
         // Step 2.5: Deploy Oracle now that we have the policyManager
         console.log("Deploying TruncGeoOracleMulti...");
-        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance, policyManager);
+        DummyFullRangeHook fullRangeHook = new DummyFullRangeHook(address(0));
+        truncGeoOracle = new TruncGeoOracleMulti(
+            poolManager,
+            governance,
+            policyManager,
+            address(fullRangeHook)
+        );
+        // Assuming DummyFullRangeHook now has setOracle
+        // fullRangeHook.setOracle(address(truncGeoOracle)); 
         console.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
 
         // Step 3: Deploy FullRange components

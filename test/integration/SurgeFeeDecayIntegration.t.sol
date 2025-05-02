@@ -100,8 +100,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // ── HOOK / ORACLE WIRING ────────────────────────────
         //
         // 1) Tell oracle which Spot hook to trust
-        vm.prank(deployerEOA);
-        oracle.setFullRangeHook(address(fullRange));
+        // oracle.setFullRangeHook(address(fullRange));
         // 2) Now enable our pool in the oracle (as Spot.afterInitialize would do)
         vm.prank(address(fullRange));
         oracle.enableOracleForPool(poolKey);
