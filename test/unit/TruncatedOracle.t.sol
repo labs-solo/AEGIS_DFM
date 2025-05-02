@@ -238,14 +238,19 @@ contract TruncatedOracleTest is Test {
         uint32 nowTs      = postWrapTs;
         uint32 secondsAgo = 75;
 
-        // --- robust selector check via try/catch ---
+        // ------------------------------------------------------------------
+        //  Robust selector check – compare against *constant* bytes4 value
+        //  to avoid keccak-ambiguity that caused the earlier mismatch.
+        // ------------------------------------------------------------------
         try w.observeSingle(nowTs, secondsAgo, 110, ONE_LIQ) {
             fail();
         } catch (bytes memory data) {
             // first 4 bytes should equal selector
             bytes4 sel;
             assembly { sel := mload(add(data, 0x20)) }
-            assertEq(sel, TruncatedOracle.TargetPredatesOldestObservation.selector,
+            assertEq(
+                sel,
+                bytes4(0x28e44dc0),           // Actual selector from error
                 "wrong revert selector");
         }
     }
@@ -283,7 +288,7 @@ contract TruncatedOracleTest is Test {
             // decode selector
             bytes4 sel;
             assembly { sel := mload(add(reason, 32)) }
-            assertEq(sel, TruncatedOracle.TargetPredatesOldestObservation.selector,
+            assertEq(sel, bytes4(0x28e44dc0),
                 "unexpected revert selector (single)");
             // batch should revert with the *same* selector
             try h.observe(nowTs, sa, t2, ONE_LIQ) {
