@@ -44,7 +44,7 @@ contract OracleHarness {
 
     function observe(
         uint32 nowTs,
-        uint32[] memory secondsAgos,
+        uint32[] calldata secondsAgos,
         int24 tick_,
         uint128 liq
     )

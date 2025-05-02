@@ -111,10 +111,12 @@ library TruncatedOracle {
         uint16 cardinalityNext
     ) internal returns (uint16 indexUpdated, uint16 cardinalityUpdated) {
         unchecked {
-            Observation memory last = self[index];
+            Observation storage last = self[index];
 
             // early return if we've already written an observation this block
-            if (last.blockTimestamp == blockTimestamp) return (index, cardinality);
+            if (last.blockTimestamp == blockTimestamp) {
+                return (index, cardinality);
+            }
 
             // if the conditions are right, we can bump the cardinality
             if (cardinalityNext > cardinality && index == (cardinality - 1)) {
@@ -124,7 +126,28 @@ library TruncatedOracle {
             }
 
             indexUpdated = (index + 1) % cardinalityUpdated;
-            self[indexUpdated] = transform(last, blockTimestamp, tick, liquidity);
+            Observation storage o = self[indexUpdated];
+            
+            // --- wrap-safe delta --------------------------------------------
+            uint32 delta = blockTimestamp >= last.blockTimestamp
+                ? blockTimestamp - last.blockTimestamp
+                : blockTimestamp + (type(uint32).max - last.blockTimestamp) + 1;
+                
+            // Calculate absolute tick movement using optimized implementation
+            (bool capped, int24 t) = TickMoveGuard.checkHardCapOnly(last.prevTick, tick);
+            if (capped) {
+                emit TickCapped(t);
+            }
+            tick = t;
+
+            o.blockTimestamp                        = blockTimestamp;
+            o.prevTick                              = tick;
+            o.tickCumulative                        =
+                last.tickCumulative + int48(tick) * int48(uint48(delta));
+            o.secondsPerLiquidityCumulativeX128     =
+                last.secondsPerLiquidityCumulativeX128 +
+                uint144((uint256(delta) << 128) / (liquidity == 0 ? 1 : liquidity));
+            o.initialized                           = true;
         }
     }
 
@@ -281,7 +304,7 @@ library TruncatedOracle {
     function observe(
         Observation[65535] storage self,
         uint32 time,
-        uint32[] memory secondsAgos,
+        uint32[] calldata secondsAgos,
         int24 tick,
         uint16 index,
         uint128 liquidity,
