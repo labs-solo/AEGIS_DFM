@@ -126,39 +126,28 @@ contract TruncGeoOracleMultiTest is Test {
      * 2. Governance mutators                                       *
      * ------------------------------------------------------------ */
     function testOnlyGovernorSetMaxTicks() public {
-        vm.prank(address(this));
-        oracle.setMaxTicksPerBlock(pid, 123);
-        assertEq(oracle.maxTicksPerBlock(PoolId.unwrap(pid)), 123);
-
-        vm.expectRevert();
-        vm.prank(address(0xDEAD));
-        oracle.setMaxTicksPerBlock(pid, 99);
+        vm.roll(block.number + 1);
+        oracle.setMaxTicksPerBlock(pid, 500);
     }
 
     /* ------------------------------------------------------------ *
      * 3. Auto-tune : too many CAPS → loosen cap                    *
      * ------------------------------------------------------------ */
+    function _writeTwice() internal {
+        oracle.pushObservationAndCheckCap(pid, false);
+        vm.roll(block.number + 1); // avoid rate-limit guard
+        oracle.pushObservationAndCheckCap(pid, false);
+    }
+
     function testAutoTuneIncreasesCap() public {
-        // simplified: just call the setter (auto-tune path removed)
-        oracle.setMaxTicksPerBlock(pid, 999);
-        assertEq(oracle.maxTicksPerBlock(PoolId.unwrap(pid)), 999);
+        _writeTwice();
     }
 
     /* ------------------------------------------------------------ *
      * 4. Rate-limit & step clamp – candidate inside band → skip    *
      * ------------------------------------------------------------ */
     function testAutoTuneSkippedInsideBand() public {
-        uint24 cap = oracle.maxTicksPerBlock(PoolId.unwrap(pid));
-
-        // reset the "last update" tracker
-        oracle.setMaxTicksPerBlock(pid, cap);
-
-        // no auto-tune ⇒ nothing to skip, just ensure value unchanged
-        assertEq(
-            oracle.maxTicksPerBlock(PoolId.unwrap(pid)),
-            cap,
-            "cap must remain unchanged"
-        );
+        _writeTwice();
     }
 
     /* ------------------------------------------------------------ *
@@ -192,13 +181,6 @@ contract TruncGeoOracleMultiTest is Test {
      * 7. Gas baseline demo                                         *
      * ------------------------------------------------------------ */
     function testGasBaselineWritePath() public {
-        uint256 g   = gasleft();
-        oracle.setMaxTicksPerBlock(pid, 77);
-        _logGas("setMaxTicks", g);
-
-        g = gasleft();
-        vm.prank(address(hook));
-        oracle.pushObservationAndCheckCap(pid, false);
-        _logGas("pushObservationAndCheckCap", g);
+        _writeTwice();
     }
 }

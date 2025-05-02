@@ -91,6 +91,13 @@ contract DynamicFeeManagerTest is Test {
         (, int24 initialTick,,) = poolManager.getSlot0(poolId);
         vm.prank(address(this)); // Assuming deployer/governance can initialize
         dfm.initialize(poolId, initialTick);
+
+        // enable the pool in the oracle before any cap-setting
+        oracle.enablePool(
+            poolId,
+            oracle.getDefaultMaxTicksPerBlock(),   // use defaults
+            oracle.getDefaultDynamicFee()
+        );
     }
 
     /// @dev helper that updates the oracle's cap through its own setter

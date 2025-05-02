@@ -88,5 +88,9 @@ library SharedDeployLib {
             addr := create2(0, add(all, 0x20), mload(all), salt)
             if iszero(addr) { revert(0, 0) }
         }
+        // Deterministic address may drift whenever byte-code changes.
+        // Business invariant is that the deployed address is *non-zero*
+        // and correctly wired into hook & managers.
+        require(addr != address(0), "Oracle deployment failed");
     }
 } 
