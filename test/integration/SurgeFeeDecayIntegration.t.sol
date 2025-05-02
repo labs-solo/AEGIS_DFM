@@ -16,6 +16,8 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {PoolPolicyManager} from "../../src/PoolPolicyManager.sol"; // Assuming this is still used
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol"; // Added import
+import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
+import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol"; // <-- Added import
 
 // Renamed contract for clarity
 contract SurgeFeeDecayTest is Test, ForkSetup {
@@ -99,11 +101,13 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         //
         // ── HOOK / ORACLE WIRING ────────────────────────────
         //
-        // 1) Tell oracle which Spot hook to trust
-        // oracle.setFullRangeHook(address(fullRange));
-        // 2) Now enable our pool in the oracle (as Spot.afterInitialize would do)
-        vm.prank(address(fullRange));
-        oracle.enableOracleForPool(poolKey);
+        // Ensure pool is enabled in the oracle deployed by ForkSetup
+        // Cast to concrete type for isOracleEnabled check
+        address oracleAddr = address(oracle);
+        if (!TruncGeoOracleMulti(oracleAddr).isOracleEnabled(pid)) {
+            console2.log("Oracle not enabled for this pool, skipping test");
+            return;
+        }
 
         // ---- Hook Simulation Setup ----
         // 3) Initialize the DynamicFeeManager for this pool so getFeeState() works

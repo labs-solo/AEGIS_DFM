@@ -443,9 +443,8 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         poolKeys[_poolId] = key;
         poolData[_poolId] = PoolData({initialized: true, emergencyState: false, lastSwapTs: uint64(block.timestamp)});
         if (address(truncGeoOracle) != address(0) && address(key.hooks) == address(this)) {
-            int24 maxAbsTickMove = TickMoveGuard.HARD_ABS_CAP;
             try truncGeoOracle.enableOracleForPool(key) {
-                emit OracleInitialized(_poolId, tick, maxAbsTickMove);
+                emit OracleInitialized(_poolId, tick, TickMoveGuard.HARD_ABS_CAP);
             } catch (bytes memory reason) {
                 emit OracleInitializationFailed(_poolId, reason);
             }

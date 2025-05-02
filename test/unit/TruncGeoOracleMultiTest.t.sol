@@ -17,6 +17,7 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IPoolPolicy}  from "../../src/interfaces/IPoolPolicy.sol";
 import {Currency}     from "v4-core/src/types/Currency.sol";
 import {IHooks}       from "v4-core/src/interfaces/IHooks.sol";
+import "forge-std/console.sol";
 
 /* ───────────────────────────── Local Stubs ─────────────────────────────── */
 
@@ -55,26 +56,32 @@ contract TruncGeoOracleMultiTest is Test {
     /*  setup                                                  */
     /* ------------------------------------------------------- */
     function setUp() public {
+        console.log("Setting up test...");
         policy      = new MockPolicyManager();
         poolManager = new MockPoolManager();
 
-        // Create mock tokens for the PoolKey
+        console.log("Deploying hook...");
+        // ── deploy hook FIRST ------------------------------------------------------
+        hook = new DummyFullRangeHook(address(0));     // single instantiation
+        console.log("Hook deployed at:", address(hook));
+
+        // Create mock tokens for the PoolKey *after* hook exists so we can embed it
         address token0 = address(0xA11CE);
         address token1 = address(0xB0B);
-        
+
+        console.log("Creating PoolKey...");
         poolKey = PoolKey({
-            currency0: Currency.wrap(token0),
-            currency1: Currency.wrap(token1),
-            fee: DEF_FEE,
+            currency0:  Currency.wrap(token0),
+            currency1:  Currency.wrap(token1),
+            fee:        DEF_FEE,
             tickSpacing: 60,
-            hooks: IHooks(address(0))
+            hooks:       IHooks(address(hook))   // ← must equal fullRangeHook
         });
-        
+
         pid = poolKey.toId();
+        console.log("PoolKey created with hooks address:", address(poolKey.hooks));
 
-        // ── deploy hook FIRST (oracle addr is 0, never used) -----------------------
-        hook = new DummyFullRangeHook(address(0));
-
+        console.log("Deploying oracle...");
         // ── deploy oracle pointing to *this* hook ----------------------------------
         oracle = new TruncGeoOracleMulti(
             IPoolManager(address(poolManager)),
@@ -82,10 +89,18 @@ contract TruncGeoOracleMultiTest is Test {
             IPoolPolicy(address(policy)),
             address(hook)
         );
+        console.log("Oracle deployed at:", address(oracle));
 
+        console.log("Setting oracle in hook...");
+        // ── set oracle address in hook (one-time operation) -----------------------
+        hook.setOracle(address(oracle));
+        console.log("Oracle address set in hook");
+
+        console.log("Enabling oracle for pool...");
         // ── enable oracle for the pool (must be called by *that* hook) --------------
-        vm.prank(address(hook));
+        vm.prank(address(hook));          // msg.sender == fullRangeHook
         oracle.enableOracleForPool(poolKey);
+        console.log("Oracle enabled for pool");
     }
 
     /* gas logger helper (does not fail CI) */
@@ -99,7 +114,7 @@ contract TruncGeoOracleMultiTest is Test {
     function testEnablePoolSetsDefaults() public {
         bytes32 poolIdBytes = PoolId.unwrap(pid);
         assertEq(
-            oracle.getMaxTicksPerBlock(poolIdBytes),
+            oracle.maxTicksPerBlock(poolIdBytes),
             policy.getDefaultMaxTicksPerBlock(pid) // Should be 50 ticks
         );
 
@@ -113,7 +128,7 @@ contract TruncGeoOracleMultiTest is Test {
     function testOnlyGovernorSetMaxTicks() public {
         vm.prank(address(this));
         oracle.setMaxTicksPerBlock(pid, 123);
-        assertEq(oracle.getMaxTicksPerBlock(PoolId.unwrap(pid)), 123);
+        assertEq(oracle.maxTicksPerBlock(PoolId.unwrap(pid)), 123);
 
         vm.expectRevert();
         vm.prank(address(0xDEAD));
@@ -126,21 +141,21 @@ contract TruncGeoOracleMultiTest is Test {
     function testAutoTuneIncreasesCap() public {
         // simplified: just call the setter (auto-tune path removed)
         oracle.setMaxTicksPerBlock(pid, 999);
-        assertEq(oracle.getMaxTicksPerBlock(PoolId.unwrap(pid)), 999);
+        assertEq(oracle.maxTicksPerBlock(PoolId.unwrap(pid)), 999);
     }
 
     /* ------------------------------------------------------------ *
      * 4. Rate-limit & step clamp – candidate inside band → skip    *
      * ------------------------------------------------------------ */
     function testAutoTuneSkippedInsideBand() public {
-        uint24 cap = oracle.getMaxTicksPerBlock(PoolId.unwrap(pid));
+        uint24 cap = oracle.maxTicksPerBlock(PoolId.unwrap(pid));
 
         // reset the "last update" tracker
         oracle.setMaxTicksPerBlock(pid, cap);
 
         // no auto-tune ⇒ nothing to skip, just ensure value unchanged
         assertEq(
-            oracle.getMaxTicksPerBlock(PoolId.unwrap(pid)),
+            oracle.maxTicksPerBlock(PoolId.unwrap(pid)),
             cap,
             "cap must remain unchanged"
         );

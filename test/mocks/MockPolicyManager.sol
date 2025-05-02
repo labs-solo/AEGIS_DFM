@@ -15,6 +15,12 @@ contract MockPolicyManager is IPoolPolicy {
     uint24  internal constant DEF_CAP   = 50;
     uint256 internal constant DEF_FEE   = 5_000;
 
+    uint32 public dailyPpm;
+    uint32 public decayWindow;
+    uint32 public dailyBudget;
+    uint32 public dailyBudgetPpm;
+    mapping(PoolId => uint32) public freqScalingPpm;
+
     /* ------------------------------------------------------------------ */
     /*                     simple allow-lists for tests                    */
     /* ------------------------------------------------------------------ */
@@ -77,5 +83,11 @@ contract MockPolicyManager is IPoolPolicy {
     function getMaxBaseFee(PoolId) external view override returns (uint256) { return 0; }
     function getSurgeFeeMultiplierPpm(PoolId) external view override returns (uint24) { return 0; }
     function getSurgeDecaySeconds(PoolId) external view override returns (uint32) { return 0; }
-    function getBudgetAndWindow(PoolId) external view override returns (uint32 budgetPerDay, uint32 decayWindow) { return (0,0); }
+    function getBudgetAndWindow(PoolId) external view override returns (uint32 budgetPerDay, uint32 decayPeriod) { return (0,0); }
+
+    // --- New functions ---
+    function setFreqScaling(PoolId pid, uint32 scaling) external /*override*/ {
+        freqScalingPpm[pid] = scaling;
+    }
+    function setBaseFeeParams(PoolId pid, uint32 stepPpm, uint32 updateIntervalSecs) external override {}
 } 

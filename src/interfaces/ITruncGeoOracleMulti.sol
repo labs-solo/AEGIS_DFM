@@ -1,7 +1,6 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.26;
-
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+// SPDX-License-Identifier: BUSL-1.1
+// minimal subset used by tests
+pragma solidity ^0.8.26;
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 
 /**
@@ -11,19 +10,17 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
  */
 interface ITruncGeoOracleMulti {
     /**
-     * @notice Enables oracle functionality for a pool.
-     * @param key The pool key.
-     * @param initialMaxAbsTickMove The initial maximum tick movement.
-     * @dev Must be called once per pool. Enforces full-range requirements.
+     * @notice Enable the oracle for a pool
+     * @param key The pool key
      */
-    function enableOracleForPool(PoolKey calldata key, int24 initialMaxAbsTickMove) external;
+    function enableOracleForPool(bytes calldata key) external;
 
     /**
      * @notice Updates oracle observations for a pool.
      * @param key The pool key.
      * @dev Called by the hook (Spot.sol) during its callbacks.
      */
-    function updateObservation(PoolKey calldata key) external;
+    function updateObservation(bytes calldata key) external;
 
     /**
      * @notice Checks if an oracle update is needed based on time thresholds
@@ -59,7 +56,7 @@ interface ITruncGeoOracleMulti {
      * @return tickCumulatives The tick cumulative values.
      * @return secondsPerLiquidityCumulativeX128s The seconds per liquidity cumulative values.
      */
-    function observe(PoolKey calldata key, uint32[] calldata secondsAgos)
+    function observe(bytes calldata key, uint32[] calldata secondsAgos)
         external
         view
         returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s);
@@ -71,7 +68,37 @@ interface ITruncGeoOracleMulti {
      * @return cardinalityNextOld The previous cardinality.
      * @return cardinalityNextNew The new cardinality.
      */
-    function increaseCardinalityNext(PoolKey calldata key, uint16 cardinalityNext)
+    function increaseCardinalityNext(bytes calldata key, uint16 cardinalityNext)
         external
         returns (uint16 cardinalityNextOld, uint16 cardinalityNextNew);
+
+    /// ------------------------------------------------------------------
+    ///  Immutable hook address accessor
+    /// ------------------------------------------------------------------
+    /**
+     * @notice Returns the address of the hook that is authorized to use this oracle
+     * @return The hook address
+     */
+    function getHookAddress() external view returns (address);
+
+    /**
+     * @notice Query the latest observation for a given pool.
+     */
+    function getLatestObservation(PoolId poolId) external view returns (int24 tick, uint32 timestamp);
+
+    /// @return true if a pool has been enabled and at least one observation exists
+    function isOracleEnabled(PoolId pid) external view returns (bool);
+
+    /**
+     * @notice Returns the current maximum ticks per block allowed for a pool.
+     * @param poolId The ID of the pool.
+     * @return The maximum ticks per block.
+     */
+    function getMaxTicksPerBlock(bytes32 poolId) external view returns (uint24);
+
+    // NB: we intentionally **do not** expose the whole `states` mapping
+    // to keep storage layout private – tests should rely on the helper.
+
+    /* ------------------------------------------------------- */
+    /*  Ring buffer logic                                      */
 }

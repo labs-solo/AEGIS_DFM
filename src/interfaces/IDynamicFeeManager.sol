@@ -2,6 +2,7 @@
 pragma solidity ^0.8.26;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {IPoolPolicy} from "./IPoolPolicy.sol";
 
 /**
  * @title IDynamicFeeManager
@@ -53,4 +54,14 @@ interface IDynamicFeeManager {
      * @return True if the pool is in a CAP event right now.
      */
     function isCAPEventActive(PoolId poolId) external view returns (bool);
+
+    /// @notice Pool-level policy contract that drives fee parameters
+    function policy() external view returns (IPoolPolicy);
+
+    /// @notice The hook that is authorized to call this contract
+    function authorizedHook() external view returns (address);
+
+    // ── ✂───────────────────────────────────────────────────────────────
+    //  The old alias is now removed – call-sites must use `policy()`.
+    // ───────────────────────────────────────────────────────────────────
 }

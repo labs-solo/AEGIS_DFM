@@ -88,14 +88,16 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         _addInitialLiquidity();
 
         // Adjust policy params for faster testing
-        vm.startPrank(deployerEOA);
-        policyManager.setDailyBudgetPpm(1e6); // 1 event per day (ppm)
-        policyManager.setDecayWindow(3600); // 1‑hour window (tests)
-        policyManager.setFreqScaling(poolId, 1); // Ensure scaling is set if needed by policy
-        
+        vm.startPrank(deployerEOA); // Prank as owner to call setters
+        // Cast to concrete type PoolPolicyManager to call owner-only setters
+        PoolPolicyManager(address(policyManager)).setDailyBudgetPpm(1e6);
+        PoolPolicyManager(address(policyManager)).setDecayWindow(3600);
+        PoolPolicyManager(address(policyManager)).setFreqScaling(poolId, 1);
+
         //---------------- TEST-ONLY: shrink base-fee step interval ----------
-        // Allow 2% moves every 1 hour so the suite runs fast
-        policyManager.setBaseFeeParams(poolId, 20_000, 3_600);
+        // Cast to concrete type PoolPolicyManager to call owner-only setter
+        PoolPolicyManager(address(policyManager))
+             .setBaseFeeParams(poolId, 20_000, 3_600);
         vm.stopPrank();
 
         //
@@ -108,10 +110,25 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // This might already be handled if the hook deployed by ForkSetup calls enableOracleForPool
         // or if the pool initialization logic triggers it.
         // Adding a check or explicit call if needed:
-        if (!oracle.isEnabled(PoolId.unwrap(poolId))) {
-             vm.prank(address(fullRange)); // Prank as the hook deployed in ForkSetup
-             oracle.enableOracleForPool(poolKey);
+        address oracleAddr = address(oracle);
+        // Cast to concrete type TruncGeoOracleMulti for isEnabled check -> use isOracleEnabled
+        if (!TruncGeoOracleMulti(oracleAddr).isOracleEnabled(poolId)) {
+            // must impersonate the spot hook, which is the only authorised caller
+            vm.prank(address(fullRange));
+            // bytes memory encodedKey = abi.encode(poolKey); // Convert PoolKey to bytes <-- Reverted
+            // Cast to concrete type TruncGeoOracleMulti for enableOracleForPool call
+            TruncGeoOracleMulti(oracleAddr).enableOracleForPool(poolKey); // <-- Pass poolKey directly
         }
+
+        // ---- Hook Simulation Setup ----
+        // 3) Initialize the DynamicFeeManager for this pool so getFeeState() works
+        (, int24 initTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+        vm.prank(deployerEOA); // Should the PolicyManager owner initialize? Or the hook? Assuming deployer for now.
+        dfm.initialize(poolId, initTick);
+
+        // Store the initial tick as the 'lastTick' for the first swap comparison
+        lastTick[poolId] = initTick;
+        // ---------------------------
     }
 
     function _setupApprovals() internal {
@@ -592,5 +609,14 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         (uint256 baseFinal, uint256 surgeFinal) = dfm.getFeeState(poolId);
         assertEq(baseFinal, initialBase, "Base fee changed after full decay");
         assertEq(surgeFinal, 0, "Surge fee not zero after full decay");
+    }
+
+    function test_CheckPOLInitialState() public {
+        // We no longer rely on a latch – sanity-check fee split instead
+        assertEq(policyManager.getPoolPOLShare(poolId), polSharePpm, "unexpected default POL share"); // Use stored polSharePpm
+
+        // Check policy manager address (remains same)
+        address polMgr = address(policyManager);
+        assertTrue(polMgr != address(0));
     }
 }

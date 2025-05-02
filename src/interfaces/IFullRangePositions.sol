@@ -1,26 +1,19 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.26;
 
-import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
+/// @title  Minimal interface for Full-Range share token
+/// @notice We purposefully stay **ERC-6909-only** – no ERC-1155 surface.
+interface IFullRangePositions {
+    /// -----------------------------------------------------------------------
+    /// Read-only helpers needed by production & tests
+    /// -----------------------------------------------------------------------
 
-/**
- * @title IFullRangePositions
- * @notice Interface for the FullRange ERC1155 position token contract.
- */
-interface IFullRangePositions is IERC1155 {
-    /**
-     * @notice Mints new position tokens.
-     * @param to The recipient address.
-     * @param id The pool ID representing the token ID.
-     * @param amount The amount of shares to mint.
-     */
-    function mint(address to, uint256 id, uint256 amount) external;
+    /// @notice total ERC-6909 shares for a given pool-wide token id
+    function totalSupply(bytes32 id) external view returns (uint256);
 
-    /**
-     * @notice Burns existing position tokens.
-     * @param from The address whose tokens are being burned.
-     * @param id The pool ID representing the token ID.
-     * @param amount The amount of shares to burn.
-     */
-    function burn(address from, uint256 id, uint256 amount) external;
+    /// @notice Uniswap-V4 liquidity held by the pool-wide position
+    function positionLiquidity(bytes32 id) external view returns (uint128);
+
+    /// @notice share balance for a specific owner (ERC-6909)
+    function shareBalance(bytes32 id, address owner) external view returns (uint256);
 }

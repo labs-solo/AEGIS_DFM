@@ -1,19 +1,19 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.26;
 
-import {Test} from "forge-std/Test.sol";
-import {ForkSetup} from "./ForkSetup.t.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol"; // Import StateLibrary
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol"; // Import IHooks
-import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol"; // Import Currency
-// Import other necessary interfaces if ForkSetup doesn't expose all needed variables
-// import {IPoolPolicyManager} from "../interfaces/IPoolPolicyManager.sol"; // Example if needed
-// import {ILiquidityManager} from "../interfaces/ILiquidityManager.sol"; // Example if needed
-// import {IDynamicFeeManager} from "../interfaces/IDynamicFeeManager.sol"; // Example if needed
-// import {ISpotHook} from "../interfaces/ISpotHook.sol"; // Example if needed
-// import {IOracle} from "../interfaces/IOracle.sol"; // Example if needed
+import {Test}                     from "forge-std/Test.sol";
+import {ForkSetup}                from "./ForkSetup.t.sol";
+import {PoolKey}                  from "v4-core/src/types/PoolKey.sol";
+import {IPoolManager}             from "v4-core/src/interfaces/IPoolManager.sol";
+import {StateLibrary}             from "v4-core/src/libraries/StateLibrary.sol";
+import {IHooks}                   from "v4-core/src/interfaces/IHooks.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+// Local Interfaces for type-safety
+import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
+import {FullRangeLiquidityManager} from "../../src/FullRangeLiquidityManager.sol";
+import {IDynamicFeeManager} from "src/interfaces/IDynamicFeeManager.sol";
+import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
+import {Owned} from "solmate/src/auth/Owned.sol";
 
 /// @title Deployment and Configuration Integration Tests
 /// @notice Verifies correct deployment and initial configuration/linkages of core contracts.
@@ -46,14 +46,16 @@ contract DeploymentAndConfigTest is ForkSetup {
 
     /// @notice Test A2: Verify PoolManager linkages are correct.
     function test_VerifyPoolManagerLinkages() public {
+        // Use interface instead of concrete type
+        assertEq(Owned(address(liquidityManager)).owner(), deployerEOA, "LM owner mismatch");
         assertEq(
-            address(liquidityManager.manager()), address(poolManager), "LiquidityManager->PoolManager link mismatch"
+            address(FullRangeLiquidityManager(payable(address(liquidityManager))).manager()),
+            address(poolManager),
+            "LM->PoolManager link mismatch"
         );
-        assertEq(
-            address(policyManager),
-            address(dynamicFeeManager.policy()),
-            "DynamicFeeManager->PolicyManager link mismatch (PoolManager linkage removed)"
-        );
+
+        // DynamicFeeManager exposes the link through `policy()`
+        assertEq(address(dynamicFeeManager.policy()), address(policyManager), "DynamicFeeManager->PolicyManager link mismatch");
         assertEq(address(fullRange.poolManager()), address(poolManager), "SpotHook->PoolManager link mismatch");
         // assertEq(address(oracle.poolManager()), address(poolManager), "Oracle->PoolManager link mismatch"); // Uncomment if Oracle interface has poolManager()
     }
@@ -74,7 +76,9 @@ contract DeploymentAndConfigTest is ForkSetup {
             address(fullRange.liquidityManager()), address(liquidityManager), "SpotHook->LiquidityManager link mismatch"
         );
         assertEq(
-            liquidityManager.authorizedHookAddress(), address(fullRange), "SpotHook not authorized in LiquidityManager"
+            FullRangeLiquidityManager(payable(address(liquidityManager))).authorizedHookAddress(),
+            address(fullRange),
+            "SpotHook not authorized in LiquidityManager"
         );
     }
 

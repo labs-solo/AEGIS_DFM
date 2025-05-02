@@ -228,17 +228,17 @@ interface IPoolPolicy {
     /**
      * @notice Returns the daily budget for CAP events (in parts per million) for the given pool.
      */
-    function getDailyBudgetPpm(PoolId poolId) external view returns (uint32);
+    function getDailyBudgetPpm(PoolId pid) external view returns (uint32);
 
     /**
      * @notice Returns the budget decay window (in seconds) for the given pool.
      */
-    function getCapBudgetDecayWindow(PoolId poolId) external view returns (uint32);
+    function getCapBudgetDecayWindow(PoolId pid) external view returns (uint32);
 
     /**
      * @notice Returns the scaling factor used for CAP frequency math for the given pool.
      */
-    function getFreqScaling(PoolId poolId) external view returns (uint256);
+    function getFreqScaling(PoolId pid) external view returns (uint256);
 
     /**
      * @notice Returns the minimum base fee (in PPM) for the given pool.
@@ -294,4 +294,8 @@ interface IPoolPolicy {
     /*──────── NEW: default starting cap ─────────*/
     /// @notice Initial `maxTicksPerBlock` the oracle should use for a pool.
     function getDefaultMaxTicksPerBlock(PoolId id) external view returns (uint24);
+
+    /* ────── test / governance helpers REMOVED FROM INTERFACE ────── */
+    // function setFreqScaling(PoolId pid, uint32 scalingPpm) external;
+    function setBaseFeeParams(PoolId pid, uint32 stepPpm, uint32 updateIntervalSecs) external;
 }
