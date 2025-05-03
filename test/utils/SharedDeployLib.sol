@@ -52,25 +52,36 @@ library SharedDeployLib {
 
     /* ------------------------------------------------------------- *
      *  Hook flag constant used by ForkSetup                         *
+     *  Matches exactly what Spot.getHookPermissions() returns      *
      * ------------------------------------------------------------- */
     uint160 internal constant SPOT_HOOK_FLAGS =
-        (Hooks.AFTER_INITIALIZE_FLAG |
-         Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-         Hooks.BEFORE_SWAP_FLAG |
-         Hooks.AFTER_SWAP_FLAG |
-         Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG);
+        (Hooks.AFTER_INITIALIZE_FLAG |           // true
+         Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |     // true
+         Hooks.BEFORE_SWAP_FLAG |                // true
+         Hooks.AFTER_SWAP_FLAG |                 // true
+         Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |   // true
+         Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG);  // true
 
-    // convenience – same mask constant that v4‐core uses
+    /* ----------------------------------------------------------------
+     *  Dynamic mask that always covers *all* defined hook-flag bits.
+     *  Currently TOTAL_HOOK_FLAGS = 14 (12 original + 2 RETURN_DELTA).
+     *  Bump this constant whenever a new flag is added.
+     * -------------------------------------------------------------- */
+    uint8  private constant TOTAL_HOOK_FLAGS = 14;
+    uint160 private constant _FLAG_MASK_CONST =
+        uint160((uint256(1) << TOTAL_HOOK_FLAGS) - 1) << (160 - TOTAL_HOOK_FLAGS);
+
     function _FLAG_MASK() private pure returns (uint160) {
-        return uint160(Hooks.ALL_HOOK_MASK);
+        return _FLAG_MASK_CONST;
     }
 
     function spotHookFlags() internal pure returns (uint160) {
         return uint160(
             Hooks.AFTER_INITIALIZE_FLAG |
-            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
             Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
+            Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |
             Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
         );
     }
@@ -131,29 +142,34 @@ library SharedDeployLib {
         address   deployer,
         bytes     memory creationCode,
         bytes     memory constructorArgs
-    ) internal view returns (bytes32 salt, address predicted) {
+    ) internal returns (bytes32 salt, address predicted) {
         bytes memory fullInit = abi.encodePacked(creationCode, constructorArgs);
 
-        /* 1️⃣  honour explicit env override – keeps CI fully reproducible */
+        /* 1️⃣  Check if existing salt is valid */
         string memory raw = vm.envOr("SPOT_HOOK_SALT", string(""));
         if (bytes(raw).length != 0) {
-            salt      = bytes32(vm.parseBytes(raw));
+            salt = bytes32(vm.parseBytes(raw));
             predicted = Create2.computeAddress(salt, keccak256(fullInit), deployer);
 
-            require(predicted.code.length == 0,
-                    "SharedDeployLib: env salt already in use");
-            require(uint160(predicted) & _FLAG_MASK() == SPOT_HOOK_FLAGS,
-                    "SharedDeployLib: env salt wrong hook-flags");
-            return (salt, predicted);
+            // If the salt is valid (correct flags and address not in use), keep using it
+            if (predicted.code.length == 0 && uint160(predicted) & _FLAG_MASK() == SPOT_HOOK_FLAGS) {
+                return (salt, predicted);
+            }
+            // Otherwise clear it since it's invalid/outdated
+            vm.setEnv("SPOT_HOOK_SALT", "");
         }
 
-        /* 2️⃣  otherwise mine a free salt that fits the flag pattern */
+        /* 2️⃣  Mine a new salt that fits the flag pattern */
         (predicted, salt) = HookMiner.find(
             deployer,
             SPOT_HOOK_FLAGS,
             creationCode,
             constructorArgs
         );
+
+        // Save the newly mined salt
+        vm.setEnv("SPOT_HOOK_SALT", vm.toString(salt));
+        return (salt, predicted);
     }
 
     /// @notice Predicts the Spot hook address using the fixed TEST_DEPLOYER and known constructor args structure from ForkSetup
@@ -169,7 +185,7 @@ library SharedDeployLib {
         IFullRangeLiquidityManager _liquidityManager,
         TruncGeoOracleMulti _oracle,
         IDynamicFeeManager _dynamicFeeManager
-    ) internal view returns (address) {
+    ) internal returns (address) {
         bytes memory spotConstructorArgs = abi.encode(
             _poolManager,
             _policyManager,
@@ -207,8 +223,9 @@ library SharedDeployLib {
 
         // 🔒 REUSE the salt that was *already* mined during prediction:
         // we rely on oracle.getHookAddress() == predicted earlier in ForkSetup.
-        bytes32 salt = vm.envOr("SPOT_HOOK_SALT", bytes32(0));
-        if (salt == bytes32(0)) revert("SharedDeployLib: missing SPOT_HOOK_SALT");
+        string memory raw = vm.envOr("SPOT_HOOK_SALT", string(""));
+        if (bytes(raw).length == 0) revert("SharedDeployLib: missing SPOT_HOOK_SALT");
+        bytes32 salt = bytes32(vm.parseBytes(raw));
 
         // recompute predicted with *final* init-code to double-check
         address predicted = Create2.computeAddress(

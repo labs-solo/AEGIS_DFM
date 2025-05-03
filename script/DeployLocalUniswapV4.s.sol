@@ -120,14 +120,9 @@ contract DeployLocalUniswapV4 is Script {
         // Step 2.5: Deploy Oracle now that we have the policyManager
         console.log("Deploying TruncGeoOracleMulti...");
         DummyFullRangeHook fullRangeHook = new DummyFullRangeHook(address(0));
-        truncGeoOracle = new TruncGeoOracleMulti(
-            poolManager,
-            governance,
-            policyManager,
-            address(fullRangeHook)
-        );
+        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance, policyManager, address(fullRangeHook));
         // Assuming DummyFullRangeHook now has setOracle
-        // fullRangeHook.setOracle(address(truncGeoOracle)); 
+        // fullRangeHook.setOracle(address(truncGeoOracle));
         console.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
 
         // Step 3: Deploy FullRange components

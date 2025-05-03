@@ -865,10 +865,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     // ────────────────────────────────────────────────────────────────────
     // missing interface method – placeholder to keep compiler happy
     // will be implemented in follow-up PR once strategy is finalised
-    function removeLiquidity(
-        PoolId /*poolId*/,
-        uint128 /*amount*/
-    ) external override nonReentrant returns (int256, int256) {
+    function removeLiquidity(PoolId, /*poolId*/ uint128 /*amount*/ )
+        external
+        override
+        nonReentrant
+        returns (int256, int256)
+    {
         revert("FRLM: removeLiquidity NIY");
     }
 

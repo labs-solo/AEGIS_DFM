@@ -31,24 +31,18 @@ interface IFullRangeLiquidityManager {
         address recipient
     ) external payable returns (uint256 shares, uint256 amount0, uint256 amount1);
 
-    function withdraw(
-        PoolId poolId,
-        uint256 sharesToBurn,
-        uint256 amount0Min,
-        uint256 amount1Min,
-        address recipient
-    ) external returns (uint256 amount0, uint256 amount1);
+    function withdraw(PoolId poolId, uint256 sharesToBurn, uint256 amount0Min, uint256 amount1Min, address recipient)
+        external
+        returns (uint256 amount0, uint256 amount1);
 
     /* ───────── HOOK-ONLY API ───────── */
 
     function storePoolKey(PoolId poolId, PoolKey calldata key) external;
 
-    function reinvest(
-        PoolId poolId,
-        uint256 use0,
-        uint256 use1,
-        uint128 liq
-    ) external payable returns (uint128 sharesMinted);
+    function reinvest(PoolId poolId, uint256 use0, uint256 use1, uint128 liq)
+        external
+        payable
+        returns (uint128 sharesMinted);
 
     /* ───────── MUTABLE STATE CONFIG ───────── */
 

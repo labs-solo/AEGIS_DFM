@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.26;
 
-import {Test}                     from "forge-std/Test.sol";
-import {ForkSetup}                from "./ForkSetup.t.sol";
-import {PoolKey}                  from "v4-core/src/types/PoolKey.sol";
-import {IPoolManager}             from "v4-core/src/interfaces/IPoolManager.sol";
-import {StateLibrary}             from "v4-core/src/libraries/StateLibrary.sol";
-import {IHooks}                   from "v4-core/src/interfaces/IHooks.sol";
+import {Test} from "forge-std/Test.sol";
+import {ForkSetup} from "./ForkSetup.t.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 // Local Interfaces for type-safety
 import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
@@ -55,7 +55,11 @@ contract DeploymentAndConfigTest is ForkSetup {
         );
 
         // DynamicFeeManager exposes the link through `policy()`
-        assertEq(address(dynamicFeeManager.policy()), address(policyManager), "DynamicFeeManager->PolicyManager link mismatch");
+        assertEq(
+            address(dynamicFeeManager.policy()),
+            address(policyManager),
+            "DynamicFeeManager->PolicyManager link mismatch"
+        );
         assertEq(address(fullRange.poolManager()), address(poolManager), "SpotHook->PoolManager link mismatch");
         // assertEq(address(oracle.poolManager()), address(poolManager), "Oracle->PoolManager link mismatch"); // Uncomment if Oracle interface has poolManager()
     }

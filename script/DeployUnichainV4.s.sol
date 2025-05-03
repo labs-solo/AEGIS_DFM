@@ -91,12 +91,12 @@ contract DeployUnichainV4 is Script {
             poolManager,
             governance,
             policyManager,
-            address(fullRangeHook)      // immutable binding
+            address(fullRangeHook) // immutable binding
         );
 
         // Optional: if hook needs to know oracle addr, redeploy / init
         // Assuming DummyFullRangeHook now has a setOracle method
-        // fullRangeHook.setOracle(address(truncGeoOracle)); 
+        // fullRangeHook.setOracle(address(truncGeoOracle));
 
         // Deploy LiquidityManager
         liquidityManager = new FullRangeLiquidityManager(poolManager, IPoolPolicy(address(0)), deployerAddress);

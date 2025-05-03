@@ -10,31 +10,22 @@ import {Errors} from "src/errors/Errors.sol";
 library EventTools {
     // Get the cheatcode address from forge-std
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
-    
+
     // Maximum PPM value (100%)
     uint256 public constant MAX_PPM = 1_000_000;
 
     event PolicySet(
-        PoolId indexed poolId, 
-        IPoolPolicy.PolicyType indexed policyType,
-        address implementation,
-        address indexed setter
+        PoolId indexed poolId, IPoolPolicy.PolicyType indexed policyType, address implementation, address indexed setter
     );
 
     /**
      * @notice Expect a PolicySet event unconditionally
      */
-    function expectPolicySet(
-        Test t, 
-        PoolId pid, 
-        IPoolPolicy.PolicyType ptype, 
-        address impl, 
-        address setter
-    ) internal {
+    function expectPolicySet(Test t, PoolId pid, IPoolPolicy.PolicyType ptype, address impl, address setter) internal {
         vm.expectEmit(true, true, true, true);
         emit PolicySet(pid, ptype, impl, setter);
     }
-    
+
     /**
      * @notice Conditionally expect a PolicySet event based on a condition
      * @param t The test contract instance
@@ -47,9 +38,9 @@ library EventTools {
     function expectPolicySetIf(
         Test t,
         bool willEmit,
-        PoolId pid, 
-        IPoolPolicy.PolicyType ptype, 
-        address impl, 
+        PoolId pid,
+        IPoolPolicy.PolicyType ptype,
+        address impl,
         address setter
     ) internal {
         if (willEmit) {
@@ -57,7 +48,7 @@ library EventTools {
             emit PolicySet(pid, ptype, impl, setter);
         }
     }
-    
+
     /**
      * @notice Conditionally expect any event based on a condition
      * @param t The test contract instance
@@ -67,14 +58,9 @@ library EventTools {
      * @param checkTopic3 Whether to check the third topic
      * @param checkData Whether to check the data
      */
-    function expectEmitIf(
-        Test t,
-        bool willEmit,
-        bool checkTopic1,
-        bool checkTopic2,
-        bool checkTopic3,
-        bool checkData
-    ) internal {
+    function expectEmitIf(Test t, bool willEmit, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData)
+        internal
+    {
         if (willEmit) {
             vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
         }
@@ -83,4 +69,4 @@ library EventTools {
     function expectReinvestorDenied(Test t, address who) internal {
         vm.expectRevert(abi.encodeWithSelector(Errors.Unauthorized.selector));
     }
-} 
+}

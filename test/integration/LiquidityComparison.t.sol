@@ -1,27 +1,27 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.26;
 
-import {Test}                             from "forge-std/Test.sol";
-import {console2}                         from "forge-std/console2.sol";
-import {ForkSetup}                        from "./ForkSetup.t.sol";
-import {PoolKey}                          from "v4-core/src/types/PoolKey.sol";
-import {PoolId, PoolIdLibrary}          from "v4-core/src/types/PoolId.sol";
-import {Currency, CurrencyLibrary}      from "v4-core/src/types/Currency.sol";
-import {StateLibrary}                   from "v4-core/src/libraries/StateLibrary.sol";
-import {SafeTransferLib}                from "solmate/src/utils/SafeTransferLib.sol";
-import {IERC20Minimal}                  from "v4-core/src/interfaces/external/IERC20Minimal.sol";
-import {IHooks}                           from "v4-core/src/interfaces/IHooks.sol";
-import {Position}                         from "v4-core/src/libraries/Position.sol";
-import {TickMath}                         from "v4-core/src/libraries/TickMath.sol";
-import {LiquidityAmounts}               from "v4-periphery/src/libraries/LiquidityAmounts.sol";
-import {IPoolManager}                   from "v4-core/src/interfaces/IPoolManager.sol";
-import {IFullRangeLiquidityManager}     from "src/interfaces/IFullRangeLiquidityManager.sol";
+import {Test} from "forge-std/Test.sol";
+import {console2} from "forge-std/console2.sol";
+import {ForkSetup} from "./ForkSetup.t.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
+import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {Position} from "v4-core/src/libraries/Position.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
-import {ModifyLiquidityParams}            from "v4-core/src/types/PoolOperation.sol";
-import {SignedMath}                       from "@openzeppelin/contracts/utils/math/SignedMath.sol";
-import {ERC20}                            from "solmate/src/tokens/ERC20.sol";
-import {CurrencySettler}                  from "uniswap-hooks/utils/CurrencySettler.sol";
-import {IUnlockCallback}                  from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
+import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
+import {SignedMath} from "@openzeppelin/contracts/utils/math/SignedMath.sol";
+import {ERC20} from "solmate/src/tokens/ERC20.sol";
+import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
+import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {IFullRangePositions as FRPos} from "src/interfaces/IFullRangePositions.sol";
 
 contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
@@ -129,7 +129,7 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         // Access positions directly as a state variable
         address positionsAddress = address(IFullRangeLiquidityManager(address(liquidityManager)).positions());
         FRPos frPositions = FRPos(positionsAddress);
-        
+
         // Call positionLiquidity via the interface
         uint128 poolLiquidity = frPositions.positionLiquidity(poolIdBytes);
 

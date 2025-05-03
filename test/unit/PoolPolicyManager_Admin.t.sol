@@ -5,20 +5,20 @@ import "forge-std/Test.sol";
 import "../lib/EventTools.sol";
 
 import {PoolPolicyManager, IPoolPolicy} from "src/PoolPolicyManager.sol";
-import {PoolId}            from "v4-core/src/types/PoolId.sol";
-import {Errors}            from "src/errors/Errors.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
+import {Errors} from "src/errors/Errors.sol";
 import {PrecisionConstants} from "src/libraries/PrecisionConstants.sol";
 
 contract PoolPolicyManager_Admin is Test {
     using EventTools for Test;
-    
+
     PoolPolicyManager ppm;
 
-    address constant OWNER      = address(0xBEEF);
+    address constant OWNER = address(0xBEEF);
     address constant GOVERNANCE = address(0xCAFE);
-    address constant ALICE      = address(0xA11CE); // unauthorized
+    address constant ALICE = address(0xA11CE); // unauthorized
     address constant NEW_FEE_CO = address(0xF00D);
-    address constant RVSTR      = address(0xDEAD); // reinvestor
+    address constant RVSTR = address(0xDEAD); // reinvestor
 
     /*────────────────── setup ──────────────────*/
     function setUp() public {
@@ -30,7 +30,7 @@ contract PoolPolicyManager_Admin is Test {
             OWNER,
             5_000,
             ticks,
-            50_000,                // 5 % in PPM
+            50_000, // 5 % in PPM
             address(0xFEE)
         );
     }
@@ -38,16 +38,18 @@ contract PoolPolicyManager_Admin is Test {
     /*──────────────── setProtocolFeePercentage ───────────────*/
     function testOwnerUpdatesProtocolFeePercentage() public {
         uint256 newPpm = 80_000; // 8 %
-        
+
         // Get current value to determine if event should emit
         uint256 prevPpm = ppm.getProtocolFeePercentage(pid(0));
         bool willEmit = (prevPpm != newPpm);
 
         EventTools.expectEmitIf(this, willEmit, false, false, false, true);
         emit ProtocolInterestFeePercentageChanged(newPpm);
-        
+
         // Also expect the PolicySet event
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.INTEREST_FEE, address(0), OWNER);
+        EventTools.expectPolicySetIf(
+            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.INTEREST_FEE, address(0), OWNER
+        );
 
         vm.prank(OWNER);
         ppm.setProtocolFeePercentage(newPpm);
@@ -80,12 +82,14 @@ contract PoolPolicyManager_Admin is Test {
         // Check if current collector matches desired value
         address prevCollector = ppm.getFeeCollector();
         bool willEmit = (prevCollector != NEW_FEE_CO);
-        
+
         EventTools.expectEmitIf(this, willEmit, false, false, false, true);
         emit FeeCollectorChanged(NEW_FEE_CO);
-        
+
         // Also expect the PolicySet event
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.INTEREST_FEE, NEW_FEE_CO, OWNER);
+        EventTools.expectPolicySetIf(
+            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.INTEREST_FEE, NEW_FEE_CO, OWNER
+        );
 
         vm.prank(OWNER);
         ppm.setFeeCollector(NEW_FEE_CO);
@@ -110,12 +114,14 @@ contract PoolPolicyManager_Admin is Test {
         // Check if reinvestor is already authorized
         bool isAlreadyAuthorized = ppm.authorizedReinvestors(RVSTR);
         bool willEmit = !isAlreadyAuthorized;
-        
+
         EventTools.expectEmitIf(this, willEmit, true, true, true, false);
         emit AuthorizedReinvestorSet(RVSTR, true);
-        
+
         // Also expect the PolicySet event
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.REINVESTOR_AUTH, RVSTR, OWNER);
+        EventTools.expectPolicySetIf(
+            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.REINVESTOR_AUTH, RVSTR, OWNER
+        );
 
         vm.prank(OWNER);
         ppm.setAuthorizedReinvestor(RVSTR, true);
@@ -167,12 +173,7 @@ contract PoolPolicyManager_Admin is Test {
     function testInitializePoliciesWrongLengthReverts() public {
         address[] memory impls = new address[](3); // should be 4
         vm.prank(OWNER);
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                Errors.InvalidPolicyImplementationsLength.selector,
-                3
-            )
-        );
+        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidPolicyImplementationsLength.selector, 3));
         ppm.initializePolicies(pid(3), GOVERNANCE, impls);
     }
 
@@ -199,10 +200,10 @@ contract PoolPolicyManager_Admin is Test {
         (uint32 prevBudget, uint32 prevWindow) = ppm.getBudgetAndWindow(pid(0));
         bool budgetWillEmit = (prevBudget != 2_000_000);
         bool windowWillEmit = (prevWindow != 90 days);
-        
+
         vm.prank(OWNER);
-        ppm.setDailyBudgetPpm(2_000_000);  // 2 caps/day
-        
+        ppm.setDailyBudgetPpm(2_000_000); // 2 caps/day
+
         vm.prank(OWNER);
         ppm.setDecayWindow(90 days);
 
@@ -217,7 +218,7 @@ contract PoolPolicyManager_Admin is Test {
     event AuthorizedReinvestorSet(address indexed reinvestor, bool isAuthorized);
 
     function _implArray() internal pure returns (address[] memory arr) {
-        arr    = new address[](4);
+        arr = new address[](4);
         arr[0] = address(0x01);
         arr[1] = address(0x02);
         arr[2] = address(0x03);

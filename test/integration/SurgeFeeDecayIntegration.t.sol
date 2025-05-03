@@ -331,10 +331,10 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         (uint256 baseAfter50Percent, uint256 surgeFeeAfter50Percent) = dfm.getFeeState(pid);
         uint256 totalFeeAfter50Percent = baseAfter50Percent + surgeFeeAfter50Percent;
         assertTrue(totalFeeAfter50Percent < totalFeeAfter10Percent, "Fee did not decay further after 50%");
-        
+
         // The surge component should be roughly half of the *initial* surge
         uint256 initialSurge = surgeFeeAfterCap;
-        uint256 expectedSurgeAt50 = initialSurge / 2;       // 50 % of peak
+        uint256 expectedSurgeAt50 = initialSurge / 2; // 50 % of peak
         assertApproxEqRel(
             surgeFeeAfter50Percent,
             expectedSurgeAt50,
@@ -372,10 +372,10 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // Verify partial decay occurred
         (uint256 basePartialDecay, uint256 surgeFeePartialDecay) = dfm.getFeeState(pid);
         uint256 totalFeePartialDecay = basePartialDecay + surgeFeePartialDecay;
-        
+
         // Base fee should be unchanged due to rate limiting
         assertEq(basePartialDecay, baseAfterCap, "Base fee should not change during decay");
-        
+
         // Surge should have decayed to ~75% of original
         assertApproxEqRel(
             surgeFeePartialDecay,
@@ -383,38 +383,38 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
             1e16, // Allow 1% tolerance
             "Unexpected surge fee after 25% decay"
         );
-        
+
         // Instead of an actual swap, simulate an oracle update WITHOUT a CAP
         vm.prank(address(fullRange)); // Act as the hook
         dfm.notifyOracleUpdate(pid, false); // Notify with tickWasCapped = false
-        
+
         // The inCap flag should still be true since decay is not complete
         bool inCapAfterNonCap = dfm.isCAPEventActive(pid);
         assertTrue(inCapAfterNonCap, "inCap incorrectly cleared before full decay");
-        
+
         // Verify decay continued and was not reset
         (uint256 baseAfterNotify, uint256 surgeFeeAfterNotify) = dfm.getFeeState(pid);
-        
+
         // Surge fee should be unchanged after the non-cap notification
         assertEq(surgeFeeAfterNotify, surgeFeePartialDecay, "Surge fee incorrectly changed by non-cap oracle update");
-        
+
         // Base fee should still match initial value (due to rate limiting)
         assertEq(baseAfterNotify, baseAfterCap, "Base fee incorrectly changed after non-cap update");
-        
+
         // Now fast-forward to complete decay
         vm.warp(block.timestamp + decayPeriod);
-        
+
         // Verify surge is now zero
         (uint256 baseAfterFullDecay, uint256 surgeFeeAfterFullDecay) = dfm.getFeeState(pid);
         assertEq(surgeFeeAfterFullDecay, 0, "Surge not zero after full decay period");
-        
+
         // Base fee should still match initial value
         assertEq(baseAfterFullDecay, baseAfterCap, "Base fee incorrectly changed after full decay");
-        
+
         // Notify without a CAP again, which should now clear inCap since surge is zero
         vm.prank(address(fullRange));
         dfm.notifyOracleUpdate(pid, false);
-        
+
         // Verify inCap is cleared after full decay
         bool inCapAfterFullDecay = dfm.isCAPEventActive(pid);
         assertFalse(inCapAfterFullDecay, "inCap not cleared after full decay");
@@ -439,7 +439,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // Get fee at 50% decay
         (uint256 basePartialDecay, uint256 surgeFeePartialDecay) = dfm.getFeeState(pid);
         uint256 totalFeePartialDecay = basePartialDecay + surgeFeePartialDecay;
-        
+
         // Verify partial decay occurred
         assertTrue(totalFeePartialDecay < totalFeeAfterCap, "Fee did not decay before second cap");
         assertApproxEqRel(

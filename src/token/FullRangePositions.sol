@@ -24,8 +24,9 @@ contract FullRangePositions is ERC6909Claims, IFullRangePositions {
         mapping(address => uint256) balanceOf;
         uint128 liquidity;
     }
+
     mapping(bytes32 => PositionInfo) internal _positions; // pool-id → info
-    mapping(bytes32 => uint256)     internal _totalSupply; // total ERC-6909 shares per pool
+    mapping(bytes32 => uint256) internal _totalSupply; // total ERC-6909 shares per pool
 
     constructor(string memory _name, string memory _symbol, address _minter) {
         name = _name;

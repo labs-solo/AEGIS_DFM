@@ -10,14 +10,14 @@ pragma solidity ^0.8.26;
 import "forge-std/Test.sol";
 import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol";
 import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
-import {TickMoveGuard}       from "../../src/libraries/TickMoveGuard.sol";
+import {TickMoveGuard} from "../../src/libraries/TickMoveGuard.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {PoolKey}      from "v4-core/src/types/PoolKey.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {IPoolPolicy}  from "../../src/interfaces/IPoolPolicy.sol";
-import {Errors}       from "../../src/errors/Errors.sol";
-import {Currency}     from "v4-core/src/types/Currency.sol";
-import {IHooks}       from "v4-core/src/interfaces/IHooks.sol";
+import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
+import {Errors} from "../../src/errors/Errors.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import "forge-std/console.sol";
 
 /* ───────────────────────────── Local Stubs ─────────────────────────────── */
@@ -44,14 +44,14 @@ contract TruncGeoOracleMultiTest is Test {
     /*  state & constants                                      */
     /* ------------------------------------------------------- */
     TruncGeoOracleMulti internal oracle;
-    MockPolicyManager   internal policy;
-    MockPoolManager     internal poolManager;
-    DummyFullRangeHook  internal hook;
+    MockPolicyManager internal policy;
+    MockPoolManager internal poolManager;
+    DummyFullRangeHook internal hook;
 
     PoolKey internal poolKey;
-    PoolId  internal pid;
-    uint24  internal constant DEF_FEE  = 5_000;     // 0.5 %
-    uint32  internal constant START_TS = 1_000_000; // base timestamp
+    PoolId internal pid;
+    uint24 internal constant DEF_FEE = 5_000; // 0.5 %
+    uint32 internal constant START_TS = 1_000_000; // base timestamp
 
     // Test addresses
     address internal alice = makeAddr("alice");
@@ -61,12 +61,12 @@ contract TruncGeoOracleMultiTest is Test {
     /* ------------------------------------------------------- */
     function setUp() public {
         console.log("Setting up test...");
-        policy      = new MockPolicyManager();
+        policy = new MockPolicyManager();
         poolManager = new MockPoolManager();
 
         console.log("Deploying hook...");
         // ── deploy hook FIRST ------------------------------------------------------
-        hook = new DummyFullRangeHook(address(0));     // single instantiation
+        hook = new DummyFullRangeHook(address(0)); // single instantiation
         console.log("Hook deployed at:", address(hook));
 
         // Create mock tokens for the PoolKey *after* hook exists so we can embed it
@@ -75,11 +75,11 @@ contract TruncGeoOracleMultiTest is Test {
 
         console.log("Creating PoolKey...");
         poolKey = PoolKey({
-            currency0:  Currency.wrap(token0),
-            currency1:  Currency.wrap(token1),
-            fee:        DEF_FEE,
+            currency0: Currency.wrap(token0),
+            currency1: Currency.wrap(token1),
+            fee: DEF_FEE,
             tickSpacing: 60,
-            hooks:       IHooks(address(hook))   // ← must equal fullRangeHook
+            hooks: IHooks(address(hook)) // ← must equal fullRangeHook
         });
 
         pid = poolKey.toId();
@@ -88,10 +88,7 @@ contract TruncGeoOracleMultiTest is Test {
         console.log("Deploying oracle...");
         // ── deploy oracle pointing to *this* hook ----------------------------------
         oracle = new TruncGeoOracleMulti(
-            IPoolManager(address(poolManager)),
-            address(this),
-            IPoolPolicy(address(policy)),
-            address(hook)
+            IPoolManager(address(poolManager)), address(this), IPoolPolicy(address(policy)), address(hook)
         );
         console.log("Oracle deployed at:", address(oracle));
 
@@ -102,7 +99,7 @@ contract TruncGeoOracleMultiTest is Test {
 
         console.log("Enabling oracle for pool...");
         // ── enable oracle for the pool (must be called by *that* hook) --------------
-        vm.prank(address(hook));          // msg.sender == fullRangeHook
+        vm.prank(address(hook)); // msg.sender == fullRangeHook
         oracle.enableOracleForPool(poolKey);
         console.log("Oracle enabled for pool");
     }
@@ -122,7 +119,7 @@ contract TruncGeoOracleMultiTest is Test {
             policy.getDefaultMaxTicksPerBlock(pid) // Should be 50 ticks
         );
 
-        (, uint16 card, ) = oracle.states(poolIdBytes);
+        (, uint16 card,) = oracle.states(poolIdBytes);
         assertEq(card, 1, "cardinality should equal 1 after init");
     }
 
@@ -146,7 +143,7 @@ contract TruncGeoOracleMultiTest is Test {
         vm.stopPrank();
 
         // Verify the observation was written
-        (int24 latestTick, ) = oracle.getLatestObservation(pid);
+        (int24 latestTick,) = oracle.getLatestObservation(pid);
         assertEq(latestTick, tick, "Observation tick mismatch after hook push");
     }
 
@@ -189,9 +186,9 @@ contract TruncGeoOracleMultiTest is Test {
         PoolKey memory unknownKey = PoolKey({
             currency0: Currency.wrap(address(0xDEAD)),
             currency1: Currency.wrap(address(0xBEEF)),
-            fee:       DEF_FEE,
+            fee: DEF_FEE,
             tickSpacing: 60,
-            hooks:       IHooks(address(0))
+            hooks: IHooks(address(0))
         });
         PoolId unknownId = unknownKey.toId();
 

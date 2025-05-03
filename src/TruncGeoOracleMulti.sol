@@ -21,17 +21,14 @@ contract TruncGeoOracleMulti {
 
     event TickCapParamChanged(bytes32 indexed poolId, uint24 newMaxTicksPerBlock);
     event MaxTicksPerBlockUpdated(
-        PoolId indexed poolId,
-        uint24 oldMaxTicksPerBlock,
-        uint24 newMaxTicksPerBlock,
-        uint32 blockTimestamp
+        PoolId indexed poolId, uint24 oldMaxTicksPerBlock, uint24 newMaxTicksPerBlock, uint32 blockTimestamp
     );
 
     /* ─────────────────── IMMUTABLE STATE ────────────────────── */
     IPoolManager public immutable poolManager;
-    address      public immutable governance;
-    IPoolPolicy  public immutable policy;
-    address      public immutable hook; // The ONLY hook allowed to call `enableOracleForPool` & `pushObservation*`
+    address public immutable governance;
+    IPoolPolicy public immutable policy;
+    address public immutable hook; // The ONLY hook allowed to call `enableOracleForPool` & `pushObservation*`
 
     /* ───────────────────── MUTABLE STATE ────────────────────── */
     mapping(bytes32 => uint24) public maxTicksPerBlock; // adaptive cap
@@ -52,12 +49,7 @@ contract TruncGeoOracleMulti {
     mapping(PoolId => uint32) private _lastMaxTickUpdate;
 
     /* ────────────────────── CONSTRUCTOR ─────────────────────── */
-    constructor(
-        IPoolManager _poolManager,
-        address _governance,
-        IPoolPolicy _policy,
-        address _hook
-    ) {
+    constructor(IPoolManager _poolManager, address _governance, IPoolPolicy _policy, address _hook) {
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
         if (_governance == address(0)) revert Errors.ZeroAddress();
         if (address(_policy) == address(0)) revert Errors.ZeroAddress();
@@ -106,13 +98,12 @@ contract TruncGeoOracleMulti {
      * @return tick The current tick after the observation.
      * @return capped True if the tick movement was capped, false otherwise.
      */
-    function pushObservationAndCheckCap(PoolId pid, bool zeroForOne)
-        external
-        returns (int24 tick, bool capped)
-    {
+    function pushObservationAndCheckCap(PoolId pid, bool zeroForOne) external returns (int24 tick, bool capped) {
         if (msg.sender != hook) revert OnlyHook();
         bytes32 id = PoolId.unwrap(pid);
-        if (states[id].cardinality == 0) revert Errors.OracleOperationFailed("pushObservationAndCheckCap", "Pool not enabled");
+        if (states[id].cardinality == 0) {
+            revert Errors.OracleOperationFailed("pushObservationAndCheckCap", "Pool not enabled");
+        }
 
         ObservationState storage state = states[id];
         TruncatedOracle.Observation[65535] storage obs = observations[id];
@@ -139,12 +130,7 @@ contract TruncGeoOracleMulti {
         // Write the (potentially capped) observation
         uint128 liquidity = StateLibrary.getLiquidity(poolManager, pid);
         (state.index, state.cardinality) = obs.write(
-            state.index,
-            uint32(block.timestamp),
-            currentTick,
-            liquidity,
-            state.cardinality,
-            state.cardinalityNext
+            state.index, uint32(block.timestamp), currentTick, liquidity, state.cardinality, state.cardinalityNext
         );
         tick = currentTick;
 
@@ -173,13 +159,11 @@ contract TruncGeoOracleMulti {
      * @return tick The tick from the latest observation.
      * @return blockTimestamp The timestamp of the latest observation.
      */
-    function getLatestObservation(PoolId pid)
-        external
-        view
-        returns (int24 tick, uint32 blockTimestamp)
-    {
+    function getLatestObservation(PoolId pid) external view returns (int24 tick, uint32 blockTimestamp) {
         bytes32 id = PoolId.unwrap(pid);
-        if (states[id].cardinality == 0) revert Errors.OracleOperationFailed("getLatestObservation", "Pool not enabled");
+        if (states[id].cardinality == 0) {
+            revert Errors.OracleOperationFailed("getLatestObservation", "Pool not enabled");
+        }
 
         TruncatedOracle.Observation memory observation = observations[id][states[id].index];
         return (observation.prevTick, observation.blockTimestamp);
@@ -189,7 +173,7 @@ contract TruncGeoOracleMulti {
      * @notice Returns the immutable hook address configured for this oracle.
      */
     function getHookAddress() external view returns (address) {
-         return hook;
+        return hook;
     }
 
     /// -----------------------------------------------------------------------

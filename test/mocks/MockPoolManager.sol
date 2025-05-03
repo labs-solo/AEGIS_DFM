@@ -10,13 +10,14 @@ contract MockPoolManager is IExtsload {
     function getSlot0(PoolId) external pure returns (uint160, int24, uint16, uint8) {
         return (0, 0, 0, 0);
     }
+
     function getLiquidity(PoolId) external pure returns (uint128) {
         return 1e18;
     }
 
     // Implement IExtsload interface
     function extsload(bytes32) external pure returns (bytes32) {
-        return bytes32(0);  // Return default values for all slots
+        return bytes32(0); // Return default values for all slots
     }
 
     function extsload(bytes32, uint256 nSlots) external pure returns (bytes32[] memory values) {
@@ -36,4 +37,4 @@ contract MockPoolManager is IExtsload {
         }
         return values;
     }
-} 
+}

@@ -12,4 +12,4 @@ contract EmitHelper is Test {
     function expectOptionalEmit(bool willEmit) internal {
         if (willEmit) vm.expectEmit(false, false, false, true);
     }
-} 
+}

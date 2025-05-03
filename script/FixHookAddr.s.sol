@@ -22,6 +22,7 @@ import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
+import {SharedDeployLib} from "../test/utils/SharedDeployLib.sol";
 
 // Utility script to display valid hook address for debugging
 contract FixHookAddr is Script {
@@ -43,14 +44,14 @@ contract FixHookAddr is Script {
         address owner_ = vm.envAddress("DEPLOYER_ADDRESS");
 
         // Define required hook flags for Spot (using HookMiner constants)
-        uint160 spotFlags = Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_SWAP_FLAG;
+        uint160 spotFlags = (Hooks.AFTER_INITIALIZE_FLAG |           // true
+                           Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |     // true
+                           Hooks.BEFORE_SWAP_FLAG |                // true
+                           Hooks.AFTER_SWAP_FLAG |                 // true
+                           Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |   // true
+                           Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG);  // true
         /* // Previous flags, keeping for reference
-            Hooks.AFTER_INITIALIZE_FLAG |
-            Hooks.BEFORE_SWAP_FLAG |
-            Hooks.AFTER_SWAP_FLAG |
-            Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
+            Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_SWAP_FLAG
             */
 
         // Construct Spot creation code and constructor arguments
@@ -59,8 +60,21 @@ contract FixHookAddr is Script {
             abi.encode(poolManager_, policyManager_, liquidityManager_, oracle_, feeManager_, owner_);
 
         // Find the correct salt for Spot
-        (address spotHookAddress, bytes32 spotSalt) =
-            HookMiner.find(owner_, spotFlags, spotBytecode, spotConstructorArgs);
+        bytes32 spotSalt;
+        address spotHookAddress;
+        (spotSalt, spotHookAddress) = SharedDeployLib._spotHookSaltAndAddr(
+            owner_,
+            spotBytecode,
+            spotConstructorArgs
+        );
+
+        // Store the salt in the environment for SharedDeployLib
+        vm.setEnv("SPOT_HOOK_SALT", vm.toString(spotSalt));
+
+        // Log the results
+        console.log("Spot Hook Address:", spotHookAddress);
+        console.log("Salt (hex):", vm.toString(spotSalt));
+        console.log("Salt (decimal):", uint256(spotSalt));
 
         // Removed console logs
 

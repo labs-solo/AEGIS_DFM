@@ -83,7 +83,7 @@ contract DirectDeploy is Script {
                 policyManager,
                 address(fullRangeHook) // Hook Address
             );
-             // Assuming DummyFullRangeHook now has setOracle
+            // Assuming DummyFullRangeHook now has setOracle
             // fullRangeHook.setOracle(address(truncGeoOracle));
             console.log("TruncGeoOracleMulti deployed at: %s", address(truncGeoOracle));
         }

@@ -31,4 +31,4 @@ contract PoolPolicyManagerHarness {
     function setFreqScaling(PoolId pid, uint32 scalingPpm) external {
         target.setFreqScaling(pid, scalingPpm);
     }
-} 
+}

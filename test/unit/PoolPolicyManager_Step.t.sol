@@ -5,11 +5,11 @@ import "forge-std/Test.sol";
 import "../lib/EventTools.sol";
 
 import {PoolPolicyManager, IPoolPolicy} from "src/PoolPolicyManager.sol";
-import {PoolId}            from "v4-core/src/types/PoolId.sol";
+import {PoolId} from "v4-core/src/types/PoolId.sol";
 
 contract PoolPolicyManager_Step is Test {
     using EventTools for Test;
-    
+
     PoolPolicyManager ppm;
 
     address constant OWNER = address(0xBEEF);
@@ -25,7 +25,7 @@ contract PoolPolicyManager_Step is Test {
             OWNER,
             5_000,
             ticks,
-            50_000,        // 5% PPM
+            50_000, // 5% PPM
             address(0xFEE)
         );
     }
@@ -45,7 +45,7 @@ contract PoolPolicyManager_Step is Test {
     /*──────────────── setBaseFeeParams ────────────────*/
     function testOwnerCanOverrideBaseFeeParams() public {
         PoolId pool = pid(42);
-        
+
         // Check current values to know if event should emit
         uint32 prevStep = ppm.getBaseFeeStepPpm(pool);
         uint32 prevInterval = ppm.getBaseFeeUpdateIntervalSeconds(pool);
@@ -53,7 +53,7 @@ contract PoolPolicyManager_Step is Test {
 
         EventTools.expectEmitIf(this, willEmit, true, true, true, false);
         emit BaseFeeParamsSet(pool, 15_000, 2 days);
-        
+
         EventTools.expectPolicySetIf(this, true, pool, IPoolPolicy.PolicyType.FEE, address(0), OWNER);
 
         vm.prank(OWNER);
@@ -81,7 +81,7 @@ contract PoolPolicyManager_Step is Test {
     /*──────────────── Surge decay period ────────────────*/
     function testOwnerCanOverrideSurgeDecay() public {
         PoolId pool = pid(7);
-        
+
         // Check current value to determine if event should emit
         uint32 prevDecay = ppm.getSurgeDecaySeconds(pool);
         bool willEmit = (prevDecay != 12 hours);
@@ -117,7 +117,7 @@ contract PoolPolicyManager_Step is Test {
     /*──────────────── Surge fee multiplier ─────────────*/
     function testOwnerCanOverrideSurgeMultiplier() public {
         PoolId pool = pid(9);
-        
+
         // Check current value to determine if event should emit
         uint32 prevMultiplier = ppm.getSurgeFeeMultiplierPpm(pool);
         bool willEmit = (prevMultiplier != 2_000_000);

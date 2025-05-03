@@ -17,8 +17,8 @@ contract DummyFullRangeHook {
     /// called by PoolManager after every swap / liquidity update
     function notifyOracle(bool capped) external {
         // NOTE: This is a placeholder and needs the actual TruncGeoOracleMulti interface and PoolId logic
-        // TruncGeoOracleMulti(oracle).recordCapEvent(PoolId.wrap(bytes32(0)), capped); 
+        // TruncGeoOracleMulti(oracle).recordCapEvent(PoolId.wrap(bytes32(0)), capped);
         // For now, just use a basic check to avoid compilation errors if TruncGeoOracleMulti is not imported
-        require(oracle != address(0), "Oracle address not set"); 
+        require(oracle != address(0), "Oracle address not set");
     }
-} 
+}

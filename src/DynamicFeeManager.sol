@@ -132,9 +132,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     mapping(PoolId => uint256) private _s;
 
     /* ─── constructor / init ─────────────────────────────────── */
-    constructor(IPoolPolicy _policyManager, address _oracle, address _authorizedHook)
-        Owned(msg.sender)
-    {
+    constructor(IPoolPolicy _policyManager, address _oracle, address _authorizedHook) Owned(msg.sender) {
         require(address(_policyManager) != address(0), "DFM: policy 0");
         require(_oracle != address(0), "DFM: oracle 0");
         require(_authorizedHook != address(0), "DFM: hook 0");
@@ -169,30 +167,31 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     function notifyOracleUpdate(PoolId poolId, bool tickWasCapped) external override {
         _requireHookAuth(); // Ensure only authorized hook can call
 
-        uint256  w  = _s[poolId];
+        uint256 w = _s[poolId];
         require(w != 0, "DFM: not init");
 
-        uint32   nowTs    = uint32(block.timestamp);
-        uint256  w1       = w;              // scratch copy (cheaper mutations)
+        uint32 nowTs = uint32(block.timestamp);
+        uint256 w1 = w; // scratch copy (cheaper mutations)
 
         // ── cache fee snapshot *before* state mutation ───────────────────────
-        uint256 oldBase  = _baseFee(poolId); // Uses direct call internally now
+        uint256 oldBase = _baseFee(poolId); // Uses direct call internally now
         uint256 oldSurge = _surge(poolId, w1); // Uses direct call internally now
 
         // ---- CAP-event handling ---------------------------------------
         if (tickWasCapped) {
             w1 = w1.setInCap(true).setCapSt(uint40(nowTs));
         } else if (w1.inCap()) {
-            if (_surge(poolId, w1) == 0) { // Check if surge decayed
+            if (_surge(poolId, w1) == 0) {
+                // Check if surge decayed
                 w1 = w1.setInCap(false);
             }
         }
 
         // ── persist + emit only when *fee* actually changed ─────────────
         if (w1 != w) {
-            _s[poolId] = w1;                              // single SSTORE
+            _s[poolId] = w1; // single SSTORE
 
-            uint256 newBase  = _baseFee(poolId); // Recalculate with potentially new oracle state
+            uint256 newBase = _baseFee(poolId); // Recalculate with potentially new oracle state
             uint256 newSurge = _surge(poolId, w1); // Recalculate with potentially new state
 
             if (newBase != oldBase || newSurge != oldSurge) {

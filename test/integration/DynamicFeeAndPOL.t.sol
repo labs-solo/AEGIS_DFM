@@ -96,8 +96,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         //---------------- TEST-ONLY: shrink base-fee step interval ----------
         // Cast to concrete type PoolPolicyManager to call owner-only setter
-        PoolPolicyManager(address(policyManager))
-             .setBaseFeeParams(poolId, 20_000, 3_600);
+        PoolPolicyManager(address(policyManager)).setBaseFeeParams(poolId, 20_000, 3_600);
         vm.stopPrank();
 
         //
@@ -276,24 +275,20 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // but with a price limit to avoid reverts.
         bool zeroForOne = true; // Swap USDC for WETH to test capping
         int256 largeSwapAmount = int256(50_000 * 1e6); // 50k USDC
-        
+
         // Get current price
-        (uint160 currentSqrtP, int24 currentTick, , ) = StateLibrary.getSlot0(poolManager, poolId);
-        
+        (uint160 currentSqrtP, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+
         // Set a limit slightly away from current price, but not MIN_SQRT_PRICE
         uint160 limitSqrtP = uint160(uint256(currentSqrtP) * 9 / 10); // 90% of current price
-        
+
         _dealAndApprove(usdc, user1, uint256(largeSwapAmount), address(swapRouter)); // Ensure user1 has funds
 
         // The swap should trigger a CAP event
         vm.startPrank(user1);
         swapRouter.swap(
             poolKey,
-            SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: largeSwapAmount,
-                sqrtPriceLimitX96: limitSqrtP
-            }),
+            SwapParams({zeroForOne: zeroForOne, amountSpecified: largeSwapAmount, sqrtPriceLimitX96: limitSqrtP}),
             PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}),
             ZERO_BYTES
         );
@@ -303,20 +298,20 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // With rate limiting, maxTicksPerBlock won't change immediately
         (uint256 baseAfterFirstSwap, uint256 surgeAfterFirstSwap) = dfm.getFeeState(poolId);
         assertTrue(surgeAfterFirstSwap > 0, "Surge fee not activated after CAP");
-        
+
         // Base fee should still match current oracle value (which hasn't changed due to rate limiting)
         assertEq(baseAfterFirstSwap, initialMaxTicks * 100, "Base fee doesn't match current oracle cap");
-        
+
         // Check that CAP event is active
         assertTrue(dfm.isCAPEventActive(poolId), "CAP event not active after swap");
 
         // Now warp past the update interval to allow rate-limited changes
         uint32 updateInterval = policyManager.getBaseFeeUpdateIntervalSeconds(poolId);
         vm.warp(block.timestamp + updateInterval + 1);
-        
+
         // Get new price after first swap
-        (uint160 newSqrtPrice, int24 newTick, , ) = StateLibrary.getSlot0(poolManager, poolId);
-        
+        (uint160 newSqrtPrice, int24 newTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+
         // For the second swap, use a different price limit that's further from current price
         // If we're doing zeroForOne (selling token0), we want to set limit lower than current price
         uint160 newPriceLimit = uint160(uint256(newSqrtPrice) * 95 / 100); // 95% of current price
@@ -338,18 +333,18 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // Now the maxTicksPerBlock should have been able to change
         uint256 newMaxTicks = oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId));
         (uint256 baseAfterSecondSwap, uint256 surgeAfterSecondSwap) = dfm.getFeeState(poolId);
-        
+
         // Check that maxTicks has changed, but within step limit
         uint32 stepPpm = policyManager.getBaseFeeStepPpm(poolId);
         uint256 maxAllowedChange = (initialMaxTicks * stepPpm) / 1_000_000;
-        
+
         assertTrue(newMaxTicks != initialMaxTicks, "Oracle did not adjust maxTicks after interval");
         assertTrue(
-            newMaxTicks <= initialMaxTicks + maxAllowedChange && 
-            newMaxTicks >= (initialMaxTicks > maxAllowedChange ? initialMaxTicks - maxAllowedChange : 0),
+            newMaxTicks <= initialMaxTicks + maxAllowedChange
+                && newMaxTicks >= (initialMaxTicks > maxAllowedChange ? initialMaxTicks - maxAllowedChange : 0),
             "MaxTicks change exceeded step limit"
         );
-        
+
         // Base fee should now reflect the new maxTicks value
         assertEq(baseAfterSecondSwap, newMaxTicks * 100, "Base fee doesn't match new oracle cap");
     }
@@ -516,7 +511,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
     function test_surgeFeeDecaysOverTime() public {
         // Store original base fee for reference
         (uint256 initialBase,) = dfm.getFeeState(poolId);
-        
+
         // Trigger a CAP event to activate surge fee
         vm.prank(address(fullRange));
         dfm.notifyOracleUpdate(poolId, true);
@@ -524,7 +519,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // Get initial fee state
         (uint256 baseAfterCap, uint256 surgeFeeAfterCap) = dfm.getFeeState(poolId);
         uint256 totalFeeAfterCap = baseAfterCap + surgeFeeAfterCap;
-        
+
         // Base fee should remain unchanged from initial value after CAP
         // (since maxTicks won't change immediately due to rate limiting)
         assertEq(baseAfterCap, initialBase, "Base fee shouldn't change immediately after CAP");
@@ -557,13 +552,13 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         // Warp to 75% through the decay period
         vm.warp(block.timestamp + surgeFeeDecayPeriod / 4); // Already at 50%, add another 25%
-        
+
         // Get fee state at 75% point
         (uint256 base75Percent, uint256 surge75Percent) = dfm.getFeeState(poolId);
-        
+
         // Base should still be unchanged
         assertEq(base75Percent, initialBase, "Base fee changed unexpectedly during decay");
-        
+
         // Surge should now be at 25% of original surge fee
         assertApproxEqRel(
             surge75Percent,
