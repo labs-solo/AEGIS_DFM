@@ -15,6 +15,7 @@ import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {PoolKey}      from "v4-core/src/types/PoolKey.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IPoolPolicy}  from "../../src/interfaces/IPoolPolicy.sol";
+import {Errors}       from "../../src/errors/Errors.sol";
 import {Currency}     from "v4-core/src/types/Currency.sol";
 import {IHooks}       from "v4-core/src/interfaces/IHooks.sol";
 import "forge-std/console.sol";
@@ -51,6 +52,9 @@ contract TruncGeoOracleMultiTest is Test {
     PoolId  internal pid;
     uint24  internal constant DEF_FEE  = 5_000;     // 0.5 %
     uint32  internal constant START_TS = 1_000_000; // base timestamp
+
+    // Test addresses
+    address internal alice = makeAddr("alice");
 
     /* ------------------------------------------------------- */
     /*  setup                                                  */
@@ -125,17 +129,22 @@ contract TruncGeoOracleMultiTest is Test {
     /* ------------------------------------------------------------ *
      * 2. Governance mutators                                       *
      * ------------------------------------------------------------ */
-    function testOnlyGovernorSetMaxTicks() public {
-        vm.roll(block.number + 1);
-        oracle.setMaxTicksPerBlock(pid, 500);
+    // NOTE: governor setter path was removed; test deleted intentionally.
+
+    function testOnlyHookCanPushObservation() public {
+        vm.prank(alice);
+        vm.expectRevert(TruncGeoOracleMulti.OnlyHook.selector);
+        oracle.pushObservationAndCheckCap(pid, false);
     }
 
     /* ------------------------------------------------------------ *
      * 3. Auto-tune : too many CAPS → loosen cap                    *
      * ------------------------------------------------------------ */
     function _writeTwice() internal {
+        vm.prank(address(hook));
         oracle.pushObservationAndCheckCap(pid, false);
         vm.roll(block.number + 1); // avoid rate-limit guard
+        vm.prank(address(hook));
         oracle.pushObservationAndCheckCap(pid, false);
     }
 

@@ -87,64 +87,45 @@ contract DynamicFeeManagerTest is Test {
         vm.prank(address(fullRange));
         oracle.enableOracleForPool(poolKey);
 
+        // Governor override removed – rely on the default MTB set during enableOracleForPool
+
+        // Oracle auto-tune guard = 1 day; jump once so first tune is allowed
+        vm.warp(block.timestamp + 1 days + 1);
+
         // Initialize DFM for the pool
         (, int24 initialTick,,) = poolManager.getSlot0(poolId);
         vm.prank(address(this)); // Assuming deployer/governance can initialize
         dfm.initialize(poolId, initialTick);
-
-        // enable the pool in the oracle before any cap-setting
-        oracle.enablePool(
-            poolId,
-            oracle.getDefaultMaxTicksPerBlock(),   // use defaults
-            oracle.getDefaultDynamicFee()
-        );
     }
 
     /// @dev helper that updates the oracle's cap through its own setter
     function _setCap(PoolId pid, uint24 cap) internal {
         // TruncGeoOracleMulti is deployed with `address(this)` as governance,
         // therefore we can call the governance-only setter directly.
-        oracle.setMaxTicksPerBlock(pid, cap); // TruncGeoOracleMulti expects PoolId
-    }
-
-    function testCapMapping() external {
-        PoolId pid = PoolId.wrap(bytes32(uint256(1)));
-
-        CapTestCase[] memory cases = new CapTestCase[](4);
-        cases[0] = CapTestCase(42, 4200, "typical small cap");
-        cases[1] = CapTestCase(1000, 100000, "medium cap");
-        cases[2] = CapTestCase(16_777_215, 1_677_721_500, "uint24 upper-bound");
-        cases[3] = CapTestCase(1, 100, "minimum cap");
-
-        for (uint256 i; i < cases.length; ++i) {
-            CapTestCase memory tc = cases[i];
-            _setCap(pid, tc.cap);
-            assertEq(dfm.baseFeeFromCap(pid), tc.expectPpm, tc.note);
-        }
+        // Functionality removed: setMaxTicksPerBlock was deleted from TruncGeoOracleMulti
+        // This helper is now obsolete.
+        revert("_setCap called obsolete function"); // Add revert to catch lingering calls
     }
 
     function testInitializeIdempotent() public {
-        PoolId pid = PoolId.wrap(bytes32(uint256(1)));
-
-        // ensure a non-zero cap so the base-fee is > 0
-        _setCap(pid, 42);
+        // Test idempotency with default oracle cap
 
         // First initialization should succeed
-        dfm.initialize(pid, 0);
-        uint256 initialBaseFee = dfm.baseFeeFromCap(pid);
+        dfm.initialize(poolId, 0); // Use poolId from setUp
+        uint256 initialBaseFee = dfm.baseFeeFromCap(poolId); // Use poolId from setUp
 
         // Second initialization should not revert and should emit event with correct args
         vm.expectEmit(true, true, false, true);
-        emit AlreadyInitialized(pid);
-        dfm.initialize(pid, 0);
+        emit AlreadyInitialized(poolId); // Use poolId from setUp
+        dfm.initialize(poolId, 0); // Use poolId from setUp
 
         // Third initialization should behave the same way
         vm.expectEmit(true, true, false, true);
-        emit AlreadyInitialized(pid);
-        dfm.initialize(pid, 0);
+        emit AlreadyInitialized(poolId); // Use poolId from setUp
+        dfm.initialize(poolId, 0); // Use poolId from setUp
 
         // Verify state remained unchanged throughout
-        uint256 finalBaseFee = dfm.baseFeeFromCap(pid);
+        uint256 finalBaseFee = dfm.baseFeeFromCap(poolId); // Use poolId from setUp
         assertEq(finalBaseFee, initialBaseFee, "Base fee should remain unchanged after multiple inits");
         assertTrue(finalBaseFee > 0, "Base fee should remain set after multiple inits");
     }

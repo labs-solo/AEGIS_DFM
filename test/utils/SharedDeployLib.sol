@@ -2,6 +2,15 @@
 pragma solidity ^0.8.26;
 
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {ISpot} from "../../src/interfaces/ISpot.sol";
+
+// Imports needed for predictSpotHookAddressForTest
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
+import {IFullRangeLiquidityManager} from "../../src/interfaces/IFullRangeLiquidityManager.sol";
+import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol";
+import {IDynamicFeeManager} from "../../src/interfaces/IDynamicFeeManager.sol";
+import {Spot} from "../../src/Spot.sol";
 
 /** ----------------------------------------------------------------
  * @title SharedDeployLib
@@ -17,9 +26,22 @@ import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 
 library SharedDeployLib {
     /* ---------- public deployment salts (constant so tests agree) ------- */
-    bytes32 internal constant ORACLE_SALT = keccak256("ORACLE_DEPLOY_SALT");
-    bytes32 internal constant DFM_SALT    = keccak256("DYNAMIC_FEE_V1");
-    bytes32 internal constant SPOT_SALT   = keccak256("SPOT_DEPLOY_SALT");
+    // --------------------------------------------------------------------- //
+    //  Single-source constants for CREATE2 salts used across every test
+    // --------------------------------------------------------------------- //
+    bytes32 public constant ORACLE_SALT      = keccak256("TRUNC_GEO_ORACLE");
+    
+    /// @dev deprecated – kept so the selector hash stays constant for old tests
+    bytes32 internal constant _SPOT_SALT_DEPRECATED = keccak256("full-range-spot-hook");
+
+    /// @notice canonical salt for deterministic Spot hook deployments (v2+)
+    bytes32 internal constant SPOT_HOOK_SALT  = keccak256("full-range-spot-hook:v2");
+    
+    bytes32 public constant DFM_SALT         = keccak256("DYNAMIC_FEE_MANAGER");
+
+    // salt uses deployer so tests ≠ prod; keep predictable by forcing same address
+    // The tests impersonate `DEPLOYER_EOA`, so we hard-code that here:
+    address internal constant TEST_DEPLOYER = address(0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf);
 
     /* ---------- flags re-exported so tests don't need hard-coding ------- */
     uint24  public  constant POOL_FEE     = 3_000; // 0.30%
@@ -52,7 +74,7 @@ library SharedDeployLib {
         bytes32 salt,
         bytes memory bytecode,
         bytes memory constructorArgs
-    ) private view returns (bytes32 hash) {
+    ) internal view returns (bytes32 hash) {
         bytes memory all = abi.encodePacked(bytecode, constructorArgs);
         hash = keccak256(all);
         assembly {
@@ -90,7 +112,44 @@ library SharedDeployLib {
         }
         // Deterministic address may drift whenever byte-code changes.
         // Business invariant is that the deployed address is *non-zero*
-        // and correctly wired into hook & managers.
         require(addr != address(0), "Oracle deployment failed");
+    }
+
+    /// Derive salt **exactly** as before – tests and production infra rely on the
+    /// original deterministic addresses.  Namespacing is left for a future
+    /// migration; for now we return the raw userSalt.
+    function _deriveSalt(bytes32 userSalt, uint8 /*objectClass*/ ) internal pure returns (bytes32) {
+        return userSalt;
+    }
+
+    /// @notice Predicts the Spot hook address using the fixed TEST_DEPLOYER and known constructor args structure from ForkSetup
+    /// @param _poolManager PoolManager instance
+    /// @param _policyManager PolicyManager instance
+    /// @param _liquidityManager LiquidityManager instance
+    /// @param _oracle Oracle instance
+    /// @param _dynamicFeeManager DynamicFeeManager instance
+    /// @return predictedAddress The predicted deterministic address for the Spot hook
+    function predictSpotHookAddressForTest(
+        IPoolManager _poolManager,
+        IPoolPolicy _policyManager,
+        IFullRangeLiquidityManager _liquidityManager,
+        TruncGeoOracleMulti _oracle,
+        IDynamicFeeManager _dynamicFeeManager
+    ) internal view returns (address) {
+        bytes memory spotConstructorArgs = abi.encode(
+            _poolManager,
+            _policyManager,
+            _liquidityManager,
+            _oracle, // Pass the concrete type as used in ForkSetup
+            _dynamicFeeManager,
+            TEST_DEPLOYER // Use the hardcoded deployer for prediction
+        );
+        bytes memory hookCreationCode = type(Spot).creationCode;
+        return predictDeterministicAddress(
+            TEST_DEPLOYER, // Use the hardcoded deployer
+            SPOT_HOOK_SALT, // Use the modified salt
+            hookCreationCode,
+            spotConstructorArgs
+        );
     }
 } 

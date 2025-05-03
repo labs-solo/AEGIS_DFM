@@ -14,6 +14,11 @@ contract TruncGeoOracleMulti {
     using TruncatedOracle for TruncatedOracle.Observation[65535];
     using PoolIdLibrary for PoolKey;
 
+    // Custom errors
+    error OnlyHook();
+    error ObservationOverflow(uint16 cardinality);
+    error ObservationTooOld(uint32 time, uint32 target);
+
     event TickCapParamChanged(bytes32 indexed poolId, uint24 newMaxTicksPerBlock);
     event MaxTicksPerBlockUpdated(
         PoolId indexed poolId,
@@ -64,34 +69,13 @@ contract TruncGeoOracleMulti {
         hook = _hook; // Set immutable hook address
     }
 
-    /* ─────────────────── GOVERNANCE ACTIONS ──────────────────── */
-
-    /**
-     * @notice Sets the maximum tick movement per block for a specific pool.
-     * @dev Can only be called by the governance address.
-     * Rate-limits governance changes to prevent abuse.
-     * @param pid The PoolId of the pool to update.
-     * @param newMaxTicks The new maximum ticks per block value.
-     */
-    function setMaxTicksPerBlock(PoolId pid, uint24 newMaxTicks) external {
-        if (msg.sender != governance) revert Errors.AccessOnlyGovernance(msg.sender);
-
-        bytes32 id = PoolId.unwrap(pid);
-        if (states[id].cardinality == 0) revert Errors.OracleOperationFailed("setMaxTicksPerBlock", "Pool not enabled");
-
-        uint32 updateInterval = policy.getBaseFeeUpdateIntervalSeconds(pid);
-        uint32 lastUpdate = _lastMaxTickUpdate[pid];
-        if (block.timestamp < lastUpdate + updateInterval) {
-            revert Errors.RateLimited();
-        }
-
-        uint24 oldValue = maxTicksPerBlock[id];
-        maxTicksPerBlock[id] = newMaxTicks;
-        _lastMaxTickUpdate[pid] = uint32(block.timestamp);
-
-        emit TickCapParamChanged(id, newMaxTicks);
-        emit MaxTicksPerBlockUpdated(pid, oldValue, newMaxTicks, uint32(block.timestamp));
-    }
+    // ─────────────────────────────────────────────────────────────────────────────
+    // 🛑  Governor override removed (2025-05-02)
+    // ─────────────────────────────────────────────────────────────────────────────
+    /*  NOTE: Function intentionally deleted.
+        Any attempt to call it will now result in a compilation error.
+        If an emergency reset is ever required, stimulate CAP events to let the
+        feedback loop converge, or ship a one-off governance patch.           */
 
     /* ─────────────────── HOOK ACTIONS ────────────────────────── */
 
@@ -101,7 +85,7 @@ contract TruncGeoOracleMulti {
      * @param key The PoolKey of the pool to enable.
      */
     function enableOracleForPool(PoolKey calldata key) external {
-        if (msg.sender != hook) revert Errors.AccessNotAuthorized(msg.sender);
+        if (msg.sender != hook) revert OnlyHook();
         bytes32 id = PoolId.unwrap(key.toId());
         if (states[id].cardinality > 0) revert Errors.OracleOperationFailed("enableOracleForPool", "Already enabled");
 
@@ -126,7 +110,7 @@ contract TruncGeoOracleMulti {
         external
         returns (int24 tick, bool capped)
     {
-        if (msg.sender != hook) revert Errors.AccessNotAuthorized(msg.sender);
+        if (msg.sender != hook) revert OnlyHook();
         bytes32 id = PoolId.unwrap(pid);
         if (states[id].cardinality == 0) revert Errors.OracleOperationFailed("pushObservationAndCheckCap", "Pool not enabled");
 

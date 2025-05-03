@@ -79,6 +79,11 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         _dealAndApprove(token1, lpProvider, amount1);
         token0.approve(address(manager_), amount0);
         token1.approve(address(manager_), amount1);
+
+        // bootstrap not needed – oracle will learn MTB via CAP events
+
+        // Initialize DFM for the pool
+        (, int24 initialTick,,) = StateLibrary.getSlot0(manager_, poolKey.toId());
     }
 
     function test_compareDirectVsFRLM() public {
