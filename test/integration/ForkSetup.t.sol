@@ -28,7 +28,6 @@ import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol"; // Use Interface
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {Spot} from "src/Spot.sol";
-import {HookMiner} from "src/utils/HookMiner.sol";
 import {PriceHelper} from "./utils/PriceHelper.sol";
 import {PoolPolicyManager} from "src/PoolPolicyManager.sol";
 import {DefaultPoolCreationPolicy} from "src/DefaultPoolCreationPolicy.sol";
@@ -129,24 +128,21 @@ contract ForkSetup is Test {
 
     // Helper to safely create/select fork
     function _safeFork() internal returns (uint256 forkId) {
-        string memory rpcAlias = "unichain_mainnet";
-        uint256 forkBlock = 0;
-        if (vm.envExists("FORK_BLOCK_NUMBER")) {
-            forkBlock = vm.envUint("FORK_BLOCK_NUMBER");
-        }
+        string memory rpcAlias  = vm.envOr("FORK_RPC_ALIAS", string("unichain_mainnet"));
+        uint256 forkBlock       = vm.envOr("FORK_BLOCK_NUMBER", uint256(0));
         emit log_named_string("Selected fork RPC alias", rpcAlias);
-        emit log_named_uint("Selected fork block number", forkBlock);
+        emit log_named_uint   ("Selected fork block number", forkBlock);
 
-        if (forkBlock != 0) {
-            forkId = vm.createSelectFork(rpcAlias, forkBlock);
+        if (forkBlock > 0) {
+            forkId = vm.createSelectFork(rpcAlias, forkBlock); // Uses combined cheatcode
             if (forkId == 0) {
-                emit log_string("WARN: Failed to fork at specific block, falling back to latest.");
-                forkId = vm.createSelectFork(rpcAlias);
+                emit log("Block unavailable - falling back to latest");
             }
-        } else {
-            forkId = vm.createSelectFork(rpcAlias);
         }
-        require(forkId != 0, "Fork setup failed: vm.createSelectFork returned 0");
+        if (forkId == 0) { // If block was 0 initially, or fallback needed
+            forkId = vm.createSelectFork(rpcAlias); // Create/select latest block
+        }
+        require(forkId != 0, "Fork creation failed");
     }
 
     function setUp() public virtual {
@@ -225,10 +221,15 @@ contract ForkSetup is Test {
             IDynamicFeeManager(predictedDfmAddress), // Use predicted DFM address
             deployerEOA // Initial Owner
         );
-        address predictedHookAddress = SharedDeployLib.predictDeterministicAddress(
-            deployerEOA, SharedDeployLib.SPOT_HOOK_SALT, type(Spot).creationCode, spotConstructorArgs
+        // Use the dedicated prediction function from SharedDeployLib which handles salt mining/env vars
+        bytes32 minedSalt;
+        address predictedHookAddress; // Explicitly declare before assignment
+        (minedSalt, predictedHookAddress) = SharedDeployLib._spotHookSaltAndAddr(
+            deployerEOA, type(Spot).creationCode, spotConstructorArgs
         );
-        emit log_named_address("Predicted Spot Hook Address", predictedHookAddress);
+        emit log_named_address("Predicted Spot Hook Address (salt mined)", predictedHookAddress);
+        // Persist the mined salt so deploySpotHook can reuse it
+        vm.setEnv("SPOT_HOOK_SALT", vm.toString(minedSalt)); // Store the actual salt
 
         // --- Predict Oracle Address (using predicted Hook) ---
         bytes memory oracleConstructorArgs = abi.encode(
@@ -290,14 +291,12 @@ contract ForkSetup is Test {
 
         // --- DEPLOY Spot Hook with CREATE2 (using final args, MUST match oracle's required address) ---
         emit log_string("Deploying Spot hook via CREATE2...");
-        bytes memory hookCreationCode = type(Spot).creationCode;
-        address deployedHookAddress = SharedDeployLib.deployDeterministic(
-            SharedDeployLib.SPOT_HOOK_SALT, hookCreationCode, finalSpotConstructorArgs
+        address spot = SharedDeployLib.deploySpotHook(
+            poolManager, policyManager, liquidityManager, TruncGeoOracleMulti(address(oracle)), dynamicFeeManager, deployerEOA
         );
-        require(deployedHookAddress == requiredHook, "Deployed hook != required hook - CREATE2 salt mismatch in SharedDeployLib.SPOT_HOOK_SALT");
-        fullRange = Spot(payable(deployedHookAddress));
-        emit log_named_address("Spot hook deployed at:", deployedHookAddress);
-        actualHookAddress = deployedHookAddress;
+        require(spot != address(0), "spot-deploy-failed");
+        emit log_named_address("Spot hook deployed at:", spot);
+        actualHookAddress = spot;
 
         // --- Configure Contracts ---
         emit log_string("Configuring contracts...");
@@ -396,6 +395,9 @@ contract ForkSetup is Test {
         // --- Bootstrap Allowances & Fund Accounts ---
         _bootstrapPoolManagerAllowances();
         _fundTestAccounts();
+
+        // regression-guard: spot hook MUST be deployed and initialised
+        assertTrue(Spot(payable(spot)).isPoolInitialized(poolKey.toId()), "Spot not initialised");
 
         emit log_string("--- ForkSetup Complete ---");
     }

@@ -12,7 +12,8 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Spot} from "../src/Spot.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
-import {HookMiner} from "../src/utils/HookMiner.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
+import {SharedDeployLib} from "../test/utils/SharedDeployLib.sol";
 
 /**
  * @notice A script to debug Create2Deployer validation issues by emulating how Uniswap V4 validates hook addresses

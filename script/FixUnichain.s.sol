@@ -9,7 +9,7 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {Spot} from "../src/Spot.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
-import {HookMiner} from "../src/utils/HookMiner.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 
 // Script to fix the hook address mining for Unichain deployment
 contract FixUnichain is Script {
@@ -48,8 +48,8 @@ contract FixUnichain is Script {
         console.log("Using salt (decimal):", uint256(salt));
         console.log("Using salt (hex):", vm.toString(salt));
 
-        // Check if address is valid
-        bool isValid = HookMiner.verifyHookAddress(hookAddress, spotFlags);
+        // Verify the flags directly: (uint160(address) & FLAG_MASK) == flags
+        bool isValid = (uint160(hookAddress) & Hooks.ALL_HOOK_MASK) == spotFlags;
         console.log("Hook address is valid:", isValid);
 
         console.log("\nTo fix the DeployUnichainV4.s.sol script:");

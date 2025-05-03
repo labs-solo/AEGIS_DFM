@@ -16,7 +16,7 @@ import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
-import {HookMiner} from "../src/utils/HookMiner.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";

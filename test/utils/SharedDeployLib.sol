@@ -12,6 +12,10 @@ import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol";
 import {IDynamicFeeManager} from "../../src/interfaces/IDynamicFeeManager.sol";
 import {Spot} from "../../src/Spot.sol";
 
+import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
+import {Vm} from "forge-std/Vm.sol";
+
 /** ----------------------------------------------------------------
  * @title SharedDeployLib
  * @notice Tiny helper used by several fork-integration tests to
@@ -25,6 +29,8 @@ import {Spot} from "../../src/Spot.sol";
 ///      Remove this file once all branches use the new path.
 
 library SharedDeployLib {
+    Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
+
     /* ---------- public deployment salts (constant so tests agree) ------- */
     // --------------------------------------------------------------------- //
     //  Single-source constants for CREATE2 salts used across every test
@@ -34,9 +40,6 @@ library SharedDeployLib {
     /// @dev deprecated – kept so the selector hash stays constant for old tests
     bytes32 internal constant _SPOT_SALT_DEPRECATED = keccak256("full-range-spot-hook");
 
-    /// @notice canonical salt for deterministic Spot hook deployments (v2+)
-    bytes32 internal constant SPOT_HOOK_SALT  = keccak256("full-range-spot-hook:v2");
-    
     bytes32 public constant DFM_SALT         = keccak256("DYNAMIC_FEE_MANAGER");
 
     // salt uses deployer so tests ≠ prod; keep predictable by forcing same address
@@ -53,16 +56,19 @@ library SharedDeployLib {
     uint160 internal constant SPOT_HOOK_FLAGS =
         (Hooks.AFTER_INITIALIZE_FLAG |
          Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-         Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
          Hooks.BEFORE_SWAP_FLAG |
          Hooks.AFTER_SWAP_FLAG |
          Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG);
+
+    // convenience – same mask constant that v4‐core uses
+    function _FLAG_MASK() private pure returns (uint160) {
+        return uint160(Hooks.ALL_HOOK_MASK);
+    }
 
     function spotHookFlags() internal pure returns (uint160) {
         return uint160(
             Hooks.AFTER_INITIALIZE_FLAG |
             Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
             Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
             Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
@@ -108,11 +114,9 @@ library SharedDeployLib {
         bytes memory all = abi.encodePacked(bytecode, constructorArgs);
         assembly {
             addr := create2(0, add(all, 0x20), mload(all), salt)
-            if iszero(addr) { revert(0, 0) }
+            if iszero(addr) { revert(0, 0) } // Revert if deployment fails
         }
-        // Deterministic address may drift whenever byte-code changes.
-        // Business invariant is that the deployed address is *non-zero*
-        require(addr != address(0), "Oracle deployment failed");
+        require(addr != address(0), "CREATE2 deployment failed");
     }
 
     /// Derive salt **exactly** as before – tests and production infra rely on the
@@ -120,6 +124,36 @@ library SharedDeployLib {
     /// migration; for now we return the raw userSalt.
     function _deriveSalt(bytes32 userSalt, uint8 /*objectClass*/ ) internal pure returns (bytes32) {
         return userSalt;
+    }
+
+    /* ---------- unified salt/address finder (env → miner fallback) ------ */
+    function _spotHookSaltAndAddr(
+        address   deployer,
+        bytes     memory creationCode,
+        bytes     memory constructorArgs
+    ) internal view returns (bytes32 salt, address predicted) {
+        bytes memory fullInit = abi.encodePacked(creationCode, constructorArgs);
+
+        /* 1️⃣  honour explicit env override – keeps CI fully reproducible */
+        string memory raw = vm.envOr("SPOT_HOOK_SALT", string(""));
+        if (bytes(raw).length != 0) {
+            salt      = bytes32(vm.parseBytes(raw));
+            predicted = Create2.computeAddress(salt, keccak256(fullInit), deployer);
+
+            require(predicted.code.length == 0,
+                    "SharedDeployLib: env salt already in use");
+            require(uint160(predicted) & _FLAG_MASK() == SPOT_HOOK_FLAGS,
+                    "SharedDeployLib: env salt wrong hook-flags");
+            return (salt, predicted);
+        }
+
+        /* 2️⃣  otherwise mine a free salt that fits the flag pattern */
+        (predicted, salt) = HookMiner.find(
+            deployer,
+            SPOT_HOOK_FLAGS,
+            creationCode,
+            constructorArgs
+        );
     }
 
     /// @notice Predicts the Spot hook address using the fixed TEST_DEPLOYER and known constructor args structure from ForkSetup
@@ -140,16 +174,58 @@ library SharedDeployLib {
             _poolManager,
             _policyManager,
             _liquidityManager,
-            _oracle, // Pass the concrete type as used in ForkSetup
+            _oracle,
             _dynamicFeeManager,
-            TEST_DEPLOYER // Use the hardcoded deployer for prediction
+            TEST_DEPLOYER
+        );
+        ( , address predicted) =
+            _spotHookSaltAndAddr(TEST_DEPLOYER, type(Spot).creationCode, spotConstructorArgs);
+        return predicted;
+    }
+
+    /// @notice Deploys a new Spot hook instance via CREATE2
+    function deploySpotHook(
+        IPoolManager _poolManager,
+        IPoolPolicy _policyManager,
+        IFullRangeLiquidityManager _liquidityManager,
+        TruncGeoOracleMulti _oracle,
+        IDynamicFeeManager _dynamicFeeManager,
+        address _deployer
+    ) internal returns (address) {
+        address positions = address(IFullRangeLiquidityManager(payable(address(_liquidityManager))).positions());
+        if (positions == address(0)) revert("SharedDeployLib: positions-not-initialised");
+
+        bytes memory spotConstructorArgs = abi.encode(
+            _poolManager,
+            _policyManager,
+            _liquidityManager,
+            _oracle,
+            _dynamicFeeManager,
+            _deployer
         );
         bytes memory hookCreationCode = type(Spot).creationCode;
-        return predictDeterministicAddress(
-            TEST_DEPLOYER, // Use the hardcoded deployer
-            SPOT_HOOK_SALT, // Use the modified salt
+
+        // 🔒 REUSE the salt that was *already* mined during prediction:
+        // we rely on oracle.getHookAddress() == predicted earlier in ForkSetup.
+        bytes32 salt = vm.envOr("SPOT_HOOK_SALT", bytes32(0));
+        if (salt == bytes32(0)) revert("SharedDeployLib: missing SPOT_HOOK_SALT");
+
+        // recompute predicted with *final* init-code to double-check
+        address predicted = Create2.computeAddress(
+            salt,
+            keccak256(abi.encodePacked(hookCreationCode, spotConstructorArgs)),
+            _deployer
+        );
+
+        // Deploy – will revert automatically if some other tx used the salt
+        address deployed = deployDeterministic(
+            salt,
             hookCreationCode,
             spotConstructorArgs
         );
+
+        // sanity-check: constructor of `Spot` ensures flags; we double-check address match
+        assert(deployed == predicted);
+        return deployed;
     }
 } 

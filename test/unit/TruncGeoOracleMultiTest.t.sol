@@ -129,12 +129,25 @@ contract TruncGeoOracleMultiTest is Test {
     /* ------------------------------------------------------------ *
      * 2. Governance mutators                                       *
      * ------------------------------------------------------------ */
-    // NOTE: governor setter path was removed; test deleted intentionally.
-
     function testOnlyHookCanPushObservation() public {
-        vm.prank(alice);
-        vm.expectRevert(TruncGeoOracleMulti.OnlyHook.selector);
-        oracle.pushObservationAndCheckCap(pid, false);
+        address governor = address(this); // Assume governor is test contract for setup
+        int24 tick = 100;
+        bool capped = false;
+
+        // Revert expected when called directly (not by hook)
+        vm.expectRevert(abi.encodeWithSelector(Errors.AccessNotAuthorized.selector, governor));
+        oracle.pushObservationAndCheckCap(pid, capped);
+
+        // Should succeed when called via the hook
+        vm.startPrank(address(hook)); // only the authorised hook may push
+        // Note: Dummy hook doesn't have notifyOracleUpdate, call oracle directly for test
+        // In a real scenario, interaction would be via hook.notifyOracleUpdate
+        oracle.pushObservationAndCheckCap(pid, capped);
+        vm.stopPrank();
+
+        // Verify the observation was written
+        (int24 latestTick, ) = oracle.getLatestObservation(pid);
+        assertEq(latestTick, tick, "Observation tick mismatch after hook push");
     }
 
     /* ------------------------------------------------------------ *
