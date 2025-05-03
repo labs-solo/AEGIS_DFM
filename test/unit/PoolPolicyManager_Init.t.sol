@@ -4,13 +4,14 @@ pragma solidity 0.8.26;
 import "forge-std/Test.sol";
 import {PoolPolicyManager} from "src/PoolPolicyManager.sol";
 import {PoolId}            from "v4-core/src/types/PoolId.sol";
+import {IPoolPolicy}     from "src/interfaces/IPoolPolicy.sol"; // Import if using PolicyType enum
 
 contract PoolPolicyManagerInitTest is Test {
     PoolPolicyManager ppm;
 
     address constant OWNER         = address(0xBEEF);
     address constant FEE_COLLECTOR = address(0xFEE);
-    uint256 constant PROTOCOL_FEE  = 0.05e18;   // 5 % (scaled by 1e18)
+    uint256 constant PROTOCOL_FEE_PPM  = 50_000;   // 5 %
 
     uint24[] internal _tickSpacings;
 
@@ -23,7 +24,7 @@ contract PoolPolicyManagerInitTest is Test {
             OWNER,
             5_000,          // defaultDynamicFeePpm = 0.50 %
             _tickSpacings,
-            PROTOCOL_FEE,
+            PROTOCOL_FEE_PPM,
             FEE_COLLECTOR
         );
     }
@@ -50,7 +51,7 @@ contract PoolPolicyManagerInitTest is Test {
         assertEq(ppm.getDefaultDynamicFee() , 5_000);        // 0.50 %
         assertEq(ppm.defaultPolMultiplier() , 10);           // 10×
         assertEq(ppm.getTickScalingFactor() , 1);
-        assertEq(ppm.protocolInterestFeePercentage(), PROTOCOL_FEE);
+        assertEq(ppm.getProtocolFeePercentage(pid(0)), PROTOCOL_FEE_PPM); // Updated getter call
         assertEq(ppm.getFeeCollector()       , FEE_COLLECTOR);
     }
 
