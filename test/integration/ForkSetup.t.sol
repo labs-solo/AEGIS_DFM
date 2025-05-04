@@ -30,7 +30,6 @@ import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {Spot} from "src/Spot.sol";
 import {PriceHelper} from "./utils/PriceHelper.sol";
 import {PoolPolicyManager} from "src/PoolPolicyManager.sol";
-import {DefaultPoolCreationPolicy} from "src/DefaultPoolCreationPolicy.sol";
 import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "src/interfaces/IDynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
