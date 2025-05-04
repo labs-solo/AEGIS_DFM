@@ -116,7 +116,7 @@ library SharedDeployLib {
         bytes32 digest = keccak256(
             abi.encodePacked(bytes1(0xff), deployer, salt, codeHash)
         );
-        return address(uint160(uint256(digest))); // ← lower 20-bytes
+        return address(uint160(uint256(digest)));
     }
 
     /** @dev Performs CREATE2 deploy and returns the address. Reverts on failure */
@@ -164,7 +164,7 @@ library SharedDeployLib {
             )
         }
         if (addr == address(0)) revert SharedDeployLib__DeploymentFailed();
-        if (addr != predicted) revert("Deployed address != Recomputed address"); // Rule 28 guard
+        if (addr != predicted) revert("SharedDeploy: Deployed address mismatch"); // Rule 28 guard
     }
 
     /// Derive salt **exactly** as before – tests and production infra rely on the
