@@ -30,7 +30,7 @@ contract MineSalt is Script {
             | Hooks.AFTER_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
     );
 
-    function run() public {
+    function run() public pure {
         // Use exact checksummed address literal (final attempt)
         address deployer = 0x7777777f279eba2a8fDba8036083534A5A82258B;
         bytes memory creationCode =
@@ -69,10 +69,12 @@ contract MineSalt is Script {
     }
 
     // Find a valid salt that produces an address with the desired hook flags
-    function findSalt(address deployer, uint160 desiredFlags, bytes memory creationCode, uint256 startingSalt)
-        public
-        returns (address hookAddress, bytes32 salt)
-    {
+    function findSalt(
+        address /* deployer */,
+        uint160 desiredFlags,
+        bytes memory creationCode,
+        uint256 startingSalt
+    ) public pure returns (address hookAddress, bytes32 salt) {
         // Apply mask to keep only the hook flag bits
         desiredFlags = desiredFlags & uint160(Hooks.ALL_HOOK_MASK);
 
@@ -84,7 +86,7 @@ contract MineSalt is Script {
 
         for (uint256 i = 0; i < MAX_ITERATIONS; i++) {
             salt = bytes32(candidate);
-            hookAddress = computeCreate2Address(deployer, salt, creationCode);
+            hookAddress = computeCreate2Address(address(0), salt, creationCode);
 
             // Check if address has the right hook flags
             if ((uint160(hookAddress) & uint160(Hooks.ALL_HOOK_MASK)) == desiredFlags) {

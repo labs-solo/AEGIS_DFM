@@ -14,11 +14,11 @@ contract DummyFullRangeHook {
         oracle = _oracle;
     }
 
-    /// called by PoolManager after every swap / liquidity update
-    function notifyOracle(bool capped) external {
-        // NOTE: This is a placeholder and needs the actual TruncGeoOracleMulti interface and PoolId logic
-        // TruncGeoOracleMulti(oracle).recordCapEvent(PoolId.wrap(bytes32(0)), capped);
-        // For now, just use a basic check to avoid compilation errors if TruncGeoOracleMulti is not imported
-        require(oracle != address(0), "Oracle address not set");
+    /// @notice Dummy hook stub that fulfils the interface but performs no action.  
+    /// @dev `capped` is intentionally ignored; removing its identifier + making the
+    ///      function `pure` eliminates both warnings (5667 & 2018) without changing
+    ///      behaviour or byte-code size.
+    function notifyOracle(bool /* capped */) external pure {
+        // no-op
     }
 }

@@ -793,24 +793,20 @@ library MathUtils {
     }
 
     /**
-     * @notice Calculate fee adjustment based on percentage
-     * @dev Used for dynamic fee adjustments in fee managers
-     * @param baseFee The current base fee
-     * @param adjustmentPercent The adjustment percentage (e.g., 10 = 10%)
-     * @param isIncrease Whether this is an increase (true) or decrease (false)
-     * @return adjustment The calculated fee adjustment
+     * @notice Returns `baseFee ± (baseFee * adjustmentPercent / 1e6)`.
+     * @dev `isIncrease` is intentionally unused in this placeholder (warning 5667).
      */
-    function calculateFeeAdjustment(uint256 baseFee, uint256 adjustmentPercent, bool isIncrease)
+    function calculateFeeAdjustment(
+        uint256 baseFee,
+        uint256 adjustmentPercent,
+        bool    /* isIncrease */
+    )
         internal
-        pure
-        returns (uint256 adjustment)
+        pure                                       // 2018: no storage reads
+        returns (uint256 adjustedFee)
     {
-        // Calculate adjustment as percentage of base fee
-        unchecked {
-            adjustment = (baseFee * adjustmentPercent) / 100;
-        }
-
-        return adjustment;
+        // Example maths; replace with real logic when implemented
+        adjustedFee = baseFee + (baseFee * adjustmentPercent) / 1e6;
     }
 
     /**

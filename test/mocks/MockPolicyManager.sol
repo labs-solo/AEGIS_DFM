@@ -36,26 +36,9 @@ contract MockPolicyManager is IPoolPolicy {
     }
 
     // --- Functions already implemented (or deprecated) ---
-    function getBaseFeeStepPpm(PoolId) external pure override returns (uint32) {
-        return STEP;
-    } // Deprecated but present
-
-    function getMaxStepPpm(PoolId) external pure override returns (uint32) {
-        return STEP;
-    } // Deprecated but present
-
-    function getBaseFeeUpdateIntervalSeconds(PoolId) external pure override returns (uint32) {
-        return INTERVAL;
-    } // Deprecated but present
-
-    function getDefaultMaxTicksPerBlock(PoolId) external view override returns (uint24) {
-        return DEF_CAP;
-    }
-
-    function getDefaultDynamicFee() external view override returns (uint256) {
-        return DEF_FEE;
-    }
-
+    function getBaseFeeStepPpm(PoolId) external pure override returns (uint32) { return STEP; } // Deprecated but present
+    function getMaxStepPpm(PoolId) external pure override returns (uint32) { return STEP; } // Deprecated but present
+    function getBaseFeeUpdateIntervalSeconds(PoolId) external pure override returns (uint32) { return INTERVAL; } // Deprecated but present
     function isTickSpacingSupported(uint24 tickSpacing) external view override returns (bool) {
         return _tickSupported[tickSpacing];
     }
@@ -64,111 +47,49 @@ contract MockPolicyManager is IPoolPolicy {
         return _currencySupported[Currency.unwrap(currency)];
     }
 
+    function isValidVtier(uint24 fee, int24 spacing) external pure override returns (bool) {
+        return true; // Always valid in mock
+    }
+
     // --- Stubs for missing IPoolPolicy functions ---
-    function getSoloGovernance() external view override returns (address) {
-        return address(0);
-    }
-
-    function initializePolicies(PoolId, address, address[] calldata) external override {}
+    function getSoloGovernance() external pure override returns (address) { return address(0); }
+    function initializePolicies(PoolId, address, address[] calldata) external override {} 
     function handlePoolInitialization(PoolId, PoolKey calldata, uint160, int24, address) external override {}
-
-    function getPolicy(PoolId, PolicyType) external view override returns (address implementation) {
-        return address(0);
-    }
-
+    function getPolicy(PoolId, PolicyType) external pure override returns (address implementation) { return address(0); }
     function getFeeAllocations(PoolId)
         external
-        view
+        pure
         override
         returns (uint256 polShare, uint256 fullRangeShare, uint256 lpShare)
     {
         return (0, 0, 0);
     }
-
-    function getMinimumPOLTarget(PoolId, uint256, uint256) external view override returns (uint256) {
-        return 0;
-    }
-
-    function getMinimumTradingFee() external view override returns (uint256) {
-        return 0;
-    }
-
-    function getFeeClaimThreshold() external view override returns (uint256) {
-        return 0;
-    }
-
-    function getPoolPOLMultiplier(PoolId) external view override returns (uint256) {
-        return 0;
-    }
-
+    function getMinimumPOLTarget(PoolId, uint256, uint256) external pure override returns (uint256) { return 0; }
+    function getMinimumTradingFee() external pure override returns (uint256) { return 0; }
+    function getFeeClaimThreshold() external pure override returns (uint256) { return 0; }
+    function getPoolPOLMultiplier(PoolId) external pure override returns (uint256) { return 0; }
     function setFeeConfig(uint256, uint256, uint256, uint256, uint256, uint256) external override {}
     function setPoolPOLMultiplier(PoolId, uint32) external override {}
     function setDefaultPOLMultiplier(uint32) external override {}
     function setPoolPOLShare(PoolId, uint256) external override {}
     function setPoolSpecificPOLSharingEnabled(bool) external override {}
-
-    function getPoolPOLShare(PoolId) external view override returns (uint256) {
-        return 0;
-    }
-
-    function getTickScalingFactor() external view override returns (int24) {
-        return 0;
-    }
-
+    function getPoolPOLShare(PoolId) external pure override returns (uint256) { return 0; }
+    function getTickScalingFactor() external pure override returns (int24) { return 0; }
     function updateSupportedTickSpacing(uint24, bool) external override {}
     function batchUpdateAllowedTickSpacings(uint24[] calldata, bool[] calldata) external override {}
-
-    function isValidVtier(uint24, int24) external view override returns (bool) {
-        return true;
-    } // Assume valid for tests
-
-    function getProtocolFeePercentage(PoolId) external view override returns (uint256 feePercentage) {
-        return 0;
-    }
-
-    function getFeeCollector() external view override returns (address) {
-        return address(0);
-    }
-
-    function getSurgeDecayPeriodSeconds(PoolId) external view override returns (uint256) {
-        return 0;
-    }
-
-    function getTargetCapsPerDay(PoolId) external view override returns (uint32) {
-        return 0;
-    }
-
-    function getDailyBudgetPpm(PoolId) external view override returns (uint32) {
-        return 0;
-    }
-
-    function getCapBudgetDecayWindow(PoolId) external view override returns (uint32) {
-        return 0;
-    }
-
-    function getFreqScaling(PoolId) external view override returns (uint256) {
-        return 0;
-    }
-
-    function getMinBaseFee(PoolId) external view override returns (uint256) {
-        return 0;
-    }
-
-    function getMaxBaseFee(PoolId) external view override returns (uint256) {
-        return 0;
-    }
-
-    function getSurgeFeeMultiplierPpm(PoolId) external view override returns (uint24) {
-        return 0;
-    }
-
-    function getSurgeDecaySeconds(PoolId) external view override returns (uint32) {
-        return 0;
-    }
-
-    function getBudgetAndWindow(PoolId) external view override returns (uint32 budgetPerDay, uint32 decayPeriod) {
-        return (0, 0);
-    }
+    function isValidVtier(uint24, int24) external pure override returns (bool) { return true; } // Assume valid for tests
+    function getProtocolFeePercentage(PoolId) external pure override returns (uint256 feePercentage) { return 0; }
+    function getFeeCollector() external pure override returns (address) { return address(0); }
+    function getSurgeDecayPeriodSeconds(PoolId) external pure override returns (uint256) { return 0; }
+    function getTargetCapsPerDay(PoolId) external pure override returns (uint32) { return 0; }
+    function getDailyBudgetPpm(PoolId) external pure override returns (uint32) { return 0; }
+    function getCapBudgetDecayWindow(PoolId) external pure override returns (uint32) { return 0; }
+    function getFreqScaling(PoolId) external pure override returns (uint256) { return 0; }
+    function getMinBaseFee(PoolId) external pure override returns (uint256) { return 0; }
+    function getMaxBaseFee(PoolId) external pure override returns (uint256) { return 0; }
+    function getSurgeFeeMultiplierPpm(PoolId) external pure override returns (uint24) { return 0; }
+    function getSurgeDecaySeconds(PoolId) external pure override returns (uint32) { return 0; }
+    function getBudgetAndWindow(PoolId) external pure override returns (uint32 budgetPerDay, uint32 decayPeriod) { return (0,0); }
 
     // --- New functions ---
     function setFreqScaling(PoolId pid, uint32 scaling) external /*override*/ {
@@ -176,4 +97,12 @@ contract MockPolicyManager is IPoolPolicy {
     }
 
     function setBaseFeeParams(PoolId pid, uint32 stepPpm, uint32 updateIntervalSecs) external override {}
+
+    function getDefaultDynamicFee() external pure override returns (uint256) {
+        return DEF_FEE;
+    }
+
+    function getDefaultMaxTicksPerBlock(PoolId) external pure override returns (uint24) {
+        return DEF_CAP;
+    }
 }

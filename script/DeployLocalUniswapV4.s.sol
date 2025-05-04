@@ -179,7 +179,12 @@ contract DeployLocalUniswapV4 is Script {
     }
 
     // Update _deployFullRange to accept and use PoolId and governance
-    function _deployFullRange(address _deployer, PoolId _poolId, PoolKey memory _key, address _governance)
+    function _deployFullRange(
+        address _deployer,
+        PoolId /* _poolId */,
+        PoolKey memory /* _key */,
+        address _governance
+    )
         internal
         returns (Spot)
     {
@@ -252,15 +257,10 @@ contract DeployLocalUniswapV4 is Script {
     }
 
     function _onPoolCreated(
-        IPoolManager manager,
-        IPoolManager, /* manager */
-        PoolId _poolId,
-        PoolKey memory, /* _key */
-        uint160 sqrtPriceX96,
-        int24 tick
+        IPoolManager /* manager */,
+        uint160      /* sqrtPriceX96 */,
+        int24        /* tick */
     ) internal pure {
-        // console2.log(string.concat("Pool created: ", Strings.toHexString(uint256(PoolId.unwrap(_poolId))))); // Removed dependency on Strings
-        console2.log("Pool created with ID:"); // Simple alternative log
-        console2.logBytes32(PoolId.unwrap(_poolId)); // Log the bytes32 ID directly
+        // logging stripped; nothing else to do
     }
 }

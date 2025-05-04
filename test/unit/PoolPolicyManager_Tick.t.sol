@@ -119,11 +119,14 @@ contract PoolPolicyManager_Tick is Test {
     function testOwnerCanSetTickScalingFactor() public {
         // Check if current value matches desired value
         int24 prevFactor = ppm.getTickScalingFactor();
-        bool willEmit = (prevFactor != 3);
-
-        // Expect PolicySet event
-        EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.VTIER, address(uint160(3)), OWNER
+        assertNotEq(prevFactor, 3);
+        
+        vm.expectEmit(true, true, true, true);
+        emit PoolPolicyManager.PolicySet(
+            PoolId.wrap(bytes32(0)),
+            IPoolPolicy.PolicyType.TICK_SCALING,
+            address(uint160(uint256(int256(3)))),
+            OWNER
         );
 
         vm.prank(OWNER);

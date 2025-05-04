@@ -774,28 +774,46 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         return v != 0 ? v : _TARGET_CAPS_PER_DAY;
     }
 
-    function getDailyBudgetPpm(PoolId pid) external view virtual override returns (uint32) {
-        // Use default if per-pool is not set (using the new state var name)
-        uint32 budget = capBudgetDailyPpm; // Assuming capBudgetDailyPpm is now the default state var
-        // uint32 poolBudget = capBudgetByPoolId[pid]; // If there was a per-pool mapping
-        // return poolBudget == 0 ? budget : poolBudget;
-        return budget; // Simplified based on lack of per-pool mapping in latest code
+    function getDailyBudgetPpm(PoolId /* pid */)
+        external
+        view
+        virtual
+        override
+        returns (uint32)
+    {
+        return capBudgetDailyPpm;
     }
 
-    function getCapBudgetDecayWindow(PoolId pid) external view virtual override returns (uint32) {
-        // Use default if per-pool is not set (using the new state var name)
-        uint32 window = capBudgetDecayWindow; // Assuming capBudgetDecayWindow is the default state var
-        // uint32 poolWindow = decayWindowByPool[pid]; // If there was a per-pool mapping
-        // return poolWindow == 0 ? window : poolWindow;
-        return window; // Simplified based on lack of per-pool mapping in latest code
+    function getCapBudgetDecayWindow(PoolId /* pid */)
+        external
+        view
+        virtual
+        override
+        returns (uint32)
+    {
+        return capBudgetDecayWindow;
     }
 
     /**
      * @inheritdoc IPoolPolicy
+     * @dev All currencies are considered supported by default in this implementation.
      */
-    function isSupportedCurrency(Currency currency) external view override returns (bool) {
-        // Default implementation: all currencies are supported
+    function isSupportedCurrency(Currency /* currency */) external pure override returns (bool) {
         return true;
+    }
+
+    /**
+     * @notice Helper to get both budget and window values in a single call, saving gas
+     * @return budgetPerDay Daily budget in PPM
+     * @return decayWindow Decay window in seconds
+     */
+    function getBudgetAndWindow(PoolId /* poolId */)
+        external
+        view
+        returns (uint32 budgetPerDay, uint32 decayWindow)
+    {
+        budgetPerDay = capBudgetDailyPpm;
+        decayWindow = capBudgetDecayWindow;
     }
 
     /// -------------------------------------------------------------------
@@ -803,17 +821,6 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     /// -------------------------------------------------------------------
 
     event DailyBudgetSet(uint32 newBudget);
-
-    /**
-     * @notice Helper to get both budget and window values in a single call, saving gas
-     * @param id The PoolId to query
-     * @return budgetPerDay Daily budget in PPM
-     * @return decayWindow Decay window in seconds
-     */
-    function getBudgetAndWindow(PoolId id) external view returns (uint32 budgetPerDay, uint32 decayWindow) {
-        budgetPerDay = capBudgetDailyPpm;
-        decayWindow = capBudgetDecayWindow;
-    }
 
     /**
      * @inheritdoc IPoolPolicy

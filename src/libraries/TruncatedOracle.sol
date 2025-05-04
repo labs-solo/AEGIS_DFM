@@ -201,10 +201,13 @@ library TruncatedOracle {
     /// @param cardinality The number of populated elements in the oracle array
     /// @return beforeOrAt The observation which occurred at, or before, the given timestamp
     /// @return atOrAfter The observation which occurred at, or after, the given timestamp
-    function binarySearch(Observation[65535] storage self, uint32 time, uint32 target, uint16 index, uint16 cardinality)
-        private
-        returns (Observation memory beforeOrAt, Observation memory atOrAfter)
-    {
+    function binarySearch(
+        Observation[65535] storage self,
+        uint32 time,
+        uint32 target,
+        uint16 index,
+        uint16 cardinality
+    ) internal view returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
         uint256 l = (index + 1) % cardinality; // oldest observation
         uint256 r = l + cardinality - 1; // newest observation
         uint256 i;
