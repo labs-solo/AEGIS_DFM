@@ -147,9 +147,11 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(pid);
         
         // Validate parameters to ensure they meet safety requirements
-        require(pc.stepPpm != 0, "stepPpm=0");
-        require(pc.minCap  != 0, "minCap=0");
-        require(pc.maxCap  >= pc.minCap, "cap-bounds");
+        require(pc.stepPpm       != 0, "stepPpm=0");
+        require(pc.minCap        != 0, "minCap=0");
+        require(pc.maxCap        >= pc.minCap, "cap-bounds");
+        require(pc.decayWindow   >  0, "decayWindow=0");      // ← NEW
+        require(pc.updateInterval>  0, "updateInterval=0");   // ← NEW
         
         // Ensure current maxTicksPerBlock is within new min/max bounds
         uint24 currentCap = maxTicksPerBlock[id];
@@ -186,9 +188,11 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         pc.decayWindow    = policy.getCapBudgetDecayWindow(PoolId.wrap(id));
         pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(PoolId.wrap(id));
 
-        require(pc.stepPpm != 0, "stepPpm=0");
-        require(pc.minCap  != 0, "minCap=0");
-        require(pc.maxCap  >= pc.minCap, "cap-bounds");
+        require(pc.stepPpm       != 0, "stepPpm=0");
+        require(pc.minCap        != 0, "minCap=0");
+        require(pc.maxCap        >= pc.minCap, "cap-bounds");
+        require(pc.decayWindow   >  0, "decayWindow=0");      // ← NEW
+        require(pc.updateInterval>  0, "updateInterval=0");   // ← NEW
 
         // ---------- external read last (reduces griefing surface) ----------
         (, int24 initialTick,,) = StateLibrary.getSlot0(poolManager, PoolId.wrap(id));
@@ -445,10 +449,10 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         if (block.timestamp >= _lastMaxTickUpdate[pid] + updateInterval) {
             if (currentFreq > targetFreq) {
                 // Too frequent caps -> Increase maxTicksPerBlock (loosen cap)
-                _autoTuneMaxTicks(pid, true);
+                _autoTuneMaxTicks(pid, pc, true);  // re-use cached struct
             } else {
                 // Caps too rare -> Decrease maxTicksPerBlock (tighten cap)
-                _autoTuneMaxTicks(pid, false);
+                _autoTuneMaxTicks(pid, pc, false); // re-use cached struct
             }
         }
     }
@@ -460,13 +464,18 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @param pid The PoolId of the pool.
      * @param increase True to increase the cap, false to decrease.
      */
-    function _autoTuneMaxTicks(PoolId pid, bool increase) internal {
-        bytes32 id = PoolId.unwrap(pid);
-        uint24 currentCap = maxTicksPerBlock[id];
-        CachedPolicy storage pc = _policy[id];
-        uint32 stepPpm = pc.stepPpm;
-        uint24 minCap  = pc.minCap;
-        uint24 maxCap  = pc.maxCap;
+    /// @dev caller passes `pc` to avoid an extra SLOAD
+    function _autoTuneMaxTicks(
+        PoolId pid,
+        CachedPolicy storage pc,
+        bool increase
+    ) internal {
+        bytes32 id       = PoolId.unwrap(pid);
+        uint24 currentCap= maxTicksPerBlock[id];
+
+        uint32 stepPpm   = pc.stepPpm;
+        uint24 minCap    = pc.minCap;
+        uint24 maxCap    = pc.maxCap;
 
         // ── validate policy params on every tune to avoid DoS vectors ──────
         require(stepPpm != 0,      "TruncOracle: stepPpm=0");
