@@ -20,8 +20,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /* -------------------------------------------------------------------------- */
     /*                               Library constants                            */
     /* -------------------------------------------------------------------------- */
-    uint32 internal constant ONE_DAY = 86_400;
-    uint32 internal constant PPM     = 1_000_000;
+    /* seconds in one day (for readability) */
+    uint32  internal constant ONE_DAY_SEC  = 86_400;
+    /* parts-per-million constant */
+    uint32  internal constant PPM          = 1_000_000;
+    /* pre-computed ONE_DAY × PPM to avoid a mul on every cap event            *
+     * 86_400 * 1_000_000  ==  86 400 000 000  <  2¹²⁷ – safe for uint128      */
+    uint128 internal constant ONE_DAY_PPM  = 86_400 * 1_000_000;
 
     // Custom errors
     error OnlyHook();
@@ -49,7 +54,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         uint16 cardinalityNext;
     }
 
-    // Observations for each pool keyed by PoolId.
+    /* Observation rings – kept as a fixed-size array because the helper
+       library is specialised for `Observation[65535]`.                       */
     mapping(bytes32 => TruncatedOracle.Observation[65535]) public observations;
     mapping(bytes32 => ObservationState) public states;
 
@@ -91,7 +97,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
         // ---------- external read last (reduces griefing surface) ----------
         (, int24 initialTick,,) = StateLibrary.getSlot0(poolManager, PoolId.wrap(id));
-        observations[id].initialize(uint32(block.timestamp), initialTick);
+        TruncatedOracle.Observation[65535] storage obs = observations[id];
+        obs.initialize(uint32(block.timestamp), initialTick);
         states[id] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 1});
 
         // Clamp defaultCap inside the validated range
@@ -228,8 +235,12 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         if (!capOccurred && timeElapsed == 0) return;
 
         uint128 currentFreq = capFreq[id];
-        uint32  budgetPpm   = policy.getDailyBudgetPpm(pid);
-        uint32  decayWindow = policy.getCapBudgetDecayWindow(pid);
+        /* ------------------------------------------------------------------ *
+         * Cache policy parameters once – each call is an external SLOAD.
+         * ------------------------------------------------------------------ */
+        uint32  budgetPpm     = policy.getDailyBudgetPpm(pid);
+        uint32  decayWindow   = policy.getCapBudgetDecayWindow(pid);
+        uint32  updateInterval= policy.getBaseFeeUpdateIntervalSeconds(pid);
 
         // Decay the frequency counter
         if (timeElapsed > 0 && currentFreq > 0) {
@@ -245,8 +256,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
         // Add to frequency counter if CAP occurred
         if (capOccurred) {
-            // Add 1 day's worth of frequency (scaled by ppm)
-            currentFreq += uint128(ONE_DAY) * uint128(PPM);
+            // ONE_DAY_PPM == ONE_DAY_SEC × PPM (compile-time constant)
+            unchecked { currentFreq += ONE_DAY_PPM; }
         }
 
         capFreq[id] = currentFreq;
@@ -254,10 +265,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         // Check if auto-tuning is needed
         // Budget is per day, frequency counter is ppm-seconds
         // Target frequency = budgetPpm * (1 day / 1e6) = budgetPpm * 86.4 seconds
-        uint128 targetFreq = uint128(budgetPpm) * uint128(ONE_DAY); // ppm-seconds target
+        uint128 targetFreq = uint128(budgetPpm) * ONE_DAY_SEC; // ppm-seconds target
 
         // Only auto-tune if enough time has passed since last governance update
-        uint32 updateInterval = policy.getBaseFeeUpdateIntervalSeconds(pid);
         if (block.timestamp >= _lastMaxTickUpdate[pid] + updateInterval) {
             if (currentFreq > targetFreq) {
                 // Too frequent caps -> Increase maxTicksPerBlock (loosen cap)
@@ -299,7 +309,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         }
 
         if (newCap != currentCap) {
-            maxTicksPerBlock[id] = newCap;
+            maxTicksPerBlock[id]      = newCap;
             _lastMaxTickUpdate[pid] = uint32(block.timestamp); // Record auto-tune time
             emit MaxTicksPerBlockUpdated(pid, currentCap, newCap, uint32(block.timestamp));
         }
