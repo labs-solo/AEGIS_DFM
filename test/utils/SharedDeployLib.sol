@@ -161,6 +161,20 @@ library SharedDeployLib {
         assembly { onChainHash := keccak256(add(finalCopy, 0x20), mload(finalCopy)) }
         console2.log("onChainHash:");
         console2.logBytes32(onChainHash);
+        
+        // Calculate expected address manually to compare
+        bytes32 expectedAddressBytes = keccak256(abi.encodePacked(bytes1(0xff), deployer, _salt, onChainHash));
+        address expectedAddress = address(uint160(uint256(expectedAddressBytes)));
+        console2.log("Manual expectedAddress:");
+        console2.log(expectedAddress);
+        console2.log("Create2.computeAddress result:");
+        console2.log(predicted);
+        console2.log("deployer parameter:");
+        console2.log(deployer);
+        console2.log("address(this):");
+        console2.log(address(this));
+        console2.log("msg.sender:");
+        console2.log(msg.sender);
 
         // Assembly: copy salt into its own local before *any* other op
         assembly {
