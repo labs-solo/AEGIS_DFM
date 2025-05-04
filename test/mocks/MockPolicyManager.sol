@@ -33,6 +33,19 @@ contract MockPolicyManager is IPoolPolicy {
     /* ------------------------------------------------------------------ */
     mapping(uint24 => bool) private _tickSupported;
     mapping(address => bool) private _currencySupported;
+    
+    /* configurable per-pool parameters - all have sensible non-zero defaults */
+    struct Params {
+        uint256 minBaseFee;   // wei
+        uint256 maxBaseFee;   // wei
+        uint256 freqScaling;  // 1e18 = no-scale
+        uint32  stepPpm;
+        uint32  budgetPpm;
+        uint32  decayWindow;
+        uint32  updateInterval;
+        uint24  defaultMaxTicks;
+    }
+    mapping(PoolId => Params) internal _p;
 
     constructor() {
         // tick-spacing used in the test poolKey
@@ -43,9 +56,7 @@ contract MockPolicyManager is IPoolPolicy {
     }
 
     // --- Functions already implemented (or deprecated) ---
-    function getBaseFeeStepPpm(PoolId) external pure override returns (uint32) { return _STEP_PPM; }
     function getMaxStepPpm(PoolId) external pure override returns (uint32) { return _STEP_PPM; }
-    function getBaseFeeUpdateIntervalSeconds(PoolId) external pure override returns (uint32) { return _UPDATE_INTERVAL_SEC; }
     function isTickSpacingSupported(uint24 tickSpacing) external view override returns (bool) {
         return _tickSupported[tickSpacing];
     }
@@ -88,10 +99,6 @@ contract MockPolicyManager is IPoolPolicy {
     function getFeeCollector() external pure override returns (address) { return address(0); }
     function getSurgeDecayPeriodSeconds(PoolId) external pure override returns (uint256) { return 0; }
     function getTargetCapsPerDay(PoolId) external pure override returns (uint32) { return 0; }
-    function getCapBudgetDecayWindow(PoolId) external pure override returns (uint32) { return _DECAY_WINDOW_SEC; }
-    function getFreqScaling(PoolId) external pure override returns (uint256) { return 0; }
-    function getMinBaseFee(PoolId) external pure override returns (uint256) { return _MIN_BASE_FEE; }
-    function getMaxBaseFee(PoolId) external pure override returns (uint256) { return _MAX_BASE_FEE; }
     function getSurgeFeeMultiplierPpm(PoolId) external pure override returns (uint24) { return 0; }
     function getSurgeDecaySeconds(PoolId) external pure override returns (uint32) { return 0; }
     function getBudgetAndWindow(PoolId) external pure override returns (uint32 budgetPerDay, uint32 decayPeriod) { return (0,0); }
@@ -107,11 +114,45 @@ contract MockPolicyManager is IPoolPolicy {
         return _MAX_BASE_FEE;
     }
 
-    function getDefaultMaxTicksPerBlock(PoolId) external pure override returns (uint24) {
-        return _DEFAULT_MAX_TICKS;
+    /* ----------- setters for tests ----------- */
+    function setParams(PoolId id, Params calldata p) external {
+        _p[id] = p;
     }
 
-    function getDailyBudgetPpm(PoolId) external pure override returns (uint32) {
-        return _DAILY_BUDGET_PPM;
+    function setMinBaseFee(PoolId id, uint256 fee) external { _p[id].minBaseFee = fee; }
+    function setMaxBaseFee(PoolId id, uint256 fee) external { _p[id].maxBaseFee = fee; }
+
+    /* ----------- getters used by the oracle ----------- */
+    function getMinBaseFee(PoolId id) external view override returns (uint256) { 
+        return _p[id].minBaseFee != 0 ? _p[id].minBaseFee : 100; 
+    }
+    
+    function getMaxBaseFee(PoolId id) external view override returns (uint256) { 
+        return _p[id].maxBaseFee != 0 ? _p[id].maxBaseFee : 10_000; 
+    }
+    
+    function getBaseFeeStepPpm(PoolId id) external view override returns (uint32) { 
+        return _p[id].stepPpm != 0 ? _p[id].stepPpm : 50_000; 
+    }
+    
+    function getDailyBudgetPpm(PoolId id) external view override returns (uint32) { 
+        return _p[id].budgetPpm != 0 ? _p[id].budgetPpm : 100_000; 
+    }
+    
+    function getCapBudgetDecayWindow(PoolId id) external view override returns (uint32) { 
+        return _p[id].decayWindow != 0 ? _p[id].decayWindow : 86_400; 
+    }
+    
+    function getBaseFeeUpdateIntervalSeconds(PoolId id) external view override returns (uint32) { 
+        return _p[id].updateInterval != 0 ? _p[id].updateInterval : 600; 
+    }
+    
+    function getDefaultMaxTicksPerBlock(PoolId id) external view override returns (uint24) { 
+        return _p[id].defaultMaxTicks != 0 ? _p[id].defaultMaxTicks : 50; 
+    }
+
+    /* ----------- new selector needed by interface ----------- */
+    function getFreqScaling(PoolId id) external view override returns (uint256) {
+        return _p[id].freqScaling != 0 ? _p[id].freqScaling : 1e18; // 1.0 in 18-dec FP
     }
 }

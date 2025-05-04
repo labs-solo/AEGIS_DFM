@@ -90,7 +90,8 @@ contract DeployUnichainV4 is Script {
         truncGeoOracle = new TruncGeoOracleMulti(
             poolManager,
             policyManager,
-            address(fullRangeHook) // immutable binding
+            address(fullRangeHook),
+            msg.sender // Deployer as owner
         );
 
         // Optional: if hook needs to know oracle addr, redeploy / init

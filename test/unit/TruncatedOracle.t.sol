@@ -20,9 +20,9 @@ import {TickMoveGuard} from "../../src/libraries/TickMoveGuard.sol";
 /*                             Harness / shim                                */
 /* ------------------------------------------------------------------------- */
 contract OracleHarness {
-    using TruncatedOracle for TruncatedOracle.Observation[65535];
+    using TruncatedOracle for TruncatedOracle.Observation[512];
 
-    TruncatedOracle.Observation[65535] internal obs;
+    TruncatedOracle.Observation[512] internal obs;
 
     uint16 public index;
     uint16 public card;

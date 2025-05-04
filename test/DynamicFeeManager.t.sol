@@ -63,13 +63,27 @@ contract DynamicFeeManagerTest is Test {
         // Deploy DFM with corrected argument order: (policy, manager, owner)
         policyManager = new MockPolicyManager(); // Deploy MockPolicyManager FIRST
 
+        // configure mock policy for this pool (same values as above)
+        MockPolicyManager.Params memory pp;
+        pp.minBaseFee      = 100;
+        pp.maxBaseFee      = 10_000;
+        pp.stepPpm         = 50_000;
+        pp.freqScaling     = 1e18;
+        pp.budgetPpm       = 100_000;
+        pp.decayWindow     = 86_400;
+        pp.updateInterval  = 600;
+        pp.defaultMaxTicks = 50;
+
+        // NB: poolKey/poolId are created later, so we temporarily create a dummy id
+
         // Deploy Dummy Hook first
         DummyFullRangeHook fullRange = new DummyFullRangeHook(address(0));
         // Deploy Oracle with hook address
         oracle = new TruncGeoOracleMulti(
             IPoolManager(address(poolManager)),
-            policyManager, // Now policyManager is deployed
-            address(fullRange) // hook address
+            policyManager,                 // policy contract
+            address(fullRange),      // authorised hook
+            address(this)            // owner / governance
         );
         // Set oracle address on hook (if needed by tests)
         // fullRange.setOracle(address(oracle));
@@ -89,6 +103,9 @@ contract DynamicFeeManagerTest is Test {
             hooks: IHooks(address(fullRange))
         });
         poolId = poolKey.toId();
+
+        // Update policy params for the real poolId
+        policyManager.setParams(poolId, pp);
 
         // Enable oracle for the pool
         vm.prank(address(fullRange));

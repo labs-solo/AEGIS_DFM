@@ -89,7 +89,7 @@ library TruncatedOracle {
     /// @param tick The current tick at initialization
     /// @return cardinality The number of populated elements in the oracle array
     /// @return cardinalityNext The new length of the oracle array, independent of population
-    function initialize(Observation[65535] storage self, uint32 time, int24 tick)
+    function initialize(Observation[512] storage self, uint32 time, int24 tick)
         internal
         returns (uint16 cardinality, uint16 cardinalityNext)
     {
@@ -115,7 +115,7 @@ library TruncatedOracle {
     /// @return indexUpdated The new index of the most recently written element in the oracle array
     /// @return cardinalityUpdated The new cardinality of the oracle array
     function write(
-        Observation[65535] storage self,
+        Observation[512] storage self,
         uint16 index,
         uint32 blockTimestamp,
         int24 tick,
@@ -174,7 +174,7 @@ library TruncatedOracle {
     /// @param next The proposed next cardinality which will be populated in the oracle array
     /// @return next The next cardinality which will be populated in the oracle array
     function grow(
-        Observation[65535] storage self,
+        Observation[512] storage self,
         uint16 current,
         uint16 next
     ) internal returns (uint16) {
@@ -226,7 +226,7 @@ library TruncatedOracle {
     /// @return beforeOrAt The observation which occurred at, or before, the given timestamp
     /// @return atOrAfter The observation which occurred at, or after, the given timestamp
     function binarySearch(
-        Observation[65535] storage self,
+        Observation[512] storage self,
         uint32 time,
         uint32 target,
         uint16 index,
@@ -270,7 +270,7 @@ library TruncatedOracle {
     /// @return beforeOrAt The observation which occurred at, or before, the given timestamp
     /// @return atOrAfter The observation which occurred at, or after, the given timestamp
     function getSurroundingObservations(
-        Observation[65535] storage self,
+        Observation[512] storage self,
         uint32 time,
         uint32 target,
         int24 tick,
@@ -332,7 +332,7 @@ library TruncatedOracle {
     /// @return tickCumulatives The tick * time elapsed since the pool was first initialized, as of each secondsAgo
     /// @return secondsPerLiquidityCumulativeX128s The cumulative seconds / max(1, liquidity) since pool initialized
     function observe(
-        Observation[65535] storage self,
+        Observation[512] storage self,
         uint32 time,
         uint32[] calldata secondsAgos,
         int24 tick,
@@ -362,7 +362,7 @@ library TruncatedOracle {
     /// @return tickCumulative The tick * time elapsed since the pool was first initialized, as of secondsAgo
     /// @return secondsPerLiquidityCumulativeX128 The seconds / max(1, liquidity) since pool initialized
     function observeSingle(
-        Observation[65535] storage self,
+        Observation[512] storage self,
         uint32 time,
         uint32 secondsAgo,
         int24 tick,

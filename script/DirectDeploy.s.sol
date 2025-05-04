@@ -80,7 +80,8 @@ contract DirectDeploy is Script {
             truncGeoOracle = new TruncGeoOracleMulti(
                 IPoolManager(UNICHAIN_POOL_MANAGER),
                 policyManager,
-                address(fullRangeHook) // Hook Address
+                address(fullRangeHook),
+                msg.sender // Deployer as owner
             );
             // Assuming DummyFullRangeHook now has setOracle
             // fullRangeHook.setOracle(address(truncGeoOracle));

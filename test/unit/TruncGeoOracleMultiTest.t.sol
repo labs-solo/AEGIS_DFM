@@ -86,9 +86,29 @@ contract TruncGeoOracleMultiTest is Test {
         pid = poolKey.toId();
         console.log("PoolKey created with hooks address:", address(poolKey.hooks));
 
+        /* ------------------------------------------------------------------ *
+         *  Configure mock policy with non-zero params so oracle invariants   *
+         *  hold during enableOracleForPool().                                *
+         * ------------------------------------------------------------------ */
+        MockPolicyManager.Params memory p;
+        p.minBaseFee      = 100;      // 1 tick
+        p.maxBaseFee      = 10_000;   // 100 ticks
+        p.stepPpm         = 50_000;   // 5 %
+        p.freqScaling     = 1e18;     // no scaling
+        p.budgetPpm       = 100_000;  // 10 %
+        p.decayWindow     = 86_400;   // 1 day
+        p.updateInterval  = 600;      // 10 min
+        p.defaultMaxTicks = 50;
+        policy.setParams(pid, p);
+
         console.log("Deploying oracle...");
         // ── deploy oracle pointing to *this* hook ----------------------------------
-        oracle = new TruncGeoOracleMulti(IPoolManager(address(poolManager)), IPoolPolicy(address(policy)), address(hook));
+        oracle = new TruncGeoOracleMulti(
+            IPoolManager(address(poolManager)), 
+            IPoolPolicy(address(policy)), 
+            address(hook),
+            address(this) // Test contract as owner
+        );
         console.log("Oracle deployed at:", address(oracle));
 
         console.log("Setting oracle in hook...");
@@ -327,5 +347,68 @@ contract TruncGeoOracleMultiTest is Test {
 
         uint24 newCap = oracle.maxTicksPerBlock(idBytes);
         assertGt(newCap, startCap, "Cap should have loosened after frequent caps");
+    }
+
+    /* ------------------------------------------------------------ *
+     * 9.                     NEW TESTS                             *
+     * ------------------------------------------------------------ */
+
+    /// @notice Push >512 observations to prove the ring really pages
+    function testPagedRingStoresAcrossPages() public {
+        uint16 pushes = 530;                   // crosses page boundary (PAGE_SIZE = 512)
+        uint24 cap    = oracle.maxTicksPerBlock(PoolId.unwrap(pid));
+
+        for (uint16 i = 1; i <= pushes; ++i) {
+            // safe ladder-cast: uint24 -> uint256 -> int256 -> int24
+            poolManager.setTick(pid, int24(int256(uint256(cap) - 1))); // stay under cap
+            vm.warp(block.timestamp + 1);                     // guarantee new ts
+            vm.prank(address(hook));
+            oracle.pushObservationAndCheckCap(pid, false);
+        }
+
+        //  Bootstrap slot (index 0) + our `pushes` writes
+        (, uint16 cardinality,) = oracle.states(PoolId.unwrap(pid));
+        assertEq(
+            cardinality,
+            pushes + 1,
+            "cardinality wrong after multi-page growth (must include bootstrap slot)"
+        );
+
+        // ── latest observation must be the last one we wrote ──
+        (int24 tick,) = oracle.getLatestObservation(pid);
+        assertEq(
+            tick,
+            int24(int256(uint256(cap) - 1)),
+            "latest tick mismatch after paging"
+        );
+    }
+
+    /// @notice Owner can refresh the cached policy; cap is clamped into new bounds
+    function testPolicyRefreshAdjustsCap() public {
+        bytes32 idBytes = PoolId.unwrap(pid);
+        uint24 oldCap   = oracle.maxTicksPerBlock(idBytes);
+
+        //  set new *higher* minBaseFee so old cap is now too small
+        policy.setMinBaseFee(pid, (oldCap + 10) * 100); // oracle divides by 100
+
+        //  non-owner should fail
+        vm.prank(alice);
+        vm.expectRevert(TruncGeoOracleMulti.OnlyOwner.selector);
+        oracle.refreshPolicyCache(pid);
+
+        //  owner succeeds
+        vm.expectEmit(true, false, false, false);
+        emit TruncGeoOracleMulti.PolicyCacheRefreshed(pid);
+        oracle.refreshPolicyCache(pid);
+
+        uint24 newCap = oracle.maxTicksPerBlock(idBytes);
+        assertGt(newCap, oldCap, "cap should have been clamped up to new minCap");
+    }
+
+    /// non-owner cannot call refreshPolicyCache (revert tested above but isolated here)
+    function testPolicyRefreshOnlyOwner() public {
+        vm.prank(alice);
+        vm.expectRevert(TruncGeoOracleMulti.OnlyOwner.selector);
+        oracle.refreshPolicyCache(pid);
     }
 }
