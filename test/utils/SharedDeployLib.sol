@@ -176,6 +176,13 @@ library SharedDeployLib {
         console2.log("msg.sender:");
         console2.log(msg.sender);
 
+        // COMPUTED FIX: Calculate prediction using msg.sender instead of the passed deployer
+        // This addresses the context mismatch during CREATE2 execution
+        bytes32 fixedAddressBytes = keccak256(abi.encodePacked(bytes1(0xff), msg.sender, _salt, onChainHash));
+        address fixedPredicted = address(uint160(uint256(fixedAddressBytes)));
+        console2.log("Fixed prediction (using msg.sender):");
+        console2.log(fixedPredicted);
+        
         // Assembly: copy salt into its own local before *any* other op
         assembly {
             let tmpSalt := _salt        // Rule 30 – re-freeze
