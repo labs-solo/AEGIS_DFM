@@ -414,7 +414,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
     }
 
     // Debugging and Isolated tests remain mostly the same, no direct DFM interaction changes needed
-    function test_DebugLiquidityAmounts() public {
+    function test_DebugLiquidityAmounts() public view {
         // ... (no changes needed here unless it interacted with DFM directly)
         (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
         int24 tickSpacing = poolKey.tickSpacing;
@@ -611,7 +611,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         assertEq(surgeFinal, 0, "Surge fee not zero after full decay");
     }
 
-    function test_CheckPOLInitialState() public {
+    function test_CheckPOLInitialState() public view {
         // Check policy manager address (remains same)
         address polMgr = address(policyManager);
         assertTrue(polMgr != address(0));

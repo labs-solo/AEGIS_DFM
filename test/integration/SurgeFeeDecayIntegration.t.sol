@@ -144,7 +144,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         console2.log("CAP event triggered - Dynamic fee manager notified with capped=true");
     }
 
-    function test_initialSurgeIsZero() external {
+    function test_initialSurgeIsZero() external view {
         // Use new getter
         (uint256 baseFee, uint256 surgeFee) = dfm.getFeeState(pid);
         assertEq(surgeFee, 0, "surge must start at zero");

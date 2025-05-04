@@ -186,10 +186,10 @@ contract PoolPolicyManager_Fee is Test {
     /* ------------------------------------------------------------ */
     /*          5. Minimum POL target & multiplier hierarchy        */
     /* ------------------------------------------------------------ */
-    function testDefaultPOLTargetCalc() public {
-        uint256 liq = 2e18;
-        uint256 fee = 4_000; // 0.40 %
-        uint256 want = liq * fee * 10 / 1e12; // default multiplier 10
+    function testDefaultPOLTargetCalc() public view {
+        uint256 liq  = 2e18;
+        uint256 fee  = 4_000; // 0.40 %
+        uint256 want = liq * fee * 10 / 1e12;  // default multiplier 10
         assertEq(ppm.getMinimumPOLTarget(pid(7), liq, fee), want);
     }
 
