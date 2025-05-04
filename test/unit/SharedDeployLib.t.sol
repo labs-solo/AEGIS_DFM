@@ -12,6 +12,7 @@ contract SharedDeployLib_PredictEqDeploy is Test {
             address(this), SALT, code, args
         );
         address deployed = SharedDeployLib.deployDeterministic(
+            address(this),
             SALT, code, args
         );
         assertEq(predicted, deployed);

@@ -121,9 +121,10 @@ library SharedDeployLib {
 
     /** @dev Performs CREATE2 deploy and returns the address. Reverts on failure */
     function deployDeterministic(
-        bytes32 salt,
-        bytes memory bytecode,
-        bytes memory constructorArgs
+        address   deployer,            // NEW explicit executor  (Rule 29-ter)
+        bytes32   salt,
+        bytes     memory bytecode,
+        bytes     memory constructorArgs
     ) internal returns (address addr) {
         bytes memory frozenArgs = bytes(constructorArgs);
         bytes memory initCode   = abi.encodePacked(bytecode, frozenArgs);
@@ -136,14 +137,14 @@ library SharedDeployLib {
         console2.log("--- Predict Deterministic ---");
         console2.log("Deploy Salt:");        console2.logBytes32(_salt);
         console2.log("Deploy Code Hash:");   console2.logBytes32(codeHash);
-        console2.log("Deploy Executor:",     address(this));
+        console2.log("Deploy Executor:",     deployer);
 
         // ---- Rule 28: final deep-copy & re-hash -----------------
         bytes memory finalCopy = abi.encodePacked(initCode); // fresh copy
         bytes32 codeHashFinal  = keccak256(finalCopy);
         require(codeHashFinal == codeHash, "initCode mutated");
 
-        address predicted = Create2.computeAddress(_salt, codeHashFinal, address(this)); // Use finalHash here too
+        address predicted = Create2.computeAddress(_salt, codeHashFinal, deployer); // Use finalHash here too
 
         // Log predicted address (now safe)
         console2.log("Predicted Address:", predicted);
@@ -273,6 +274,7 @@ library SharedDeployLib {
 
         // Deploy – will revert automatically if some other tx used the salt
         address deployed = deployDeterministic(
+            address(this),
             salt,
             hookCreationCode,
             spotConstructorArgs

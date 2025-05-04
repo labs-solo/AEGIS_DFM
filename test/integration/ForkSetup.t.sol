@@ -351,6 +351,7 @@ contract ForkSetup is Test {
         // --- DEPLOY contracts via CREATE2 --------------------------------
         console2.log("Deploying Oracle via CREATE2...");
         address deployedOracleAddr = SharedDeployLib.deployDeterministic(
+            c2Deployer,
             ORACLE_SALT,
             type(TruncGeoOracleMulti).creationCode,
             oracleArgs                       // <<< single-source of truth
@@ -362,6 +363,7 @@ contract ForkSetup is Test {
         emit log_string("Deploying DFM via CREATE2...");
         dynamicFeeManager = IDynamicFeeManager(
             SharedDeployLib.deployDeterministic(
+                c2Deployer,
                 DFM_SALT,
                 type(DynamicFeeManager).creationCode,
                 dfmArgs                           // <<< reuse same args
