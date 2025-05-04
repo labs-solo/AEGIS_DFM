@@ -1,243 +1,127 @@
-# VENM: Dynamic Fee Hook for Uniswap V4
+# AEGIS Dynamic Fee Hook (DFM) for Uniswap V4
 
-VENM is a comprehensive system for managing dynamic fees and protocol-owned liquidity (POL) in Uniswap V4. It implements a sophisticated dual-component fee structure and automated POL reinvestment mechanism.
+> **Smart, self-tuning swap fees & protocol-owned liquidity on-chain.**
 
-## Documentation
+`aeGIS-dfm` is an opinionated toolkit that plugs directly into Uniswap V4 pools, replacing the static fee tier with a two-component dynamic fee and automatically compounding a slice of trading fees into protocol-owned liquidity (POL).
 
-For detailed understanding of the system, please refer to our documentation:
+Why you might care:
 
-- [Statement of Intended Behavior](docs/Statement_of_Intended_Behavior.md) - Complete overview of system components and their interactions
-- [Dynamic Fee Requirements](docs/Dynamic_Fee_Requirements.md) - Deep dive into the dynamic fee system implementation
-- [Protocol Owned Liquidity](docs/Protocol_Owned_Liquidity.md) - Detailed explanation of the POL system
-- [Integration Testing Plan](docs/Integration_Testing_Plan.md) - Comprehensive testing strategy
-- [Files Overview](docs/Files.md) - Directory structure and file purposes
+* **Security.** Sudden price shocks trigger an immediate _surge_ fee, discouraging oracle manipulation.
+* **Capital Efficiency.** In calm markets the _base_ fee self-tunes downward to stay competitive.
+* **Liquidity Depth.** A configurable share of fees is recycled into a full-range Uniswap position, deepening the book over time.
+* **100 % On-chain & Deterministic.** No external price feeds – all maths derive solely from pool ticks + block‐time.
 
-## Key Features
+---
 
-### Dynamic Fee System
+## 📖 Documentation Quick-Links
 
-The system implements a two-component fee structure:
-- **Base Fee**: Long-term component that adjusts based on market conditions
-- **Surge Fee**: Short-term component activated during high volatility periods
+| Audience | Read First | Purpose |
+|----------|-----------|---------|
+| **Auditors / Formal Reviewers** | [`docs/AEGIS_Statement_of_Intended_Behavior.md`](docs/AEGIS_Statement_of_Intended_Behavior.md) | Canonical description of expected run-time behavior ☑️ |
+| **Protocol Engineers** | One-pagers in [`docs/one_pagers/`](docs/one_pagers) | Storage layout, invariants & gas notes for each contract |
+| **Contributors / Devs** | This README | Setup & dev-loop |
 
-Key capabilities:
-- CAP (Capitalizable Adverse Price) event detection
-- Automatic fee adjustment based on market conditions
-- Linear surge fee decay after volatility events
-- Configurable tick scaling for price movement limits
+Additional deep-dives:
 
-### Protocol-Owned Liquidity (POL)
+* [`docs/Dynamic_Fee_Requirements.md`](docs/Dynamic_Fee_Requirements.md) – design rationale
+* [`docs/Protocol_Owned_Liquidity.md`](docs/Protocol_Owned_Liquidity.md) – POL maths & edge cases
+* [`docs/Integration_Testing_Plan.md`](docs/Integration_Testing_Plan.md) – how we test the invariants
 
-Automated system for growing protocol-controlled liquidity:
-- Configurable share of trading fees designated for POL
-- Automatic fee collection and queuing
-- Optimal reinvestment calculations based on pool ratios
-- Full-range liquidity position management
+---
 
-## Architecture
+## 🏗️ Project Layout (High-Level)
 
-### Core Components
-
-1. **Fee Management**
-   - `FullRangeDynamicFeeManager.sol`: Manages dynamic fee calculations
-   - `TruncatedOracle.sol`: Implements tick capping for manipulation protection
-   - `Spot.sol`: Hook contract handling fee application during swaps
-
-2. **POL System**
-   - `FeeReinvestmentManager.sol`: Handles POL fee extraction and reinvestment
-   - `FullRangeLiquidityManager.sol`: Manages protocol liquidity positions
-   - `PoolPolicyManager.sol`: Configures POL share and fee parameters
-
-### Supporting Libraries
-
-- `MathUtils.sol`: Mathematical utilities for fee and liquidity calculations
-- `SettlementUtils.sol`: Handles Uniswap V4 settlement operations
-- `TokenSafetyWrapper.sol`: Safe token operation utilities
-
-## Getting Started
-
-### Prerequisites
-
-- Foundry (Forge, Anvil, and Cast)
-- Solidity compiler 0.8.26
-- `pnpm` (Node.js package manager)
-
-### Installation: PNPM-Managed Dependencies
-
-This project uses `pnpm` to manage **all** dependencies, including Solidity libraries like Uniswap V4 Core, Periphery, Forge Std, etc. These are fetched directly from their respective repositories (or npm) and stored within the `node_modules` directory. There are no Git submodules or manually managed libraries in the `lib/` folder.
-
-1.  Clone the repository:
-    ```bash
-    git clone https://github.com/labs-solo/venm.git
-    cd venm
-    ```
-
-2.  Install all dependencies using pnpm:
-    ```bash
-    pnpm install -w # Fetches all JS and Solidity dependencies
-    ```
-    This command populates the `node_modules` directory and ensures `foundry` can find the necessary libraries via the remappings defined in `remappings.txt`.
-
-### Development Workflow
-
-All standard development tasks are managed via `pnpm` scripts which utilize Foundry commands internally.
-
-1.  **Build**: Compile the contracts using the dependencies in `node_modules`.
-    ```bash
-    pnpm run build
-    ```
-    (This runs `./scripts/build.sh`, which executes `pnpm install` then `forge build`)
-
-2.  **Test**: Run the test suite against the compiled contracts.
-    ```bash
-    pnpm run test
-    ```
-    (This runs `./scripts/test.sh`, which executes `pnpm install` then `forge test`)
-
-3.  **Format**: Format the Solidity code using Forge's formatter.
-    ```bash
-    pnpm run format
-    ```
-
-4.  **Clean**: Remove Foundry build artifacts (`cache/` and `out/`).
-    ```bash
-    pnpm run clean
-    ```
-
-### Testing Instructions
-
-Run the full test suite using the pnpm script:
-```bash
-pnpm run test
+```text
+contracts/
+├─ hooks/Spot.sol                 # central Uniswap V4 hook (fee router)
+├─ fee/DynamicFeeManager.sol      # base + surge fee engine
+├─ oracle/TruncGeoOracleMulti.sol # adaptive tick-cap oracle
+├─ policy/PoolPolicyManager.sol   # registry of risk parameters
+└─ pol/FullRangeLiquidityManager.sol # protocol-owned-liquidity vault
+scripts/                 # build / test / deploy helpers
+foundry.toml             # compiler + remappings
+package.json + pnpm-lock.yaml
 ```
 
-To run tests with gas reporting:
+---
+
+## 🚀 Getting Started
+
+### 1. Install Tooling
+
+| Tool | Purpose | Version |
+|------|---------|---------|
+| [pnpm](https://pnpm.io) | JS + Solidity dependency manager | ≥ 8.x |
+| [Foundry](https://github.com/foundry-rs/foundry) | Build / test Solidity | `forge --version` ≥ 0.2.0 |
+| `node` | required by pnpm | ≥ 18 |
+
 ```bash
+# macOS ex.
+brew install pnpm
+curl -L https://foundry.paradigm.xyz | bash && foundryup
+```
+
+### 2. Clone & Install
+
+```bash
+git clone https://github.com/labs-solo/venm.git    # repo still named venm for now
+cd venm
+pnpm install --workspace-root                      # fetches ALL deps incl. Uniswap v4 core
+```
+
+`pnpm install` populates `node_modules`; `forge` picks them up via `remappings.txt`. No submodules, no manual `lib/` juggling.
+
+### 3. Compile Contracts
+
+```bash
+pnpm run build    # wrapper around forge build
+```
+
+### 4. Run Tests
+
+```bash
+# fast unit + fuzz suite
+pnpm run test
+
+# with gas report
 forge test --gas-report -vvv
 ```
 
-### Build Process
+### 5. Format / Clean
 
-The build process relies entirely on the dependencies installed by `pnpm` into `node_modules`. `forge build` uses `remappings.txt` to locate these libraries.
-
-To perform a clean build:
 ```bash
-pnpm run clean && pnpm run build
+pnpm run format   # prettier solidity
+pnpm run clean    # nuke cache/ & out/
 ```
 
-### Deployment
+---
 
-#### Local Unichain Fork Development
+## 🔄  Local Fork Demo (Optional)
 
-1. Configure environment:
-   ```bash
-   # Copy example environment file
-   cp .env.example .env
-   
-   # Edit .env with your settings:
-   # UNICHAIN_RPC_URL=your_unichain_rpc_url
-   # PRIVATE_KEY=your_private_key
-   ```
+Spin up a persistent Anvil fork and deploy the full stack:
 
-2. Start a persistent fork of Unichain:
-   ```bash
-   # This will create a persistent fork and keep it running
-   ./persistent-fork.sh
-   ```
+```bash
+cp .env.example .env         # fill in RPC + key
+./persistent-fork.sh         # keeps the fork alive in background
+./deploy-to-unichain.sh      # or tailor with forge script ...
+```
 
-3. Deploy the system:
-   ```bash
-   # For direct deployment of all components
-   ./deploy-to-unichain.sh
-   
-   # Or for more granular control:
-   forge script script/DirectDeploy.s.sol --fork-url http://localhost:8545
-   ```
+After deployment run `./add-liquidity.sh` then `forge script script/C2DValidation.s.sol` to verify the system invariants on-chain.
 
-4. Add initial liquidity:
-   ```bash
-   # This script will add initial liquidity to test the system
-   ./add-liquidity.sh
-   ```
+---
 
-5. Run validation:
-   ```bash
-   # Validate the deployment and component interactions
-   forge script script/C2DValidation.s.sol --fork-url http://localhost:8545
-   ```
+## 🤝 Contributing
 
-#### Available Scripts
+PRs welcome!  Bug reports, test-cases, and gas-optimization suggestions are especially appreciated.  Please read the Statement of Intended Behavior first to ensure changes uphold published invariants.
 
-- `persistent-fork.sh`: Maintains a persistent fork of Unichain for development
-- `deploy-to-unichain.sh`: Deploys all components with proper configuration
-- `add-liquidity.sh`: Adds initial liquidity to test pools
-- `run-with-env.sh`: Helper for running scripts with environment variables
-- `run-tests.sh`: Runs the test suite against the fork
+---
 
-#### Deployment Scripts
+## 📜 License
 
-The repository includes several deployment-related scripts:
-
-- `DeployUnichainV4.s.sol`: Main deployment script for Unichain
-- `DirectDeploy.s.sol`: Alternative deployment approach
-- `FixUnichain.s.sol` and `FixUnichainHook.s.sol`: Scripts for fixing potential issues
-- `AnalyzeAddress.s.sol`: Analyzes deployed contract addresses
-- `C2DValidation.s.sol`: Validates the deployment and component interactions
-
-#### Troubleshooting Local Development
-
-1. **Fork Issues**
-   - If the fork becomes stale: `./persistent-fork.sh --reset`
-   - For RPC errors: Check your `UNICHAIN_RPC_URL` in `.env`
-
-2. **Deployment Failures**
-   - Check `deployed-addresses.txt` for the latest deployment
-   - Review `deployment-output.txt` for detailed logs
-   - Use `AnalyzeAddress.s.sol` to verify contract states
-
-3. **Validation Errors**
-   - Run `C2DValidation.s.sol` for detailed diagnostics
-   - Check component interactions and permissions
-   - Verify hook addresses and permissions
-
-4. **Common Solutions**
-   - Clear the fork: Delete `.anvil/` directory and restart fork
-   - Reset deployment: Remove `deployed-addresses.txt` and redeploy
-   - Check gas settings in `foundry.toml`
-
-## Security Features
-
-- Reentrancy protection on critical functions
-- Rate limiting for fee updates and POL processing
-- Configurable minimum intervals between operations
-- Emergency pause functionality for both systems
-- Safe token approval management
-
-## Fee Structure
-
-The protocol implements a dual-fee structure:
-
-1. **Dynamic Trading Fee**
-   - Base component: Long-term market adjustment
-   - Surge component: Short-term volatility response
-   - Bounded by configurable minimum and maximum values
-
-2. **Fee Distribution**
-   - LP Share: Configurable percentage to liquidity providers
-   - POL Share: Protocol's portion for reinvestment
-   - Governance-adjustable parameters
-
-## Contributing
-
-Contributions are welcome! Please read our documentation first to understand the system architecture.
-
-## License
-
-This project is licensed under the Business Source License 1.1 - see the LICENSE file for details.
+Business Source License 1.1 – see `LICENSE` for details.
 
 ## Acknowledgments
 
 - Uniswap V4 Core Team
 - OpenZeppelin
 - Solmate
-
