@@ -435,9 +435,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
                  *  can exceed 2⁶⁴ during the intermediate product.         *
                  * --------------------------------------------------------- */
                 uint128 decayed = uint128(currentFreq) * decayFactorPpm / PPM;
-                currentFreq = decayed > CAP_FREQ_MAX
-                    ? CAP_FREQ_MAX   // saturate instead of wrap at sentinel
-                    : uint64(decayed);
+                // ----- overflow-safe down-cast (≤ 5 LOC) -------------------------
+                if (decayed > type(uint64).max) {
+                    currentFreq = CAP_FREQ_MAX;
+                } else {
+                    uint64 d64 = uint64(decayed);
+                    currentFreq = d64 > CAP_FREQ_MAX ? CAP_FREQ_MAX : d64;
+                }
             }
         }
 
