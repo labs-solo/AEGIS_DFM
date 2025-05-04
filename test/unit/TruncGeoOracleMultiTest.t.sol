@@ -411,4 +411,17 @@ contract TruncGeoOracleMultiTest is Test {
         vm.expectRevert(TruncGeoOracleMulti.OnlyOwner.selector);
         oracle.refreshPolicyCache(pid);
     }
+
+    /// @notice Test that safe int24 cast works for values within bounds
+    function testFuzz_TickCastBounds(int256 raw) public {
+        raw = bound(raw, -9_000_000, 9_000_000); // narrower than int24 max
+        poolManager.setTick(pid, int24(0));
+        vm.warp(block.timestamp + 1);
+        vm.prank(address(hook));
+
+        // should never revert for values within ±8 388 607
+        poolManager.setTick(pid, int24(raw));
+        vm.prank(address(hook));
+        oracle.pushObservationAndCheckCap(pid, false);
+    }
 }

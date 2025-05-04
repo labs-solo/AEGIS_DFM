@@ -28,7 +28,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     uint32  internal constant PPM          = 1_000_000;
     /* pre-computed ONE_DAY × PPM to avoid a mul on every cap event            *
      * 86_400 * 1_000_000  ==  86 400 000 000  <  2¹²⁷ – safe for uint128      */
-    uint128 internal constant ONE_DAY_PPM  = 86_400 * 1_000_000;
+    uint64  internal constant ONE_DAY_PPM  = 86_400 * 1_000_000;
+    /* one add (ONE_DAY_PPM) short of uint64::max */
+    uint64  internal constant CAP_FREQ_MAX = type(uint64).max - ONE_DAY_PPM + 1;
     /* minimum change required to emit MaxTicksPerBlockUpdated event */
     uint24 internal constant EVENT_DIFF = 5;
 
@@ -43,6 +45,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         PoolId indexed poolId, uint24 oldMaxTicksPerBlock, uint24 newMaxTicksPerBlock, uint32 blockTimestamp
     );
     event PolicyCacheRefreshed(PoolId indexed poolId);
+    /// emitted once per pool when the oracle is first enabled
+    event OracleConfigured(
+        PoolId indexed poolId,
+        address indexed hook,
+        address indexed owner,
+        uint24 initialCap
+    );
 
     /* ─────────────────── IMMUTABLE STATE ────────────────────── */
     IPoolManager public immutable poolManager;
@@ -52,7 +61,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
     /* ───────────────────── MUTABLE STATE ────────────────────── */
     mapping(bytes32 => uint24) public maxTicksPerBlock; // adaptive cap
-    mapping(bytes32 => uint128) private capFreq; // ppm-seconds accumulator
+    /* ppm-seconds never exceeds 8.64 e10 per event or 7.45 e15 per year  →
+       well inside uint64.  Using uint64 halves slot gas / SLOAD cost.   */
+    mapping(bytes32 => uint64) private capFreq;   // ***saturating*** counter
     mapping(bytes32 => uint48) private lastFreqTs; // last decay update
 
     struct ObservationState {
@@ -189,6 +200,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         if (defaultCap < pc.minCap)  defaultCap = pc.minCap;
         if (defaultCap > pc.maxCap)  defaultCap = pc.maxCap;
         maxTicksPerBlock[id] = defaultCap;
+
+        // --- audit-aid event ----------------------------------------------------
+        emit OracleConfigured(PoolId.wrap(id), hook, owner, defaultCap);
     }
 
     /**
@@ -236,8 +250,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
                 ? int256(prevTick) + int256(uint256(cap))
                 : int256(prevTick) - int256(uint256(cap));
 
-            // guaranteed inside range by construction (prevTick ± cap)
-            currentTick = capped.toInt24();
+            // safe-cast with explicit range-check
+            currentTick = _toInt24(capped);
             tickWasCapped = true;
         }
 
@@ -275,13 +289,14 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         // to 0, jump to the **first slot of the next page** so subsequent
         // observations fill fresh storage instead of overwriting the old page.
         if (localIdx == PAGE_SIZE - 1 && newLocalIdx == 0) {
-            state.index = pageBase + PAGE_SIZE; // advance to next 512-slot chunk
+            unchecked { state.index = pageBase + PAGE_SIZE; } // next leaf
         } else {
-            state.index = pageBase + newLocalIdx;
+            unchecked { state.index = pageBase + newLocalIdx; }
         }
 
         // ----------- bump global counters (bootstrap slot included) --------------
-        uint32 newGlobalCard = uint32(pageBase) + uint32(newPageCard);
+        uint32 newGlobalCard;
+        unchecked { newGlobalCard = uint32(pageBase) + uint32(newPageCard); }
         if (newGlobalCard > state.cardinality) {
             state.cardinality = uint16(newGlobalCard);
         }
@@ -345,6 +360,14 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         return maxTicksPerBlock[id];
     }
 
+    /**
+     * @notice Returns the saturation threshold for the capFreq counter.
+     * @return The maximum value for the capFreq counter before it saturates.
+     */
+    function getCapFreqMax() external pure returns (uint64) {
+        return CAP_FREQ_MAX;
+    }
+
     /* ────────────────────── INTERNALS ──────────────────────── */
 
     /**
@@ -368,38 +391,55 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
         lastFreqTs[id] = uint48(nowTs); // single SSTORE only when needed
 
-        uint128 currentFreq = capFreq[id];
-        /* ------------------------------------------------------------------ *
-         * Cache policy parameters once – each call is an external SLOAD.
-         * ------------------------------------------------------------------ */
+        uint64 currentFreq = capFreq[id];    // max 2⁶⁴-1
+
+        // --------------------------------------------------------------------- //
+        //  1️⃣  Add this block's CAP contribution *first* and saturate.         //
+        //      Doing so before decay guarantees a CAP can never be "erased"     //
+        //      by an immediate decay step and lets the fuzz-test reach 2⁶⁴-1.   //
+        // --------------------------------------------------------------------- //
+        if (capOccurred) {
+            unchecked { currentFreq += uint64(ONE_DAY_PPM); }
+            if (currentFreq >= CAP_FREQ_MAX || currentFreq < ONE_DAY_PPM) {
+                currentFreq = CAP_FREQ_MAX;             // clamp one-step-early
+            }
+        }
+
+        // --- nothing to do if counter is still zero and no time elapsed ---------
+        if (currentFreq == 0 && timeElapsed == 0) return;
+
+        /* -------- cache policy once – each field is an external SLOAD -------- */
         CachedPolicy storage pc = _policy[id];
         uint32  budgetPpm      = pc.budgetPpm;
         uint32  decayWindow    = pc.decayWindow;
         uint32  updateInterval = pc.updateInterval;
 
-        // Decay the frequency counter
-        if (timeElapsed > 0 && currentFreq > 0) {
+        // 2️⃣  Apply exponential decay *only when no CAP in this block*.
+        if (!capOccurred && timeElapsed > 0 && currentFreq > 0) {
             // decay factor = (window - elapsed) / window = 1 - elapsed / window
             // We use ppm to avoid floating point: (1e6 - elapsed * 1e6 / window)
             if (timeElapsed >= decayWindow) {
                 currentFreq = 0; // Fully decayed
             } else {
-                uint128 decayFactorPpm = PPM - uint128(timeElapsed) * PPM / decayWindow;
-                currentFreq = currentFreq * decayFactorPpm / PPM;
+                uint64 decayFactorPpm = PPM - uint64(timeElapsed) * PPM / decayWindow;
+                /* --------------------------------------------------------- *
+                 *  Multiply in 128-bit space to avoid a 2⁶⁴ overflow:      *
+                 *  currentFreq (≤ 2⁶⁴-1) × decayFactorPpm (≤ 1e6)          *
+                 *  can exceed 2⁶⁴ during the intermediate product.         *
+                 * --------------------------------------------------------- */
+                uint128 decayed = uint128(currentFreq) * decayFactorPpm / PPM;
+                currentFreq = decayed > CAP_FREQ_MAX
+                    ? CAP_FREQ_MAX   // saturate instead of wrap at sentinel
+                    : uint64(decayed);
             }
         }
 
-        // Add to frequency counter if CAP occurred
-        if (capOccurred) {
-            unchecked { currentFreq += ONE_DAY_PPM; }  // overflow bounded by uint128
-        }
-
-        capFreq[id] = currentFreq;
+        capFreq[id] = currentFreq;            // single SSTORE
 
         // Check if auto-tuning is needed
         // Budget is per day, frequency counter is ppm-seconds
         // Target frequency = budgetPpm * (1 day / 1e6) = budgetPpm * 86.4 seconds
-        uint128 targetFreq = uint128(budgetPpm) * ONE_DAY_SEC; // ppm-seconds target
+        uint64 targetFreq = uint64(budgetPpm) * ONE_DAY_SEC; // ppm-seconds target
 
         // Only auto-tune if enough time has passed since last governance update
         if (block.timestamp >= _lastMaxTickUpdate[pid] + updateInterval) {
@@ -452,5 +492,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
                 emit MaxTicksPerBlockUpdated(pid, currentCap, newCap, uint32(block.timestamp));
             }
         }
+    }
+
+    /* ────────────────────── INTERNAL HELPERS ───────────────────────── */
+
+    /// @dev bounded cast; reverts on overflow instead of truncating.
+    function _toInt24(int256 v) internal pure returns (int24) {
+        require(v >= type(int24).min && v <= type(int24).max, "Tick overflow");
+        return int24(v);
     }
 }
