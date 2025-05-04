@@ -6,7 +6,7 @@
 
 Why you might care:
 
-* **Security.** Sudden price shocks trigger an immediate _surge_ fee, discouraging oracle manipulation.
+* **Higher Fees.** Sudden price shocks trigger an immediate _surge_ fee, enabling LPs to capitalize on volatility.
 * **Capital Efficiency.** In calm markets the _base_ fee self-tunes downward to stay competitive.
 * **Liquidity Depth.** A configurable share of fees is recycled into a full-range Uniswap position, deepening the book over time.
 * **100 % On-chain & Deterministic.** No external price feeds – all maths derive solely from pool ticks + block‐time.
