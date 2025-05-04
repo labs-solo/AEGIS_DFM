@@ -11,6 +11,7 @@ import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {Errors} from "./errors/Errors.sol";
+import {PolicyValidator} from "./libraries/PolicyValidator.sol";
 
 contract TruncGeoOracleMulti is ReentrancyGuard {
     /* ========== paged ring – each "leaf" holds 512 observations ========== */
@@ -55,14 +56,17 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
     /* ────────────────────── LIB-LEVEL HELPERS ─────────────────────── */
 
-    /// @dev Centralised validator for policy parameters – prevents code drift.
-    function _validatePolicy(CachedPolicy storage pc) internal view {
-        require(pc.stepPpm        != 0 && pc.stepPpm   <= PPM, "stepPpm-range");
-        require(pc.budgetPpm      != 0 && pc.budgetPpm <= PPM, "budgetPpm-range");
-        require(pc.minCap         != 0,                     "minCap=0");
-        require(pc.maxCap         >= pc.minCap,             "cap-bounds");
-        require(pc.decayWindow    >  0,                     "decayWindow=0");
-        require(pc.updateInterval >  0,                     "updateInterval=0");
+    /// @dev Shorthand wrapper that forwards storage-struct fields to the library
+    ///      (keeps calling-site tidy without another memory copy).
+    function _validatePolicy(CachedPolicy storage pc) internal pure {
+        PolicyValidator.validate(
+            pc.minCap,
+            pc.maxCap,
+            pc.stepPpm,
+            pc.budgetPpm,
+            pc.decayWindow,
+            pc.updateInterval
+        );
     }
 
     /* ─────────────────── IMMUTABLE STATE ────────────────────── */
@@ -247,10 +251,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /// @notice Record a new observation and return whether the tick delta
     ///         exceeded the adaptive cap (and was therefore clamped).
     /// @param  pid Pool identifier
-    /// @param  _zeroForOne unused – kept for future compatibility
     /// @return tickWasCapped True if the move hit the cap
     /// -----------------------------------------------------------------------
-    function pushObservationAndCheckCap(PoolId pid, bool /* _zeroForOne */)
+    function pushObservationAndCheckCap(PoolId pid, bool /* unused swap direction */)
         external
         nonReentrant
         returns (bool tickWasCapped)
@@ -493,7 +496,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         capFreq[id] = currentFreq;            // single SSTORE
 
         // Only auto-tune if enough time has passed since last governance update
-        if (block.timestamp >= _lastMaxTickUpdate[pid] + updateInterval) {
+        // and auto-tune is not paused for this pool
+        if (!_autoTunePaused[pid] && block.timestamp >= _lastMaxTickUpdate[pid] + updateInterval) {
             // Target frequency = budgetPpm × 86 400 sec (computed only when needed)
             uint64 targetFreq = uint64(budgetPpm) * ONE_DAY_SEC;
             if (currentFreq > targetFreq) {
@@ -558,5 +562,23 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     function _toInt24(int256 v) internal pure returns (int24) {
         require(v >= type(int24).min && v <= type(int24).max, "Tick overflow");
         return int24(v);
+    }
+
+    /* ───────────────────── Emergency pause ────────────────────── */
+    /// @notice Emitted when the governor toggles the auto-tune circuit-breaker.
+    event AutoTunePaused(PoolId indexed poolId, bool paused, uint32 timestamp);
+
+    /// @dev circuit-breaker flag per pool (default: false = auto-tune active)
+    mapping(PoolId => bool) private _autoTunePaused;
+
+    /**
+     * @notice Pause or un-pause the adaptive cap algorithm for a pool.
+     * @param pid       Target pool id.
+     * @param paused    True to disable auto-tune, false to resume.
+     */
+    function setAutoTunePaused(PoolId pid, bool paused) external {
+        if (msg.sender != owner) revert OnlyOwner();
+        _autoTunePaused[pid] = paused;
+        emit AutoTunePaused(pid, paused, uint32(block.timestamp));
     }
 }
