@@ -355,7 +355,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
 
         // Notify oracle of a non-cap event
         vm.prank(address(oracle));
-        dfm.notifyOracle(pid, false);
+        dfm.notifyOracleUpdate(pid, false);
 
         // The inCap flag should still be true since decay is not complete
         bool inCapAfterNonCap = dfm.isCAPEventActive(pid);
@@ -420,7 +420,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
 
         // Notify oracle of a non-cap event
         vm.prank(address(oracle));
-        dfm.notifyOracle(pid, false);
+        dfm.notifyOracleUpdate(pid, false);
 
         // The inCap flag should still be true since decay is not complete
         bool inCapAfterNonCap = dfm.isCAPEventActive(pid);

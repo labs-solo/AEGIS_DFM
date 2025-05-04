@@ -77,7 +77,6 @@ contract MockPolicyManager is IPoolPolicy {
     function getTickScalingFactor() external pure override returns (int24) { return 0; }
     function updateSupportedTickSpacing(uint24, bool) external override {}
     function batchUpdateAllowedTickSpacings(uint24[] calldata, bool[] calldata) external override {}
-    function isValidVtier(uint24, int24) external pure override returns (bool) { return true; } // Assume valid for tests
     function getProtocolFeePercentage(PoolId) external pure override returns (uint256 feePercentage) { return 0; }
     function getFeeCollector() external pure override returns (address) { return address(0); }
     function getSurgeDecayPeriodSeconds(PoolId) external pure override returns (uint256) { return 0; }

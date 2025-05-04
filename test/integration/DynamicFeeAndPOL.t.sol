@@ -305,11 +305,12 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         vm.startPrank(user1);
         swapRouter.swap(
             poolKey,
-            IPoolManager.SwapParams({
+            SwapParams({
                 zeroForOne: zeroForOne,
                 amountSpecified: largeSwapAmount,
                 sqrtPriceLimitX96: limitSqrtP
             }),
+            PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}),
             ZERO_BYTES
         );
         vm.stopPrank();
@@ -328,11 +329,12 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         vm.startPrank(user1);
         swapRouter.swap(
             poolKey,
-            IPoolManager.SwapParams({
+            SwapParams({
                 zeroForOne: zeroForOne,
                 amountSpecified: largeSwapAmount,
                 sqrtPriceLimitX96: newPriceLimit
             }),
+            PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}),
             ZERO_BYTES
         );
         vm.stopPrank();
