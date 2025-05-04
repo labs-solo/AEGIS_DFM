@@ -424,4 +424,25 @@ contract TruncGeoOracleMultiTest is Test {
         vm.prank(address(hook));
         oracle.pushObservationAndCheckCap(pid, false);
     }
+
+    /* ------------------------------------------------------------ *
+     * 10. Fuzz regression for extreme policy params                *
+     * ------------------------------------------------------------ */
+    function testFuzz_PolicyValidation(uint24 minCap) public {
+        // stepPpm = 1e9  ➜ should revert (out of 1e6 range)
+        // build a fresh params struct (MockPolicyManager has no getter)
+        MockPolicyManager.Params memory p;
+        p.minBaseFee      = uint256(minCap == 0 ? 1 : minCap) * 100;
+        p.maxBaseFee      = 10_000;          // sane default
+        p.stepPpm         = 1_000_000_000;   // invalid (>1 e6) triggers revert
+        p.freqScaling     = 1e18;
+        p.budgetPpm       = 0;               // invalid (0) triggers revert
+        p.decayWindow     = 86_400;
+        p.updateInterval  = 600;
+        p.defaultMaxTicks = 50;
+        policy.setParams(pid, p);
+
+        vm.expectRevert("stepPpm-range");
+        oracle.refreshPolicyCache(pid);  // validation should trigger in helper
+    }
 }

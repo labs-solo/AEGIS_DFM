@@ -53,6 +53,18 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         uint24 initialCap
     );
 
+    /* ────────────────────── LIB-LEVEL HELPERS ─────────────────────── */
+
+    /// @dev Centralised validator for policy parameters – prevents code drift.
+    function _validatePolicy(CachedPolicy storage pc) internal view {
+        require(pc.stepPpm        != 0 && pc.stepPpm   <= PPM, "stepPpm-range");
+        require(pc.budgetPpm      != 0 && pc.budgetPpm <= PPM, "budgetPpm-range");
+        require(pc.minCap         != 0,                     "minCap=0");
+        require(pc.maxCap         >= pc.minCap,             "cap-bounds");
+        require(pc.decayWindow    >  0,                     "decayWindow=0");
+        require(pc.updateInterval >  0,                     "updateInterval=0");
+    }
+
     /* ─────────────────── IMMUTABLE STATE ────────────────────── */
     IPoolManager public immutable poolManager;
     IPoolPolicy public immutable policy;
@@ -146,12 +158,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         pc.decayWindow    = policy.getCapBudgetDecayWindow(pid);
         pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(pid);
         
-        // Validate parameters to ensure they meet safety requirements
-        require(pc.stepPpm       != 0, "stepPpm=0");
-        require(pc.minCap        != 0, "minCap=0");
-        require(pc.maxCap        >= pc.minCap, "cap-bounds");
-        require(pc.decayWindow   >  0, "decayWindow=0");      // ← NEW
-        require(pc.updateInterval>  0, "updateInterval=0");   // ← NEW
+        _validatePolicy(pc);
         
         // Ensure current maxTicksPerBlock is within new min/max bounds
         uint24 currentCap = maxTicksPerBlock[id];
@@ -188,11 +195,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         pc.decayWindow    = policy.getCapBudgetDecayWindow(PoolId.wrap(id));
         pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(PoolId.wrap(id));
 
-        require(pc.stepPpm       != 0, "stepPpm=0");
-        require(pc.minCap        != 0, "minCap=0");
-        require(pc.maxCap        >= pc.minCap, "cap-bounds");
-        require(pc.decayWindow   >  0, "decayWindow=0");      // ← NEW
-        require(pc.updateInterval>  0, "updateInterval=0");   // ← NEW
+        _validatePolicy(pc);
 
         // ---------- external read last (reduces griefing surface) ----------
         (, int24 initialTick,,) = StateLibrary.getSlot0(poolManager, PoolId.wrap(id));
@@ -395,7 +398,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
         lastFreqTs[id] = uint48(nowTs); // single SSTORE only when needed
 
-        uint64 currentFreq = capFreq[id];    // max 2⁶⁴-1
+        uint64 currentFreq = capFreq[id];    // 🔹 cached early SLOAD
 
         // --------------------------------------------------------------------- //
         //  1️⃣  Add this block's CAP contribution *first* and saturate.         //
@@ -413,7 +416,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         if (currentFreq == 0 && timeElapsed == 0) return;
 
         /* -------- cache policy once – each field is an external SLOAD -------- */
-        CachedPolicy storage pc = _policy[id];
+        CachedPolicy storage pc = _policy[id];              // 🔹 single SLOAD kept
         uint32  budgetPpm      = pc.budgetPpm;
         uint32  decayWindow    = pc.decayWindow;
         uint32  updateInterval = pc.updateInterval;
