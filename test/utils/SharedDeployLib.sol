@@ -165,6 +165,10 @@ library SharedDeployLib {
             )
         }
         if (addr == address(0)) revert SharedDeployLib__DeploymentFailed();
+        
+        // Add debug output for deployed address
+        console2.log("ADDR AFTER DEPLOY:", addr);
+        
         if (addr != predicted) revert("SharedDeploy: Deployed address mismatch"); // Rule 28 guard
     }
 
