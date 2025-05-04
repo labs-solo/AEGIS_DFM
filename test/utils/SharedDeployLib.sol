@@ -36,6 +36,9 @@ error SharedDeployLib__DeploymentFailed();
 library SharedDeployLib {
     Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
 
+    // Fixed deployer for certain internal operations
+    address internal constant TEST_DEPLOYER = address(0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf);
+
     /* ---------- public deployment salts (constant so tests agree) ------- */
     // --------------------------------------------------------------------- //
     //  Single-source constants for CREATE2 salts used across every test
@@ -90,8 +93,27 @@ library SharedDeployLib {
      *  Deterministic-address prediction (now **uses** the `deployer` arg) *
      * ------------------------------------------------------------------ */
 
+    function _computeCreate2(
+        address deployer,
+        bytes32 salt,
+        bytes32 codeHash
+    ) private pure returns (address) {
+        // EIP-1014:  address = keccak256(0xff ++ deployer ++ salt ++ hash))[12:]
+        bytes32 digest = keccak256(
+            abi.encodePacked(bytes1(0xff), deployer, salt, codeHash)
+        );
+        return address(uint160(uint256(digest))); // ← lower 20-bytes
+    }
+
+    /** @dev Predicts a CREATE2 address 
+     *  @param deployer The address which will deploy the contract
+     *  @param salt A 32-byte value used to create the contract address
+     *  @param bytecode The bytecode of the to-be-deployed contract
+     *  @param constructorArgs The constructor arguments for the contract
+     *  @return The predicted address of the contract
+     */
     function predictDeterministicAddress(
-        address /* _unusedDeployer */,
+        address deployer,
         bytes32 salt,
         bytes memory bytecode,
         bytes memory constructorArgs
@@ -104,19 +126,6 @@ library SharedDeployLib {
         console2.log("Predict Code Hash:"); console2.logBytes32(codeHash);
 
         return Create2.computeAddress(salt, codeHash, deployer);
-    }
-
-    /// @dev Minimal, dependency-free replica of EIP-1014 formula
-    function _computeCreate2(
-        address deployer,
-        bytes32 salt,
-        bytes32 codeHash
-    ) private pure returns (address) {
-        // EIP-1014:  address = keccak256(0xff ++ deployer ++ salt ++ hash))[12:]
-        bytes32 digest = keccak256(
-            abi.encodePacked(bytes1(0xff), deployer, salt, codeHash)
-        );
-        return address(uint160(uint256(digest)));
     }
 
     /** @dev Performs CREATE2 deploy and returns the address. Reverts on failure */
