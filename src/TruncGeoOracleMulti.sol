@@ -398,7 +398,15 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
         lastFreqTs[id] = uint48(nowTs); // single SSTORE only when needed
 
-        uint64 currentFreq = capFreq[id];    // 🔹 cached early SLOAD
+        /* ------------------------------------------------------------------ *
+         *  Combined SLOAD + compare (0.8.24 syntax) and ultra-cheap bail-out *
+         *  – if nothing accumulated *and* nothing happened this second we    *
+         *    return immediately, skipping the expensive policy read.        *
+         * ------------------------------------------------------------------ */
+        uint64 currentFreq;
+        if (((currentFreq = capFreq[id]) == 0) && !capOccurred && timeElapsed == 0) {
+            return; // ✅ short-circuit before pulling CachedPolicy
+        }
 
         // --------------------------------------------------------------------- //
         //  1️⃣  Add this block's CAP contribution *first* and saturate.         //
@@ -411,9 +419,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
                 currentFreq = CAP_FREQ_MAX;             // clamp one-step-early
             }
         }
-
-        // --- nothing to do if counter is still zero and no time elapsed ---------
-        if (currentFreq == 0 && timeElapsed == 0) return;
 
         /* -------- cache policy once – each field is an external SLOAD -------- */
         CachedPolicy storage pc = _policy[id];              // 🔹 single SLOAD kept
@@ -447,13 +452,10 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
         capFreq[id] = currentFreq;            // single SSTORE
 
-        // Check if auto-tuning is needed
-        // Budget is per day, frequency counter is ppm-seconds
-        // Target frequency = budgetPpm * (1 day / 1e6) = budgetPpm * 86.4 seconds
-        uint64 targetFreq = uint64(budgetPpm) * ONE_DAY_SEC; // ppm-seconds target
-
         // Only auto-tune if enough time has passed since last governance update
         if (block.timestamp >= _lastMaxTickUpdate[pid] + updateInterval) {
+            // Target frequency = budgetPpm × 86 400 sec (computed only when needed)
+            uint64 targetFreq = uint64(budgetPpm) * ONE_DAY_SEC;
             if (currentFreq > targetFreq) {
                 // Too frequent caps -> Increase maxTicksPerBlock (loosen cap)
                 _autoTuneMaxTicks(pid, pc, true);  // re-use cached struct
