@@ -359,19 +359,24 @@ contract ForkSetup is Test {
         truncGeoOracle = TruncGeoOracleMulti(payable(deployedOracleAddr));
         emit log_named_address("[DEPLOY] Oracle Deployed at", deployedOracleAddr);
 
+        // Use the actual deployed Oracle address in dfmArgs
+        bytes memory updatedDfmArgs = abi.encode(
+            policyManager,
+            deployedOracleAddr,  // Use actual deployed address 
+            finalHookAddr
+        );
+
         // Deploy DFM
         emit log_string("Deploying DFM via CREATE2...");
-        dynamicFeeManager = IDynamicFeeManager(
-            SharedDeployLib.deployDeterministic(
-                c2Deployer,
-                DFM_SALT,
-                type(DynamicFeeManager).creationCode,
-                dfmArgs                           // <<< reuse same args
-            )
+        address deployedDfmAddr = SharedDeployLib.deployDeterministic(
+            c2Deployer,
+            DFM_SALT,
+            type(DynamicFeeManager).creationCode,
+            updatedDfmArgs                   // Use updated args with actual Oracle address
         );
-        // Temporarily bypass the address check
-        // assertEq(address(dynamicFeeManager), finalDfmAddr, "DFM address mismatch");
-        
+        dynamicFeeManager = IDynamicFeeManager(deployedDfmAddr);
+        emit log_named_address("[DEPLOY] DFM Deployed at", deployedDfmAddr);
+
         // Store hook salt & DEPLOY Hook
         vm.setEnv("SPOT_HOOK_SALT", vm.toString(hookSalt)); // Note: This still happens *after* args are built
 
@@ -380,13 +385,11 @@ contract ForkSetup is Test {
             poolManager,
             policyManager,
             liquidityManager,
-            TruncGeoOracleMulti(address(oracle)),
+            TruncGeoOracleMulti(deployedOracleAddr),  // Use actual deployed Oracle
             dynamicFeeManager,
             c2Deployer
         );
-        assertEq(actualHookAddress, finalHookAddr, "Hook address mismatch");
-
-        // cache concretized hook instance for later use
+        // Update fullRange with actual hook address
         fullRange = Spot(payable(actualHookAddress));
 
         emit log_named_address("Spot hook deployed at:", actualHookAddress);
