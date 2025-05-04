@@ -9,6 +9,7 @@ pragma solidity ^0.8.26;
 
 import "forge-std/Test.sol";
 import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol";
+import {TruncatedOracle} from "../../src/libraries/TruncatedOracle.sol";
 import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
 import {TickMoveGuard} from "../../src/libraries/TickMoveGuard.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
@@ -26,7 +27,7 @@ import "forge-std/console.sol";
 /*  (only selectors the oracle touches are implemented).                   */
 /* ----------------------------------------------------------------------- */
 import {MockPolicyManager} from "mocks/MockPolicyManager.sol";
-import {MockPoolManager} from "mocks/MockPoolManager.sol";
+import {MockPoolManagerSettable as MockPoolManager} from "../mocks/MockPoolManagerSettable.sol";
 
 /* Mock PoolManager – implements **only** the getters the oracle touches.   */
 // Definition removed, now imported
@@ -66,7 +67,7 @@ contract TruncGeoOracleMultiTest is Test {
 
         console.log("Deploying hook...");
         // ── deploy hook FIRST ------------------------------------------------------
-        hook = new DummyFullRangeHook(address(0)); // single instantiation
+        hook = new DummyFullRangeHook(address(0));
         console.log("Hook deployed at:", address(hook));
 
         // Create mock tokens for the PoolKey *after* hook exists so we can embed it
@@ -87,9 +88,7 @@ contract TruncGeoOracleMultiTest is Test {
 
         console.log("Deploying oracle...");
         // ── deploy oracle pointing to *this* hook ----------------------------------
-        oracle = new TruncGeoOracleMulti(
-            IPoolManager(address(poolManager)), address(this), IPoolPolicy(address(policy)), address(hook)
-        );
+        oracle = new TruncGeoOracleMulti(IPoolManager(address(poolManager)), IPoolPolicy(address(policy)), address(hook));
         console.log("Oracle deployed at:", address(oracle));
 
         console.log("Setting oracle in hook...");
@@ -127,24 +126,28 @@ contract TruncGeoOracleMultiTest is Test {
      * 2. Governance mutators                                       *
      * ------------------------------------------------------------ */
     function testOnlyHookCanPushObservation() public {
-        address governor = address(this); // Assume governor is test contract for setup
-        int24 tick = 100;
+        int24 tickToSetInMock = 100;
+        int24 expectedTickAfterCap = 50; // Oracle's internal cap is 50
         bool capped = false;
 
+        // Seed the mock with the tick we expect the oracle to record *before* capping
+        poolManager.setTick(pid, tickToSetInMock);
+
         // Revert expected when called directly (not by hook)
-        vm.expectRevert(abi.encodeWithSelector(Errors.AccessNotAuthorized.selector, governor));
+        vm.expectRevert(TruncGeoOracleMulti.OnlyHook.selector);
         oracle.pushObservationAndCheckCap(pid, capped);
+
+        // --- Advance time before successful call ---
+        vm.warp(block.timestamp + 1);
 
         // Should succeed when called via the hook
         vm.startPrank(address(hook)); // only the authorised hook may push
-        // Note: Dummy hook doesn't have notifyOracleUpdate, call oracle directly for test
-        // In a real scenario, interaction would be via hook.notifyOracleUpdate
         oracle.pushObservationAndCheckCap(pid, capped);
         vm.stopPrank();
 
-        // Verify the observation was written
+        // Verify the observation was written (it should be the CAPPED value)
         (int24 latestTick,) = oracle.getLatestObservation(pid);
-        assertEq(latestTick, tick, "Observation tick mismatch after hook push");
+        assertEq(latestTick, expectedTickAfterCap, "Observation tick mismatch after hook push");
     }
 
     /* ------------------------------------------------------------ *
@@ -166,7 +169,23 @@ contract TruncGeoOracleMultiTest is Test {
      * 4. Rate-limit & step clamp – candidate inside band → skip    *
      * ------------------------------------------------------------ */
     function testAutoTuneSkippedInsideBand() public {
-        _writeTwice();
+        bytes32 idBytes = PoolId.unwrap(pid);
+        uint24 startCap = oracle.maxTicksPerBlock(idBytes);
+
+        // 1️⃣  stay just under the cap so no CAP event is registered
+        poolManager.setTick(pid, int24(startCap) - 1);
+        vm.warp(block.timestamp + 1);
+        vm.prank(address(hook));
+        oracle.pushObservationAndCheckCap(pid, false);
+
+        // 2️⃣  wait less than the update-interval and push again
+        vm.warp(block.timestamp + policy.getBaseFeeUpdateIntervalSeconds(pid) / 2);
+        poolManager.setTick(pid, int24(startCap) - 2);
+        vm.prank(address(hook));
+        oracle.pushObservationAndCheckCap(pid, false);
+
+        uint24 endCap = oracle.maxTicksPerBlock(idBytes);
+        assertEq(endCap, startCap, "Cap should remain unchanged when frequency is inside budget");
     }
 
     /* ------------------------------------------------------------ *
@@ -199,7 +218,114 @@ contract TruncGeoOracleMultiTest is Test {
     /* ------------------------------------------------------------ *
      * 7. Gas baseline demo                                         *
      * ------------------------------------------------------------ */
-    function testGasBaselineWritePath() public {
-        _writeTwice();
+    /// @dev Fuzz: every observation must be clamped to ±cap
+    function testFuzz_PushObservationWithinCap(int24 seedTick) public {
+        bytes32 idBytes = PoolId.unwrap(pid);
+        uint24 cap = oracle.maxTicksPerBlock(idBytes);
+
+        int24 boundedTick = int24(
+            bound(int256(seedTick), -int256(uint256(cap) * 2), int256(uint256(cap) * 2))
+        );
+        poolManager.setTick(pid, boundedTick);
+
+        vm.warp(block.timestamp + 1);
+        vm.prank(address(hook));
+        oracle.pushObservationAndCheckCap(pid, false);
+
+        (int24 latestTick,) = oracle.getLatestObservation(pid);
+        int24 absVal = latestTick >= 0 ? latestTick : -latestTick;
+        assertLe(uint256(uint24(absVal)), uint256(cap), "Observation exceeds cap");
+    }
+
+    function testPushObservationAndCheckCap_EnforcesMaxTicks() public {
+        // 1. Enable Oracle for the pool (already done in setUp)
+        bytes32 pidBytes = PoolId.unwrap(pid); // Define pidBytes
+
+        // 2. Check initial cap (should be > 0)
+        uint24 maxTicks = oracle.maxTicksPerBlock(pidBytes);
+        assertTrue(maxTicks > 0, "Max ticks should be initialized");
+
+        // 3. Set tick far above the cap
+        int24 overLimitTick = int24(maxTicks) + 100; // Go well over the limit
+        poolManager.setTick(pid, overLimitTick);
+
+        // --- Test capping logic ---
+        // Advance time to ensure observation is written
+        vm.warp(block.timestamp + 1);
+
+        // DEBUG: Log prevTick before the call
+        (int24 tickBefore,) = oracle.getLatestObservation(pid);
+        console.log("prevTick before capping call:", tickBefore);
+
+        // Expect the call via hook to succeed, but the tick to be capped
+        vm.startPrank(address(hook)); // Use the correct 'hook' variable
+        bool tickWasCapped = oracle.pushObservationAndCheckCap(pid, false);
+        vm.stopPrank();
+
+        assertTrue(tickWasCapped, "Tick SHOULD have been capped");
+
+        // Verify the observation was written with the CAPPED value
+        int24 expectedCappedTick = int24(maxTicks); // Tick should be capped at maxTicks
+        (int24 latestTick,) = oracle.getLatestObservation(pid); // Use getter for latest info
+
+        // Get the current state index to access the correct observation
+        (,uint16 currentIndex,) = oracle.states(pidBytes);
+        
+        // Verify using getLatestObservation instead, which should correctly return the capped value
+        (int24 observedTick,) = oracle.getLatestObservation(pid);
+        assertEq(observedTick, expectedCappedTick, "Latest observation tick should match capped value");
+
+        // --- Test logic when tick is UNDER cap ---
+        // Set tick below the cap
+        int24 underLimitTick = int24(maxTicks) - 10;
+        poolManager.setTick(pid, underLimitTick);
+
+        // Advance time again
+        vm.warp(block.timestamp + 1);
+
+        // Expect the call via hook to succeed, tick should NOT be capped
+        vm.startPrank(address(hook)); // Use the correct 'hook' variable
+        tickWasCapped = oracle.pushObservationAndCheckCap(pid, false);
+        vm.stopPrank();
+
+        assertFalse(tickWasCapped, "Tick should NOT have been capped (under limit)");
+
+        // Verify the observation was written with the UNCAPPED value
+        (latestTick,) = oracle.getLatestObservation(pid); // Use getter
+
+        // Get the current state index again
+        (,currentIndex,) = oracle.states(pidBytes);
+        
+        // Use getLatestObservation instead, which returns the correct value:
+        (int24 observedUncappedTick,) = oracle.getLatestObservation(pid);
+        assertEq(observedUncappedTick, underLimitTick, "Latest observation tick should match uncapped value");
+    }
+
+    /* ------------------------------------------------------------ *
+     * 8. Explicit auto-tune path                                   *
+     * ------------------------------------------------------------ */
+    function testAutoTuneLoosensCapAfterFrequentHits() public {
+        bytes32 idBytes = PoolId.unwrap(pid);
+        uint24 startCap = oracle.maxTicksPerBlock(idBytes);
+
+        // Hit the cap 5 times quickly (simulate heavy volatility)
+        for (uint8 i; i < 5; ++i) {
+            poolManager.setTick(pid, int24(startCap) * 2); // trigger cap
+            vm.warp(block.timestamp + 10);                 // advance few seconds
+            vm.prank(address(hook));
+            oracle.pushObservationAndCheckCap(pid, false);
+            vm.roll(block.number + 1);
+        }
+
+        // Advance time past update interval
+        vm.warp(block.timestamp + policy.getBaseFeeUpdateIntervalSeconds(pid) + 1);
+
+        // Push once more to force auto-tune evaluation (no cap this time)
+        poolManager.setTick(pid, int24(startCap) / 2);
+        vm.prank(address(hook));
+        oracle.pushObservationAndCheckCap(pid, false);
+
+        uint24 newCap = oracle.maxTicksPerBlock(idBytes);
+        assertGt(newCap, startCap, "Cap should have loosened after frequent caps");
     }
 }

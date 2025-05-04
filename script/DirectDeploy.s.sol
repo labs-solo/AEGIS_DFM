@@ -79,7 +79,6 @@ contract DirectDeploy is Script {
             DummyFullRangeHook fullRangeHook = new DummyFullRangeHook(address(0)); // Deploy hook first
             truncGeoOracle = new TruncGeoOracleMulti(
                 IPoolManager(UNICHAIN_POOL_MANAGER),
-                deployer, // governance parameter
                 policyManager,
                 address(fullRangeHook) // Hook Address
             );

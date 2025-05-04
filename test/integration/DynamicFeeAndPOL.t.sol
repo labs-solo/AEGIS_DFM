@@ -225,7 +225,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // We no longer store pre-swap balances – not needed by assertions.
 
         // Capture slot0 before the swap (needed for direction assertions)
-        (uint160 sqrtPriceX96Before, int24 tickBefore,,) =
+        (uint160 _sqrtBefore, int24 _tickBefore, ,) =
             StateLibrary.getSlot0(poolManager, poolId);
         // Get initial base fee
         (uint256 currentBaseFee, uint256 currentSurgeFee) = dfm.getFeeState(poolId);
@@ -248,11 +248,11 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         // Price direction checks remain the same
         if (wethIsToken0) {
-            assertTrue(sqrtPriceX96After < sqrtPriceX96Before, "Price direction mismatch 0->1");
-            assertTrue(tickAfter < tickBefore,     "Tick direction mismatch 0->1");
+            assertTrue(sqrtPriceX96After < _sqrtBefore, "Price direction mismatch 0->1");
+            assertTrue(tickAfter < _tickBefore,     "Tick direction mismatch 0->1");
         } else {
-            assertTrue(sqrtPriceX96After > sqrtPriceX96Before, "Price direction mismatch 1->0");
-            assertTrue(tickAfter > tickBefore,     "Tick direction mismatch 1->0");
+            assertTrue(sqrtPriceX96After > _sqrtBefore, "Price direction mismatch 1->0");
+            assertTrue(tickAfter > _tickBefore,     "Tick direction mismatch 1->0");
         }
 
         // Fee shouldn't have changed significantly from one small swap if interval > 0
@@ -341,7 +341,8 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         // Now the maxTicksPerBlock should have been able to change
         uint256 newMaxTicks = oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId));
-        (uint256 baseAfterSecondSwap, uint256 surgeAfterSecondSwap) = dfm.getFeeState(poolId);
+        (uint256 _baseAfterSecond, uint256 _surgeAfterSecond) =
+            dfm.getFeeState(poolId);
 
         // Check that maxTicks has changed, but within step limit
         uint32 stepPpm = policyManager.getBaseFeeStepPpm(poolId);
@@ -355,7 +356,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         );
 
         // Base fee should now reflect the new maxTicks value
-        assertEq(baseAfterSecondSwap, newMaxTicks * 100, "Base fee doesn't match new oracle cap");
+        assertEq(_baseAfterSecond, newMaxTicks * 100, "Base fee doesn't match new oracle cap");
     }
 
     function test_B3_BaseFee_Decreases_When_Caps_Too_Rare() public {

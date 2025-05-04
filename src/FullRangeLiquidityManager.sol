@@ -254,11 +254,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Pool price is zero");
         }
 
-        bool hasToken0Native = key.currency0.isAddressZero();
-        bool hasToken1Native = key.currency1.isAddressZero();
-
         // ——— 3) single‐read slot0 and reuse it for getPoolReserves
         (uint256 reserve0, uint256 reserve1) = getPoolReservesWithPrice(poolId, sqrtPriceX96);
+
+        // Declare *after* the reserves are fetched to keep them off the stack
+        bool hasToken0Native = key.currency0.isAddressZero();
+        bool hasToken1Native = key.currency1.isAddressZero();
 
         // Calculate deposit shares
         DepositCalculationResult memory calcResult = DepositCalculationResult({

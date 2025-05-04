@@ -2,6 +2,8 @@
 pragma solidity ^0.8.26;
 
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
+import {SafeCast}        from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -10,9 +12,10 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {Errors} from "./errors/Errors.sol";
 
-contract TruncGeoOracleMulti {
+contract TruncGeoOracleMulti is ReentrancyGuard {
     using TruncatedOracle for TruncatedOracle.Observation[65535];
     using PoolIdLibrary for PoolKey;
+    using SafeCast for int256;
 
     // Custom errors
     error OnlyHook();
@@ -26,7 +29,6 @@ contract TruncGeoOracleMulti {
 
     /* ─────────────────── IMMUTABLE STATE ────────────────────── */
     IPoolManager public immutable poolManager;
-    address public immutable governance;
     IPoolPolicy public immutable policy;
     address public immutable hook; // The ONLY hook allowed to call `enableOracleForPool` & `pushObservation*`
 
@@ -49,27 +51,15 @@ contract TruncGeoOracleMulti {
     mapping(PoolId => uint32) private _lastMaxTickUpdate;
 
     /* ────────────────────── CONSTRUCTOR ─────────────────────── */
-    constructor(IPoolManager _poolManager, address _governance, IPoolPolicy _policy, address _hook) {
+    constructor(IPoolManager _poolManager, IPoolPolicy _policy, address _hook) {
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
-        if (_governance == address(0)) revert Errors.ZeroAddress();
         if (address(_policy) == address(0)) revert Errors.ZeroAddress();
         if (_hook == address(0)) revert Errors.ZeroAddress();
 
         poolManager = _poolManager;
-        governance = _governance;
-        policy = _policy;
-        hook = _hook; // Set immutable hook address
+        policy      = _policy;
+        hook        = _hook;          // Set immutable hook address
     }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // 🛑  Governor override removed (2025-05-02)
-    // ─────────────────────────────────────────────────────────────────────────────
-    /*  NOTE: Function intentionally deleted.
-        Any attempt to call it will now result in a compilation error.
-        If an emergency reset is ever required, stimulate CAP events to let the
-        feedback loop converge, or ship a one-off governance patch.           */
-
-    /* ─────────────────── HOOK ACTIONS ────────────────────────── */
 
     /**
      * @notice Enables the oracle for a given pool, initializing its state.
@@ -86,8 +76,22 @@ contract TruncGeoOracleMulti {
         observations[id].initialize(uint32(block.timestamp), initialTick);
         states[id] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 1});
 
-        // Set initial max ticks per block from policy
-        maxTicksPerBlock[id] = policy.getDefaultMaxTicksPerBlock(PoolId.wrap(id));
+        /* ------------------------------------------------------------------ *
+         * Pull policy parameters once and *sanity-check* them               *
+         * ------------------------------------------------------------------ */
+        uint24 defaultCap = SafeCast.toUint24(policy.getDefaultMaxTicksPerBlock(PoolId.wrap(id)));
+        uint24 minCap     = SafeCast.toUint24(policy.getMinBaseFee(PoolId.wrap(id)) / 100);
+        uint24 maxCap     = SafeCast.toUint24(policy.getMaxBaseFee(PoolId.wrap(id)) / 100);
+        uint32 stepPpm    = policy.getBaseFeeStepPpm(PoolId.wrap(id));
+
+        require(stepPpm != 0,      "TruncOracle: stepPpm=0");
+        require(minCap  != 0,      "TruncOracle: minCap=0");
+        require(maxCap  >= minCap, "TruncOracle: cap-bounds");
+
+        // Clamp defaultCap inside the validated range
+        if (defaultCap < minCap)  defaultCap = minCap;
+        if (defaultCap > maxCap)  defaultCap = maxCap;
+        maxTicksPerBlock[id] = defaultCap;
     }
 
     /**
@@ -95,12 +99,12 @@ contract TruncGeoOracleMulti {
      * @dev Can only be called by the configured hook address. The swap direction parameter
      *      is currently unused but kept for interface compatibility.
      * @param pid The PoolId of the pool.
-     * @return tick The current tick after the observation.
-     * @return capped True if the tick movement was capped, false otherwise.
+     * @return tickWasCapped True if the tick movement was capped, false otherwise.
      */
-    function pushObservationAndCheckCap(PoolId pid, bool zeroForOne)
+    function pushObservationAndCheckCap(PoolId pid, bool /* _zeroForOne */)
         external
-        returns (int24 tick, bool capped)
+        nonReentrant
+        returns (bool tickWasCapped)
     {
         if (msg.sender != hook) revert OnlyHook();
         bytes32 id = PoolId.unwrap(pid);
@@ -115,14 +119,20 @@ contract TruncGeoOracleMulti {
         (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, pid);
 
         // Check against max ticks per block
-        int24 prevTick = obs[state.index].prevTick;
-        uint24 cap = maxTicksPerBlock[id];
-        int24 tickDelta = currentTick - prevTick;
+        int24  prevTick      = obs[state.index].prevTick;
+        uint24 cap           = maxTicksPerBlock[id];
+        int256 tickDelta256  = int256(currentTick) - int256(prevTick);
 
-        if (uint24(abs(tickDelta)) > cap) {
-            // Cap the tick movement
-            currentTick = tickDelta > 0 ? prevTick + int24(cap) : prevTick - int24(cap);
-            capped = true;
+        // re-cast once, safe-checked
+        int24 tickDelta = tickDelta256.toInt24();
+
+        // Inclusive cap: hitting the limit counts as a capped move
+        if (uint24(TruncatedOracle.abs(tickDelta)) >= cap) {
+            // Cap (and safe-cast) the tick movement
+            currentTick = tickDelta > 0
+                ? (int256(prevTick) + int256(uint256(cap))).toInt24()
+                : (int256(prevTick) - int256(uint256(cap))).toInt24();
+            tickWasCapped = true;
         }
 
         // Grow cardinality if needed
@@ -135,10 +145,9 @@ contract TruncGeoOracleMulti {
         (state.index, state.cardinality) = obs.write(
             state.index, uint32(block.timestamp), currentTick, liquidity, state.cardinality, state.cardinalityNext
         );
-        tick = currentTick;
 
         // Update auto-tune frequency counter if capped
-        if (capped) {
+        if (tickWasCapped) {
             _updateCapFrequency(pid, true);
         } else {
             _updateCapFrequency(pid, false);
@@ -255,8 +264,13 @@ contract TruncGeoOracleMulti {
         bytes32 id = PoolId.unwrap(pid);
         uint24 currentCap = maxTicksPerBlock[id];
         uint32 stepPpm = policy.getBaseFeeStepPpm(pid);
-        uint24 minCap = uint24(policy.getMinBaseFee(pid) / 100); // Cast result
-        uint24 maxCap = uint24(policy.getMaxBaseFee(pid) / 100); // Cast result
+        uint24 minCap = SafeCast.toUint24(policy.getMinBaseFee(pid) / 100);
+        uint24 maxCap = SafeCast.toUint24(policy.getMaxBaseFee(pid) / 100);
+
+        // ── validate policy params on every tune to avoid DoS vectors ──────
+        require(stepPpm != 0,      "TruncOracle: stepPpm=0");
+        require(minCap  != 0,      "TruncOracle: minCap=0");
+        require(maxCap  >= minCap, "TruncOracle: cap-bounds");
 
         uint24 change = uint24(uint256(currentCap) * stepPpm / 1e6);
         if (change == 0) change = 1; // Ensure minimum change of 1 tick
@@ -273,12 +287,5 @@ contract TruncGeoOracleMulti {
             _lastMaxTickUpdate[pid] = uint32(block.timestamp); // Record auto-tune time
             emit MaxTicksPerBlockUpdated(pid, currentCap, newCap, uint32(block.timestamp));
         }
-    }
-
-    /**
-     * @dev Helper function to calculate the absolute value of an int24.
-     */
-    function abs(int24 x) internal pure returns (uint24) {
-        return uint24(x >= 0 ? x : -x);
     }
 }

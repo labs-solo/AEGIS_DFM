@@ -228,14 +228,14 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         BalanceDelta delta,
         bytes calldata /* hookData */
     ) internal override returns (bytes4, int128) {
-        // Ignore the returned tick to silence 2072. Only the CAP flag is relevant.
-        (, bool capped) = truncGeoOracle.pushObservationAndCheckCap(key.toId(), params.zeroForOne);
+        // 2. Push observation to oracle & check cap
+        // The oracle call returns a boolean indicating if the tick movement was capped.
+        bool capped = truncGeoOracle.pushObservationAndCheckCap(key.toId(), params.zeroForOne);
 
-        // 2) Feed the DynamicFeeManager - using gas stipend to prevent re-entrancy
-        //    - `Spot` itself is the authorised hook
+        // 3. Notify Dynamic Fee Manager about the oracle update
         feeManager.notifyOracleUpdate{gas: GAS_STIPEND}(key.toId(), capped);
 
-        // 3) accrue any LP/PROTOCOL fees
+        // 4. accrue any LP/PROTOCOL fees
         _processSwapFees(PoolId.unwrap(key.toId()), delta);
 
         return (BaseHook.afterSwap.selector, 0);

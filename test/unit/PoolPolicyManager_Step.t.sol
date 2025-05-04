@@ -93,19 +93,19 @@ contract PoolPolicyManager_Step is Test {
         // Set decay to 12h, check event
         vm.expectEmit(true, true, true, true);
         emit PolicySet(pool, IPoolPolicy.PolicyType.FEE, address(uint160(12 hours)), OWNER);
-        ppm.getSurgeDecaySeconds(pool);
+        vm.prank(OWNER);
         ppm.setSurgeDecayPeriodSeconds(pool, 12 hours);
         assertEq(ppm.getSurgeDecaySeconds(pool), 12 hours, "Surge decay not set");
     }
 
     function testSurgeDecayTooShortReverts() public {
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidParameter.selector));
+        vm.expectRevert(bytes("min 60s"));
         vm.prank(OWNER);
         ppm.setSurgeDecayPeriodSeconds(pid(7), 59);
     }
 
     function testSurgeDecayTooLongReverts() public {
-        vm.expectRevert(abi.encodeWithSelector(Errors.InvalidParameter.selector));
+        vm.expectRevert(bytes("max 1 day"));
         vm.prank(OWNER);
         ppm.setSurgeDecayPeriodSeconds(pid(7), 1 days + 1);
     }
@@ -123,7 +123,7 @@ contract PoolPolicyManager_Step is Test {
         // Set multiplier to 2x, check event
         vm.expectEmit(true, true, true, true);
         emit PolicySet(pool, IPoolPolicy.PolicyType.FEE, address(uint160(2_000_000)), OWNER);
-        ppm.getSurgeFeeMultiplierPpm(pool);
+        vm.prank(OWNER);
         ppm.setSurgeFeeMultiplierPpm(pool, 2_000_000);
         assertEq(ppm.getSurgeFeeMultiplierPpm(pool), 2_000_000, "Surge mult not set");
     }

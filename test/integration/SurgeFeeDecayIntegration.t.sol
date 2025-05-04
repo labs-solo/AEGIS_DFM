@@ -333,9 +333,6 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // read-only sanity check; result not stored
         baseAfter50Percent + surgeFeeAfter50Percent; // silence 2072
 
-        // The surge component should be roughly half of the *initial* surge
-        uint256 initialSurge = surgeFeeAfterCap;
-
         // Warp time forward by 25% of the decay period
         uint256 decayPeriod = policyManager.getSurgeDecayPeriodSeconds(pid);
         uint256 decayPeriodSeconds = decayPeriod;
@@ -374,8 +371,8 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         vm.warp(block.timestamp + policyManager.getSurgeDecayPeriodSeconds(pid));
         
         // Verify surge is now zero
-        (uint256 baseAfterFullDecay, uint256 surgeFeeAfterFullDecay) = dfm.getFeeState(pid);
-        assertEq(surgeFeeAfterFullDecay, 0, "Surge not zero after full decay period");
+        (, uint256 _surgeAfterFullDecay) = dfm.getFeeState(pid);
+        assertEq(_surgeAfterFullDecay, 0, "Surge not zero after full decay period");
 
         // Get fee at 50% decay
         (, uint256 surgeFeePartialDecay) = dfm.getFeeState(pid); // base not needed
@@ -439,8 +436,8 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         vm.warp(block.timestamp + policyManager.getSurgeDecayPeriodSeconds(pid));
         
         // Verify surge is now zero
-        (uint256 baseAfterFullDecay, uint256 surgeFeeAfterFullDecay) = dfm.getFeeState(pid);
-        assertEq(surgeFeeAfterFullDecay, 0, "Surge not zero after full decay period");
+        (, uint256 _surgeAfterFullDecay2) = dfm.getFeeState(pid);
+        assertEq(_surgeAfterFullDecay2, 0, "Surge not zero after full decay period");
 
         // Get fee at 50% decay
         (, uint256 surgeFeePartialDecay) = dfm.getFeeState(pid); // base not needed

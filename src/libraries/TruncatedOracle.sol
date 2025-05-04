@@ -2,11 +2,18 @@
 pragma solidity ^0.8.26;
 
 import {TickMoveGuard} from "./TickMoveGuard.sol";
+import {SafeCast}     from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title TruncatedOracle
 /// @notice Provides price oracle data with protection against price manipulation
 /// @dev Truncates price movements that exceed configurable thresholds to prevent oracle manipulation
 library TruncatedOracle {
+    /* -------------------------------------------------------------------------- */
+    /*                              Library constants                              */
+    /* -------------------------------------------------------------------------- */
+    /// @dev Safety-fuse: prevent pathological gas usage in `grow()`
+    uint16 internal constant MAX_CARDINALITY_ALLOWED = 8_192;
+
     /// @notice Thrown when trying to interact with an Oracle of a non-initialized pool
     error OracleCardinalityCannotBeZero();
 
@@ -154,14 +161,26 @@ library TruncatedOracle {
         }
     }
 
+    /// @notice Safe absolute value – reverts on `type(int24).min`
+    function abs(int24 x) internal pure returns (uint24) {
+        require(x != type(int24).min, "ABS_OF_MIN_INT24");
+        return uint24(x >= 0 ? x : -x);
+    }
+
     /// @notice Prepares the oracle array to store up to `next` observations
     /// @param self The stored oracle array
     /// @param current The current next cardinality of the oracle array
     /// @param next The proposed next cardinality which will be populated in the oracle array
     /// @return next The next cardinality which will be populated in the oracle array
-    function grow(Observation[65535] storage self, uint16 current, uint16 next) internal returns (uint16) {
+    function grow(
+        Observation[65535] storage self,
+        uint16 current,
+        uint16 next
+    ) internal returns (uint16) {
         unchecked {
             if (current == 0) revert OracleCardinalityCannotBeZero();
+            // Guard against out-of-gas loops
+            require(next <= MAX_CARDINALITY_ALLOWED, "grow>limit");
             // no-op if the passed next value isn't greater than the current next value
             if (next <= current) return current;
             // store in each slot to prevent fresh SSTOREs in swaps

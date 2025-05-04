@@ -36,8 +36,8 @@ error SharedDeployLib__DeploymentFailed();
 library SharedDeployLib {
     Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
 
-    // Fixed deployer for certain internal operations
-    address internal constant TEST_DEPLOYER = address(0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf);
+    // (kept for legacy scripts; **not** used by tests any more)
+    address internal constant LEGACY_DEPLOYER = address(0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf);
 
     /* ---------- public deployment salts (constant so tests agree) ------- */
     // --------------------------------------------------------------------- //
@@ -117,7 +117,7 @@ library SharedDeployLib {
         bytes32 salt,
         bytes memory bytecode,
         bytes memory constructorArgs
-    ) internal view returns (address) {
+    ) internal pure returns (address) {
         console2.log("Predict Salt:"); console2.logBytes32(salt); // Rule 27
         // Rule 27 – deep-copy to prevent aliasing between predict & deploy
         bytes memory frozenArgs = bytes(constructorArgs);
@@ -208,7 +208,7 @@ library SharedDeployLib {
 
     /* ---------- unified salt/address finder (env → miner fallback) ------ */
     function _spotHookSaltAndAddr(
-        address   /* deployer */,
+        address   deployer,
         bytes     memory creationCode,
         bytes     memory constructorArgs
     ) internal returns (bytes32 salt, address predicted) {
@@ -218,7 +218,7 @@ library SharedDeployLib {
         string memory raw = vm.envOr("SPOT_HOOK_SALT", string(""));
         if (bytes(raw).length != 0) {
             salt = bytes32(vm.parseBytes(raw));
-            predicted = Create2.computeAddress(salt, keccak256(fullInit), TEST_DEPLOYER);
+            predicted = Create2.computeAddress(salt, keccak256(fullInit), deployer);
 
             // If the salt is valid (correct flags and address not in use), keep using it
             if (predicted.code.length == 0 && uint160(predicted) & _FLAG_MASK() == SPOT_HOOK_FLAGS) {
@@ -229,7 +229,7 @@ library SharedDeployLib {
 
         /* 2️⃣  Mine a new salt that fits the flag pattern */
         (predicted, salt) = HookMiner.find(
-            TEST_DEPLOYER,
+            deployer,
             SPOT_HOOK_FLAGS,
             creationCode,
             constructorArgs

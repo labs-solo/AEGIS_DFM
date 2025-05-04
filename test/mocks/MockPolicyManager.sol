@@ -10,10 +10,17 @@ import {Currency} from "v4-core/src/types/Currency.sol";
 /*  (only selectors the oracle touches are implemented).                   */
 /* ----------------------------------------------------------------------- */
 contract MockPolicyManager is IPoolPolicy {
-    uint32 internal constant STEP = 20_000; // 2 %
-    uint32 internal constant INTERVAL = 1 days;
-    uint24 internal constant DEF_CAP = 50;
-    uint256 internal constant DEF_FEE = 5_000;
+    // ───────────────────────── Tunable constants ─────────────────────────
+    uint24  internal constant _DEFAULT_MAX_TICKS   = 50;          // ← initial cap in ticks
+    uint32  internal constant _DAILY_BUDGET_PPM    = 100_000;     // 10 % of the day may be capped
+    uint32  internal constant _DECAY_WINDOW_SEC    = 43_200;      // 12-hour half-life
+    uint32  internal constant _UPDATE_INTERVAL_SEC = 86_400;      // 24 h
+    uint32  internal constant _STEP_PPM            = 20_000;      // 2 % change per step
+
+    // fee values are expressed in *hundredths of a tick* inside TruncGeoOracleMulti
+    // so dividing by 100 should yield the target cap in ticks.
+    uint256 internal constant _MIN_BASE_FEE = 1_000;  // → 10 ticks
+    uint256 internal constant _MAX_BASE_FEE = 10_000; // → 100 ticks
 
     uint32 public dailyPpm;
     uint32 public decayWindow;
@@ -36,9 +43,9 @@ contract MockPolicyManager is IPoolPolicy {
     }
 
     // --- Functions already implemented (or deprecated) ---
-    function getBaseFeeStepPpm(PoolId) external pure override returns (uint32) { return STEP; } // Deprecated but present
-    function getMaxStepPpm(PoolId) external pure override returns (uint32) { return STEP; } // Deprecated but present
-    function getBaseFeeUpdateIntervalSeconds(PoolId) external pure override returns (uint32) { return INTERVAL; } // Deprecated but present
+    function getBaseFeeStepPpm(PoolId) external pure override returns (uint32) { return _STEP_PPM; }
+    function getMaxStepPpm(PoolId) external pure override returns (uint32) { return _STEP_PPM; }
+    function getBaseFeeUpdateIntervalSeconds(PoolId) external pure override returns (uint32) { return _UPDATE_INTERVAL_SEC; }
     function isTickSpacingSupported(uint24 tickSpacing) external view override returns (bool) {
         return _tickSupported[tickSpacing];
     }
@@ -47,8 +54,8 @@ contract MockPolicyManager is IPoolPolicy {
         return _currencySupported[Currency.unwrap(currency)];
     }
 
-    function isValidVtier(uint24 fee, int24 spacing) external pure override returns (bool) {
-        return true; // Always valid in mock
+    function isValidVtier(uint24 /* _fee */, int24 /* _spacing */) external pure override returns (bool) {
+        return true; // Assume valid for tests
     }
 
     // --- Stubs for missing IPoolPolicy functions ---
@@ -81,11 +88,10 @@ contract MockPolicyManager is IPoolPolicy {
     function getFeeCollector() external pure override returns (address) { return address(0); }
     function getSurgeDecayPeriodSeconds(PoolId) external pure override returns (uint256) { return 0; }
     function getTargetCapsPerDay(PoolId) external pure override returns (uint32) { return 0; }
-    function getDailyBudgetPpm(PoolId) external pure override returns (uint32) { return 0; }
-    function getCapBudgetDecayWindow(PoolId) external pure override returns (uint32) { return 0; }
+    function getCapBudgetDecayWindow(PoolId) external pure override returns (uint32) { return _DECAY_WINDOW_SEC; }
     function getFreqScaling(PoolId) external pure override returns (uint256) { return 0; }
-    function getMinBaseFee(PoolId) external pure override returns (uint256) { return 0; }
-    function getMaxBaseFee(PoolId) external pure override returns (uint256) { return 0; }
+    function getMinBaseFee(PoolId) external pure override returns (uint256) { return _MIN_BASE_FEE; }
+    function getMaxBaseFee(PoolId) external pure override returns (uint256) { return _MAX_BASE_FEE; }
     function getSurgeFeeMultiplierPpm(PoolId) external pure override returns (uint24) { return 0; }
     function getSurgeDecaySeconds(PoolId) external pure override returns (uint32) { return 0; }
     function getBudgetAndWindow(PoolId) external pure override returns (uint32 budgetPerDay, uint32 decayPeriod) { return (0,0); }
@@ -98,10 +104,14 @@ contract MockPolicyManager is IPoolPolicy {
     function setBaseFeeParams(PoolId pid, uint32 stepPpm, uint32 updateIntervalSecs) external override {}
 
     function getDefaultDynamicFee() external pure override returns (uint256) {
-        return DEF_FEE;
+        return _MAX_BASE_FEE;
     }
 
     function getDefaultMaxTicksPerBlock(PoolId) external pure override returns (uint24) {
-        return DEF_CAP;
+        return _DEFAULT_MAX_TICKS;
+    }
+
+    function getDailyBudgetPpm(PoolId) external pure override returns (uint32) {
+        return _DAILY_BUDGET_PPM;
     }
 }

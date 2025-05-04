@@ -1,16 +1,25 @@
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.26;
 
-/// @dev minimal full-range hook that is forever paired with a given oracle
+/// @title Dummy hook used only in unit-tests – now hardened with ownership
 contract DummyFullRangeHook {
+    /* --------------------------------------------------------------------- */
+    /*  Ownership & one-time oracle binding                                  */
+    /* --------------------------------------------------------------------- */
+    address public immutable owner;
     address public oracle;
 
     constructor(address _oracle) {
-        oracle = _oracle;
+        owner = msg.sender;
+        if (_oracle != address(0)) {
+            oracle = _oracle;
+        }
     }
 
+    /// @notice One-time setter used only in tests to wire the oracle.
     function setOracle(address _oracle) external {
-        require(oracle == address(0), "oracle already set");
+        require(msg.sender == owner,         "DummyHook: not-owner");
+        require(oracle == address(0),        "DummyHook: oracle-set");
         oracle = _oracle;
     }
 

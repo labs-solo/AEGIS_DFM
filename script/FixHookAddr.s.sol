@@ -45,15 +45,9 @@ contract FixHookAddr is Script {
         address owner_ = vm.envAddress("DEPLOYER_ADDRESS");
 
         // Define required hook flags for Spot (using HookMiner constants)
-        uint160 spotFlags = (Hooks.AFTER_INITIALIZE_FLAG |           // true
-                           Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |     // true
-                           Hooks.BEFORE_SWAP_FLAG |                // true
-                           Hooks.AFTER_SWAP_FLAG |                 // true
-                           Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |   // true
-                           Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG);  // true
-        /* // Previous flags, keeping for reference
-            Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_SWAP_FLAG
-            */
+        uint160 _unusedSpotFlags = (Hooks.AFTER_INITIALIZE_FLAG |
+                                    Hooks.BEFORE_SWAP_FLAG        |
+                                    Hooks.AFTER_SWAP_FLAG);
 
         // Construct Spot creation code and constructor arguments
         bytes memory spotBytecode = type(Spot).creationCode;
