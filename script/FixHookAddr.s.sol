@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import "forge-std/Script.sol";
+import {Script} from "forge-std/Script.sol";
+// logging (use canonical wildcard import so solc resolves correct library)
 import "forge-std/console2.sol";
 
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
@@ -68,13 +69,15 @@ contract FixHookAddr is Script {
             spotConstructorArgs
         );
 
-        // Store the salt in the environment for SharedDeployLib
-        vm.setEnv("SPOT_HOOK_SALT", vm.toString(spotSalt));
+        // This script should not mutate global ENV during test runs.
+        // Print instead so operator can export manually.
+        console2.log(">>> Spot Hook salt =");
+        console2.logBytes32(spotSalt);
 
         // Log the results
-        console.log("Spot Hook Address:", spotHookAddress);
-        console.log("Salt (hex):", vm.toString(spotSalt));
-        console.log("Salt (decimal):", uint256(spotSalt));
+        console2.logAddress(spotHookAddress);
+        console2.logString(string.concat("Salt (hex): ", vm.toString(spotSalt)));
+        console2.logUint(uint256(spotSalt));
 
         // Removed console logs
 

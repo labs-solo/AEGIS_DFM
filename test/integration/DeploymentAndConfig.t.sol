@@ -12,7 +12,7 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
 import {FullRangeLiquidityManager} from "../../src/FullRangeLiquidityManager.sol";
 import {IDynamicFeeManager} from "src/interfaces/IDynamicFeeManager.sol";
-import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
+import {DynamicFeeManager} from "../../src/DynamicFeeManager.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 
 /// @title Deployment and Configuration Integration Tests

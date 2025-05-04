@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.26;
 
+import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
 import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {INITIAL_LP_USDC, INITIAL_LP_WETH} from "../utils/TestConstants.sol";
-import {Create2} from "@openzeppelin/contracts/utils/Create2.sol"; // Corrected path
 
 // Core Contract Interfaces & Libraries
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {PoolKey}        from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol"; // Needed for Permissions & Flags
@@ -35,8 +35,6 @@ import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "src/interfaces/IDynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
 import {ITruncGeoOracleMulti} from "src/interfaces/ITruncGeoOracleMulti.sol";
-
-// Use the new shared library
 import {SharedDeployLib} from "test/utils/SharedDeployLib.sol";
 
 // Test Routers
@@ -58,12 +56,14 @@ contract ForkSetup is Test {
     using BalanceDeltaLibrary for BalanceDelta;
 
     // --- Deployed/Referenced Contract Instances --- (Interfaces preferred)
-    IPoolManager public poolManager; // From Unichain
-    IPoolPolicy public policyManager; // Deployed in setup (using interface)
-    IFullRangeLiquidityManager public liquidityManager; // Deployed in setup (using interface)
-    IDynamicFeeManager public dynamicFeeManager; // Deployed in setup (using interface)
-    ITruncGeoOracleMulti public oracle; // Deployed in setup (using interface)
-    Spot public fullRange; // Deployed in setup via CREATE2
+    IPoolManager public immutable poolManager;
+    /// @dev keep the concrete type; it still implements IPoolPolicy
+    PoolPolicyManager public policyManager;
+    IFullRangeLiquidityManager public liquidityManager;
+    ITruncGeoOracleMulti public oracle;
+    TruncGeoOracleMulti public truncGeoOracle;
+    IDynamicFeeManager public dynamicFeeManager;
+    Spot public fullRange;
 
     // --- Test Routers --- (Deployed in setup)
     PoolModifyLiquidityTest public lpRouter;
@@ -91,7 +91,6 @@ contract ForkSetup is Test {
 
     // --- Deployment Constants from SharedDeployLib ---
     // uint24 internal constant DEFAULT_FEE = SharedDeployLib.POOL_FEE; // Already dynamic
-    int24 internal constant TICK_SPACING = int24(SharedDeployLib.TICK_SPACING);
 
     // Variable to track the actual hook address used (set during deployment)
     address internal actualHookAddress;
@@ -145,6 +144,10 @@ contract ForkSetup is Test {
         require(forkId != 0, "Fork creation failed");
     }
 
+    constructor() {
+        poolManager = IPoolManager(UNICHAIN_POOL_MANAGER);
+    }
+
     function setUp() public virtual {
         // 1. Create Fork & Basic Env Setup
         uint256 forkId = _safeFork();
@@ -164,8 +167,7 @@ contract ForkSetup is Test {
         emit log_named_address("Deployer EOA (PK=1)", deployerEOA);
         emit log_named_uint("Deployer EOA ETH Balance", deployerEOA.balance);
 
-        // 3. Get PoolManager Instance
-        poolManager = IPoolManager(UNICHAIN_POOL_MANAGER);
+        // 3. Get PoolManager Instance (constant address on Unichain)
         emit log_named_address("Using PoolManager", address(poolManager));
 
         // 4. Deploy All Contracts, Configure, Initialize (within vm.prank)
@@ -185,118 +187,206 @@ contract ForkSetup is Test {
             0, // Initial protocol interest fee (0 for test)
             deployerEOA // Fee collector (use deployer for test)
         );
-        policyManager = IPoolPolicy(address(policyManagerImpl));
+        policyManager = policyManagerImpl; // Use concrete type
         emit log_named_address("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
         // Deploy LiquidityManager (standard new)
         emit log_string("Deploying LiquidityManager...");
-        FullRangeLiquidityManager liquidityManagerImpl = new FullRangeLiquidityManager(poolManager, policyManager, deployerEOA); // Use interface, Governance = deployer
+        FullRangeLiquidityManager liquidityManagerImpl =
+            new FullRangeLiquidityManager(poolManager, policyManager, deployerEOA);
         liquidityManager = IFullRangeLiquidityManager(address(liquidityManagerImpl));
         emit log_named_address("LiquidityManager deployed at", address(liquidityManager));
         require(address(liquidityManager) != address(0), "LiquidityManager deployment failed");
 
-        /* ------------------------------------------------------------------ *
-         * PREDICT & DEPLOY ORACLE, DFM, SPOT HOOK VIA CREATE2
+        /* ------------------------------------------------------------------ *\\
+         *  MUTUALLY-CONSISTENT CREATE2 DEPLOYMENT (Oracle ⇄ DFM ⇄ Hook)
          * ------------------------------------------------------------------ */
 
-        // --- Arguments for DynamicFeeManager Prediction/Deployment ---
-        bytes memory dfmConstructorArgs = abi.encode(
-            policyManager,
-            address(0), // Oracle address placeholder, needed for prediction
-            address(0)  // Hook address placeholder, needed for prediction
-        );
-        address predictedDfmAddress = SharedDeployLib.predictDeterministicAddress(
-            deployerEOA, SharedDeployLib.DFM_SALT, type(DynamicFeeManager).creationCode, dfmConstructorArgs
-        );
-        emit log_named_address("Predicted DFM Address", predictedDfmAddress);
+        // Use SharedDeployLib constants directly
+        bytes32 ORACLE_SALT = SharedDeployLib.ORACLE_SALT;
+        bytes32 DFM_SALT    = SharedDeployLib.DFM_SALT;
 
-        // --- Arguments for Oracle Prediction (Needs Predicted Hook) ---
-        // Oracle depends on Hook, Hook depends on Oracle & DFM. Predict DFM first.
-        // Predict Spot Hook Address FIRST (needs predicted Oracle & DFM)
-        bytes memory spotConstructorArgs = abi.encode(
+        // ---------- Predict Oracle, DFM, Hook Addresses (Fixed-Point Iteration) ----------
+        // Deployer for CREATE2 is **this contract** (ForkSetup) because the
+        // `create2` opcode is executed inside library code called here.
+        // CREATE2 helper is compiled *internal*; code executes in this contract.
+        // Therefore the deployer for deterministic prediction is address(this).
+        address c2Deployer = address(this);
+
+        address oraclePred = address(0);
+        address dfmPred    = address(0);
+        address hookPred   = address(0);
+        bytes32 hookSalt   = bytes32(0);
+
+        // --- Fixed-point iteration (find stable addresses) ---
+        for (uint8 i = 0; i < 4; i++) {
+            // Use SharedDeployLib function
+            address newOracle = SharedDeployLib.predictDeterministicAddress(
+                c2Deployer,
+                ORACLE_SALT,
+                type(TruncGeoOracleMulti).creationCode,
+                abi.encode(poolManager, c2Deployer, policyManager, hookPred)
+            );
+            oraclePred = newOracle;
+
+            // Use SharedDeployLib function
+            address newDFM = SharedDeployLib.predictDeterministicAddress(
+                c2Deployer,
+                DFM_SALT,
+                type(DynamicFeeManager).creationCode,
+                abi.encode(policyManager, newOracle, hookPred)
+            );
+            dfmPred = newDFM;
+
+            // Fix shadowing: use a different name for the loop's salt result
+            // Use SharedDeployLib function
+            (bytes32 minedSalt, address newHook) = SharedDeployLib._spotHookSaltAndAddr(
+                c2Deployer,
+                type(Spot).creationCode,
+                abi.encode(
+                    poolManager,
+                    policyManager,
+                    liquidityManager,
+                    TruncGeoOracleMulti(oraclePred),
+                    IDynamicFeeManager(dfmPred),
+                    c2Deployer
+                )
+            );
+            hookPred = newHook; // Update hook prediction
+            // hookSalt = minedSalt; // Update the outer hookSalt if the loop breaks or logic requires
+
+            // If nothing changed, we are stable
+            if (newOracle == oraclePred && newDFM == dfmPred && newHook == hookPred) {
+                // Now we need the *final* salt from the last successful _spotHookSaltAndAddr call
+                hookSalt = minedSalt; // Assign the correctly mined salt
+                break;
+            }
+             // Optimization: If addresses are stable, but loop continues, re-assign the potentially updated salt.
+             // This might not be strictly necessary if the loop always breaks on stability,
+             // but ensures hookSalt reflects the latest calculation within the loop's scope.
+             hookSalt = minedSalt;
+        }
+
+        // ---- Mine real hook salt ONCE with final args -------------
+        // (Expensive operation, done only after convergence)
+        // Use SharedDeployLib function
+        (bytes32 finalMinedHookSalt, address finalPredictedHookAddress) = SharedDeployLib._spotHookSaltAndAddr(
+            c2Deployer,
+            type(Spot).creationCode,
+            abi.encode(
+                poolManager,
+                policyManager,
+                liquidityManager,
+                TruncGeoOracleMulti(oraclePred),
+                IDynamicFeeManager(dfmPred),
+                c2Deployer
+            )
+        );
+
+        // Use the *actually* mined salt and predicted address from the miner
+        hookSalt = finalMinedHookSalt;
+        address finalHookAddr = finalPredictedHookAddress;
+
+        // Sanity check re-prediction (using correct deployer AND args)
+        bytes memory finalHookArgs = abi.encode(poolManager, policyManager, liquidityManager, TruncGeoOracleMulti(oraclePred), IDynamicFeeManager(dfmPred), c2Deployer); // Args already correct here from previous edit
+        address rePredictedHook = SharedDeployLib.predictDeterministicAddress(c2Deployer, hookSalt, type(Spot).creationCode, finalHookArgs);
+        require(rePredictedHook == finalHookAddr, "Hook address miner/predictor mismatch");
+
+        // ---------- 3.  Re-compute *FINAL* Oracle & DFM addresses WITH finalHookAddr ----------
+        // NOTE: we *must* calculate these **after** _spotHookSaltAndAddr has
+        // finalised the salt and (optionally) written SPOT_HOOK_SALT, otherwise
+        // constructor-args will drift and the assertion below will fail.
+
+        // ────────────────────────────────
+        // Rule 5/6/27 – NEVER override deterministic salts in test-time
+        //               logic. Remove the dead env read entirely.
+        // ────────────────────────────────
+        // (Nothing here – deleted)
+
+        // Governance must be an EOA.  Keeping the original deployerEOA
+        // avoids a main-net address collision while maintaining caller /
+        // predictor parity (executor is still `address(this)`).
+        bytes memory oracleArgs = abi.encode(
             poolManager,
-            policyManager, // Use interface
-            liquidityManager, // Use interface
-            address(0), // Oracle address placeholder
-            IDynamicFeeManager(predictedDfmAddress), // Use predicted DFM address
-            deployerEOA // Initial Owner
-        );
-        // Use the dedicated prediction function from SharedDeployLib which handles salt mining/env vars
-        bytes32 minedSalt;
-        address predictedHookAddress; // Explicitly declare before assignment
-        (minedSalt, predictedHookAddress) = SharedDeployLib._spotHookSaltAndAddr(
-            deployerEOA, type(Spot).creationCode, spotConstructorArgs
-        );
-        emit log_named_address("Predicted Spot Hook Address (salt mined)", predictedHookAddress);
-        // Persist the mined salt so deploySpotHook can reuse it
-        vm.setEnv("SPOT_HOOK_SALT", vm.toString(minedSalt)); // Store the actual salt
-
-        // --- Predict Oracle Address (using predicted Hook) ---
-        bytes memory oracleConstructorArgs = abi.encode(
-            poolManager,
-            deployerEOA,
+            deployerEOA,       // ✅ restore EOA governance
             policyManager,
-            predictedHookAddress // Use predicted hook address
+            finalHookAddr
         );
-        address predictedOracleAddress = SharedDeployLib.predictDeterministicAddress(
-            deployerEOA, SharedDeployLib.ORACLE_SALT, type(TruncGeoOracleMulti).creationCode, oracleConstructorArgs
+
+        // --- PREDICT final addresses -------------------------------------
+        // Use `c2Deployer` (`address(this)`) as the executor context
+        // for all address predictions.
+        address finalOracleAddr = SharedDeployLib.predictDeterministicAddress(
+            c2Deployer,           // executor (unchanged)
+            ORACLE_SALT,
+            type(TruncGeoOracleMulti).creationCode,
+            oracleArgs
         );
-        emit log_named_address("Predicted Oracle Address", predictedOracleAddress);
 
-        // --- DEPLOY Oracle with CREATE2 ---
-        // NOTE: predictedHookAddress is determined *after* oracle deployment below,
-        // because the oracle constructor now enforces the hook address.
+        bytes memory dfmArgs = abi.encode(
+            policyManager,
+            finalOracleAddr,
+            finalHookAddr
+        );
 
+        // Predict DFM *using* the final hook and oracle addresses
+        address finalDfmAddr = SharedDeployLib.predictDeterministicAddress(
+            c2Deployer,
+            DFM_SALT,
+            type(DynamicFeeManager).creationCode,
+            dfmArgs
+        );
+
+        emit log_named_address("Predicted Oracle Address", finalOracleAddr);
+        emit log_named_address("Predicted DFM Address",    finalDfmAddr);
+        emit log_named_address("Predicted Hook Address",   finalHookAddr);
+
+        // ---------- 4. Deploy Oracle, DFM, and Hook ----------
+        // Check code length *before* deploying oracle
+        emit log_named_uint("Code length at finalOracleAddr before deploy", finalOracleAddr.code.length);
+
+        // Deploy Oracle
         emit log_string("Deploying Oracle via CREATE2...");
-        oracle = ITruncGeoOracleMulti(SharedDeployLib.deployDeterministic(
-            SharedDeployLib.ORACLE_SALT, type(TruncGeoOracleMulti).creationCode, oracleConstructorArgs
-        ));
-        emit log_named_address("Oracle deployed at:", address(oracle));
-        require(address(oracle) != address(0), "Oracle deployment failed");
 
-        // --- Get required hook address from deployed Oracle ---
-        address requiredHook = oracle.getHookAddress();
-        require(requiredHook == predictedHookAddress, "Oracle hook address mismatch vs prediction - Deterministic salt mismatch in SharedDeployLib.SPOT_HOOK_SALT");
-
-        // --- Prepare FINAL DFM Constructor Args (with actual Oracle) ---
-        bytes memory finalDfmConstructorArgs = abi.encode(
-            policyManager,
-            address(oracle), // Use deployed oracle address
-            requiredHook // Use hook address required by oracle
+        // --- DEPLOY contracts via CREATE2 --------------------------------
+        console2.log("Deploying Oracle via CREATE2...");
+        address deployedOracleAddr = SharedDeployLib.deployDeterministic(
+            ORACLE_SALT,
+            type(TruncGeoOracleMulti).creationCode,
+            oracleArgs                       // <<< single-source of truth
         );
+        truncGeoOracle = TruncGeoOracleMulti(payable(deployedOracleAddr));
+        emit log_named_address("[DEPLOY] Oracle Deployed at", deployedOracleAddr);
 
-        // --- DEPLOY DFM with CREATE2 (using final args) ---
+        // Deploy DFM
         emit log_string("Deploying DFM via CREATE2...");
-        dynamicFeeManager = IDynamicFeeManager(SharedDeployLib.deployDeterministic(
-            SharedDeployLib.DFM_SALT, type(DynamicFeeManager).creationCode, finalDfmConstructorArgs
-        ));
-        emit log_named_address("DynamicFeeManager deployed at:", address(dynamicFeeManager));
-        // We cannot easily predict the address with the *final* oracle address easily beforehand,
-        // but we deploy with the same salt, so it *should* land at predictedDfmAddress if bytecode matches.
-        // Let's check against the initially predicted address based on placeholders.
-        // If this fails, it implies bytecode changed due to oracle address, which is possible.
-        // assertEq(address(dynamicFeeManager), predictedDfmAddress, "DFM address mismatch");
-        // A safer check might be to re-predict with final args, or accept the deployed address.
-
-
-        // --- Prepare FINAL Spot Hook Constructor Args (with actual Oracle & DFM) ---
-        bytes memory finalSpotConstructorArgs = abi.encode(
-            poolManager,
-            policyManager, // Use interface
-            liquidityManager, // Use interface
-            TruncGeoOracleMulti(address(oracle)), // Re-added cast: Pass concrete type expected by constructor
-            dynamicFeeManager, // Use interface
-            deployerEOA // Initial Owner
+        dynamicFeeManager = IDynamicFeeManager(
+            SharedDeployLib.deployDeterministic(
+                DFM_SALT,
+                type(DynamicFeeManager).creationCode,
+                dfmArgs                           // <<< reuse same args
+            )
         );
+        assertEq(address(dynamicFeeManager), finalDfmAddr, "DFM address mismatch");
 
-        // --- DEPLOY Spot Hook with CREATE2 (using final args, MUST match oracle's required address) ---
+        // Store hook salt & DEPLOY Hook
+        vm.setEnv("SPOT_HOOK_SALT", vm.toString(hookSalt)); // Note: This still happens *after* args are built
+
         emit log_string("Deploying Spot hook via CREATE2...");
-        address spot = SharedDeployLib.deploySpotHook(
-            poolManager, policyManager, liquidityManager, TruncGeoOracleMulti(address(oracle)), dynamicFeeManager, deployerEOA
+        actualHookAddress = SharedDeployLib.deploySpotHook(
+            poolManager,
+            policyManager,
+            liquidityManager,
+            TruncGeoOracleMulti(address(oracle)),
+            dynamicFeeManager,
+            c2Deployer
         );
-        require(spot != address(0), "spot-deploy-failed");
-        emit log_named_address("Spot hook deployed at:", spot);
-        actualHookAddress = spot;
+        assertEq(actualHookAddress, finalHookAddr, "Hook address mismatch");
+
+        // cache concretized hook instance for later use
+        fullRange = Spot(payable(actualHookAddress));
+
+        emit log_named_address("Spot hook deployed at:", actualHookAddress);
 
         // --- Configure Contracts ---
         emit log_string("Configuring contracts...");
@@ -313,17 +403,11 @@ contract ForkSetup is Test {
             currency1: Currency.wrap(token1),
             fee: SharedDeployLib.POOL_FEE, // Use dynamic fee flag from library
             hooks: IHooks(actualHookAddress), // Use the deployed hook address
-            tickSpacing: TICK_SPACING
+            tickSpacing: SharedDeployLib.TICK_SPACING
         });
         poolId = poolKey.toId();
         emit log_named_bytes32("Pool ID created", PoolId.unwrap(poolId));
         emit log_named_address("Pool Key Hook Address", address(poolKey.hooks));
-
-        // --- Initialize DFM --- (Already deployed, now initialize pool within it)
-        emit log_string("Initializing DFM for pool...");
-        // Get initial tick *after* pool is potentially initialized below
-        // (Tick is needed for DFM init, but pool might not exist yet on fork)
-        // We will initialize DFM *after* poolManager.initialize
 
         // --- Deploy Test Routers ---
         emit log_string("Deploying test routers...");
@@ -396,8 +480,8 @@ contract ForkSetup is Test {
         _bootstrapPoolManagerAllowances();
         _fundTestAccounts();
 
-        // regression-guard: spot hook MUST be deployed and initialised
-        assertTrue(Spot(payable(spot)).isPoolInitialized(poolKey.toId()), "Spot not initialised");
+        // regression-guard: hook MUST be deployed and initialised
+        assertTrue(fullRange.isPoolInitialized(poolKey.toId()), "Spot not initialised");
 
         emit log_string("--- ForkSetup Complete ---");
     }

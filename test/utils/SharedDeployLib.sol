@@ -15,6 +15,7 @@ import {Spot} from "../../src/Spot.sol";
 import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 import {Vm} from "forge-std/Vm.sol";
+import {console2} from "forge-std/console2.sol";
 
 /** ----------------------------------------------------------------
  * @title SharedDeployLib
@@ -24,9 +25,13 @@ import {Vm} from "forge-std/Vm.sol";
  *         so that a missing import can never break the whole tree.
  * ---------------------------------------------------------------*/
 
-/// @dev Temporary forwarder – lets historical `../utils/SharedDeployLib.sol`
-///      imports keep compiling after we moved the real code to `src/utils/`.
-///      Remove this file once all branches use the new path.
+/**
+ * @notice Shared library for deterministic deployments using CREATE2.
+ * @dev Includes functions for prediction, deployment, and specific hook deployment logic.
+ */
+
+// Define the custom error
+error SharedDeployLib__DeploymentFailed();
 
 library SharedDeployLib {
     Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
@@ -37,14 +42,9 @@ library SharedDeployLib {
     // --------------------------------------------------------------------- //
     bytes32 public constant ORACLE_SALT      = keccak256("TRUNC_GEO_ORACLE");
     
-    /// @dev deprecated – kept so the selector hash stays constant for old tests
-    bytes32 internal constant _SPOT_SALT_DEPRECATED = keccak256("full-range-spot-hook");
-
     bytes32 public constant DFM_SALT         = keccak256("DYNAMIC_FEE_MANAGER");
 
-    // salt uses deployer so tests ≠ prod; keep predictable by forcing same address
-    // The tests impersonate `DEPLOYER_EOA`, so we hard-code that here:
-    address internal constant TEST_DEPLOYER = address(0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf);
+    /// 🛑  Do **not** hard-code a deployer.  It must be provided by the caller.
 
     /* ---------- flags re-exported so tests don't need hard-coding ------- */
     uint24  public  constant POOL_FEE     = 3_000; // 0.30%
@@ -86,25 +86,9 @@ library SharedDeployLib {
         );
     }
 
-    /* ---------- deterministic-address helpers -------------------------- */
-    function _buildCreate2(
-        bytes32 salt,
-        bytes memory bytecode,
-        bytes memory constructorArgs
-    ) internal view returns (bytes32 hash) {
-        bytes memory all = abi.encodePacked(bytecode, constructorArgs);
-        hash = keccak256(all);
-        assembly {
-            // Same formula solidity uses for CREATE2 addr calc:
-            // keccak256(0xff ++ deployer ++ salt ++ keccak256(init_code))[12:]
-            let encoded := mload(0x40)
-            mstore(encoded, 0xff)
-            mstore(add(encoded, 0x01), shl(96, caller()))
-            mstore(add(encoded, 0x15), salt)
-            mstore(add(encoded, 0x35), hash)
-            hash := keccak256(encoded, 0x55)
-        }
-    }
+    /* ------------------------------------------------------------------ *
+     *  Deterministic-address prediction (now **uses** the `deployer` arg) *
+     * ------------------------------------------------------------------ */
 
     function predictDeterministicAddress(
         address deployer,
@@ -112,8 +96,27 @@ library SharedDeployLib {
         bytes memory bytecode,
         bytes memory constructorArgs
     ) internal view returns (address) {
-        bytes32 digest = _buildCreate2(salt, bytecode, constructorArgs);
-        return address(uint160(uint256(digest)));
+        console2.log("Predict Salt:"); console2.logBytes32(salt); // Rule 27
+        // Rule 27 – deep-copy to prevent aliasing between predict & deploy
+        bytes memory frozenArgs = bytes(constructorArgs);
+        bytes memory initCode   = abi.encodePacked(bytecode, frozenArgs);
+        bytes32 codeHash = keccak256(initCode);
+        console2.log("Predict Code Hash:"); console2.logBytes32(codeHash);
+
+        return Create2.computeAddress(salt, codeHash, deployer);
+    }
+
+    /// @dev Minimal, dependency-free replica of EIP-1014 formula
+    function _computeCreate2(
+        address deployer,
+        bytes32 salt,
+        bytes32 codeHash
+    ) private pure returns (address) {
+        // EIP-1014:  address = keccak256(0xff ++ deployer ++ salt ++ hash))[12:]
+        bytes32 digest = keccak256(
+            abi.encodePacked(bytes1(0xff), deployer, salt, codeHash)
+        );
+        return address(uint160(uint256(digest))); // ← lower 20-bytes
     }
 
     /** @dev Performs CREATE2 deploy and returns the address. Reverts on failure */
@@ -122,12 +125,46 @@ library SharedDeployLib {
         bytes memory bytecode,
         bytes memory constructorArgs
     ) internal returns (address addr) {
-        bytes memory all = abi.encodePacked(bytecode, constructorArgs);
-        assembly {
-            addr := create2(0, add(all, 0x20), mload(all), salt)
-            if iszero(addr) { revert(0, 0) } // Revert if deployment fails
+        bytes memory frozenArgs = bytes(constructorArgs);
+        bytes memory initCode   = abi.encodePacked(bytecode, frozenArgs);
+        bytes32 codeHash = keccak256(initCode);
+
+        // ►► Rule 29 bis – MOVE salt to a stack-local before any further allocations
+        bytes32 _salt = salt;
+
+        // ───── Logging BEFORE touching free memory (hash is still valid)
+        console2.log("--- Predict Deterministic ---");
+        console2.log("Deploy Salt:");        console2.logBytes32(_salt);
+        console2.log("Deploy Code Hash:");   console2.logBytes32(codeHash);
+        console2.log("Deploy Executor:",     address(this));
+
+        // ---- Rule 28: final deep-copy & re-hash -----------------
+        bytes memory finalCopy = abi.encodePacked(initCode); // fresh copy
+        bytes32 codeHashFinal  = keccak256(finalCopy);
+        require(codeHashFinal == codeHash, "initCode mutated");
+
+        address predicted = Create2.computeAddress(_salt, codeHashFinal, address(this)); // Use finalHash here too
+
+        // Log predicted address (now safe)
+        console2.log("Predicted Address:", predicted);
+
+        // Rule 27 guard
+        if (predicted.code.length != 0) {
+            revert("CREATE2 target already has code - pick a different salt");
         }
-        require(addr != address(0), "CREATE2 deployment failed");
+
+        // Assembly: copy salt into its own local before *any* other op
+        assembly {
+            let tmpSalt := _salt        // Rule 30 – re-freeze
+            addr := create2(
+                0,                      // value
+                add(finalCopy, 0x20),   // code offset
+                mload(finalCopy),       // code length
+                tmpSalt                 // salt
+            )
+        }
+        if (addr == address(0)) revert SharedDeployLib__DeploymentFailed();
+        if (addr != predicted) revert("Deployed address != Recomputed address"); // Rule 28 guard
     }
 
     /// Derive salt **exactly** as before – tests and production infra rely on the
@@ -155,8 +192,7 @@ library SharedDeployLib {
             if (predicted.code.length == 0 && uint160(predicted) & _FLAG_MASK() == SPOT_HOOK_FLAGS) {
                 return (salt, predicted);
             }
-            // Otherwise clear it since it's invalid/outdated
-            vm.setEnv("SPOT_HOOK_SALT", "");
+            // Otherwise signal failure to caller; do NOT touch ENV here
         }
 
         /* 2️⃣  Mine a new salt that fits the flag pattern */
@@ -167,24 +203,25 @@ library SharedDeployLib {
             constructorArgs
         );
 
-        // Save the newly mined salt
-        vm.setEnv("SPOT_HOOK_SALT", vm.toString(salt));
+        // Caller decides when (and if) to persist the salt.
         return (salt, predicted);
     }
 
-    /// @notice Predicts the Spot hook address using the fixed TEST_DEPLOYER and known constructor args structure from ForkSetup
+    /// @notice Predicts the Spot hook address using the provided deployer and constructor args structure
     /// @param _poolManager PoolManager instance
     /// @param _policyManager PolicyManager instance
     /// @param _liquidityManager LiquidityManager instance
     /// @param _oracle Oracle instance
     /// @param _dynamicFeeManager DynamicFeeManager instance
+    /// @param _deployer The deployer address
     /// @return predictedAddress The predicted deterministic address for the Spot hook
-    function predictSpotHookAddressForTest(
+    function predictSpotHookAddress(
         IPoolManager _poolManager,
         IPoolPolicy _policyManager,
         IFullRangeLiquidityManager _liquidityManager,
         TruncGeoOracleMulti _oracle,
-        IDynamicFeeManager _dynamicFeeManager
+        IDynamicFeeManager _dynamicFeeManager,
+        address      _deployer /* ⬅ NEW explicit deployer */
     ) internal returns (address) {
         bytes memory spotConstructorArgs = abi.encode(
             _poolManager,
@@ -192,10 +229,10 @@ library SharedDeployLib {
             _liquidityManager,
             _oracle,
             _dynamicFeeManager,
-            TEST_DEPLOYER
+            _deployer
         );
         ( , address predicted) =
-            _spotHookSaltAndAddr(TEST_DEPLOYER, type(Spot).creationCode, spotConstructorArgs);
+            _spotHookSaltAndAddr(_deployer, type(Spot).creationCode, spotConstructorArgs);
         return predicted;
     }
 
@@ -231,7 +268,7 @@ library SharedDeployLib {
         address predicted = Create2.computeAddress(
             salt,
             keccak256(abi.encodePacked(hookCreationCode, spotConstructorArgs)),
-            _deployer
+            address(this)
         );
 
         // Deploy – will revert automatically if some other tx used the salt
