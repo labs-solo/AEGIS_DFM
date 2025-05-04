@@ -154,6 +154,14 @@ library SharedDeployLib {
             revert("CREATE2 target already has code - pick a different salt");
         }
 
+        // Add diagnostic logging for hash comparison
+        console2.log("codeHashFinal:");
+        console2.logBytes32(codeHashFinal);
+        bytes32 onChainHash;
+        assembly { onChainHash := keccak256(add(finalCopy, 0x20), mload(finalCopy)) }
+        console2.log("onChainHash:");
+        console2.logBytes32(onChainHash);
+
         // Assembly: copy salt into its own local before *any* other op
         assembly {
             let tmpSalt := _salt        // Rule 30 – re-freeze
