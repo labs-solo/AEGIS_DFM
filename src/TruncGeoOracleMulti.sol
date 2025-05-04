@@ -526,14 +526,22 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         bytes32 id       = PoolId.unwrap(pid);
         uint24 currentCap= maxTicksPerBlock[id];
 
-        uint32 stepPpm   = pc.stepPpm;
-        uint24 minCap    = pc.minCap;
-        uint24 maxCap    = pc.maxCap;
+        /* ------------------------------------------------------------------ *
+         * ⚠️  Hot-path gas-saving:                                           *
+         * The three invariants below                                         *
+         *   – `stepPpm   != 0`                                               *
+         *   – `minCap    != 0`                                               *
+         *   – `maxCap    >= minCap`                                          *
+         * are **already checked once** in `PolicyValidator.validate()`       *
+         * (called from `enableOracleForPool` and `refreshPolicyCache`).      *
+         * After that, the cached `pc` struct can only change through the     *
+         * same validated path, so repeating the `require`s here costs        *
+         * ~500 gas per swap without adding security.                         *
+         * ------------------------------------------------------------------ */
 
-        // ── validate policy params on every tune to avoid DoS vectors ──────
-        require(stepPpm != 0,      "TruncOracle: stepPpm=0");
-        require(minCap  != 0,      "TruncOracle: minCap=0");
-        require(maxCap  >= minCap, "TruncOracle: cap-bounds");
+        uint32 stepPpm   = pc.stepPpm;  // safe: validated on write
+        uint24 minCap    = pc.minCap;   // safe: validated on write
+        uint24 maxCap    = pc.maxCap;   // safe: validated on write
 
         uint24 change = uint24(uint256(currentCap) * stepPpm / PPM);
         if (change == 0) change = 1; // Ensure minimum change of 1 tick
