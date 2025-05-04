@@ -112,7 +112,7 @@ contract TruncGeoOracleMultiTest is Test {
     /* ------------------------------------------------------------ *
      * 1. Initialization paths                                      *
      * ------------------------------------------------------------ */
-    function testEnablePoolSetsDefaults() public {
+    function testEnablePoolSetsDefaults() public view {
         bytes32 poolIdBytes = PoolId.unwrap(pid);
         assertEq(
             oracle.maxTicksPerBlock(poolIdBytes),
@@ -172,7 +172,7 @@ contract TruncGeoOracleMultiTest is Test {
     /* ------------------------------------------------------------ *
      * 5. getLatestObservation fast-path                            *
      * ------------------------------------------------------------ */
-    function testGetLatestObservation() public {
+    function testGetLatestObservation() public view {
         (int24 tick, uint32 ts) = oracle.getLatestObservation(pid);
         assertEq(tick, 0);
         assertEq(ts, uint32(block.timestamp));

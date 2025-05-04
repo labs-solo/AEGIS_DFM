@@ -92,13 +92,16 @@ contract TruncGeoOracleMulti {
 
     /**
      * @notice Pushes a new observation and checks if the tick movement exceeds the cap.
-     * @dev Can only be called by the configured hook address.
+     * @dev Can only be called by the configured hook address. The swap direction parameter
+     *      is currently unused but kept for interface compatibility.
      * @param pid The PoolId of the pool.
-     * @param zeroForOne Indicates the swap direction (true if swapping token0 for token1).
      * @return tick The current tick after the observation.
      * @return capped True if the tick movement was capped, false otherwise.
      */
-    function pushObservationAndCheckCap(PoolId pid, bool zeroForOne) external returns (int24 tick, bool capped) {
+    function pushObservationAndCheckCap(PoolId pid, bool zeroForOne)
+        external
+        returns (int24 tick, bool capped)
+    {
         if (msg.sender != hook) revert OnlyHook();
         bytes32 id = PoolId.unwrap(pid);
         if (states[id].cardinality == 0) {

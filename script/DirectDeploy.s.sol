@@ -92,14 +92,7 @@ contract DirectDeploy is Script {
             console.log("Deploying PolicyManager...");
             // Simplified parameters for this test deployment
             address owner = deployer;
-            uint256 polSharePpm = 800000; // 80%
-            uint256 fullRangeSharePpm = 0; // 0%
-            uint256 lpSharePpm = 200000; // 20%
-            uint256 minimumTradingFeePpm = 1000; // 0.1%
-            uint256 feeClaimThresholdPpm = 1000; // 0.1%
-            uint256 defaultPolMultiplier = 2;
             uint256 defaultDynamicFeePpm = 5000; // 0.5%
-            int24 tickScalingFactor = 10;
             uint24[] memory supportedTickSpacings = new uint24[](3);
             supportedTickSpacings[0] = 1;
             supportedTickSpacings[1] = 10;

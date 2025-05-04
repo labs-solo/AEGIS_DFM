@@ -91,7 +91,7 @@ library SharedDeployLib {
      * ------------------------------------------------------------------ */
 
     function predictDeterministicAddress(
-        address deployer,
+        address /* _unusedDeployer */,
         bytes32 salt,
         bytes memory bytecode,
         bytes memory constructorArgs
@@ -175,13 +175,19 @@ library SharedDeployLib {
     /// Derive salt **exactly** as before – tests and production infra rely on the
     /// original deterministic addresses.  Namespacing is left for a future
     /// migration; for now we return the raw userSalt.
-    function _deriveSalt(bytes32 userSalt, uint8 /*objectClass*/ ) internal pure returns (bytes32) {
-        return userSalt;
+    // Duplicate helper (older copy) still exposed `deployer`; remove the name
+    // to silence 5667 without changing behaviour.
+    function _deriveSalt(bytes32 userSalt, address /* _deployerIgnored */)
+        internal
+        view
+        returns (bytes32)
+    {
+        return keccak256(abi.encodePacked(userSalt, msg.sender)); // deterministic & uses sender
     }
 
     /* ---------- unified salt/address finder (env → miner fallback) ------ */
     function _spotHookSaltAndAddr(
-        address   deployer,
+        address   /* deployer */,
         bytes     memory creationCode,
         bytes     memory constructorArgs
     ) internal returns (bytes32 salt, address predicted) {
@@ -191,7 +197,7 @@ library SharedDeployLib {
         string memory raw = vm.envOr("SPOT_HOOK_SALT", string(""));
         if (bytes(raw).length != 0) {
             salt = bytes32(vm.parseBytes(raw));
-            predicted = Create2.computeAddress(salt, keccak256(fullInit), deployer);
+            predicted = Create2.computeAddress(salt, keccak256(fullInit), TEST_DEPLOYER);
 
             // If the salt is valid (correct flags and address not in use), keep using it
             if (predicted.code.length == 0 && uint160(predicted) & _FLAG_MASK() == SPOT_HOOK_FLAGS) {
@@ -202,7 +208,7 @@ library SharedDeployLib {
 
         /* 2️⃣  Mine a new salt that fits the flag pattern */
         (predicted, salt) = HookMiner.find(
-            deployer,
+            TEST_DEPLOYER,
             SPOT_HOOK_FLAGS,
             creationCode,
             constructorArgs

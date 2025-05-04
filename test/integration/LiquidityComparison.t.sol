@@ -81,9 +81,6 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         token1.approve(address(manager_), amount1);
 
         // bootstrap not needed – oracle will learn MTB via CAP events
-
-        // Initialize DFM for the pool
-        (, int24 initialTick,,) = StateLibrary.getSlot0(manager_, poolKey.toId());
     }
 
     function test_compareDirectVsFRLM() public {
@@ -113,15 +110,11 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
             CallbackData({poolKey: poolKey, tickLower: tickLower, tickUpper: tickUpper, liquidity: liquidity});
 
         manager_.unlock(abi.encode(cbData));
-        uint256 used0Direct = used0Direct_;
-        uint256 used1Direct = used1Direct_;
 
         // ───────────────────────────────────────────────────────────
         // ② Same deposit through FullRangeLiquidityManager (lpProvider)
         // ───────────────────────────────────────────────────────────
         uint256 shares;
-        uint256 used0FRLM;
-        uint256 used1FRLM;
 
         // bytes32 ← direct unwrap; no cast needed
         bytes32 poolIdBytes = PoolId.unwrap(poolKey.toId()); // for hash & indexing

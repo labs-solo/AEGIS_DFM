@@ -33,11 +33,11 @@ contract PoolPolicyManagerInitTest is Test {
     /*                              Constructor checks                            */
     /* -------------------------------------------------------------------------- */
 
-    function testConstructorSetsOwner() public {
+    function testConstructorSetsOwner() public view {
         assertEq(ppm.owner(), OWNER);
     }
 
-    function testConstructorSetsDefaultFeeAllocations() public {
+    function testConstructorSetsDefaultFeeAllocations() public view {
         // (POL share, full-range share, LP share)
         (uint256 pol, uint256 fr, uint256 lp) = ppm.getFeeAllocations(pid(1));
         assertEq(pol, 100_000); // 10 %
@@ -45,36 +45,36 @@ contract PoolPolicyManagerInitTest is Test {
         assertEq(lp, 900_000); // 90 %
     }
 
-    function testConstructorSetsOtherGlobalDefaults() public {
-        assertEq(ppm.getMinimumTradingFee(), 100); // 0.01 %
-        assertEq(ppm.getFeeClaimThreshold(), 10_000); // 1 %
-        assertEq(ppm.getDefaultDynamicFee(), 5_000); // 0.50 %
-        assertEq(ppm.defaultPolMultiplier(), 10); // 10×
-        assertEq(ppm.getTickScalingFactor(), 1);
+    function testConstructorSetsOtherGlobalDefaults() public view {
+        assertEq(ppm.getMinimumTradingFee() , 100);          // 0.01 %
+        assertEq(ppm.getFeeClaimThreshold() , 10_000);       // 1 %
+        assertEq(ppm.getDefaultDynamicFee() , 5_000);        // 0.50 %
+        assertEq(ppm.defaultPolMultiplier() , 10);           // 10×
+        assertEq(ppm.getTickScalingFactor() , 1);
         assertEq(ppm.getProtocolFeePercentage(pid(0)), PROTOCOL_FEE_PPM); // Updated getter call
         assertEq(ppm.getFeeCollector(), FEE_COLLECTOR);
     }
 
-    function testSupportedTickSpacingsInitialised() public {
-        assertTrue(ppm.isTickSpacingSupported(1));
-        assertTrue(ppm.isTickSpacingSupported(10));
-        assertFalse(ppm.isTickSpacingSupported(60)); // not whitelisted
+    function testSupportedTickSpacingsInitialised() public view {
+        assertTrue (ppm.isTickSpacingSupported(1));
+        assertTrue (ppm.isTickSpacingSupported(10));
+        assertFalse(ppm.isTickSpacingSupported(60));         // not whitelisted
     }
 
-    function testGetMinimumPOLTarget_UsesDefaultMultiplier() public {
-        uint256 tl = 1e18; // total liquidity
-        uint256 dyn = 3_000; // 0.30 %
-        uint256 exp = tl * dyn * 10 / 1e12; // tl * fee * mult ÷ 1e12
+    function testGetMinimumPOLTarget_UsesDefaultMultiplier() public view {
+        uint256 tl  = 1e18;      // total liquidity
+        uint256 dyn = 3_000;     // 0.30 %
+        uint256 exp = tl * dyn * 10 / 1e12;  // tl * fee * mult ÷ 1e12
         assertEq(ppm.getMinimumPOLTarget(pid(7), tl, dyn), exp);
     }
 
-    function testDailyBudgetAndDecayWindowDefaults() public {
+    function testDailyBudgetAndDecayWindowDefaults() public view {
         (uint32 budget, uint32 window) = ppm.getBudgetAndWindow(pid(0));
         assertEq(budget, 1e6); // 1 cap-event per day (ppm)
         assertEq(window, 180 days); // six-month linear decay
     }
 
-    function testDefaultGetterFallbacks() public {
+    function testDefaultGetterFallbacks() public view {
         PoolId p = pid(42);
         assertEq(ppm.getFreqScaling(p), 1e18);
         assertEq(ppm.getMinBaseFee(p), 100);

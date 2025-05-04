@@ -20,15 +20,24 @@ library EventTools {
 
     /**
      * @notice Expect a PolicySet event unconditionally
+     * @param pid The pool ID
+     * @param ptype The policy type
+     * @param impl The implementation address
+     * @param setter The address setting the policy
      */
-    function expectPolicySet(Test t, PoolId pid, IPoolPolicy.PolicyType ptype, address impl, address setter) internal {
+    function expectPolicySet(
+        Test /* t */,
+        PoolId pid,
+        IPoolPolicy.PolicyType ptype,
+        address impl,
+        address setter
+    ) internal {
         vm.expectEmit(true, true, true, true);
         emit PolicySet(pid, ptype, impl, setter);
     }
 
     /**
      * @notice Conditionally expect a PolicySet event based on a condition
-     * @param t The test contract instance
      * @param willEmit Whether the event should be expected
      * @param pid The pool ID
      * @param ptype The policy type
@@ -36,7 +45,7 @@ library EventTools {
      * @param setter The address setting the policy
      */
     function expectPolicySetIf(
-        Test t,
+        Test /* t */,
         bool willEmit,
         PoolId pid,
         IPoolPolicy.PolicyType ptype,
@@ -51,22 +60,26 @@ library EventTools {
 
     /**
      * @notice Conditionally expect any event based on a condition
-     * @param t The test contract instance
      * @param willEmit Whether the event should be expected
      * @param checkTopic1 Whether to check the first topic
      * @param checkTopic2 Whether to check the second topic
      * @param checkTopic3 Whether to check the third topic
      * @param checkData Whether to check the data
      */
-    function expectEmitIf(Test t, bool willEmit, bool checkTopic1, bool checkTopic2, bool checkTopic3, bool checkData)
-        internal
-    {
+    function expectEmitIf(
+        Test /* t */,
+        bool willEmit,
+        bool checkTopic1,
+        bool checkTopic2,
+        bool checkTopic3,
+        bool checkData
+    ) internal {
         if (willEmit) {
             vm.expectEmit(checkTopic1, checkTopic2, checkTopic3, checkData);
         }
     }
 
-    function expectReinvestorDenied(Test t, address who) internal {
+    function expectReinvestorDenied(address /* who */) internal {
         vm.expectRevert(abi.encodeWithSelector(Errors.Unauthorized.selector));
     }
 }

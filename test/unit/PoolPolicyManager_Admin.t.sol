@@ -197,10 +197,9 @@ contract PoolPolicyManager_Admin is Test {
     /*────────────────── Daily budget & decay window ───────────*/
     function testOwnerUpdatesBudgetAndWindow() public {
         // Get current values to determine if events should emit
-        (uint32 prevBudget, uint32 prevWindow) = ppm.getBudgetAndWindow(pid(0));
-        bool budgetWillEmit = (prevBudget != 2_000_000);
-        bool windowWillEmit = (prevWindow != 90 days);
-
+        ppm.getBudgetAndWindow(pid(0)); // call to read state, discard return values - silence 2072
+        
+        // Set the new values
         vm.prank(OWNER);
         ppm.setDailyBudgetPpm(2_000_000); // 2 caps/day
 

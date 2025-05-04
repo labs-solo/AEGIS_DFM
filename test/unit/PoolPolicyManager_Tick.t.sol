@@ -33,9 +33,9 @@ contract PoolPolicyManager_Tick is Test {
     }
 
     /*────────────────── Constructor defaults ──────────────────*/
-    function testConstructorSeedsSupportedTickSpacings() public {
-        assertTrue(ppm.isTickSpacingSupported(1));
-        assertTrue(ppm.isTickSpacingSupported(10));
+    function testConstructorSeedsSupportedTickSpacings() public view {
+        assertTrue (ppm.isTickSpacingSupported(1));
+        assertTrue (ppm.isTickSpacingSupported(10));
         assertFalse(ppm.isTickSpacingSupported(60));
     }
 
@@ -119,11 +119,14 @@ contract PoolPolicyManager_Tick is Test {
     function testOwnerCanSetTickScalingFactor() public {
         // Check if current value matches desired value
         int24 prevFactor = ppm.getTickScalingFactor();
-        bool willEmit = (prevFactor != 3);
-
-        // Expect PolicySet event
-        EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.VTIER, address(uint160(3)), OWNER
+        assertNotEq(prevFactor, 3);
+        
+        vm.expectEmit(true, true, true, true);
+        emit PoolPolicyManager.PolicySet(
+            PoolId.wrap(bytes32(0)),
+            IPoolPolicy.PolicyType.TICK_SCALING,
+            address(uint160(uint256(int256(3)))),
+            OWNER
         );
 
         vm.prank(OWNER);
@@ -157,7 +160,7 @@ contract PoolPolicyManager_Tick is Test {
         _assertVtier(999, 1, false); // wrong fee for spacing
     }
 
-    function testIsValidVtierDynamicFeeFlagBypassesFeeRules() public {
+    function testIsValidVtierDynamicFeeFlagBypassesFeeRules() public view {
         // Fee with high-bit flag + supported spacing → always true
         assertTrue(ppm.isValidVtier(0x800000, 1));
         assertTrue(ppm.isValidVtier(0x800000, 10));
@@ -169,7 +172,7 @@ contract PoolPolicyManager_Tick is Test {
     /*───────────────────── helper / internal ───────────────────*/
     event TickSpacingSupportChanged(uint24 tickSpacing, bool isSupported);
 
-    function _assertVtier(uint24 fee, int24 spacing, bool expected) internal {
+    function _assertVtier(uint24 fee, int24 spacing, bool expected) internal view {
         bool ok = ppm.isValidVtier(fee, spacing);
         assertEq(ok, expected, "vtier mismatch");
     }

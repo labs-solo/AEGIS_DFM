@@ -90,7 +90,7 @@ contract C2DValidation is Script {
     /**
      * @notice Main script to test hook validation
      */
-    function run() public view {
+    function run() public pure {
         console.log("Testing Create2Deployer validation for hooks");
 
         // Create the same hook flags as in our deployment
