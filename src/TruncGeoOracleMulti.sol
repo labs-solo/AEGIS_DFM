@@ -122,7 +122,20 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     mapping(PoolId => uint32) private _lastMaxTickUpdate;
 
     /* ────────────────────── CONSTRUCTOR ─────────────────────── */
-    constructor(IPoolManager _poolManager, IPoolPolicy _policyContract, address _hook, address _owner) {
+    /// -----------------------------------------------------------------------
+    /// @notice Deploy the oracle and wire the immutable dependencies.
+    /// @param _poolManager Canonical v4 `PoolManager` contract
+    /// @param _policyContract Governance-controlled policy contract
+    /// @param _hook Whitelisted hook address that is allowed to call
+    ///              `enableOracleForPool` and `pushObservationAndCheckCap`
+    /// @param _owner Governor address that can refresh the cached policy
+    /// -----------------------------------------------------------------------
+    constructor(
+        IPoolManager _poolManager,
+        IPoolPolicy _policyContract,
+        address _hook,
+        address _owner
+    ) {
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_policyContract) == address(0)) revert Errors.ZeroAddress();
         if (_hook == address(0)) revert Errors.ZeroAddress();
@@ -140,6 +153,12 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      *      all policy parameters, ensuring they remain within acceptable ranges.
      * @param pid The PoolId of the pool.
      */
+    /// -----------------------------------------------------------------------
+    /// @notice Sync the in-storage policy cache with the current policy
+    ///         contract values and clamp the existing `maxTicksPerBlock`
+    ///         into the new `[minCap, maxCap]` band.
+    /// @dev    Callable only by `owner`. Emits `PolicyCacheRefreshed`.
+    /// -----------------------------------------------------------------------
     function refreshPolicyCache(PoolId pid) external {
         if (msg.sender != owner) revert OnlyOwner();
         
@@ -178,6 +197,11 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @dev Can only be called by the configured hook address.
      * @param key The PoolKey of the pool to enable.
      */
+    /// -----------------------------------------------------------------------
+    /// @notice One-time bootstrap that allocates the first observation page
+    ///         and persists all policy parameters for `pid`.
+    /// @dev    Must be invoked through the authorised `hook`.
+    /// -----------------------------------------------------------------------
     function enableOracleForPool(PoolKey calldata key) external {
         if (msg.sender != hook) revert OnlyHook();
         bytes32 id = PoolId.unwrap(key.toId());   // explicit unwrap
@@ -219,6 +243,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @param pid The PoolId of the pool.
      * @return tickWasCapped True if the tick movement was capped, false otherwise.
      */
+    /// -----------------------------------------------------------------------
+    /// @notice Record a new observation and return whether the tick delta
+    ///         exceeded the adaptive cap (and was therefore clamped).
+    /// @param  pid Pool identifier
+    /// @param  _zeroForOne unused – kept for future compatibility
+    /// @return tickWasCapped True if the move hit the cap
+    /// -----------------------------------------------------------------------
     function pushObservationAndCheckCap(PoolId pid, bool /* _zeroForOne */)
         external
         nonReentrant
@@ -330,6 +361,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @param pid The PoolId to check.
      * @return True if the oracle is enabled, false otherwise.
      */
+    /// @notice Read-only helper: check if the oracle has been enabled for `pid`.
     function isOracleEnabled(PoolId pid) external view returns (bool) {
         return states[PoolId.unwrap(pid)].cardinality > 0;
     }
@@ -340,7 +372,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @return tick The tick from the latest observation.
      * @return blockTimestamp The timestamp of the latest observation.
      */
-    function getLatestObservation(PoolId pid) external view returns (int24 tick, uint32 blockTimestamp) {
+    /// @notice Return the most recent observation stored for `pid`.
+    /// @dev    Reverts if the oracle was never enabled.
+    function getLatestObservation(PoolId pid)
+        external
+        view
+        returns (int24 tick, uint32 blockTimestamp)
+    {
         bytes32 id = PoolId.unwrap(pid);
         if (states[id].cardinality == 0) {
             revert Errors.OracleOperationFailed("getLatestObservation", "Pool not enabled");
@@ -355,6 +393,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /**
      * @notice Returns the immutable hook address configured for this oracle.
      */
+    /// @notice Expose the immutable hook address for off-chain tooling.
     function getHookAddress() external view returns (address) {
         return hook;
     }
@@ -371,6 +410,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @notice Returns the saturation threshold for the capFreq counter.
      * @return The maximum value for the capFreq counter before it saturates.
      */
+    /// @notice Hard-coded saturation threshold used by the frequency counter.
     function getCapFreqMax() external pure returns (uint64) {
         return CAP_FREQ_MAX;
     }
