@@ -192,11 +192,11 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
 
     /* ─────────────────── Hook: beforeSwap ───────────────────── */
     function _beforeSwap(
-        address, /* sender */
+        address /* sender */,
         PoolKey calldata key,
-        SwapParams calldata params,
+        SwapParams calldata /* params */,
         bytes calldata /* hookData */
-    ) internal override returns (bytes4, BeforeSwapDelta, uint24) {
+    ) internal view override returns (bytes4, BeforeSwapDelta, uint24) {
         if (address(feeManager) == address(0)) {
             revert Errors.NotInitialized("DynamicFeeManager");
         }
@@ -228,14 +228,14 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         BalanceDelta delta,
         bytes calldata /* hookData */
     ) internal override returns (bytes4, int128) {
-        // 1) Push tick to oracle, also get the CAP flag
-        (int24 tick, bool capped) = truncGeoOracle.pushObservationAndCheckCap(key.toId(), params.zeroForOne);
+        // 2. Push observation to oracle & check cap
+        // The oracle call returns a boolean indicating if the tick movement was capped.
+        bool capped = truncGeoOracle.pushObservationAndCheckCap(key.toId(), params.zeroForOne);
 
-        // 2) Feed the DynamicFeeManager - using gas stipend to prevent re-entrancy
-        //    - `Spot` itself is the authorised hook
+        // 3. Notify Dynamic Fee Manager about the oracle update
         feeManager.notifyOracleUpdate{gas: GAS_STIPEND}(key.toId(), capped);
 
-        // 3) accrue any LP/PROTOCOL fees
+        // 4. accrue any LP/PROTOCOL fees
         _processSwapFees(PoolId.unwrap(key.toId()), delta);
 
         return (BaseHook.afterSwap.selector, 0);
@@ -246,14 +246,11 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     /* ───────────────── afterAddLiquidity hook ───────────────── */
     function _afterAddLiquidity(
         address, /* sender */
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
-        BalanceDelta delta,
+        PoolKey calldata /* key */,
+        ModifyLiquidityParams calldata /* params */,
+        BalanceDelta /* delta */,
         bytes calldata /* hookData */
-    ) internal returns (bytes4, BalanceDelta) {
-        // Optional: Process fees accrued during add liquidity (uncommon for standard full-range add)
-        // bytes32 _poolId = PoolId.unwrap(key.toId());
-        // _processFees(_poolId, IFeeReinvestmentManager.OperationType.DEPOSIT, feesAccrued);
+    ) internal pure returns (bytes4, BalanceDelta) {
         return (BaseHook.afterAddLiquidity.selector, BalanceDeltaLibrary.ZERO_DELTA);
     }
 
@@ -261,7 +258,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     function _afterRemoveLiquidity(
         address, /* sender */
         PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
+        ModifyLiquidityParams calldata /* params */,
         BalanceDelta delta,
         bytes calldata /* hookData */
     ) internal returns (bytes4, BalanceDelta) {
@@ -275,7 +272,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         PoolKey calldata key,
         SwapParams calldata params,
         bytes calldata hookData
-    ) external override returns (bytes4, BeforeSwapDelta) {
+    ) external view override returns (bytes4, BeforeSwapDelta) {
         if (msg.sender != address(poolManager)) {
             revert Errors.CallerNotPoolManager(msg.sender);
         }
@@ -305,7 +302,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         ModifyLiquidityParams calldata params,
         BalanceDelta delta,
         bytes calldata hookData
-    ) external override returns (bytes4, BalanceDelta) {
+    ) external view override returns (bytes4, BalanceDelta) {
         if (msg.sender != address(poolManager)) {
             revert Errors.CallerNotPoolManager(msg.sender);
         }
@@ -320,7 +317,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         PoolKey calldata key,
         ModifyLiquidityParams calldata params,
         BalanceDelta delta,
-        BalanceDelta feesAccrued,
+        BalanceDelta /* feesAccrued */,
         bytes calldata hookData
     ) external override returns (bytes4, BalanceDelta) {
         if (msg.sender != address(poolManager)) {
@@ -443,9 +440,8 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         poolKeys[_poolId] = key;
         poolData[_poolId] = PoolData({initialized: true, emergencyState: false, lastSwapTs: uint64(block.timestamp)});
         if (address(truncGeoOracle) != address(0) && address(key.hooks) == address(this)) {
-            int24 maxAbsTickMove = TickMoveGuard.HARD_ABS_CAP;
             try truncGeoOracle.enableOracleForPool(key) {
-                emit OracleInitialized(_poolId, tick, maxAbsTickMove);
+                emit OracleInitialized(_poolId, tick, TickMoveGuard.HARD_ABS_CAP);
             } catch (bytes memory reason) {
                 emit OracleInitializationFailed(_poolId, reason);
             }
@@ -494,7 +490,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
      * @notice DEPRECATED: Oracle address is now immutable and set in constructor
      * @dev This function will always revert but is kept for backwards compatibility
      */
-    function setOracleAddress(address _oracleAddress) external onlyGovernance {
+    function setOracleAddress(address /* _oracleAddress */) external onlyGovernance {
         emit DependencySetterDeprecated("oracle");
         revert ImmutableDependencyDeprecated("oracle");
     }
@@ -503,7 +499,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
      * @notice DEPRECATED: DynamicFeeManager is now immutable and set in constructor
      * @dev This function will always revert but is kept for backwards compatibility
      */
-    function setDynamicFeeManager(address _dynamicFeeManager) external onlyGovernance {
+    function setDynamicFeeManager(address /* _dynamicFeeManager */) external onlyGovernance {
         emit DependencySetterDeprecated("dynamicFeeManager");
         revert ImmutableDependencyDeprecated("dynamicFeeManager");
     }
@@ -606,8 +602,8 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         return size > 0;
     }
 
-    function getOracleData(PoolId poolId) external returns (int24 tick, uint32 blockNumber) {
-        bytes32 _poolId = PoolId.unwrap(poolId);
+    function getOracleData(PoolId poolId) external view returns (int24 tick, uint32 blockNumber) {
+        // No local copy of `poolId` required; avoids 2072 warning.
         if (address(truncGeoOracle) != address(0) && truncGeoOracle.isOracleEnabled(poolId)) {
             try truncGeoOracle.getLatestObservation(poolId) returns (int24 _tick, uint32 _blockTimestamp) {
                 return (_tick, _blockTimestamp);
@@ -656,16 +652,16 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         totalShares = liquidityManager.positionTotalShares(poolId);
     }
 
-    function _addLiquidity(PoolKey memory key, int24 tickLower, int24 tickUpper, uint128 liquidity)
+    function _addLiquidity(
+        PoolKey memory /* key */,
+        int24 /* tickLower */,
+        int24 /* tickUpper */,
+        uint128 /* liquidity */
+    )
         internal
+        pure
         returns (BalanceDelta delta)
     {
-        ModifyLiquidityParams memory params = ModifyLiquidityParams({
-            tickLower: tickLower,
-            tickUpper: tickUpper,
-            liquidityDelta: int256(uint256(liquidity)),
-            salt: bytes32(0)
-        });
-        // ... existing code ...
+        // no-op dummy; default-initialised `delta` is returned
     }
 }

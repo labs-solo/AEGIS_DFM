@@ -16,7 +16,7 @@ import {Spot} from "../src/Spot.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
-import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
+// import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
@@ -33,6 +33,7 @@ import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityM
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {HookMiner as HMiner} from "v4-periphery/src/utils/HookMiner.sol";
+import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -118,7 +119,15 @@ contract DeployLocalUniswapV4 is Script {
 
         // Step 2.5: Deploy Oracle now that we have the policyManager
         console.log("Deploying TruncGeoOracleMulti...");
-        truncGeoOracle = new TruncGeoOracleMulti(poolManager, governance, policyManager);
+        DummyFullRangeHook fullRangeHook = new DummyFullRangeHook(address(0));
+        truncGeoOracle = new TruncGeoOracleMulti(
+            poolManager, 
+            policyManager, 
+            address(fullRangeHook),
+            msg.sender // Use deployer as owner
+        );
+        // Assuming DummyFullRangeHook now has setOracle
+        // fullRangeHook.setOracle(address(truncGeoOracle));
         console.log("TruncGeoOracleMulti deployed at:", address(truncGeoOracle));
 
         // Step 3: Deploy FullRange components
@@ -175,7 +184,12 @@ contract DeployLocalUniswapV4 is Script {
     }
 
     // Update _deployFullRange to accept and use PoolId and governance
-    function _deployFullRange(address _deployer, PoolId _poolId, PoolKey memory _key, address _governance)
+    function _deployFullRange(
+        address _deployer,
+        PoolId /* _poolId */,
+        PoolKey memory /* _key */,
+        address _governance
+    )
         internal
         returns (Spot)
     {
@@ -248,15 +262,10 @@ contract DeployLocalUniswapV4 is Script {
     }
 
     function _onPoolCreated(
-        IPoolManager manager,
-        IPoolManager, /* manager */
-        PoolId _poolId,
-        PoolKey memory, /* _key */
-        uint160 sqrtPriceX96,
-        int24 tick
+        IPoolManager /* manager */,
+        uint160      /* sqrtPriceX96 */,
+        int24        /* tick */
     ) internal pure {
-        // console2.log(string.concat("Pool created: ", Strings.toHexString(uint256(PoolId.unwrap(_poolId))))); // Removed dependency on Strings
-        console2.log("Pool created with ID:"); // Simple alternative log
-        console2.logBytes32(PoolId.unwrap(_poolId)); // Log the bytes32 ID directly
+        // logging stripped; nothing else to do
     }
 }

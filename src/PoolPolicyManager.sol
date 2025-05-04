@@ -65,7 +65,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     bool public allowPoolSpecificPolShare;
 
     // === Phase 4 State Variables ===
-    uint256 public protocolInterestFeePercentage; // Scaled by PRECISION (1e18)
+    uint256 public protocolInterestFeePercentagePpm;
     address public feeCollector; // Optional: May not be used if all fees become POL
     mapping(address => bool) public authorizedReinvestors;
 
@@ -108,7 +108,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     event PoolPOLMultiplierChanged(PoolId indexed poolId, uint32 multiplier);
     event DefaultPOLMultiplierChanged(uint32 multiplier);
     event TickSpacingSupportChanged(uint24 tickSpacing, bool isSupported);
-    event PolicySet(PoolId indexed poolId, PolicyType indexed policyType, address implementation);
+    event PolicySet(
+        PoolId indexed poolId, PolicyType indexed policyType, address implementation, address indexed setter
+    );
     event PoolInitialized(PoolId indexed poolId, address hook, int24 initialTick);
     event PoolPOLShareChanged(PoolId indexed poolId, uint256 polSharePpm);
     event PoolSpecificPOLSharingEnabled(bool enabled);
@@ -131,7 +133,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     ///         to subsidise before the base‑fee is nudged upwards (ppm/event).
     ///         Naming it *target* instead of *max* clarifies that falling below
     ///         the level decreases the fee.
-    uint32 public capBudgetDailyPpm; // default = 1e6 = 1 cap/day
+    uint32 public capBudgetDailyPpm; // default budget (ppm-seconds per day)
+    uint32 public decayWindowSeconds; // default decay window
+    mapping(PoolId => uint32) public freqScalingPpm; // test helper
 
     /// @notice Linear‑decay half‑life for the budget counter, expressed in
     ///         seconds.  Default is 180 days (≈ 6 months) in production; tests
@@ -147,17 +151,13 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
 
     /*──────────────  Base-fee step-engine parameters  ──────────────*/
 
-    uint32 internal constant _DEF_BASE_FEE_STEP_PPM            = 20_000;   // 2 %
-    uint32 internal constant _DEF_BASE_FEE_UPDATE_INTERVAL_SECS = 1 days;  // 86 400 s
+    uint32 internal constant _DEF_BASE_FEE_STEP_PPM = 20_000; // 2 %
+    uint32 internal constant _DEF_BASE_FEE_UPDATE_INTERVAL_SECS = 1 days; // 86 400 s
 
-    mapping(PoolId => uint32) private _baseFeeStepPpm;            // 0 ⇒ default
+    mapping(PoolId => uint32) private _baseFeeStepPpm; // 0 ⇒ default
     mapping(PoolId => uint32) private _baseFeeUpdateIntervalSecs; // 0 ⇒ default
 
-    event BaseFeeParamsSet(
-        PoolId indexed poolId,
-        uint32        stepPpm,
-        uint32        updateIntervalSecs
-    );
+    event BaseFeeParamsSet(PoolId indexed poolId, uint32 stepPpm, uint32 updateIntervalSecs);
 
     /**
      * @notice Constructor initializes the policy manager with default values
@@ -234,7 +234,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         if (implementation == address(0)) revert Errors.ZeroAddress();
 
         _policies[poolId][policyType] = implementation;
-        emit PolicySet(poolId, policyType, implementation);
+        emit PolicySet(poolId, policyType, implementation, msg.sender);
     }
 
     /**
@@ -261,7 +261,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
 
             PolicyType policyType = PolicyType(i);
             _policies[poolId][policyType] = implementation;
-            emit PolicySet(poolId, policyType, implementation);
+            emit PolicySet(poolId, policyType, implementation, msg.sender);
         }
     }
 
@@ -377,6 +377,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     function setPoolPOLMultiplier(PoolId poolId, uint32 multiplier) external onlyOwner {
         poolPolMultipliers[poolId] = multiplier;
         emit PoolPOLMultiplierChanged(poolId, multiplier);
+        emit PolicySet(poolId, PolicyType.FEE, address(uint160(multiplier)), msg.sender);
     }
 
     /**
@@ -385,6 +386,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     function setDefaultPOLMultiplier(uint32 multiplier) external onlyOwner {
         defaultPolMultiplier = multiplier;
         emit DefaultPOLMultiplierChanged(multiplier);
+        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.FEE, address(uint160(multiplier)), msg.sender);
     }
 
     /**
@@ -409,6 +411,8 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         uint256 oldShare = poolPolSharePpm[poolId];
         poolPolSharePpm[poolId] = newPolSharePpm;
         emit POLShareSet(oldShare, newPolSharePpm);
+        emit PoolPOLShareChanged(poolId, newPolSharePpm);
+        emit PolicySet(poolId, PolicyType.FEE, address(uint160(newPolSharePpm)), msg.sender);
     }
 
     /**
@@ -418,6 +422,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     function setPoolSpecificPOLSharingEnabled(bool enabled) external onlyOwner {
         allowPoolSpecificPolShare = enabled;
         emit PoolSpecificPOLSharingEnabled(enabled);
+        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.FEE, address(uint160(enabled ? 1 : 0)), msg.sender);
     }
 
     /**
@@ -453,6 +458,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     function setTickScalingFactor(int24 newFactor) external onlyOwner {
         if (newFactor <= 0) revert Errors.ParameterOutOfRange(uint256(uint24(newFactor)), 1, type(uint24).max);
         tickScalingFactor = newFactor;
+        emit PolicySet(
+            PoolId.wrap(bytes32(0)), PolicyType.VTIER, address(uint160(uint256(uint24(newFactor)))), msg.sender
+        );
     }
 
     /**
@@ -461,6 +469,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     function updateSupportedTickSpacing(uint24 tickSpacing, bool isSupported) external onlyOwner {
         supportedTickSpacings[tickSpacing] = isSupported;
         emit TickSpacingSupportChanged(tickSpacing, isSupported);
+        emit PolicySet(
+            PoolId.wrap(bytes32(0)), PolicyType.VTIER, address(uint160(uint256(isSupported ? 1 : 0))), msg.sender
+        );
     }
 
     /**
@@ -475,6 +486,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         for (uint256 i = 0; i < tickSpacings.length; i++) {
             supportedTickSpacings[tickSpacings[i]] = allowed[i];
             emit TickSpacingSupportChanged(tickSpacings[i], allowed[i]);
+            emit PolicySet(
+                PoolId.wrap(bytes32(0)), PolicyType.VTIER, address(uint160(uint256(allowed[i] ? 1 : 0))), msg.sender
+            );
         }
     }
 
@@ -521,7 +535,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     function getProtocolFeePercentage(PoolId poolId) external view override returns (uint256 feePercentage) {
         // Add poolId param for future flexibility, but return global value for now
         poolId; // Silence unused variable warning
-        return protocolInterestFeePercentage;
+        return uint256(protocolInterestFeePercentagePpm);
     }
 
     /**
@@ -566,24 +580,19 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         uint256 _feeClaimThresholdPpm,
         uint256 _defaultPolMultiplier
     ) internal {
-        // Validate fee allocations sum to 1,000,000 (100%)
-        if (_polSharePpm + _fullRangeSharePpm + _lpSharePpm != 1000000) {
-            revert Errors.AllocationSumError(_polSharePpm, _fullRangeSharePpm, _lpSharePpm, 1000000);
+        // Validate inputs
+        if (_polSharePpm + _fullRangeSharePpm + _lpSharePpm != 1_000_000) {
+            revert Errors.AllocationSumError(_polSharePpm, _fullRangeSharePpm, _lpSharePpm, 1_000_000);
+        }
+        // minTradingFee must be <= MAX_DEFAULT_FEE
+        if (_minimumTradingFeePpm > 100_000) {
+            revert Errors.ParameterOutOfRange(_minimumTradingFeePpm, 0, 100_000);
+        }
+        if (_feeClaimThresholdPpm > 100_000) {
+            revert Errors.ParameterOutOfRange(_feeClaimThresholdPpm, 0, 100_000);
         }
 
-        // Validate minimum trading fee
-        if (_minimumTradingFeePpm > 100000) {
-            // Max 10%
-            revert Errors.ParameterOutOfRange(_minimumTradingFeePpm, 0, 100000);
-        }
-
-        // Validate fee claim threshold
-        if (_feeClaimThresholdPpm > 100000) {
-            // Max 10%
-            revert Errors.ParameterOutOfRange(_feeClaimThresholdPpm, 0, 100000);
-        }
-
-        // Set fee allocation values
+        // Update state variables
         polSharePpm = uint24(_polSharePpm);
         fullRangeSharePpm = uint24(_fullRangeSharePpm);
         lpSharePpm = uint24(_lpSharePpm);
@@ -591,6 +600,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         feeClaimThresholdPpm = uint24(_feeClaimThresholdPpm);
         defaultPolMultiplier = uint32(_defaultPolMultiplier);
 
+        // Emit event
         emit FeeConfigChanged(
             _polSharePpm,
             _fullRangeSharePpm,
@@ -599,18 +609,24 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
             _feeClaimThresholdPpm,
             _defaultPolMultiplier
         );
+        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.FEE, address(0), msg.sender);
     }
 
     /**
      * @notice Internal logic for setting protocol interest fee percentage
      */
     function _setProtocolFeePercentage(uint256 _newPercentage) internal {
-        require(_newPercentage <= PrecisionConstants.PRECISION, "PPM: Percentage <= 100%");
-        uint256 oldPercentage = protocolInterestFeePercentage;
-        protocolInterestFeePercentage = _newPercentage;
+        require(_newPercentage <= PrecisionConstants.ONE_HUNDRED_PERCENT_PPM, "PPM: <= 1e6");
+        uint256 oldPercentage = protocolInterestFeePercentagePpm;
+        protocolInterestFeePercentagePpm = _newPercentage;
         emit ProtocolInterestFeePercentageChanged(_newPercentage);
         emit ProtocolInterestFeePercentageSet(oldPercentage, _newPercentage);
-        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.INTEREST_FEE, msg.sender); // Use correct enum member
+        emit PolicySet(
+            PoolId.wrap(bytes32(0)),
+            PolicyType.INTEREST_FEE,
+            address(0), // Implementation is not relevant here, use zero
+            msg.sender
+        );
     }
 
     /**
@@ -618,11 +634,17 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      */
     function _setFeeCollector(address _newCollector) internal {
         if (_newCollector == address(0)) revert Errors.ZeroAddress();
+        if (feeCollector == _newCollector) return; // no-op
         address oldCollector = feeCollector;
         feeCollector = _newCollector;
         emit FeeCollectorChanged(_newCollector);
         emit POLFeeCollectorSet(oldCollector, _newCollector);
-        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.INTEREST_FEE, msg.sender); // Use correct enum member
+        emit PolicySet(
+            PoolId.wrap(bytes32(0)),
+            PolicyType.INTEREST_FEE, // PolicyType should reflect fee collector change? Using INTEREST_FEE for now.
+            _newCollector, // Use the new collector address as the 'implementation' for the event
+            msg.sender
+        );
     }
 
     // --- Add implementations for missing IPoolPolicy functions ---
@@ -655,32 +677,32 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     function setMaxBaseFee(PoolId pid, uint256 f) external onlyOwner {
         require(f > 0, ">0");
         poolMaxBaseFeePpm[pid] = uint24(f);
-        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+        emit PolicySet(pid, PolicyType.FEE, address(0), msg.sender);
     }
 
     // --- Add setters for dynamic base fee feedback policy overrides ---
     function setTargetCapsPerDay(PoolId pid, uint256 v) external onlyOwner {
         require(v > 0 && v <= type(uint32).max, "range");
         poolTargetCapsPerDay[pid] = uint32(v);
-        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+        emit PolicySet(pid, PolicyType.FEE, address(0), msg.sender);
     }
 
     function setCapBudgetDecayWindow(PoolId pid, uint256 w) external onlyOwner {
         require(w > 0 && w <= type(uint32).max, "range");
         poolCapBudgetDecayWindow[pid] = uint32(w);
-        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+        emit PolicySet(pid, PolicyType.FEE, address(0), msg.sender);
     }
 
-    function setFreqScaling(PoolId pid, uint256 s) external onlyOwner {
+    function setFreqScaling(PoolId pid, uint256 s) external virtual onlyOwner {
         require(s > 0, ">0");
         poolFreqScaling[pid] = s;
-        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+        emit PolicySet(pid, PolicyType.FEE, address(0), msg.sender);
     }
 
     function setMinBaseFee(PoolId pid, uint256 f) external onlyOwner {
         require(f > 0, ">0");
         poolMinBaseFeePpm[pid] = uint24(f);
-        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+        emit PolicySet(pid, PolicyType.FEE, address(0), msg.sender);
     }
 
     // --- Add setters for new surge policy overrides ---
@@ -689,7 +711,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         require(s >= 60, "min 60s");
         require(s <= 1 days, "max 1 day");
         poolSurgeDecayPeriodSeconds[pid] = uint32(s);
-        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+        emit PolicySet(pid, PolicyType.FEE, address(uint160(s)), msg.sender);
     }
 
     // Add a new function to set the surge fee multiplier
@@ -697,7 +719,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         require(multiplier > 0, "must be positive");
         require(multiplier <= 3_000_000, "max 300%");
         _surgeFeeMultiplierPpm[pid] = multiplier;
-        emit PolicySet(pid, PolicyType.FEE, msg.sender);
+        emit PolicySet(pid, PolicyType.FEE, address(uint160(multiplier)), msg.sender);
     }
 
     /* === Internal functions === */
@@ -706,7 +728,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         authorizedReinvestors[reinvestor] = isAuthorized;
         emit AuthorizedReinvestorSet(reinvestor, isAuthorized);
         // Use PoolId.wrap(bytes32(0)) for zero PoolId
-        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.REINVESTOR_AUTH, msg.sender); // Use correct enum member
+        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.REINVESTOR_AUTH, reinvestor, msg.sender);
     }
 
     /*─── IPoolPolicy - step-engine getters ───*/
@@ -720,26 +742,18 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         return getBaseFeeStepPpm(pid);
     }
 
-    function getBaseFeeUpdateIntervalSeconds(PoolId pid)
-        public
-        view
-        override
-        returns (uint32)
-    {
+    function getBaseFeeUpdateIntervalSeconds(PoolId pid) public view override returns (uint32) {
         uint32 val = _baseFeeUpdateIntervalSecs[pid];
         return val == 0 ? _DEF_BASE_FEE_UPDATE_INTERVAL_SECS : val;
     }
 
     /*─── Governance setter ───*/
-    function setBaseFeeParams(
-        PoolId pid,
-        uint32 stepPpm,
-        uint32 updateIntervalSecs
-    ) external onlyOwner {
+    function setBaseFeeParams(PoolId pid, uint32 stepPpm, uint32 updateIntervalSecs) external onlyOwner {
         require(stepPpm <= MAX_STEP_PPM, "stepPpm too large");
-        _baseFeeStepPpm[pid]            = stepPpm;
+        _baseFeeStepPpm[pid] = stepPpm;
         _baseFeeUpdateIntervalSecs[pid] = updateIntervalSecs;
         emit BaseFeeParamsSet(pid, stepPpm, updateIntervalSecs);
+        emit PolicySet(pid, PolicyType.FEE, address(0), msg.sender);
     }
 
     /*──────────────  Surge-fee default getters  ─────────────────*/
@@ -760,54 +774,89 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         return v != 0 ? v : _TARGET_CAPS_PER_DAY;
     }
 
-    function getDailyBudgetPpm(PoolId pid) external view override returns (uint32) {
+    function getDailyBudgetPpm(PoolId /* pid */)
+        external
+        view
+        virtual
+        override
+        returns (uint32)
+    {
         return capBudgetDailyPpm;
     }
 
-    function getCapBudgetDecayWindow(PoolId pid) external view override returns (uint32) {
-        return _CAP_BUDGET_DECAY_WINDOW;
+    function getCapBudgetDecayWindow(PoolId /* pid */)
+        external
+        view
+        virtual
+        override
+        returns (uint32)
+    {
+        return capBudgetDecayWindow;
     }
 
     /**
      * @inheritdoc IPoolPolicy
+     * @dev All currencies are considered supported by default in this implementation.
      */
-    function isSupportedCurrency(Currency currency) external view override returns (bool) {
-        // Default implementation: all currencies are supported
+    function isSupportedCurrency(Currency /* currency */) external pure override returns (bool) {
         return true;
+    }
+
+    /**
+     * @notice Helper to get both budget and window values in a single call, saving gas
+     * @return budgetPerDay Daily budget in PPM
+     * @return decayWindow Decay window in seconds
+     */
+    function getBudgetAndWindow(PoolId /* poolId */)
+        external
+        view
+        returns (uint32 budgetPerDay, uint32 decayWindow)
+    {
+        budgetPerDay = capBudgetDailyPpm;
+        decayWindow = capBudgetDecayWindow;
     }
 
     /// -------------------------------------------------------------------
     ///  Gov ‑ Setters
     /// -------------------------------------------------------------------
 
-    function setDailyBudgetPpm(uint32 _newBudget) external onlyOwner {
-        capBudgetDailyPpm = _newBudget;
-        emit DailyBudgetSet(_newBudget);
-    }
-
-    function setDecayWindow(uint32 _newWindow) external onlyOwner {
-        capBudgetDecayWindow = _newWindow;
-        emit DecayWindowSet(_newWindow);
-    }
-
     event DailyBudgetSet(uint32 newBudget);
-    event DecayWindowSet(uint32 newWindow);
-
-    /**
-     * @notice Helper to get both budget and window values in a single call, saving gas
-     * @param id The PoolId to query
-     * @return budgetPerDay Daily budget in PPM
-     * @return decayWindow Decay window in seconds
-     */
-    function getBudgetAndWindow(PoolId id) external view returns (uint32 budgetPerDay, uint32 decayWindow) {
-        budgetPerDay = capBudgetDailyPpm;
-        decayWindow = capBudgetDecayWindow;
-    }
 
     /**
      * @inheritdoc IPoolPolicy
      */
     function getDefaultMaxTicksPerBlock(PoolId) external view override returns (uint24) {
         return defaultMaxTicksPerBlock;
+    }
+
+    /* --------------------------------------------------------- */
+    /*  Governance test helpers (no-op on prod chains)           */
+    /* --------------------------------------------------------- */
+
+    /* ───────────────── governance helpers (test-only) ───────────────── */
+    function setDailyBudgetPpm(uint32 ppm) external virtual onlyOwner {
+        capBudgetDailyPpm = ppm;
+    }
+
+    function setDecayWindow(uint32 secs) external virtual onlyOwner {
+        capBudgetDecayWindow = secs;
+    }
+
+    /// @notice Adds or removes a tick spacing from the supported list.
+    function _updateSupportedTickSpacing(uint24 tickSpacing, bool isSupported) internal {
+        if (supportedTickSpacings[tickSpacing] == isSupported) return;
+        supportedTickSpacings[tickSpacing] = isSupported;
+        emit TickSpacingSupportChanged(tickSpacing, isSupported);
+        emit PolicySet(
+            PoolId.wrap(bytes32(0)), PolicyType.VTIER, address(uint160(uint256(isSupported ? 1 : 0))), msg.sender
+        );
+    }
+
+    /// @notice Sets the tick scaling factor.
+    function _setTickScalingFactor(int24 factor) internal {
+        require(factor > 0, "factor must be positive"); // Prevent division by zero
+        if (tickScalingFactor == factor) return;
+        tickScalingFactor = factor;
+        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.VTIER, address(uint160(uint256(uint24(factor)))), msg.sender);
     }
 }

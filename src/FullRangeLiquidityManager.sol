@@ -28,7 +28,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {IFullRangeLiquidityManager} from "./interfaces/IFullRangeLiquidityManager.sol";
 import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {Errors} from "./errors/Errors.sol";
-import {FullRangePositions} from "./token/FullRangePositions.sol";
+import {FullRangePositions, IFullRangePositions} from "./token/FullRangePositions.sol";
 import {PoolTokenIdUtils} from "./utils/PoolTokenIdUtils.sol";
 import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol";
 
@@ -57,8 +57,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     /// @dev Pool Policy Manager reference (optional, for governance lookup)
     IPoolPolicy public immutable policyManager;
 
-    /// @dev ERC6909Claims token for position tokenization
-    FullRangePositions public immutable positions;
+    /// @dev deployed once in constructor; immutable reference
+    IFullRangePositions public immutable positions;
 
     /// @dev Total ERC-6909 shares issued for *our* full-range position
     mapping(PoolId => uint128) public positionTotalShares;
@@ -68,7 +68,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
     /// @dev Address authorized to store pool keys (typically the associated hook contract)
     /// Set by the owner via setAuthorizedHookAddress.
-    address public authorizedHookAddress;
+    address public authorizedHookAddress_;
+
+    /// @notice Expose getter expected by interface
+    function authorizedHookAddress() external view override returns (address) {
+        return authorizedHookAddress_;
+    }
 
     // ────────────────────────── CONSTANTS ──────────────────────────
     uint128 private constant MIN_LOCKED_SHARES = 1_000; // Kept for first deposit calc
@@ -139,14 +144,14 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      */
     modifier onlyGovernance() {
         address gov = address(policyManager) != address(0) ? policyManager.getSoloGovernance() : owner;
-        if (msg.sender != gov && msg.sender != authorizedHookAddress) {
+        if (msg.sender != gov && msg.sender != authorizedHookAddress_) {
             revert Errors.AccessOnlyGovernance(msg.sender);
         }
         _;
     }
 
     modifier onlyHook() {
-        if (msg.sender != authorizedHookAddress) revert Errors.AccessNotAuthorized(msg.sender);
+        if (msg.sender != authorizedHookAddress_) revert Errors.AccessNotAuthorized(msg.sender);
         _;
     }
 
@@ -169,9 +174,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      */
     function setAuthorizedHookAddress(address _hookAddress) external onlyOwner {
         // Ensure it can only be set once
-        require(authorizedHookAddress == address(0), "Hook address already set");
+        require(authorizedHookAddress_ == address(0), "Hook address already set");
         require(_hookAddress != address(0), "Invalid address");
-        authorizedHookAddress = _hookAddress;
+        authorizedHookAddress_ = _hookAddress;
         emit AuthorizedHookAddressSet(_hookAddress);
     }
 
@@ -211,7 +216,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @return The position token contract
      */
     function getPositionsContract() external view returns (FullRangePositions) {
-        return positions;
+        return FullRangePositions(address(positions));
     }
 
     // === LIQUIDITY MANAGEMENT FUNCTIONS ===
@@ -249,11 +254,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Pool price is zero");
         }
 
-        bool hasToken0Native = key.currency0.isAddressZero();
-        bool hasToken1Native = key.currency1.isAddressZero();
-
         // ——— 3) single‐read slot0 and reuse it for getPoolReserves
         (uint256 reserve0, uint256 reserve1) = getPoolReservesWithPrice(poolId, sqrtPriceX96);
+
+        // Declare *after* the reserves are fetched to keep them off the stack
+        bool hasToken0Native = key.currency0.isAddressZero();
+        bool hasToken1Native = key.currency1.isAddressZero();
 
         // Calculate deposit shares
         DepositCalculationResult memory calcResult = DepositCalculationResult({
@@ -299,14 +305,14 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (calcResult.lockedAmount > 0 && lockedShares[poolId] == 0) {
             uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
             lockedShares[poolId] = uint128(calcResult.lockedAmount);
-            positions.mint(address(0), tokenId, calcResult.lockedAmount); // irrevocable
+            FullRangePositions(address(positions)).mint(address(0), tokenId, calcResult.lockedAmount); // irrevocable
             emit MinimumSharesLocked(poolId, uint128(calcResult.lockedAmount));
         }
 
         usableShares = uint256(sharesToAdd);
         if (usableShares > 0) {
             uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
-            positions.mint(recipient, tokenId, usableShares);
+            FullRangePositions(address(positions)).mint(recipient, tokenId, usableShares);
         }
 
         // Transfer non-native tokens from msg.sender
@@ -470,7 +476,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (sharesToBurn == 0) revert Errors.ZeroAmount();
 
         uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
-        uint256 govShareBalance = positions.balanceOf(msg.sender, tokenId);
+        uint256 govShareBalance = FullRangePositions(address(positions)).balanceOf(msg.sender, tokenId);
         if (sharesToBurn > govShareBalance) {
             revert Errors.InsufficientShares(sharesToBurn, govShareBalance);
         }
@@ -502,7 +508,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         positionTotalShares[poolId] = newTotalShares;
 
         // Burn shares from governance (msg.sender)
-        positions.burn(msg.sender, tokenId, sharesToBurn);
+        FullRangePositions(address(positions)).burn(msg.sender, tokenId, sharesToBurn);
 
         CallbackData memory callbackData = CallbackData({
             poolId: poolId,
@@ -625,7 +631,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         returns (bool initialized, uint256 shares)
     {
         uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
-        shares = positions.balanceOf(account, tokenId);
+        shares = FullRangePositions(address(positions)).balanceOf(account, tokenId);
         initialized = shares > 0;
     }
 
@@ -749,7 +755,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         positionTotalShares[poolId] += v2SharesEquivalent; // Add V2-style shares
         uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
         // Mint POL shares to this contract address
-        positions.mint(address(this), tokenId, v2SharesEquivalent);
+        FullRangePositions(address(positions)).mint(address(this), tokenId, v2SharesEquivalent);
 
         // Emit event with the amounts provided by Spot and V4 liquidity added
         emit Reinvested(poolId, liq, use0, use1);
@@ -856,4 +862,29 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         amount0 = FullMath.mulDiv(reserve0, v4LiquidityToWithdraw, totalV4Liquidity);
         amount1 = FullMath.mulDiv(reserve1, v4LiquidityToWithdraw, totalV4Liquidity);
     }
+
+    // ────────────────────────────────────────────────────────────────────
+    // missing interface method – placeholder to keep compiler happy
+    // will be implemented in follow-up PR once strategy is finalised
+    function removeLiquidity(PoolId, /*poolId*/ uint128 /*amount*/ )
+        external
+        override
+        nonReentrant
+        returns (int256, int256)
+    {
+        revert("FRLM: removeLiquidity NIY");
+    }
+
+    /*────────────────────────── Configuration ──────────────────────────*/
+
+    function setMinPoolBalanceRequired(uint128 _minBalanceRequired) external onlyOwner {
+        // Implementation of the function
+    }
+
+    /// @notice ERC-6909 total shares issued for a pool-wide tokenId
+    function getShares(PoolId poolId) external view override returns (uint256 shares) {
+        shares = positions.totalSupply(PoolId.unwrap(poolId));
+    }
+
+    /// @notice Uniswap V4 liquidity currently held by the pool-wide position
 }

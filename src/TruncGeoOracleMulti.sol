@@ -1,540 +1,598 @@
-// SPDX-License-Identifier: UNLICENSED
-pragma solidity =0.8.26;
+// SPDX-License-Identifier: BUSL-1.1
+pragma solidity ^0.8.26;
 
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
+import {SafeCast}        from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {Errors} from "./errors/Errors.sol";
-import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
-import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
+import {PolicyValidator} from "./libraries/PolicyValidator.sol";
 
-/**
- * @title TruncGeoOracleMulti
- * @notice A non-hook contract that provides truncated geomean oracle data for multiple pools.
- *         Pools using Spot.sol must have their oracle updated by calling updateObservation(poolKey)
- *         on this contract. Each pool is set up via enableOracleForPool(), which initializes observation state
- *         and sets a pool-specific maximum tick movement (maxAbsTickMove).
- *
- * @dev SECURITY BY MUTUAL AUTHENTICATION:
- *      This contract implements a bilateral authentication pattern between Spot.sol and TruncGeoOracleMulti.
- *      1. During deployment, the TruncGeoOracleMulti is initialized with the known Spot address
- *      2. The Spot contract is then initialized with the TruncGeoOracleMulti address
- *      3. All sensitive oracle functions require the caller to be the trusted Spot contract
- *      4. This creates a secure mutual authentication loop that prevents:
- *         - Unauthorized oracle updates that could manipulate price data
- *         - Spoofed oracle observations from malicious contracts
- *         - Cross-contract manipulation attempts
- *      5. This forms a secure enclave of trusted contracts that cannot be manipulated by external actors
- *      6. The design avoids "hook stuffing" attacks where malicious code is injected into hooks
- */
-contract TruncGeoOracleMulti {
-    using TruncatedOracle for TruncatedOracle.Observation[65535];
+contract TruncGeoOracleMulti is ReentrancyGuard {
+    /* ========== paged ring – each "leaf" holds 512 observations ========== */
+    uint16  internal constant PAGE_SIZE = 512;
+    using TruncatedOracle for TruncatedOracle.Observation[PAGE_SIZE];
     using PoolIdLibrary for PoolKey;
+    using SafeCast for int256;
 
-    // The Uniswap V4 Pool Manager
+    /* -------------------------------------------------------------------------- */
+    /*                               Library constants                            */
+    /* -------------------------------------------------------------------------- */
+    /* seconds in one day (for readability) */
+    uint32  internal constant ONE_DAY_SEC  = 86_400;
+    /* parts-per-million constant */
+    uint32  internal constant PPM          = 1_000_000;
+    /* pre-computed ONE_DAY × PPM to avoid a mul on every cap event            *
+     * 86_400 * 1_000_000  ==  86 400 000 000  <  2¹²⁷ – safe for uint128      */
+    uint64  internal constant ONE_DAY_PPM  = 86_400 * 1_000_000;
+    /* one add (ONE_DAY_PPM) short of uint64::max */
+    uint64  internal constant CAP_FREQ_MAX = type(uint64).max - ONE_DAY_PPM + 1;
+    /* minimum change required to emit MaxTicksPerBlockUpdated event */
+    uint24 internal constant EVENT_DIFF = 5;
+
+    // Custom errors
+    error OnlyHook();
+    error OnlyOwner();
+    error ObservationOverflow(uint16 cardinality);
+    error ObservationTooOld(uint32 time, uint32 target);
+
+    event TickCapParamChanged(bytes32 indexed poolId, uint24 newMaxTicksPerBlock);
+    event MaxTicksPerBlockUpdated(
+        PoolId indexed poolId, uint24 oldMaxTicksPerBlock, uint24 newMaxTicksPerBlock, uint32 blockTimestamp
+    );
+    event PolicyCacheRefreshed(PoolId indexed poolId);
+    /// emitted once per pool when the oracle is first enabled
+    event OracleConfigured(
+        PoolId indexed poolId,
+        address indexed hook,
+        address indexed owner,
+        uint24 initialCap
+    );
+
+    /* ────────────────────── LIB-LEVEL HELPERS ─────────────────────── */
+
+    /// @dev Shorthand wrapper that forwards storage-struct fields to the library
+    ///      (keeps calling-site tidy without another memory copy).
+    function _validatePolicy(CachedPolicy storage pc) internal view {
+        PolicyValidator.validate(
+            pc.minCap,
+            pc.maxCap,
+            pc.stepPpm,
+            pc.budgetPpm,
+            pc.decayWindow,
+            pc.updateInterval
+        );
+    }
+
+    /* ─────────────────── IMMUTABLE STATE ────────────────────── */
     IPoolManager public immutable poolManager;
+    IPoolPolicy public immutable policy;
+    address public immutable hook; // The ONLY hook allowed to call `enableOracleForPool` & `pushObservation*`
+    address public immutable owner; // Governance address that can refresh policy cache
 
-    // The authorized Spot hook address - critical for secure mutual authentication
-    address public fullRangeHook;
-
-    // The policy manager for getting configuration
-    IPoolPolicy public immutable policyManager;
-
-    // Number of historic observations to keep (roughly 24h at 1h sample rate)
-    uint32 internal constant SAMPLE_CAPACITY = 24;
-
-    // Track which pools have been enabled
-    mapping(bytes32 => bool) public isEnabled;
-
-    // dynamic capping -------------------------------------------------------
+    /* ───────────────────── MUTABLE STATE ────────────────────── */
     mapping(bytes32 => uint24) public maxTicksPerBlock; // adaptive cap
-    mapping(bytes32 => uint128) private capFreq; // ppm-seconds accumulator
+    /* ppm-seconds never exceeds 8.64 e10 per event or 7.45 e15 per year  →
+       well inside uint64.  Using uint64 halves slot gas / SLOAD cost.   */
+    mapping(bytes32 => uint64) private capFreq;   // ***saturating*** counter
     mapping(bytes32 => uint48) private lastFreqTs; // last decay update
 
     struct ObservationState {
         uint16 index;
+        /**
+         * @notice total number of populated observations.
+         * Includes the bootstrap slot written by `enableOracleForPool`,
+         * so after N user pushes the value is **N + 1**.
+         */
         uint16 cardinality;
         uint16 cardinalityNext;
     }
 
-    // Observations for each pool keyed by PoolId.
-    mapping(bytes32 => TruncatedOracle.Observation[65535]) public observations;
+    /* ─────────────── cached policy parameters ─────────────── */
+    struct CachedPolicy {
+        uint24 minCap;
+        uint24 maxCap;
+        uint32 stepPpm;
+        uint32 budgetPpm;
+        uint32 decayWindow;
+        uint32 updateInterval;
+    }
+    mapping(bytes32 => CachedPolicy) internal _policy;
+
+    /* ──────────────────  CHUNKED OBSERVATION RING  ──────────────────
+       Each pool owns *pages* (index ⇒ Observation[PAGE_SIZE]).
+       A page is allocated lazily the first time it is touched, so the
+       storage footprint grows with `grow()` instead of pre-allocating
+       65 k slots (≈ 4 MiB) per pool.                                        */
+    /// pool ⇒ page# ⇒ 512-slot chunk (lazily created)
+    mapping(bytes32 => mapping(uint16 => TruncatedOracle.Observation[PAGE_SIZE])) internal _pages;
+
+    function _leaf(bytes32 id, uint16 globalIdx)
+        internal
+        view
+        returns (TruncatedOracle.Observation[PAGE_SIZE] storage)
+    {
+        return _pages[id][globalIdx / PAGE_SIZE];
+    }
+
     mapping(bytes32 => ObservationState) public states;
 
-    // Events for observability and debugging
-    event OracleEnabled(bytes32 indexed poolId, int24 initialMaxAbsTickMove);
-    event ObservationUpdated(bytes32 indexed poolId, int24 tick, uint32 timestamp);
-    event TickCapped(bytes32 indexed poolId, int24 truncatedTo);
-    event TickCapParamChanged(bytes32 indexed poolId, uint24 newMaxTicksPerBlock);
-
-    address public governance; // Need governance address for setter
-
-    /// last time `maxTicksPerBlock` was *actually* changed
+    // Store last max tick update time for rate limiting governance changes
     mapping(PoolId => uint32) private _lastMaxTickUpdate;
 
-    event MaxTicksPerBlockUpdated(
-        PoolId indexed poolId,
-        uint32 oldValue,
-        uint32 newValue,
-        uint32 timestamp
-    );
-
-    event MaxTicksUpdateSkipped(
-        PoolId indexed poolId,
-        uint32 candidate,
-        string reason,
-        uint32 timestamp
-    );
-
-    /* ---------------- modifiers -------------------- */
-    modifier onlyHook() {
-        require(msg.sender == fullRangeHook, "Oracle: not hook");
-        _;
-    }
-
-    /**
-     * @notice Constructor - MODIFIED: Removed _fullRangeHook
-     * @param _poolManager The Uniswap V4 Pool Manager
-     * @param _governance The initial governance address for setting the hook
-     * @param _policyManager The policy manager contract
-     */
-    constructor(IPoolManager _poolManager, address _governance, IPoolPolicy _policyManager) {
+    /* ────────────────────── CONSTRUCTOR ─────────────────────── */
+    /// -----------------------------------------------------------------------
+    /// @notice Deploy the oracle and wire the immutable dependencies.
+    /// @param _poolManager Canonical v4 `PoolManager` contract
+    /// @param _policyContract Governance-controlled policy contract
+    /// @param _hook Whitelisted hook address that is allowed to call
+    ///              `enableOracleForPool` and `pushObservationAndCheckCap`
+    /// @param _owner Governor address that can refresh the cached policy
+    /// -----------------------------------------------------------------------
+    constructor(
+        IPoolManager _poolManager,
+        IPoolPolicy _policyContract,
+        address _hook,
+        address _owner
+    ) {
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
-        if (_governance == address(0)) revert Errors.ZeroAddress();
-        if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
+        if (address(_policyContract) == address(0)) revert Errors.ZeroAddress();
+        if (_hook == address(0)) revert Errors.ZeroAddress();
+        if (_owner == address(0)) revert Errors.ZeroAddress();
 
         poolManager = _poolManager;
-        governance = _governance;
-        policyManager = _policyManager;
-    }
-
-    // NEW FUNCTION: Setter for Spot hook address
-    /**
-     * @notice Sets the trusted Spot hook address after deployment.
-     * @param _hook The address of the Spot hook contract.
-     */
-    function setFullRangeHook(address _hook) external {
-        // Only allow governance to set this once
-        if (msg.sender != governance) revert Errors.AccessOnlyGovernance(msg.sender);
-        if (fullRangeHook != address(0)) revert Errors.AlreadyInitialized("FullRangeHook");
-        if (_hook == address(0)) revert Errors.ZeroAddress();
-        fullRangeHook = _hook;
-    }
-
-    modifier onlyFullRangeHook() {
-        // ADDED Check: Ensure hook address is set before checking msg.sender
-        if (fullRangeHook == address(0)) {
-            revert Errors.NotInitialized("FullRangeHook");
-        }
-        if (msg.sender != fullRangeHook) {
-            revert Errors.AccessNotAuthorized(msg.sender);
-        }
-        _;
-    }
-
-    /* ─────────────────── external API ─────────────────── */
-    /// @notice Push a new observation and immediately know whether the tick
-    ///         move had to be capped.  Designed for the Spot hook hot-path.
-    /// @param id         PoolId (bytes32) of the pool
-    /// @param zeroForOne Direction of the swap (needed for cap logic)
-    /// @return tick      The truncated/stored tick
-    /// @return capped    True if the tick move exceeded the policy cap
-    function pushObservationAndCheckCap(PoolId id, bool zeroForOne)
-        external
-        onlyHook
-        returns (int24 tick, bool capped)
-    {
-        // reuse existing internal routine to avoid code duplication
-        return _pushObservation(id, zeroForOne);
-    }
-
-    /* ─────────────── internal logic for observation pushing ───────────── */
-    function _pushObservation(PoolId id, bool zeroForOne) internal returns (int24 tick, bool capped) {
-        bytes32 poolId = PoolId.unwrap(id);
-
-        // Check if pool is enabled in oracle
-        if (states[poolId].cardinality == 0) {
-            revert Errors.OracleOperationFailed("pushObservation", "Pool not enabled in oracle");
-        }
-
-        // Get current tick from pool manager
-        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, id);
-
-        // Get the most recent observation for comparison
-        TruncatedOracle.Observation memory lastObs = observations[poolId][states[poolId].index];
-
-        // Apply adaptive cap
-        uint24 cap = maxTicksPerBlock[poolId];
-        (capped, tick) = TickMoveGuard.truncate(lastObs.prevTick, currentTick, cap);
-
-        // Update frequency accumulator and maybe rebalance cap
-        _updateFreq(poolId, capped);
-        _maybeRebalanceCap(poolId);
-
-        // Update the observation with the potentially capped tick
-        uint128 liquidity = StateLibrary.getLiquidity(poolManager, id);
-        (states[poolId].index, states[poolId].cardinality) = observations[poolId].write(
-            states[poolId].index,
-            _blockTimestamp(),
-            tick,
-            liquidity,
-            states[poolId].cardinality,
-            states[poolId].cardinalityNext
-        );
-
-        if (capped) emit TickCapped(poolId, tick);
-        emit ObservationUpdated(poolId, tick, _blockTimestamp());
-
-        return (tick, capped);
-    }
-
-    /* ───────────── adaptive-cap helpers ───────────── */
-    function _updateFreq(bytes32 pid, bool capped_) private {
-        uint48 nowTs = uint48(block.timestamp);
-        uint48 last = lastFreqTs[pid];
-        if (nowTs == last) {
-            if (capped_) capFreq[pid] += 1e6;
-            return;
-        }
-        uint32 window = IPoolPolicy(policyManager).getCapBudgetDecayWindow(PoolId.wrap(pid));
-        uint128 f = capFreq[pid];
-        if (window > 0) {
-            uint256 decay = uint256(f) * (nowTs - last) / window;
-            f -= uint128(decay > f ? f : decay);
-        }
-        if (capped_) f += 1e6;
-        capFreq[pid] = f;
-        lastFreqTs[pid] = nowTs;
-    }
-
-    function _maybeRebalanceCap(bytes32 pid) private {
-        uint256 target = IPoolPolicy(policyManager).getTargetCapsPerDay(PoolId.wrap(pid));
-        if (target == 0) return;
-
-        uint32 window = IPoolPolicy(policyManager).getCapBudgetDecayWindow(PoolId.wrap(pid));
-        uint256 perDay = window == 0 ? 0 : uint256(capFreq[pid]) * 1 days / uint256(window);
-
-        uint24 cap = maxTicksPerBlock[pid];
-        bool changed;
-        uint32 newCandidate = cap;
-        
-        if (perDay > target * 115 / 100 && cap < 250_000) {
-            // too many caps → loosen cap
-            newCandidate = uint32(uint256(cap) * 125 / 100);
-            changed = true;
-        } else if (perDay < target * 85 / 100 && cap > 1) {
-            // too quiet → tighten cap
-            newCandidate = uint32(uint256(cap) * 80 / 100);
-            if (newCandidate == 0) newCandidate = 1;
-            changed = true;
-        }
-        
-        if (changed) {
-            // Use rate-limited update instead of direct assignment
-            _maybeUpdateMaxTicks(PoolId.wrap(pid), newCandidate);
-        }
+        policy      = _policyContract;
+        hook        = _hook;          // Set immutable hook address
+        owner       = _owner;         // Set immutable owner address
     }
 
     /**
-     * @notice Enables oracle functionality for a pool.
-     * MODIFIED: Uses modifier, added check
+     * @notice Refreshes the cached policy parameters for a pool.
+     * @dev Can only be called by the owner (governance). Re-fetches and validates
+     *      all policy parameters, ensuring they remain within acceptable ranges.
+     * @param pid The PoolId of the pool.
      */
-    function enableOracleForPool(PoolKey calldata key) external onlyFullRangeHook {
-        bytes32 id = PoolId.unwrap(key.toId());
-        require(!isEnabled[id], "Oracle already enabled");
-        isEnabled[id] = true;
-
-        /* -------------------------------------------------------------
-         *  Initialise cap
-         *     – if policy gives a per-pool override → use it
-         *     – else:   cap = defaultFeePPM ÷ 100  (ppm/tick)
-         *       e.g. 3 000 ppm ÷ 100 = **30 ticks**  (0 .30 %)
-         * ---------------------------------------------------------- */
-        uint24 initCap = IPoolPolicy(policyManager).getDefaultMaxTicksPerBlock(PoolId.wrap(id));
-        if (initCap == 0) {
-            uint256 defFee = IPoolPolicy(policyManager).getDefaultDynamicFee(); // ppm
-            initCap = uint24(defFee / 100); // 1 tick ≃ 100 ppm
-            if (initCap == 0) initCap = 1; // never zero
-        }
+    /// -----------------------------------------------------------------------
+    /// @notice Sync the in-storage policy cache with the current policy
+    ///         contract values and clamp the existing `maxTicksPerBlock`
+    ///         into the new `[minCap, maxCap]` band.
+    /// @dev    Callable only by `owner`. Emits `PolicyCacheRefreshed`.
+    /// -----------------------------------------------------------------------
+    function refreshPolicyCache(PoolId pid) external {
+        if (msg.sender != owner) revert OnlyOwner();
         
-        // Set initial maxTicksPerBlock value directly (skipping rate limit for initialization)
-        // Note: We don't use _maybeUpdateMaxTicks here as this is the initial value
-        maxTicksPerBlock[id] = initCap;
-        // Mark the update time to start the clock for future rate-limiting
-        _lastMaxTickUpdate[PoolId.wrap(id)] = uint32(block.timestamp);
-        
-        lastFreqTs[id] = uint48(block.timestamp);
-
-        // Initialize observation slot and cardinality
-        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, key.toId());
-        uint128 liquidity = StateLibrary.getLiquidity(poolManager, key.toId());
-
-        // Initialize first observation
-        observations[id][0] = TruncatedOracle.Observation({
-            blockTimestamp: _blockTimestamp(),
-            prevTick: currentTick,
-            tickCumulative: 0,
-            secondsPerLiquidityCumulativeX128: 0,
-            initialized: true
-        });
-
-        // Set initial cardinality to 1 and target to 1
-        states[id].index = 0;
-        states[id].cardinality = 1;
-        states[id].cardinalityNext = 1;
-
-        emit ObservationUpdated(id, currentTick, _blockTimestamp());
-    }
-
-    /**
-     * @notice Updates oracle observations for a pool.
-     * MODIFIED: Uses modifier, added check
-     */
-    function updateObservation(PoolKey calldata key) external onlyFullRangeHook {
-        // Check moved to modifier
-        // if (msg.sender != fullRangeHook) { ... }
-
-        PoolId pid = key.toId();
         bytes32 id = PoolId.unwrap(pid);
+        if (states[id].cardinality == 0) {
+            revert Errors.OracleOperationFailed("refreshPolicyCache", "Pool not enabled");
+        }
+        
+        CachedPolicy storage pc = _policy[id];
+        
+        // Re-fetch all policy parameters
+        pc.minCap         = SafeCast.toUint24(policy.getMinBaseFee(pid) / 100);
+        pc.maxCap         = SafeCast.toUint24(policy.getMaxBaseFee(pid) / 100);
+        pc.stepPpm        = policy.getBaseFeeStepPpm(pid);
+        pc.budgetPpm      = policy.getDailyBudgetPpm(pid);
+        pc.decayWindow    = policy.getCapBudgetDecayWindow(pid);
+        pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(pid);
+        
+        _validatePolicy(pc);
+        
+        // Ensure current maxTicksPerBlock is within new min/max bounds
+        uint24 currentCap = maxTicksPerBlock[id];
+        if (currentCap < pc.minCap) {
+            maxTicksPerBlock[id] = pc.minCap;
+            emit MaxTicksPerBlockUpdated(pid, currentCap, pc.minCap, uint32(block.timestamp));
+        } else if (currentCap > pc.maxCap) {
+            maxTicksPerBlock[id] = pc.maxCap;
+            emit MaxTicksPerBlockUpdated(pid, currentCap, pc.maxCap, uint32(block.timestamp));
+        }
+        
+        emit PolicyCacheRefreshed(pid);
+    }
 
-        // Double check pool exists in PoolManager
+    /**
+     * @notice Enables the oracle for a given pool, initializing its state.
+     * @dev Can only be called by the configured hook address.
+     * @param key The PoolKey of the pool to enable.
+     */
+    /// -----------------------------------------------------------------------
+    /// @notice One-time bootstrap that allocates the first observation page
+    ///         and persists all policy parameters for `pid`.
+    /// @dev    Must be invoked through the authorised `hook`.
+    /// -----------------------------------------------------------------------
+    function enableOracleForPool(PoolKey calldata key) external {
+        if (msg.sender != hook) revert OnlyHook();
+        bytes32 id = PoolId.unwrap(key.toId());   // explicit unwrap
+        if (states[id].cardinality > 0) revert Errors.OracleOperationFailed("enableOracleForPool", "Already enabled");
+
+        /* ------------------------------------------------------------------ *
+         * Pull policy parameters once and *sanity-check* them               *
+         * ------------------------------------------------------------------ */
+        uint24 defaultCap = SafeCast.toUint24(policy.getDefaultMaxTicksPerBlock(PoolId.wrap(id)));
+        CachedPolicy storage pc = _policy[id];
+        pc.minCap         = SafeCast.toUint24(policy.getMinBaseFee(PoolId.wrap(id)) / 100);
+        pc.maxCap         = SafeCast.toUint24(policy.getMaxBaseFee(PoolId.wrap(id)) / 100);
+        pc.stepPpm        = policy.getBaseFeeStepPpm(PoolId.wrap(id));
+        pc.budgetPpm      = policy.getDailyBudgetPpm(PoolId.wrap(id));
+        pc.decayWindow    = policy.getCapBudgetDecayWindow(PoolId.wrap(id));
+        pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(PoolId.wrap(id));
+
+        _validatePolicy(pc);
+
+        // ---------- external read last (reduces griefing surface) ----------
+        (, int24 initialTick,,) = StateLibrary.getSlot0(poolManager, PoolId.wrap(id));
+        TruncatedOracle.Observation[PAGE_SIZE] storage first = _pages[id][0];
+        first.initialize(uint32(block.timestamp), initialTick);
+        states[id] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 1});
+
+        // Clamp defaultCap inside the validated range
+        if (defaultCap < pc.minCap)  defaultCap = pc.minCap;
+        if (defaultCap > pc.maxCap)  defaultCap = pc.maxCap;
+        maxTicksPerBlock[id] = defaultCap;
+
+        // --- audit-aid event ----------------------------------------------------
+        emit OracleConfigured(PoolId.wrap(id), hook, owner, defaultCap);
+    }
+
+    /**
+     * @notice Pushes a new observation and checks if the tick movement exceeds the cap.
+     * @dev Can only be called by the configured hook address. The swap direction parameter
+     *      is currently unused but kept for interface compatibility.
+     * @param pid The PoolId of the pool.
+     * @return tickWasCapped True if the tick movement was capped, false otherwise.
+     */
+    /// -----------------------------------------------------------------------
+    /// @notice Record a new observation and return whether the tick delta
+    ///         exceeded the adaptive cap (and was therefore clamped).
+    /// @param  pid Pool identifier
+    /// @return tickWasCapped True if the move hit the cap
+    /// -----------------------------------------------------------------------
+    function pushObservationAndCheckCap(PoolId pid, bool /* unused swap direction */)
+        external
+        nonReentrant
+        returns (bool tickWasCapped)
+    {
+        if (msg.sender != hook) revert OnlyHook();
+        bytes32 id = PoolId.unwrap(pid);   // single unwrap for the whole call
+        if (states[id].cardinality == 0) {
+            revert Errors.OracleOperationFailed("pushObservationAndCheckCap", "Pool not enabled");
+        }
+
+        ObservationState storage state = states[id];
+        TruncatedOracle.Observation[PAGE_SIZE] storage obs = _leaf(id, state.index);
+        uint16 localIdx = state.index % PAGE_SIZE;     // offset inside the 512-slot page
+        uint16 pageBase = state.index - localIdx;      // first global index of this page
+
+        // Get current tick from PoolManager
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, pid);
+
+        // Check against max ticks per block
+        int24  prevTick      = obs[localIdx].prevTick;
+        uint24 cap           = maxTicksPerBlock[id];
+        int256 tickDelta256 = int256(currentTick) - int256(prevTick);
+
+        /* ------------------------------------------------------------
+           Use the *absolute* delta while it is still int256 – no cast
+        ------------------------------------------------------------ */
+        uint256 absDelta     = tickDelta256 >= 0
+            ? uint256(tickDelta256)
+            : uint256(-tickDelta256);
+
+        // Inclusive cap: hitting the limit counts as a capped move
+        if (absDelta >= cap) {
+            // Cap (and safe-cast) the tick movement
+            int256 capped = tickDelta256 > 0
+                ? int256(prevTick) + int256(uint256(cap))
+                : int256(prevTick) - int256(uint256(cap));
+
+            // safe-cast with explicit range-check
+            currentTick = _toInt24(capped);
+            tickWasCapped = true;
+        }
+
+        // -------------------------------------------------- //
+        //  ❖ Write the (potentially capped) observation     //
+        //  Preserve the library's returned page-index and   //
+        //  translate it back to a *global* cursor.          //
+        // -------------------------------------------------- //
         uint128 liquidity = StateLibrary.getLiquidity(poolManager, pid);
 
-        // Check if pool is enabled in oracle
-        if (states[id].cardinality == 0) {
-            revert Errors.OracleOperationFailed("updateObservation", "Pool not enabled in oracle");
-        }
+        /* --------------------------------------------------------------- *
+         *  Page-local lengths                                             *
+         *  - pageCardinality      = populated slots in this 512-slot leaf *
+         *  - pageCardinalityNext  = "room for one more", capped at 512    *
+         * --------------------------------------------------------------- */
+        uint16 pageCardinality = state.cardinality > pageBase
+            ? state.cardinality - pageBase
+            : 1;                           // bootstrap slot
 
-        // Get current tick from pool manager
-        (, int24 tick,,) = StateLibrary.getSlot0(poolManager, pid);
+        uint16 pageCardinalityNext = pageCardinality < PAGE_SIZE
+            ? pageCardinality + 1          // open the next empty slot
+            : pageCardinality;             // page already full
 
-        // Update observation with truncated oracle logic
-        // This applies tick capping to prevent oracle manipulation
-        (bool capped, int24 newTick) = TickMoveGuard.checkHardCapOnly(observations[id][states[id].index].prevTick, tick);
-
-        (states[id].index, states[id].cardinality) = observations[id].write(
-            states[id].index, _blockTimestamp(), newTick, liquidity, states[id].cardinality, states[id].cardinalityNext
+        (uint16 newLocalIdx, uint16 newPageCard) = obs.write(
+            localIdx,
+            uint32(block.timestamp),
+            currentTick,
+            liquidity,
+            pageCardinality,
+            pageCardinalityNext
         );
 
-        if (capped) emit TickCapped(id, newTick);
-        emit ObservationUpdated(id, newTick, _blockTimestamp());
-    }
-
-    /**
-     * @notice Checks if an oracle update is needed based on time thresholds
-     * @dev Gas optimization to avoid unnecessary updates
-     * @param poolId The unique identifier for the pool
-     * @return shouldUpdate Whether the oracle should be updated
-     *
-     * @dev This function is a key gas optimization that reduces the frequency of oracle updates.
-     *      It can be safely called by any contract since it's a view function that doesn't modify state.
-     *      The function helps minimize the gas overhead of oracle updates during swaps.
-     */
-    function shouldUpdateOracle(PoolId poolId) external view returns (bool shouldUpdate) {
-        bytes32 id = PoolId.unwrap(poolId);
-
-        // If pool isn't initialized, no update needed
-        if (states[id].cardinality == 0) return false;
-
-        // Check time threshold (default: update every 15 seconds)
-        uint32 timeThreshold = 15;
-        uint32 lastUpdateTime = 0;
-
-        // Get the most recent observation
-        if (states[id].cardinality > 0) {
-            TruncatedOracle.Observation memory lastObs = observations[id][states[id].index];
-            lastUpdateTime = lastObs.blockTimestamp;
+        // Translate the page-local index back to the global cursor.
+        // If we just wrote the last slot of a page and the library wrapped
+        // to 0, jump to the **first slot of the next page** so subsequent
+        // observations fill fresh storage instead of overwriting the old page.
+        if (localIdx == PAGE_SIZE - 1 && newLocalIdx == 0) {
+            unchecked { state.index = pageBase + PAGE_SIZE; } // next leaf
+        } else {
+            unchecked { state.index = pageBase + newLocalIdx; }
         }
 
-        // Only update if enough time has passed
-        return (_blockTimestamp() >= lastUpdateTime + timeThreshold);
+        // ----------- bump global counters (bootstrap slot included) --------------
+        uint32 newGlobalCard;
+        unchecked { newGlobalCard = uint32(pageBase) + uint32(newPageCard); }
+        if (newGlobalCard > state.cardinality) {
+            state.cardinality = uint16(newGlobalCard);
+        }
+
+        // keep `cardinalityNext` one ahead, bounded by the hard limit
+        if (state.cardinalityNext < state.cardinality + 1
+            && state.cardinalityNext < TruncatedOracle.MAX_CARDINALITY_ALLOWED)
+        {
+            state.cardinalityNext = state.cardinality + 1;
+        }
+
+        // Update auto-tune frequency counter if capped
+        if (tickWasCapped) {
+            _updateCapFrequency(pid, true);
+        } else {
+            _updateCapFrequency(pid, false);
+        }
+    }
+
+    /* ─────────────────── VIEW FUNCTIONS ──────────────────────── */
+
+    /**
+     * @notice Checks if the oracle is enabled for a given pool.
+     * @param pid The PoolId to check.
+     * @return True if the oracle is enabled, false otherwise.
+     */
+    /// @notice Read-only helper: check if the oracle has been enabled for `pid`.
+    function isOracleEnabled(PoolId pid) external view returns (bool) {
+        return states[PoolId.unwrap(pid)].cardinality > 0;
     }
 
     /**
-     * @notice Gets the most recent observation for a pool
-     * @param poolId The ID of the pool
-     * @return timestamp The timestamp of the observation
-     * @return tick The tick value at the observation
-     * @return tickCumulative The cumulative tick value
-     * @return secondsPerLiquidityCumulativeX128 The cumulative seconds per liquidity value
+     * @notice Gets the latest observation for a pool.
+     * @param pid The PoolId of the pool.
+     * @return tick The tick from the latest observation.
+     * @return blockTimestamp The timestamp of the latest observation.
      */
-    function getLastObservation(PoolId poolId)
+    /// @notice Return the most recent observation stored for `pid`.
+    /// @dev    - Gas optimisation -  
+    ///         We *do not* copy the whole `Observation` struct to memory.  
+    ///         Instead we keep a **storage** reference and read just the two
+    ///         fields we need, saving ~120 gas per call.  
+    ///         **⚠️  IMPORTANT:** the field order (`prevTick`, `blockTimestamp`)
+    ///         must stay in-sync with `TruncatedOracle.Observation` layout.
+    function getLatestObservation(PoolId pid)
         external
-        returns (uint32 timestamp, int24 tick, int48 tickCumulative, uint144 secondsPerLiquidityCumulativeX128)
+        view
+        returns (int24 tick, uint32 blockTimestamp)
     {
-        bytes32 id = PoolId.unwrap(poolId);
-        ObservationState memory state = states[id];
-        if (state.cardinality == 0) revert Errors.OracleOperationFailed("getLastObservation", "Pool not enabled");
-
-        TruncatedOracle.Observation memory observation = observations[id][state.index];
-
-        // Retrieve current tick from pool state
-        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
-
-        // If the observation is not from the current timestamp, we may need to transform it
-        // However, since this is view-only, we don't actually update storage
-        uint32 currentTime = _blockTimestamp();
-        if (observation.blockTimestamp < currentTime) {
-            // This doesn't update storage, just gives us the expected value after tick capping
-            TruncatedOracle.Observation memory transformedObservation = TruncatedOracle.transform(
-                observation,
-                currentTime,
-                currentTick,
-                0 // liquidity ignored
-            );
-
-            return (
-                transformedObservation.blockTimestamp,
-                transformedObservation.prevTick,
-                transformedObservation.tickCumulative,
-                transformedObservation.secondsPerLiquidityCumulativeX128
-            );
-        }
-
-        return (
-            observation.blockTimestamp,
-            observation.prevTick,
-            observation.tickCumulative,
-            observation.secondsPerLiquidityCumulativeX128
-        );
-    }
-
-    /**
-     * @notice Observes oracle data for a pool.
-     * @param key The pool key.
-     * @param secondsAgos Array of time offsets.
-     * @return tickCumulatives The tick cumulative values.
-     * @return secondsPerLiquidityCumulativeX128s The seconds per liquidity cumulative values.
-     */
-    function observe(PoolKey calldata key, uint32[] calldata secondsAgos)
-        external
-        returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s)
-    {
-        PoolId pid = key.toId();
         bytes32 id = PoolId.unwrap(pid);
-        ObservationState memory state = states[id];
-        (, int24 tick,,) = StateLibrary.getSlot0(poolManager, pid);
-
-        return observations[id].observe(
-            _blockTimestamp(),
-            secondsAgos,
-            tick,
-            state.index,
-            0, // liquidity ignored
-            state.cardinality
-        );
-    }
-
-    /**
-     * @notice Helper function to get the current block timestamp as uint32
-     * @return The current block timestamp truncated to uint32
-     */
-    function _blockTimestamp() internal view returns (uint32) {
-        return uint32(block.timestamp);
-    }
-
-    /**
-     * @notice Checks if oracle is enabled for a pool
-     * @param poolId The ID of the pool
-     * @return True if the oracle is enabled for this pool
-     */
-    function isOracleEnabled(PoolId poolId) external view returns (bool) {
-        bytes32 id = PoolId.unwrap(poolId);
-        return states[id].cardinality > 0;
-    }
-
-    /**
-     * @notice Gets the latest observation for a pool
-     * @param poolId The ID of the pool
-     * @return _tick The latest observed tick
-     * @return blockTimestampResult The block timestamp of the observation
-     */
-    function getLatestObservation(PoolId poolId) external view returns (int24 _tick, uint32 blockTimestampResult) {
-        bytes32 id = PoolId.unwrap(poolId);
         if (states[id].cardinality == 0) {
-            revert Errors.OracleOperationFailed("getLatestObservation", "Pool not enabled in oracle");
+            revert Errors.OracleOperationFailed("getLatestObservation", "Pool not enabled");
         }
 
-        // Get the most recent observation
-        TruncatedOracle.Observation memory observation = observations[id][states[id].index];
-        return (observation.prevTick, observation.blockTimestamp);
+        ObservationState storage state = states[id];
+        // ---- inline fast-path (no struct copy) ----------------------------
+        TruncatedOracle.Observation storage o =
+            _leaf(id, state.index)[state.index % PAGE_SIZE];
+        return (o.prevTick, o.blockTimestamp);
     }
-
-    /// ------------------------------------------------------------------
-    ///  Exposed for DynamicFeeManager → simple cap-to-fee mapping
-    /// ------------------------------------------------------------------
-    /// @notice Public getter so <DynamicFeeManager> can derive the base-fee
-    function getMaxTicksPerBlock(bytes32 poolId) external view returns (uint24) {
-        return maxTicksPerBlock[poolId];
-    }
-
-    /* ────────────────── governance / test helper ────────────────── */
 
     /**
-     * @notice **Governance-only** override for the adaptive tick-cap.
-     *         Added to support unit-tests that need deterministic caps.
-     *         Production systems should rarely (if ever) call this,
-     *         because it bypasses the automatic feedback loop.
-     *
-     * @param pid  PoolId whose cap is being set
-     * @param cap  New max tick movement per block (must fit in uint24)
+     * @notice Returns the immutable hook address configured for this oracle.
      */
-    function setMaxTicksPerBlock(PoolId pid, uint24 cap) external {
-        if (msg.sender != governance) revert Errors.AccessOnlyGovernance(msg.sender);
-        
-        // For governance changes, directly update without rate limiting
-        // This is needed for testing and emergency interventions
-        bytes32 id = PoolId.unwrap(pid);
-        uint24 oldValue = maxTicksPerBlock[id];
-        maxTicksPerBlock[id] = cap;
-        
-        // Record the update time for future rate-limiting
-        _lastMaxTickUpdate[pid] = uint32(block.timestamp);
-        
-        // Emit both events for consistency
-        emit TickCapParamChanged(id, cap);
-        emit MaxTicksPerBlockUpdated(pid, oldValue, cap, uint32(block.timestamp));
+    /// @notice Expose the immutable hook address for off-chain tooling.
+    function getHookAddress() external view returns (address) {
+        return hook;
     }
 
-    function _maybeUpdateMaxTicks(PoolId poolId, uint32 newCandidate) private {
-        bytes32 id = PoolId.unwrap(poolId);
-        uint32 oldValue = maxTicksPerBlock[id];
+    /// -----------------------------------------------------------------------
+    /// 👀  External helpers (kept tiny – unit tests only)
+    /// -----------------------------------------------------------------------
+    /// @notice View helper mirroring the public mapping but typed for tests.
+    function getMaxTicksPerBlock(bytes32 id) external view returns (uint24) {
+        return maxTicksPerBlock[id];
+    }
 
-        // ── 1. 24 h rate-limit ───────────────────────────────────────────────
-        uint32 minInterval = IPoolPolicy(policyManager).getBaseFeeUpdateIntervalSeconds(poolId);
+    /**
+     * @notice Returns the saturation threshold for the capFreq counter.
+     * @return The maximum value for the capFreq counter before it saturates.
+     */
+    /// @notice Hard-coded saturation threshold used by the frequency counter.
+    function getCapFreqMax() external pure returns (uint64) {
+        return CAP_FREQ_MAX;
+    }
+
+    /* ────────────────────── INTERNALS ──────────────────────── */
+
+    /**
+     * @notice Updates the CAP frequency counter and potentially triggers auto-tuning.
+     * @dev Decays the frequency counter based on time elapsed since the last update.
+     *      Increments the counter if a CAP occurred.
+     *      Triggers auto-tuning if the frequency exceeds the budget or is too low.
+     * @param pid The PoolId of the pool.
+     * @param capOccurred True if a CAP event occurred in the current block.
+     */
+    function _updateCapFrequency(PoolId pid, bool capOccurred) internal {
+        bytes32 id      = PoolId.unwrap(pid);
+        uint32 lastTs   = uint32(lastFreqTs[id]);
+        uint32 nowTs    = uint32(block.timestamp);
+        uint32 timeElapsed = nowTs - lastTs;
+
+        /* FAST-PATH ────────────────────────────────────────────────────────
+           No tick was capped *and* we're still in the same second ⇒ every
+           state var is already correct, so we avoid **all** SSTOREs.      */
+        if (!capOccurred && timeElapsed == 0) return;
+
+        lastFreqTs[id] = uint48(nowTs); // single SSTORE only when needed
+
+        /* ------------------------------------------------------------------ *
+         *  Combined SLOAD + compare (0.8.24 syntax) and ultra-cheap bail-out *
+         *  – if nothing accumulated *and* nothing happened this second we    *
+         *    return immediately, skipping the expensive policy read.        *
+         * ------------------------------------------------------------------ */
+        uint64 currentFreq;
+        if (((currentFreq = capFreq[id]) == 0) && !capOccurred && timeElapsed == 0) {
+            return; // ✅ short-circuit before pulling CachedPolicy
+        }
+
+        // --------------------------------------------------------------------- //
+        //  1️⃣  Add this block's CAP contribution *first* and saturate.         //
+        //      Doing so before decay guarantees a CAP can never be "erased"     //
+        //      by an immediate decay step and lets the fuzz-test reach 2⁶⁴-1.   //
+        // --------------------------------------------------------------------- //
+        if (capOccurred) {
+            unchecked { currentFreq += uint64(ONE_DAY_PPM); }
+            if (currentFreq >= CAP_FREQ_MAX || currentFreq < ONE_DAY_PPM) {
+                currentFreq = CAP_FREQ_MAX;             // clamp one-step-early
+            }
+        }
+
+        /* -------- cache policy once – each field is an external SLOAD -------- */
+        CachedPolicy storage pc = _policy[id];              // 🔹 single SLOAD kept
+        uint32  budgetPpm      = pc.budgetPpm;
+        uint32  decayWindow    = pc.decayWindow;
+        uint32  updateInterval = pc.updateInterval;
+
+        // 2️⃣  Apply exponential decay *only when no CAP in this block*.
+        if (!capOccurred && timeElapsed > 0 && currentFreq > 0) {
+            // decay factor = (window - elapsed) / window = 1 - elapsed / window
+            // We use ppm to avoid floating point: (1e6 - elapsed * 1e6 / window)
+            if (timeElapsed >= decayWindow) {
+                currentFreq = 0; // Fully decayed
+            } else {
+                uint64 decayFactorPpm = PPM - uint64(timeElapsed) * PPM / decayWindow;
+                /* --------------------------------------------------------- *
+                 *  Multiply in 128-bit space to avoid a 2⁶⁴ overflow:      *
+                 *  currentFreq (≤ 2⁶⁴-1) × decayFactorPpm (≤ 1e6)          *
+                 *  can exceed 2⁶⁴ during the intermediate product.         *
+                 * --------------------------------------------------------- */
+                uint128 decayed = uint128(currentFreq) * decayFactorPpm / PPM;
+                // ----- overflow-safe down-cast (≤ 5 LOC) -------------------------
+                if (decayed > type(uint64).max) {
+                    currentFreq = CAP_FREQ_MAX;
+                } else {
+                    uint64 d64 = uint64(decayed);
+                    currentFreq = d64 > CAP_FREQ_MAX ? CAP_FREQ_MAX : d64;
+                }
+            }
+        }
+
+        capFreq[id] = currentFreq;            // single SSTORE
+
+        // Only auto-tune if enough time has passed since last governance update
+        // and auto-tune is not paused for this pool
+        if (!_autoTunePaused[pid] && block.timestamp >= _lastMaxTickUpdate[pid] + updateInterval) {
+            // Target frequency = budgetPpm × 86 400 sec (computed only when needed)
+            uint64 targetFreq = uint64(budgetPpm) * ONE_DAY_SEC;
+            if (currentFreq > targetFreq) {
+                // Too frequent caps -> Increase maxTicksPerBlock (loosen cap)
+                _autoTuneMaxTicks(pid, pc, true);  // re-use cached struct
+            } else {
+                // Caps too rare -> Decrease maxTicksPerBlock (tighten cap)
+                _autoTuneMaxTicks(pid, pc, false); // re-use cached struct
+            }
+        }
+    }
+
+    /**
+     * @notice Adjusts the maxTicksPerBlock based on CAP frequency.
+     * @dev Increases the cap if caps are too frequent, decreases otherwise.
+     *      Clamps the adjustment based on policy step size and min/max bounds.
+     * @param pid The PoolId of the pool.
+     * @param increase True to increase the cap, false to decrease.
+     */
+    /// @dev caller passes `pc` to avoid an extra SLOAD
+    function _autoTuneMaxTicks(
+        PoolId pid,
+        CachedPolicy storage pc,
+        bool increase
+    ) internal {
+        bytes32 id       = PoolId.unwrap(pid);
+        uint24 currentCap= maxTicksPerBlock[id];
+
+        /* ------------------------------------------------------------------ *
+         * ⚠️  Hot-path gas-saving:                                           *
+         * The three invariants below                                         *
+         *   – `stepPpm   != 0`                                               *
+         *   – `minCap    != 0`                                               *
+         *   – `maxCap    >= minCap`                                          *
+         * are **already checked once** in `PolicyValidator.validate()`       *
+         * (called from `enableOracleForPool` and `refreshPolicyCache`).      *
+         * After that, the cached `pc` struct can only change through the     *
+         * same validated path, so repeating the `require`s here costs        *
+         * ~500 gas per swap without adding security.                         *
+         * ------------------------------------------------------------------ */
+
+        uint32 stepPpm   = pc.stepPpm;  // safe: validated on write
+        uint24 minCap    = pc.minCap;   // safe: validated on write
+        uint24 maxCap    = pc.maxCap;   // safe: validated on write
+
+        uint24 change = uint24(uint256(currentCap) * stepPpm / PPM);
+        if (change == 0) change = 1; // Ensure minimum change of 1 tick
+
+        uint24 newCap;
+        if (increase) {
+            newCap = currentCap + change > maxCap ? maxCap : currentCap + change;
+        } else {
+            newCap = currentCap > change + minCap ? currentCap - change : minCap;
+        }
+
+        uint24 diff = currentCap > newCap ? currentCap - newCap : newCap - currentCap;
         
-        // Skip rate-limiting if this is the first update (_lastMaxTickUpdate is 0)
-        // or if the minimum interval is not set, or if enough time has passed
-        if (minInterval != 0 && _lastMaxTickUpdate[poolId] != 0 && block.timestamp < _lastMaxTickUpdate[poolId] + minInterval) {
-            emit MaxTicksUpdateSkipped(poolId, newCandidate, "too-early", uint32(block.timestamp));
-            return;
+        if (newCap != currentCap) {
+            maxTicksPerBlock[id] = newCap;
+            _lastMaxTickUpdate[pid] = uint32(block.timestamp);
+            if (diff >= EVENT_DIFF) {
+                emit MaxTicksPerBlockUpdated(pid, currentCap, newCap, uint32(block.timestamp));
+            }
         }
+    }
 
-        // ── 2. Step-size clamp (ppm) ─────────────────────────────────────────
-        uint32 stepPpm   = IPoolPolicy(policyManager).getBaseFeeStepPpm(poolId);  // default 2 %/day
-        uint32 maxDelta  = (oldValue * stepPpm) / 1_000_000;
-        uint32 upperBand = oldValue + maxDelta;
-        uint32 lowerBand = oldValue > maxDelta ? oldValue - maxDelta : 0;
+    /* ────────────────────── INTERNAL HELPERS ───────────────────────── */
 
-        uint32 adjusted = newCandidate;
-        if (newCandidate > upperBand)       adjusted = upperBand;
-        else if (newCandidate < lowerBand)  adjusted = lowerBand;
+    /// @dev bounded cast; reverts on overflow instead of truncating.
+    function _toInt24(int256 v) internal pure returns (int24) {
+        require(v >= type(int24).min && v <= type(int24).max, "Tick overflow");
+        return int24(v);
+    }
 
-        if (adjusted == oldValue) {
-            emit MaxTicksUpdateSkipped(poolId, newCandidate, "inside-band", uint32(block.timestamp));
-            return;
-        }
+    /* ───────────────────── Emergency pause ────────────────────── */
+    /// @notice Emitted when the governor toggles the auto-tune circuit-breaker.
+    event AutoTunePaused(PoolId indexed poolId, bool paused, uint32 timestamp);
 
-        // ── 3. Persist & log ────────────────────────────────────────────────
-        maxTicksPerBlock[id] = uint24(adjusted);
-        _lastMaxTickUpdate[poolId] = uint32(block.timestamp);
+    /// @dev circuit-breaker flag per pool (default: false = auto-tune active)
+    mapping(PoolId => bool) private _autoTunePaused;
 
-        emit MaxTicksPerBlockUpdated(poolId, oldValue, adjusted, uint32(block.timestamp));
-        // Also emit the legacy event for backward compatibility
-        emit TickCapParamChanged(id, uint24(adjusted));
+    /**
+     * @notice Pause or un-pause the adaptive cap algorithm for a pool.
+     * @param pid       Target pool id.
+     * @param paused    True to disable auto-tune, false to resume.
+     */
+    function setAutoTunePaused(PoolId pid, bool paused) external {
+        if (msg.sender != owner) revert OnlyOwner();
+        _autoTunePaused[pid] = paused;
+        emit AutoTunePaused(pid, paused, uint32(block.timestamp));
     }
 }

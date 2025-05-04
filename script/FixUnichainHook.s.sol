@@ -1,15 +1,15 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import "forge-std/Script.sol";
-import "forge-std/console.sol";
+import {Script} from "forge-std/Script.sol";
+import {console} from "forge-std/console.sol";
 
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {Spot} from "../src/Spot.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
-import {HookMiner} from "../src/utils/HookMiner.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 
@@ -55,7 +55,8 @@ contract FixUnichainHook is Script {
         console.log("Old hook address (lower 20 bytes): 0x%x", uint160(oldHookAddress));
         console.log("Old hook address flags: 0x%x", uint256(uint160(oldHookAddress) & Hooks.ALL_HOOK_MASK));
 
-        bool isOldValid = HookMiner.verifyHookAddress(oldHookAddress, targetFlags);
+        // Verify the flags directly: (uint160(address) & FLAG_MASK) == flags
+        bool isOldValid = (uint160(oldHookAddress) & Hooks.ALL_HOOK_MASK) == targetFlags;
         console.log("Is old hook address valid? %s", isOldValid);
         console.log("Expected flags: 0x%x", uint256(targetFlags));
         console.log("Actual flags: 0x%x", uint256(uint160(oldHookAddress) & Hooks.ALL_HOOK_MASK));

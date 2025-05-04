@@ -4,8 +4,8 @@ pragma solidity 0.8.26;
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {ForkSetup} from "./ForkSetup.t.sol";
-
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+
 // import {StateLibrary}   from "v4-core/src/libraries/StateLibrary.sol"; // Keep commented out
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
@@ -16,6 +16,9 @@ import {Spot} from "src/Spot.sol";
 import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
 import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
 import {ISpot, DepositParams as ISpotDepositParams} from "src/interfaces/ISpot.sol";
+// NOTE: SharedDeployLib is *not* used directly here, but keeping the structure consistent.
+// If it *were* imported, the path would be updated below.
+// import {SharedDeployLib} from "src/utils/SharedDeployLib.sol"; // Example of correct path
 
 // import {IWETH9}         from "v4-periphery/interfaces/external/IWETH9.sol"; // Keep commented out
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
@@ -38,6 +41,9 @@ import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 //     uint256 deadline;
 // }
 
+// The re-investment tests can run on the fully-wired environment that
+// `ForkSetup` already gives us – no need to hand-roll another deployer.
+
 contract InternalReinvestTest is ForkSetup {
     using CurrencyLibrary for Currency;
     using SafeERC20 for IERC20; // Updated to use IERC20 instead of IERC20Minimal
@@ -56,6 +62,9 @@ contract InternalReinvestTest is ForkSetup {
     uint256 constant MIN0 = 1; // 1 USDC
     uint256 constant MIN1 = 1e9; // 1 gwei WETH
     uint64 constant COOLDOWN = 1 hours;
+
+    address token0;
+    address token1;
 
     function _ensureHookApprovals() internal {
         address t0 = Currency.unwrap(c0);
@@ -94,6 +103,9 @@ contract InternalReinvestTest is ForkSetup {
 
         vm.prank(policyMgr.getSoloGovernance());
         hook.setReinvestConfig(poolId, MIN0, MIN1, COOLDOWN);
+
+        token0 = Currency.unwrap(c0);
+        token1 = Currency.unwrap(c1);
     }
 
     /* ---------- helpers --------------------------------------------------- */

@@ -11,10 +11,11 @@ import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
-import {HookMiner} from "../src/utils/HookMiner.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
+import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
 
 /**
  * Script to directly deploy the hook with an explicit constructor and salt.
@@ -75,11 +76,15 @@ contract DirectDeploy is Script {
         // Deploy the helper contracts
         if (address(truncGeoOracle) == address(0)) {
             console.log("Deploying TruncGeoOracleMulti...");
+            DummyFullRangeHook fullRangeHook = new DummyFullRangeHook(address(0)); // Deploy hook first
             truncGeoOracle = new TruncGeoOracleMulti(
                 IPoolManager(UNICHAIN_POOL_MANAGER),
-                deployer, // governance parameter
-                policyManager // policy manager parameter
+                policyManager,
+                address(fullRangeHook),
+                msg.sender // Deployer as owner
             );
+            // Assuming DummyFullRangeHook now has setOracle
+            // fullRangeHook.setOracle(address(truncGeoOracle));
             console.log("TruncGeoOracleMulti deployed at: %s", address(truncGeoOracle));
         }
 
@@ -87,14 +92,7 @@ contract DirectDeploy is Script {
             console.log("Deploying PolicyManager...");
             // Simplified parameters for this test deployment
             address owner = deployer;
-            uint256 polSharePpm = 800000; // 80%
-            uint256 fullRangeSharePpm = 0; // 0%
-            uint256 lpSharePpm = 200000; // 20%
-            uint256 minimumTradingFeePpm = 1000; // 0.1%
-            uint256 feeClaimThresholdPpm = 1000; // 0.1%
-            uint256 defaultPolMultiplier = 2;
             uint256 defaultDynamicFeePpm = 5000; // 0.5%
-            int24 tickScalingFactor = 10;
             uint24[] memory supportedTickSpacings = new uint24[](3);
             supportedTickSpacings[0] = 1;
             supportedTickSpacings[1] = 10;

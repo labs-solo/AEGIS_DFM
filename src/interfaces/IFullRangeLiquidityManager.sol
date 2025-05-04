@@ -3,11 +3,23 @@ pragma solidity ^0.8.26;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IFullRangePositions} from "./IFullRangePositions.sol";
+import {FullRangePositions} from "../token/FullRangePositions.sol";
 
 /**
  * @notice Interface for FullRangeLiquidityManager (Phase 1: POL-Only)
  */
 interface IFullRangeLiquidityManager {
+    /// @notice the PoolManager this contract is bound to
+    function manager() external view returns (IPoolManager);
+
+    /// @notice address of the hook that is currently authorised
+    function authorizedHookAddress() external view returns (address);
+
+    /// @notice ERC-6909 share token contract that tracks pool-wide positions
+    function positions() external view returns (IFullRangePositions);
+
     /* ───────── GOVERNANCE-ONLY API ───────── */
 
     function deposit(
@@ -30,7 +42,7 @@ interface IFullRangeLiquidityManager {
     function reinvest(PoolId poolId, uint256 use0, uint256 use1, uint128 liq)
         external
         payable
-        returns (uint128 sharesMinted); // Note: Implementation returns V2 shares
+        returns (uint128 sharesMinted);
 
     /* ───────── MUTABLE STATE CONFIG ───────── */
 
@@ -66,4 +78,13 @@ interface IFullRangeLiquidityManager {
         external
         view
         returns (bool initialized, uint256 shares);
+
+    function removeLiquidity(PoolId poolId, uint128 amount) external returns (int256 amount0, int256 amount1);
+
+    /// @notice Returns the total number of ERC-6909 shares minted for the
+    /// pool-wide position.
+    function getShares(PoolId poolId) external view returns (uint256 shares);
+
+    // Removed old positions() returning address
+    // Removed positionLiquidity(bytes32 poolId)
 }

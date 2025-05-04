@@ -13,16 +13,16 @@ pragma solidity ^0.8.26;
 \*───────────────────────────────────────────────────────────────────────────*/
 
 import "forge-std/Test.sol";
-import {TruncatedOracle}  from "../../src/libraries/TruncatedOracle.sol";
-import {TickMoveGuard}    from "../../src/libraries/TickMoveGuard.sol";
+import {TruncatedOracle} from "../../src/libraries/TruncatedOracle.sol";
+import {TickMoveGuard} from "../../src/libraries/TickMoveGuard.sol";
 
 /* ------------------------------------------------------------------------- */
 /*                             Harness / shim                                */
 /* ------------------------------------------------------------------------- */
 contract OracleHarness {
-    using TruncatedOracle for TruncatedOracle.Observation[65535];
+    using TruncatedOracle for TruncatedOracle.Observation[512];
 
-    TruncatedOracle.Observation[65535] internal obs;
+    TruncatedOracle.Observation[512] internal obs;
 
     uint16 public index;
     uint16 public card;
@@ -42,24 +42,14 @@ contract OracleHarness {
         cardNext = obs.grow(cardNext == 0 ? card : cardNext, next_);
     }
 
-    function observe(
-        uint32 nowTs,
-        uint32[] calldata secondsAgos,
-        int24 tick_,
-        uint128 liq
-    )
+    function observe(uint32 nowTs, uint32[] calldata secondsAgos, int24 tick_, uint128 liq)
         external
         returns (int48[] memory tc, uint144[] memory sl)
     {
         return obs.observe(nowTs, secondsAgos, tick_, index, liq, card);
     }
 
-    function observeSingle(
-        uint32 nowTs,
-        uint32 secondsAgo,
-        int24 tick_,
-        uint128 liq
-    )
+    function observeSingle(uint32 nowTs, uint32 secondsAgo, int24 tick_, uint128 liq)
         external
         returns (int48 tc, uint144 sl)
     {
@@ -78,7 +68,7 @@ contract TruncatedOracleTest is Test {
     OracleHarness internal h;
 
     /* constants */
-    uint32  internal constant START   = 1_000_000;
+    uint32 internal constant START = 1_000_000;
     uint128 internal constant ONE_LIQ = 1 ether;
 
     function setUp() public {
@@ -128,12 +118,12 @@ contract TruncatedOracleTest is Test {
     function testSameBlockDoubleWriteNoChange() public {
         uint32 ts = START + 50;
 
-        h.push(ts, 30, ONE_LIQ);                // first write
+        h.push(ts, 30, ONE_LIQ); // first write
         (uint16 idxBefore, uint16 cardBefore) = (h.index(), h.card());
 
-        h.push(ts, 31, ONE_LIQ);                // second write in same block
-        assertEq(h.index(), idxBefore,  "index mutated");
-        assertEq(h.card(),  cardBefore, "cardinality mutated");
+        h.push(ts, 31, ONE_LIQ); // second write in same block
+        assertEq(h.index(), idxBefore, "index mutated");
+        assertEq(h.card(), cardBefore, "cardinality mutated");
 
         // stored tick should remain the first one (30)
         TruncatedOracle.Observation memory o = h.getObs(idxBefore);
@@ -145,7 +135,7 @@ contract TruncatedOracleTest is Test {
     /* ----------------------------------------------------- */
     function testTickCappingEmitsAndTruncates() public {
         // baseline so prevTick == 10
-        h.grow(3);                      // ensure at least 3 slots
+        h.grow(3); // ensure at least 3 slots
         h.push(START + 10, 10, ONE_LIQ);
 
         // delta of 600 000 will exceed the 250k/300k cap
@@ -197,8 +187,8 @@ contract TruncatedOracleTest is Test {
         h.push(START + 20, 22, ONE_LIQ); // idx2
         h.push(START + 30, 32, ONE_LIQ); // idx3
 
-        uint32 nowTs      = START + 30;
-        uint32 targetTime = START + 15;         // midway 10→20
+        uint32 nowTs = START + 30;
+        uint32 targetTime = START + 15; // midway 10→20
         uint32 secondsAgo = nowTs - targetTime;
 
         (int48 tcMid,) = h.observeSingle(nowTs, secondsAgo, 22, ONE_LIQ);
@@ -224,18 +214,20 @@ contract TruncatedOracleTest is Test {
     /* ----------------------------------------------------- */
     function testObserveWorksAcrossTimestampOverflow() public {
         // simulate near-overflow start
-        uint32 nearWrap  = type(uint32).max - 50; // ~4 GHz seconds
-        OracleHarness w  = new OracleHarness();
+        uint32 nearWrap = type(uint32).max - 50; // ~4 GHz seconds
+        OracleHarness w = new OracleHarness();
         w.init(nearWrap, 100); // Initial observation before wrap
 
         // write after wrap (overflow: +100 s)
         uint32 postWrapTs;
-        unchecked { postWrapTs = nearWrap + 100; } // simulate wrap
+        unchecked {
+            postWrapTs = nearWrap + 100;
+        } // simulate wrap
 
         w.push(postWrapTs, 110, ONE_LIQ);
 
         // observe 75 s ago (crosses the wrap)
-        uint32 nowTs      = postWrapTs;
+        uint32 nowTs = postWrapTs;
         uint32 secondsAgo = 75;
 
         // ------------------------------------------------------------------
@@ -247,11 +239,14 @@ contract TruncatedOracleTest is Test {
         } catch (bytes memory data) {
             // first 4 bytes should equal selector
             bytes4 sel;
-            assembly { sel := mload(add(data, 0x20)) }
+            assembly {
+                sel := mload(add(data, 0x20))
+            }
             assertEq(
                 sel,
-                bytes4(0x28e44dc0),           // Actual selector from error
-                "wrong revert selector");
+                bytes4(0x28e44dc0), // Actual selector from error
+                "wrong revert selector"
+            );
         }
     }
 
@@ -266,7 +261,7 @@ contract TruncatedOracleTest is Test {
         h.push(ts1, 40, ONE_LIQ);
 
         uint32 ts2 = ts1 + offset;
-        int24  t2  = 40 + tickDelta;
+        int24 t2 = 40 + tickDelta;
         h.push(ts2, t2, ONE_LIQ);
 
         uint32 nowTs = ts2 + 1 minutes;
@@ -287,17 +282,20 @@ contract TruncatedOracleTest is Test {
         } catch (bytes memory reason) {
             // decode selector
             bytes4 sel;
-            assembly { sel := mload(add(reason, 32)) }
-            assertEq(sel, bytes4(0x28e44dc0),
-                "unexpected revert selector (single)");
+            assembly {
+                sel := mload(add(reason, 32))
+            }
+            assertEq(sel, bytes4(0x28e44dc0), "unexpected revert selector (single)");
             // batch should revert with the *same* selector
             try h.observe(nowTs, sa, t2, ONE_LIQ) {
                 revert("batch did not revert");
             } catch (bytes memory reasonB) {
                 bytes4 selB;
-                assembly { selB := mload(add(reasonB, 32)) }
+                assembly {
+                    selB := mload(add(reasonB, 32))
+                }
                 assertEq(selB, sel, "selectors mismatch single vs batch");
             }
         }
     }
-} 
+}

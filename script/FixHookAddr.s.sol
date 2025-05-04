@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.26;
 
-import "forge-std/Script.sol";
+import {Script} from "forge-std/Script.sol";
+// logging (use canonical wildcard import so solc resolves correct library)
 import "forge-std/console2.sol";
 
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
@@ -16,12 +17,13 @@ import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
-import {HookMiner} from "../src/utils/HookMiner.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
+import {SharedDeployLib} from "../test/utils/SharedDeployLib.sol";
 
 // Utility script to display valid hook address for debugging
 contract FixHookAddr is Script {
@@ -43,15 +45,9 @@ contract FixHookAddr is Script {
         address owner_ = vm.envAddress("DEPLOYER_ADDRESS");
 
         // Define required hook flags for Spot (using HookMiner constants)
-        uint160 spotFlags = Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_SWAP_FLAG;
-        /* // Previous flags, keeping for reference
-            Hooks.AFTER_INITIALIZE_FLAG |
-            Hooks.BEFORE_SWAP_FLAG |
-            Hooks.AFTER_SWAP_FLAG |
-            Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
-            */
+        uint160 _unusedSpotFlags = (Hooks.AFTER_INITIALIZE_FLAG |
+                                    Hooks.BEFORE_SWAP_FLAG        |
+                                    Hooks.AFTER_SWAP_FLAG);
 
         // Construct Spot creation code and constructor arguments
         bytes memory spotBytecode = type(Spot).creationCode;
@@ -59,8 +55,23 @@ contract FixHookAddr is Script {
             abi.encode(poolManager_, policyManager_, liquidityManager_, oracle_, feeManager_, owner_);
 
         // Find the correct salt for Spot
-        (address spotHookAddress, bytes32 spotSalt) =
-            HookMiner.find(owner_, spotFlags, spotBytecode, spotConstructorArgs);
+        bytes32 spotSalt;
+        address spotHookAddress;
+        (spotSalt, spotHookAddress) = SharedDeployLib._spotHookSaltAndAddr(
+            owner_,
+            spotBytecode,
+            spotConstructorArgs
+        );
+
+        // This script should not mutate global ENV during test runs.
+        // Print instead so operator can export manually.
+        console2.log(">>> Spot Hook salt =");
+        console2.logBytes32(spotSalt);
+
+        // Log the results
+        console2.logAddress(spotHookAddress);
+        console2.logString(string.concat("Salt (hex): ", vm.toString(spotSalt)));
+        console2.logUint(uint256(spotSalt));
 
         // Removed console logs
 
