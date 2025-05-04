@@ -5,6 +5,9 @@ import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
+import "forge-std/Test.sol";
+import {PolicyValidator} from "../../src/libraries/PolicyValidator.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /*  VERY-LIGHT policy stub – **does not** inherit the full interface       */
 /*  (only selectors the oracle touches are implemented).                   */
@@ -115,8 +118,17 @@ contract MockPolicyManager is IPoolPolicy {
     }
 
     /* ----------- setters for tests ----------- */
-    function setParams(PoolId id, Params calldata p) external {
-        _p[id] = p;
+    function setParams(PoolId pid, Params memory p) external {
+        // shared invariant checks (Rule 3: never skip validation in mocks)
+        PolicyValidator.validate(
+            SafeCast.toUint24(p.minBaseFee / 100),
+            SafeCast.toUint24(p.maxBaseFee / 100),
+            p.stepPpm,
+            p.budgetPpm,
+            p.decayWindow,
+            p.updateInterval
+        );
+        _p[pid] = p;
     }
 
     function setMinBaseFee(PoolId id, uint256 fee) external { _p[id].minBaseFee = fee; }

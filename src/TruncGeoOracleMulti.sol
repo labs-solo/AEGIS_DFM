@@ -58,7 +58,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
     /// @dev Shorthand wrapper that forwards storage-struct fields to the library
     ///      (keeps calling-site tidy without another memory copy).
-    function _validatePolicy(CachedPolicy storage pc) internal pure {
+    function _validatePolicy(CachedPolicy storage pc) internal view {
         PolicyValidator.validate(
             pc.minCap,
             pc.maxCap,

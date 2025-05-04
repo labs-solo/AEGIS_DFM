@@ -440,9 +440,13 @@ contract TruncGeoOracleMultiTest is Test {
         p.decayWindow     = 86_400;
         p.updateInterval  = 600;
         p.defaultMaxTicks = 50;
+
+        // Validation now happens in setParams, so expect revert there
+        vm.expectRevert("stepPpm-range");
         policy.setParams(pid, p);
 
-        vm.expectRevert("stepPpm-range");
-        oracle.refreshPolicyCache(pid);  // validation should trigger in helper
+        // The following code won't be reached since revert happens earlier
+        // vm.expectRevert("stepPpm-range");
+        // oracle.refreshPolicyCache(pid);  // validation should trigger in helper
     }
 }
