@@ -13,6 +13,7 @@ library TruncatedOracle {
     /* -------------------------------------------------------------------------- */
     /// @dev Safety-fuse: prevent pathological gas usage in `grow()`
     uint16 internal constant MAX_CARDINALITY_ALLOWED = 8_192;
+    uint16 internal constant GROW_STEP_LIMIT         = 256;   // per-call growth guard
 
     /// @notice Thrown when trying to interact with an Oracle of a non-initialized pool
     error OracleCardinalityCannotBeZero();
@@ -181,8 +182,12 @@ library TruncatedOracle {
             if (current == 0) revert OracleCardinalityCannotBeZero();
             // Guard against out-of-gas loops
             require(next <= MAX_CARDINALITY_ALLOWED, "grow>limit");
-            // no-op if the passed next value isn't greater than the current next value
+            // no-op if the passed `next` value isn't greater than the current
             if (next <= current) return current;
+
+            // ---------- new safety-fail guard (≤ 256 slots per call) ----------
+            require(next - current <= GROW_STEP_LIMIT, "grow>step");
+
             // store in each slot to prevent fresh SSTOREs in swaps
             // this data will not be used because the initialized boolean is still false
             for (uint16 i = current; i < next; i++) {

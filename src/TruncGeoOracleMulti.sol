@@ -17,6 +17,12 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     using PoolIdLibrary for PoolKey;
     using SafeCast for int256;
 
+    /* -------------------------------------------------------------------------- */
+    /*                               Library constants                            */
+    /* -------------------------------------------------------------------------- */
+    uint32 internal constant ONE_DAY = 86_400;
+    uint32 internal constant PPM     = 1_000_000;
+
     // Custom errors
     error OnlyHook();
     error ObservationOverflow(uint16 cardinality);
@@ -71,11 +77,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         bytes32 id = PoolId.unwrap(key.toId());
         if (states[id].cardinality > 0) revert Errors.OracleOperationFailed("enableOracleForPool", "Already enabled");
 
-        // Initialize observation state
-        (, int24 initialTick,,) = StateLibrary.getSlot0(poolManager, PoolId.wrap(id));
-        observations[id].initialize(uint32(block.timestamp), initialTick);
-        states[id] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 1});
-
         /* ------------------------------------------------------------------ *
          * Pull policy parameters once and *sanity-check* them               *
          * ------------------------------------------------------------------ */
@@ -87,6 +88,11 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         require(stepPpm != 0,      "TruncOracle: stepPpm=0");
         require(minCap  != 0,      "TruncOracle: minCap=0");
         require(maxCap  >= minCap, "TruncOracle: cap-bounds");
+
+        // ---------- external read last (reduces griefing surface) ----------
+        (, int24 initialTick,,) = StateLibrary.getSlot0(poolManager, PoolId.wrap(id));
+        observations[id].initialize(uint32(block.timestamp), initialTick);
+        states[id] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 1});
 
         // Clamp defaultCap inside the validated range
         if (defaultCap < minCap)  defaultCap = minCap;
@@ -121,17 +127,24 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         // Check against max ticks per block
         int24  prevTick      = obs[state.index].prevTick;
         uint24 cap           = maxTicksPerBlock[id];
-        int256 tickDelta256  = int256(currentTick) - int256(prevTick);
+        int256 tickDelta256 = int256(currentTick) - int256(prevTick);
 
-        // re-cast once, safe-checked
-        int24 tickDelta = tickDelta256.toInt24();
+        /* ------------------------------------------------------------
+           Use the *absolute* delta while it is still int256 – no cast
+        ------------------------------------------------------------ */
+        uint256 absDelta     = tickDelta256 >= 0
+            ? uint256(tickDelta256)
+            : uint256(-tickDelta256);
 
         // Inclusive cap: hitting the limit counts as a capped move
-        if (uint24(TruncatedOracle.abs(tickDelta)) >= cap) {
+        if (absDelta >= cap) {
             // Cap (and safe-cast) the tick movement
-            currentTick = tickDelta > 0
-                ? (int256(prevTick) + int256(uint256(cap))).toInt24()
-                : (int256(prevTick) - int256(uint256(cap))).toInt24();
+            int256 capped = tickDelta256 > 0
+                ? int256(prevTick) + int256(uint256(cap))
+                : int256(prevTick) - int256(uint256(cap));
+
+            // guaranteed inside range by construction (prevTick ± cap)
+            currentTick = capped.toInt24();
             tickWasCapped = true;
         }
 
@@ -211,9 +224,12 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         uint32 timeElapsed = uint32(block.timestamp) - uint32(lastFreqTs[id]);
         lastFreqTs[id] = uint48(block.timestamp);
 
+        // -------- fast-exit: nothing to do ---------------------------------
+        if (!capOccurred && timeElapsed == 0) return;
+
         uint128 currentFreq = capFreq[id];
-        uint32 budgetPpm = policy.getDailyBudgetPpm(pid);
-        uint32 decayWindow = policy.getCapBudgetDecayWindow(pid);
+        uint32  budgetPpm   = policy.getDailyBudgetPpm(pid);
+        uint32  decayWindow = policy.getCapBudgetDecayWindow(pid);
 
         // Decay the frequency counter
         if (timeElapsed > 0 && currentFreq > 0) {
@@ -222,15 +238,15 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
             if (timeElapsed >= decayWindow) {
                 currentFreq = 0; // Fully decayed
             } else {
-                uint128 decayFactorPpm = 1e6 - uint128(timeElapsed) * 1e6 / decayWindow;
-                currentFreq = currentFreq * decayFactorPpm / 1e6;
+                uint128 decayFactorPpm = PPM - uint128(timeElapsed) * PPM / decayWindow;
+                currentFreq = currentFreq * decayFactorPpm / PPM;
             }
         }
 
         // Add to frequency counter if CAP occurred
         if (capOccurred) {
             // Add 1 day's worth of frequency (scaled by ppm)
-            currentFreq += (1 days * 1e6);
+            currentFreq += uint128(ONE_DAY) * uint128(PPM);
         }
 
         capFreq[id] = currentFreq;
@@ -238,7 +254,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         // Check if auto-tuning is needed
         // Budget is per day, frequency counter is ppm-seconds
         // Target frequency = budgetPpm * (1 day / 1e6) = budgetPpm * 86.4 seconds
-        uint128 targetFreq = uint128(budgetPpm) * 86400; // Target frequency in ppm-seconds
+        uint128 targetFreq = uint128(budgetPpm) * uint128(ONE_DAY); // ppm-seconds target
 
         // Only auto-tune if enough time has passed since last governance update
         uint32 updateInterval = policy.getBaseFeeUpdateIntervalSeconds(pid);
@@ -264,15 +280,15 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         bytes32 id = PoolId.unwrap(pid);
         uint24 currentCap = maxTicksPerBlock[id];
         uint32 stepPpm = policy.getBaseFeeStepPpm(pid);
-        uint24 minCap = SafeCast.toUint24(policy.getMinBaseFee(pid) / 100);
-        uint24 maxCap = SafeCast.toUint24(policy.getMaxBaseFee(pid) / 100);
+        uint24 minCap  = SafeCast.toUint24(policy.getMinBaseFee(pid) / 100);
+        uint24 maxCap  = SafeCast.toUint24(policy.getMaxBaseFee(pid) / 100);
 
         // ── validate policy params on every tune to avoid DoS vectors ──────
         require(stepPpm != 0,      "TruncOracle: stepPpm=0");
         require(minCap  != 0,      "TruncOracle: minCap=0");
         require(maxCap  >= minCap, "TruncOracle: cap-bounds");
 
-        uint24 change = uint24(uint256(currentCap) * stepPpm / 1e6);
+        uint24 change = uint24(uint256(currentCap) * stepPpm / PPM);
         if (change == 0) change = 1; // Ensure minimum change of 1 tick
 
         uint24 newCap;
