@@ -21,12 +21,6 @@ Why you might care:
 | **Protocol Engineers** | One-pagers in [`docs/one_pagers/`](docs/one_pagers) | Storage layout, invariants & gas notes for each contract |
 | **Contributors / Devs** | This README | Setup & dev-loop |
 
-Additional deep-dives:
-
-* [`docs/Dynamic_Fee_Requirements.md`](docs/Dynamic_Fee_Requirements.md) – design rationale
-* [`docs/Protocol_Owned_Liquidity.md`](docs/Protocol_Owned_Liquidity.md) – POL maths & edge cases
-* [`docs/Integration_Testing_Plan.md`](docs/Integration_Testing_Plan.md) – how we test the invariants
-
 ---
 
 ## 🏗️ Project Layout (High-Level)
