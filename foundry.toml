@@ -21,7 +21,7 @@ remappings = [
 
   # uniswap hooks (locally cloned)
   "uniswap-hooks/=node_modules/uniswap-hooks/src/",
-  
+
   # Local utils & mocks (ADDED)
   "utils/=src/utils/",
   "mocks/=test/mocks/"
@@ -31,9 +31,7 @@ out = "out"
 libs = ["lib"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
-solc_version = "0.8.29"
 evm_version = "cancun"
-via_ir = true
 optimizer = true
 optimizer_runs = 500
 dotenv = true  # Enable .env file loading
@@ -52,9 +50,7 @@ out = "out"
 libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
-solc_version = "0.8.29"
 evm_version = "cancun"
-via_ir = true
 optimizer = true
 optimizer_runs = 500
 
@@ -69,9 +65,7 @@ out = "out"
 libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
-solc_version = "0.8.29"
 evm_version = "cancun"
-via_ir = true
 optimizer = true
 optimizer_runs = 500
 dotenv = true
