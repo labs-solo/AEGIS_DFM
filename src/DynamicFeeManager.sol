@@ -110,6 +110,10 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     using _P for uint256;
     using PoolIdLibrary for PoolId;
 
+    /* ─── custom errors ──────────────────────────────── */
+    error UnauthorizedHook();
+    error ZeroHookAddress();
+
     /* ─── constants ─────────────────────────────────────────── */
     /// @dev fallback base-fee when the oracle has no data yet (0.5 %)
     uint32 internal constant DEFAULT_BASE_FEE_PPM = 5_000;
@@ -122,8 +126,8 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
 
     /* ─── config / state ─────────────────────────────────────── */
     IPoolPolicy public immutable policyManager;
-    /// @notice address allowed to call `notifyOracleUpdate` – owner may rotate
-    address public authorizedHook;
+    /// @notice address allowed to call `notifyOracleUpdate` – immutable after deployment
+    address public immutable authorizedHook;
 
     /// direct handle to the oracle (for cap → fee mapping)
     TruncGeoOracleMulti public immutable oracle;
@@ -135,7 +139,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     constructor(IPoolPolicy _policyManager, address _oracle, address _authorizedHook) Owned(msg.sender) {
         require(address(_policyManager) != address(0), "DFM: policy 0");
         require(_oracle != address(0), "DFM: oracle 0");
-        require(_authorizedHook != address(0), "DFM: hook 0");
+        if (_authorizedHook == address(0)) revert ZeroHookAddress();
         policyManager = _policyManager; // immutable handle for surge-knobs
         oracle = TruncGeoOracleMulti(_oracle);
         authorizedHook = _authorizedHook;
@@ -255,15 +259,8 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         return maxSurge * (uint256(decay) - dt) / decay;
     }
 
-    /// @notice governance-only: rotate the authorized hook
-    function setAuthorizedHook(address newHook) external {
-        require(msg.sender == owner, "DFM:!owner");
-        require(newHook != address(0), "DFM:hook 0");
-        authorizedHook = newHook;
-    }
-
     function _requireHookAuth() internal view {
-        require(msg.sender == authorizedHook, "DFM:!auth");
+        if (msg.sender != authorizedHook) revert UnauthorizedHook();
     }
 
     /* ---------- Back-compat alias (optional – can be deleted later) ---- */
