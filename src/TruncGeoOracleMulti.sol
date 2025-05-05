@@ -447,15 +447,11 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
         lastFreqTs[id] = uint48(nowTs); // single SSTORE only when needed
 
-        /* ------------------------------------------------------------------ *
-         *  Combined SLOAD + compare (0.8.24 syntax) and ultra-cheap bail-out *
-         *  – if nothing accumulated *and* nothing happened this second we    *
-         *    return immediately, skipping the expensive policy read.        *
-         * ------------------------------------------------------------------ */
-        uint64 currentFreq;
-        if (((currentFreq = capFreq[id]) == 0) && !capOccurred && timeElapsed == 0) {
-            return; // ✅ short-circuit before pulling CachedPolicy
-        }
+        // Load current frequency counter once. The earlier fast-path has already
+        // returned when `timeElapsed == 0 && !capOccurred`, so the additional
+        // bail-out previously here was unreachable. Removing it saves ~200 gas
+        // on the hot path while preserving identical behaviour.
+        uint64 currentFreq = capFreq[id];
 
         // --------------------------------------------------------------------- //
         //  1️⃣  Add this block's CAP contribution *first* and saturate.         //
