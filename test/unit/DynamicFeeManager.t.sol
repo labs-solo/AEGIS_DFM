@@ -125,12 +125,12 @@ contract DynamicFeeManagerUnitTest is Test {
 
     /* ───────────────── constructor reverts ──────────────── */
     function testConstructorRevertsOnZeroPolicy() public {
-        vm.expectRevert(bytes("DFM: policy 0"));
+        vm.expectRevert(DynamicFeeManager.ZeroPolicyManager.selector);
         new DynamicFeeManager(IPoolPolicy(address(0)), address(oracle), HOOK);
     }
 
     function testConstructorRevertsOnZeroOracle() public {
-        vm.expectRevert(bytes("DFM: oracle 0"));
+        vm.expectRevert(DynamicFeeManager.ZeroOracleAddress.selector);
         new DynamicFeeManager(IPoolPolicy(address(policy)), address(0), HOOK);
     }
 
@@ -173,7 +173,16 @@ contract DynamicFeeManagerUnitTest is Test {
 
     function testInitializeUnauthorized() public {
         vm.prank(NON_HOOK);
-        vm.expectRevert(bytes("DFM:auth"));
+        vm.expectRevert(DynamicFeeManager.UnauthorizedHook.selector);
+        dfm.initialize(PID, 0);
+    }
+
+    function testInitializeAlreadyInitialized() public {
+        vm.prank(HOOK);
+        dfm.initialize(PID, 0);
+
+        vm.prank(HOOK);
+        vm.expectRevert(DynamicFeeManager.AlreadyInitialised.selector);
         dfm.initialize(PID, 0);
     }
 
@@ -185,7 +194,7 @@ contract DynamicFeeManagerUnitTest is Test {
     }
 
     /* ──────────────── Fee-state & CAP flow ──────────────── */
-    event FeeStateChanged(PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent);
+    event FeeStateChanged(PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent, uint32 timestamp);
 
     function _initAndCap() internal returns (uint256 baseFee) {
         _initAsOwner();
@@ -193,9 +202,9 @@ contract DynamicFeeManagerUnitTest is Test {
 
         // Trigger CAP event via hook
         vm.prank(HOOK);
-        vm.expectEmit(true, true, true, true);
-        // We don't match full args due to gas savings – only topics
-        emit FeeStateChanged(PID, baseFee, baseFee * policy.multiplier() / 1e6, true);
+        vm.expectEmit(true, true, false, true);
+        // timestamp can be ignored by expectEmit, only check indexed and data fields
+        emit FeeStateChanged(PID, baseFee, baseFee * policy.multiplier() / 1e6, true, uint32(block.timestamp));
         dfm.notifyOracleUpdate(PID, true);
     }
 
@@ -217,8 +226,9 @@ contract DynamicFeeManagerUnitTest is Test {
         vm.warp(block.timestamp + policy.decay());
         // notify with capped=false to clear flag
         vm.prank(HOOK);
-        vm.expectEmit(true, true, true, true);
-        emit FeeStateChanged(PID, baseFee, 0, false);
+        vm.expectEmit(true, true, false, true);
+        // clear cap: timestamp will be block.timestamp in the callback
+        emit FeeStateChanged(PID, baseFee, 0, false, uint32(block.timestamp));
         dfm.notifyOracleUpdate(PID, false);
 
         (, uint256 surgeFinal) = dfm.getFeeState(PID);
@@ -235,7 +245,7 @@ contract DynamicFeeManagerUnitTest is Test {
 
     function testNotifyOracleUpdateNotInitialized() public {
         vm.prank(HOOK);
-        vm.expectRevert(bytes("DFM: not init"));
+        vm.expectRevert(DynamicFeeManager.NotInitialized.selector);
         dfm.notifyOracleUpdate(PID, true);
     }
 

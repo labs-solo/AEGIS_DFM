@@ -22,8 +22,15 @@ interface IDynamicFeeManager {
      * @param surgeFeePpm  New surge-fee (ppm, may be zero). Note: Value is as of emission block timestamp;
      *                     client-side recalculation might differ slightly if block timestamp changes post-transaction.
      * @param inCapEvent   True if the pool is currently in a CAP event window
+     * @param timestamp    Emission block timestamp
      */
-    event FeeStateChanged(PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent);
+    event FeeStateChanged(
+        PoolId indexed poolId,
+        uint256 baseFeePpm,
+        uint256 surgeFeePpm,
+        bool inCapEvent,
+        uint32 timestamp
+    );
 
     /* ─────── Mutators (called by hook / factory) ──────────────────────── */
 

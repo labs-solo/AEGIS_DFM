@@ -113,16 +113,25 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     /* ─── custom errors ──────────────────────────────── */
     error UnauthorizedHook();
     error ZeroHookAddress();
+    error NotInitialized();
+    error InvalidMaxTicks(uint24 maxTicks);
+    error InvalidBaseFee(uint256 baseFee);
+    error ZeroPolicyManager();
+    error ZeroOracleAddress();
+    error AlreadyInitialised();
+
+    /* ─── events ─────────────────────────────────────── */
+    /// @notice fired when a CAP event starts or ends
+    event CapToggled(PoolId indexed id, bool inCap);
+
+    /// @notice emitted when a pool is successfully initialized
+    event PoolInitialized(PoolId indexed id);
 
     /* ─── constants ─────────────────────────────────────────── */
     /// @dev fallback base-fee when the oracle has no data yet (0.5 %)
     uint32 internal constant DEFAULT_BASE_FEE_PPM = 5_000;
-
-    /// @notice emitted when `initialize` is called on an already-initialized pool
-    event AlreadyInitialized(PoolId indexed id);
-
-    /// @notice emitted when a pool is successfully initialized
-    event PoolInitialized(PoolId indexed id);
+    /// @dev oracle ticks → base-fee conversion factor (1 tick = 100 ppm)
+    uint256 internal constant BASE_FEE_FACTOR_PPM = 100;
 
     /* ─── config / state ─────────────────────────────────────── */
     IPoolPolicy public immutable policyManager;
@@ -135,27 +144,29 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     /// @dev per-pool state word – we only use `capStart` + `inCap`
     mapping(PoolId => uint256) private _s;
 
+    /* ─── modifiers ─────────────────────────────────────── */
+    modifier onlyOwnerOrHook() {
+        if (msg.sender != owner && msg.sender != authorizedHook) revert UnauthorizedHook();
+        _;
+    }
+
     /* ─── constructor / init ─────────────────────────────────── */
     constructor(IPoolPolicy _policyManager, address _oracle, address _authorizedHook) Owned(msg.sender) {
-        require(address(_policyManager) != address(0), "DFM: policy 0");
-        require(_oracle != address(0), "DFM: oracle 0");
+        if (address(_policyManager) == address(0)) revert ZeroPolicyManager();
+        if (_oracle == address(0)) revert ZeroOracleAddress();
         if (_authorizedHook == address(0)) revert ZeroHookAddress();
         policyManager = _policyManager; // immutable handle for surge-knobs
         oracle = TruncGeoOracleMulti(_oracle);
         authorizedHook = _authorizedHook;
     }
 
-    function initialize(PoolId id, int24 /*initialTick*/ ) external override {
-        require(msg.sender == owner || msg.sender == authorizedHook, "DFM:auth");
-        if (_s[id] != 0) {
-            emit AlreadyInitialized(id);
-            return;
-        }
-        require(address(oracle) != address(0), "DFM: Oracle Not Set"); // Ensure oracle is set
+    function initialize(PoolId id, int24 /*initialTick*/ ) external override onlyOwnerOrHook {
+        if (_s[id] != 0) revert AlreadyInitialised();
 
         // Fetch the current maxTicksPerBlock from the associated oracle contract
         uint24 maxTicks = oracle.maxTicksPerBlock(PoolId.unwrap(id)); // Direct call
-        uint256 baseFee = uint256(maxTicks) * 100;
+        uint256 baseFee;
+        unchecked { baseFee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM; }
 
         // Initialize state
         uint32 ts = uint32(block.timestamp);
@@ -172,7 +183,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         _requireHookAuth(); // Ensure only authorized hook can call
 
         uint256 w = _s[poolId];
-        require(w != 0, "DFM: not init");
+        if (w == 0) revert NotInitialized();
 
         uint32 nowTs = uint32(block.timestamp);
         uint256 w1 = w; // scratch copy (cheaper mutations)
@@ -184,10 +195,12 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         // ---- CAP-event handling ---------------------------------------
         if (tickWasCapped) {
             w1 = w1.setInCap(true).setCapSt(uint40(nowTs));
+            emit CapToggled(poolId, true);
         } else if (w1.inCap()) {
             if (_surge(poolId, w1) == 0) {
                 // Check if surge decayed
                 w1 = w1.setInCap(false);
+                emit CapToggled(poolId, false);
             }
         }
 
@@ -197,25 +210,23 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
 
             uint256 newBase = _baseFee(poolId); // Recalculate with potentially new oracle state
             uint256 newSurge = _surge(poolId, w1); // Recalculate with potentially new state
-
-            if (newBase != oldBase || newSurge != oldSurge) {
-                emit FeeStateChanged(poolId, newBase, newSurge, w1.inCap());
-            }
+            // Always emit fee state change when cap state toggles
+            emit FeeStateChanged(poolId, newBase, newSurge, w1.inCap(), nowTs);
         }
     }
 
     /* ── stateless base-fee helper ───────────────────────────────────── */
     function _baseFee(PoolId id) private view returns (uint256) {
-        require(address(oracle) != address(0), "DFM: Oracle Not Set");
         uint24 maxTicks = oracle.maxTicksPerBlock(PoolId.unwrap(id)); // Direct call
-        uint256 fee = uint256(maxTicks) * 100;
+        uint256 fee;
+        unchecked { fee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM; }
         return fee == 0 ? DEFAULT_BASE_FEE_PPM : fee; // Use default if oracle returns 0
     }
 
     /* ─── public views ───────────────────────────────────────── */
     function getFeeState(PoolId id) external view override returns (uint256 baseFee, uint256 surgeFee) {
         uint256 w = _s[id];
-        require(w != 0, "DFM: not init");
+        if (w == 0) revert NotInitialized();
 
         baseFee = _baseFee(id);
         surgeFee = _surge(id, w);
@@ -223,7 +234,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
 
     function isCAPEventActive(PoolId id) external view override returns (bool) {
         uint256 w = _s[id];
-        require(w != 0, "DFM: not init");
+        if (w == 0) revert NotInitialized();
         return w.inCap();
     }
 
@@ -246,10 +257,10 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         if (dt >= decay) return 0;
 
         // Get current base fee from oracle for surge calculation
-        require(address(oracle) != address(0), "DFM: Oracle Not Set");
         bytes32 poolBytes = PoolId.unwrap(id);
         uint24 maxTicks = oracle.maxTicksPerBlock(poolBytes); // Direct call
-        uint256 currentBaseFee = uint256(maxTicks) * 100;
+        uint256 currentBaseFee;
+        unchecked { currentBaseFee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM; }
         if (currentBaseFee == 0) {
             currentBaseFee = DEFAULT_BASE_FEE_PPM; // Use default if oracle returns 0
         }
