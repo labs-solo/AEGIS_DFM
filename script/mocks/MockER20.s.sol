@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.19;
+pragma solidity ^0.8.26;
 
 /*
  * This file has been commented out as part of migrating to local Uniswap V4 testing.

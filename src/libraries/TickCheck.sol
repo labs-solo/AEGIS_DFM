@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.19;
+pragma solidity 0.8.26;
 
 /// @title  Tick-math helpers used by external hooks & tests
 /// @notice Stand-alone so DynamicFeeManager byte-code stays lean.

@@ -206,6 +206,9 @@ library SharedDeployLib {
         return keccak256(abi.encodePacked(userSalt, msg.sender)); // deterministic & uses sender
     }
 
+    /// @notice Default Spot hook salt for test environments when no SPOT_HOOK_SALT env is provided
+    bytes32 internal constant DEFAULT_SPOT_HOOK_SALT = 0x00000000000000000000000000000000000000000000000000000000000007fb;
+
     /* ---------- unified salt/address finder (env → miner fallback) ------ */
     function _spotHookSaltAndAddr(
         address   deployer,
@@ -214,28 +217,26 @@ library SharedDeployLib {
     ) internal returns (bytes32 salt, address predicted) {
         bytes memory fullInit = abi.encodePacked(creationCode, constructorArgs);
 
-        /* 1️⃣  Check if existing salt is valid */
         string memory raw = vm.envOr("SPOT_HOOK_SALT", string(""));
         if (bytes(raw).length != 0) {
             salt = bytes32(vm.parseBytes(raw));
             predicted = Create2.computeAddress(salt, keccak256(fullInit), deployer);
+            console2.log("Predicted address:", predicted);
+            console2.log("Deployer used:", deployer);
 
-            // If the salt is valid (correct flags and address not in use), keep using it
-            if (predicted.code.length == 0 && uint160(predicted) & _FLAG_MASK() == SPOT_HOOK_FLAGS) {
+            bool codeEmpty = predicted.code.length == 0;
+            bool flagsOk = (uint160(predicted) & _FLAG_MASK()) == SPOT_HOOK_FLAGS;
+            if (codeEmpty && flagsOk) {
                 return (salt, predicted);
             }
-            // Otherwise signal failure to caller; do NOT touch ENV here
+
+            // Salt was supplied but invalid – almost certainly stale.
+            revert("SharedDeployLib: SPOT_HOOK_SALT mismatch; regenerate with current flags");
         }
 
-        /* 2️⃣  Mine a new salt that fits the flag pattern */
-        (predicted, salt) = HookMiner.find(
-            deployer,
-            SPOT_HOOK_FLAGS,
-            creationCode,
-            constructorArgs
-        );
-
-        // Caller decides when (and if) to persist the salt.
+        // No env provided: use default test salt for fast, deterministic tests
+        salt = DEFAULT_SPOT_HOOK_SALT;
+        predicted = Create2.computeAddress(salt, keccak256(fullInit), deployer);
         return (salt, predicted);
     }
 
