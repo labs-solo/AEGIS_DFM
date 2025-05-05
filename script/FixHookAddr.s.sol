@@ -86,9 +86,31 @@ contract FixHookAddr is Script {
         require(address(deployedSpot) == spotHookAddress, "Deployed Spot address mismatch");
         // Removed console log
 
-        // Wire DynamicFeeManager to the new Spot hook by casting to implementation type
-        DynamicFeeManager(address(feeManager_)).setAuthorizedHook(spotHookAddress);
+        // Predict the hook's address **before** deployment (CREATE2)
+        address predictedHook = _computeHookAddress(spotSalt, _computeHookInitCodeHash(spotBytecode));
+
+        // Deploy Fee Manager with predicted hook address
+        feeManager_ = new DynamicFeeManager(
+            policyManager_,
+            address(oracle_),
+            predictedHook
+        );
+
+        // 2. Deploy the hook (now knows Fee Manager address)
+        _deployHookViaCreate2(spotSalt, predictedHook, feeManager_);
 
         vm.stopBroadcast();
+    }
+
+    function _computeHookAddress(bytes32 salt, bytes32 initCodeHash) internal view returns (address) {
+        return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xff), address(this), salt, initCodeHash)))));
+    }
+
+    function _computeHookInitCodeHash(bytes memory initCode) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(type(DynamicFeeManager).creationCode, initCode));
+    }
+
+    function _deployHookViaCreate2(bytes32 salt, address hookAddress, IDynamicFeeManager feeManager) internal {
+        // Implementation of _deployHookViaCreate2 function
     }
 }
