@@ -35,7 +35,7 @@ A Statement of Intended Behavior
 The **AEGIS Dynamic Fee Mechanism (DFM)** dynamically adjusts Uniswap V4 swap fees based on real-time volatility.  
 Key properties:
 
-* **Reactive Protection.** Large, sudden price moves trigger an immediate _surge fee_, discouraging manipulation.
+* **Reactive Surge Fees.** Large, sudden price moves trigger an immediate _surge fee_, capitalizing on volatility.
 * **Adaptive Baseline.** A slower feedback loop raises or lowers the _base fee_ to keep the frequency of extreme moves near a target.
 * **POL Accretion.** A protocol-owned-liquidity vault recycles a share of fees back into the pool, widening depth over time.
 * **Deterministic & On-chain.** All calculations depend solely on pool state and timestamps—no external price feeds.
