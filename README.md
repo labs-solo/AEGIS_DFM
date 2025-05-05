@@ -1,4 +1,4 @@
-# AEGIS Dynamic Fee Hook (DFM) for Uniswap V4
+# AEGIS Dynamic Fee Mechanism (DFM) for Uniswap V4
 
 > **Smart, self-tuning swap fees & protocol-owned liquidity on-chain.**
 
