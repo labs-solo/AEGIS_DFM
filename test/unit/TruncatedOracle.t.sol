@@ -44,14 +44,14 @@ contract OracleHarness {
 
     function observe(uint32 nowTs, uint32[] calldata secondsAgos, int24 tick_, uint128 liq)
         external
-        returns (int48[] memory tc, uint144[] memory sl)
+        returns (int56[] memory tc, uint160[] memory sl)
     {
         return obs.observe(nowTs, secondsAgos, tick_, index, liq, card);
     }
 
     function observeSingle(uint32 nowTs, uint32 secondsAgo, int24 tick_, uint128 liq)
         external
-        returns (int48 tc, uint144 sl)
+        returns (int56 tc, uint160 sl)
     {
         return obs.observeSingle(nowTs, secondsAgo, tick_, index, liq, card);
     }
@@ -138,19 +138,15 @@ contract TruncatedOracleTest is Test {
         h.grow(3); // ensure at least 3 slots
         h.push(START + 10, 10, ONE_LIQ);
 
-        // delta of 600 000 will exceed the 250k/300k cap
         int24 requested = 600_000;
-        (bool capped, int24 truncated) = TickMoveGuard.checkHardCapOnly(10, requested);
-        assertTrue(capped, "should cap");
-
-        // Expect the specific truncated tick value (9126)
-        vm.expectEmit(false, false, false, true); // Check data
-        emit TruncatedOracle.TickCapped(int24(9126));
+        (bool capped,) = TickMoveGuard.checkHardCapOnly(10, requested);
+        assertTrue(capped, "guard should propose a cap");
 
         h.push(START + 20, requested, ONE_LIQ);
 
         TruncatedOracle.Observation memory o = h.getObs(h.index());
-        assertEq(o.prevTick, truncated, "tick not truncated as expected");
+        // Library now records the raw tick; capping is done upstream.
+        assertEq(o.prevTick, requested, "library should not truncate (handled upstream)");
     }
 
     /* ----------------------------------------------------- */
@@ -160,7 +156,7 @@ contract TruncatedOracleTest is Test {
         uint32 nowTs = START + 30;
         h.push(nowTs, 20, ONE_LIQ);
 
-        (int48 tc,) = h.observeSingle(nowTs, 0, 20, ONE_LIQ);
+        (int56 tc,) = h.observeSingle(nowTs, 0, 20, ONE_LIQ);
         // 30 s have elapsed at tick 20  (init→now)
         assertEq(tc, 20 * 30, "cumulative mismatch != 600");
     }
@@ -173,7 +169,7 @@ contract TruncatedOracleTest is Test {
         h.push(lastTs, 25, ONE_LIQ);
 
         uint32 nowTs = START + 45; // 5 s later
-        (int48 tc,) = h.observeSingle(nowTs, 0, 25, ONE_LIQ);
+        (int56 tc,) = h.observeSingle(nowTs, 0, 25, ONE_LIQ);
         // 45 s total at tick 25
         assertEq(tc, 25 * 45, "transform cumulative wrong");
     }
@@ -191,7 +187,7 @@ contract TruncatedOracleTest is Test {
         uint32 targetTime = START + 15; // midway 10→20
         uint32 secondsAgo = nowTs - targetTime;
 
-        (int48 tcMid,) = h.observeSingle(nowTs, secondsAgo, 22, ONE_LIQ);
+        (int56 tcMid,) = h.observeSingle(nowTs, secondsAgo, 22, ONE_LIQ);
         assertEq(tcMid, 230);
     }
 
@@ -272,9 +268,9 @@ contract TruncatedOracleTest is Test {
 
         // We expect *either* both paths to revert with identical selector
         // *or* both to succeed and return equal cumulatives.
-        try h.observeSingle(nowTs, secondsAgo, t2, ONE_LIQ) returns (int48 tcA, uint144) {
+        try h.observeSingle(nowTs, secondsAgo, t2, ONE_LIQ) returns (int56 tcA, uint160) {
             // no revert → the batch call must also succeed
-            (int48[] memory tcB,) = h.observe(nowTs, sa, t2, ONE_LIQ);
+            (int56[] memory tcB,) = h.observe(nowTs, sa, t2, ONE_LIQ);
             assertEq(tcA, tcB[0], "observe mismatch (no-revert path)");
         } catch Error(string memory) {
             // string selectors not used – ignore

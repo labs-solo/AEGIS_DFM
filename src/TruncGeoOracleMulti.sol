@@ -40,6 +40,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     error OnlyOwner();
     error ObservationOverflow(uint16 cardinality);
     error ObservationTooOld(uint32 time, uint32 target);
+    error TooManyObservationsRequested();
 
     event TickCapParamChanged(bytes32 indexed poolId, uint24 newMaxTicksPerBlock);
     event MaxTicksPerBlockUpdated(
@@ -240,42 +241,25 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         emit OracleConfigured(PoolId.wrap(id), hook, owner, defaultCap);
     }
 
-    /**
-     * @notice Pushes a new observation and checks if the tick movement exceeds the cap.
-     * @dev Can only be called by the configured hook address. The swap direction parameter
-     *      is currently unused but kept for interface compatibility.
-     * @param pid The PoolId of the pool.
-     * @return tickWasCapped True if the tick movement was capped, false otherwise.
-     */
-    /// -----------------------------------------------------------------------
-    /// @notice Record a new observation and return whether the tick delta
-    ///         exceeded the adaptive cap (and was therefore clamped).
-    /// @param  pid Pool identifier
-    /// @return tickWasCapped True if the move hit the cap
-    /// -----------------------------------------------------------------------
-    function pushObservationAndCheckCap(PoolId pid, bool /* unused swap direction */)
-        external
-        nonReentrant
+    // Internal workhorse
+    function _recordObservation(PoolId pid, int24 preSwapTick)
+        internal
         returns (bool tickWasCapped)
     {
-        if (msg.sender != hook) revert OnlyHook();
-        bytes32 id = PoolId.unwrap(pid);   // single unwrap for the whole call
-        if (states[id].cardinality == 0) {
-            revert Errors.OracleOperationFailed("pushObservationAndCheckCap", "Pool not enabled");
-        }
+        bytes32 id = PoolId.unwrap(pid);
 
         ObservationState storage state = states[id];
         TruncatedOracle.Observation[PAGE_SIZE] storage obs = _leaf(id, state.index);
-        uint16 localIdx = state.index % PAGE_SIZE;     // offset inside the 512-slot page
-        uint16 pageBase = state.index - localIdx;      // first global index of this page
+        uint16 localIdx = state.index % PAGE_SIZE; // offset inside the 512-slot page
+        uint16 pageBase = state.index - localIdx;  // first global index of this page
 
         // Get current tick from PoolManager
         (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, pid);
 
         // Check against max ticks per block
-        int24  prevTick      = obs[localIdx].prevTick;
+        int24  prevTick      = preSwapTick;
         uint24 cap           = maxTicksPerBlock[id];
-        int256 tickDelta256 = int256(currentTick) - int256(prevTick);
+        int256 tickDelta256  = int256(currentTick) - int256(prevTick);
 
         /* ------------------------------------------------------------
            Use the *absolute* delta while it is still int256 – no cast
@@ -350,11 +334,40 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         }
 
         // Update auto-tune frequency counter if capped
-        if (tickWasCapped) {
-            _updateCapFrequency(pid, true);
-        } else {
-            _updateCapFrequency(pid, false);
+        _updateCapFrequency(pid, tickWasCapped);
+    }
+
+    /// -----------------------------------------------------------------------
+    /// @notice Record a new observation using the actual pre-swap tick.
+    /// -----------------------------------------------------------------------
+    function pushObservationAndCheckCap(PoolId pid, int24 preSwapTick)
+        external
+        nonReentrant
+        returns (bool tickWasCapped)
+    {
+        if (msg.sender != hook) revert OnlyHook();
+        if (states[PoolId.unwrap(pid)].cardinality == 0) {
+            revert Errors.OracleOperationFailed("pushObservationAndCheckCap", "Pool not enabled");
         }
+        return _recordObservation(pid, preSwapTick);
+    }
+
+    /**
+     * @dev Legacy overload kept for unit-tests with the old `(bool)` param.
+     *      Uses the last stored tick as the reference.
+     */
+    function pushObservationAndCheckCap(PoolId pid, bool /* unused */)
+        external
+        nonReentrant
+        returns (bool tickWasCapped)
+    {
+        if (msg.sender != hook) revert OnlyHook();
+        bytes32 id = PoolId.unwrap(pid);
+        if (states[id].cardinality == 0) {
+            revert Errors.OracleOperationFailed("pushObservationAndCheckCap", "Pool not enabled");
+        }
+        TruncatedOracle.Observation storage latest = _leaf(id, states[id].index)[states[id].index % PAGE_SIZE];
+        return _recordObservation(pid, latest.prevTick);
     }
 
     /* ─────────────────── VIEW FUNCTIONS ──────────────────────── */
@@ -422,6 +435,88 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /// @notice Hard-coded saturation threshold used by the frequency counter.
     function getCapFreqMax() external pure returns (uint64) {
         return CAP_FREQ_MAX;
+    }
+
+    /**
+     * @notice Observe oracle values at specific secondsAgos from the current block timestamp
+     * @dev Reverts if observation at or before the desired observation timestamp does not exist
+     * @param key The pool key to observe
+     * @param secondsAgos The array of seconds ago to observe
+     * @return tickCumulatives The tick * time elapsed since the pool was first initialized, as of each secondsAgo
+     * @return secondsPerLiquidityCumulativeX128s The cumulative seconds / max(1, liquidity) since pool initialized
+     */
+    function observe(bytes calldata key, uint32[] calldata secondsAgos)
+        external
+        view
+        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s)
+    {
+        PoolKey memory decodedKey = abi.decode(key, (PoolKey));
+        PoolId pid = decodedKey.toId();
+
+        // Length guard removed – timestamp validation ensures safety even for multi-page history
+        bytes32 id = PoolId.unwrap(pid);
+        if (states[id].cardinality == 0) {
+            revert Errors.OracleOperationFailed("observe", "Pool not enabled");
+        }
+
+        ObservationState storage state = states[id];
+        // --- Resolve leaf dynamically – supports TWAP windows spanning multiple pages ---
+        uint16  gIdx      = state.index; // global index of newest obs
+        uint32  time      = uint32(block.timestamp);
+
+        // Determine oldest timestamp the caller cares about (largest secondsAgo)
+        uint32 oldestWanted;
+        if (secondsAgos.length != 0) {
+            unchecked { oldestWanted = time - secondsAgos[secondsAgos.length - 1]; }
+        }
+
+        uint16 leafCursor = gIdx;
+
+        // Walk pages backwards until the first timestamp inside the leaf is <= oldestWanted
+        while (true) {
+            TruncatedOracle.Observation[PAGE_SIZE] storage page = _leaf(id, leafCursor);
+            uint16 localIdx = uint16(leafCursor % PAGE_SIZE);
+            uint16 pageBase = leafCursor - localIdx;
+            uint16 pageCardinality = state.cardinality > pageBase ? state.cardinality - pageBase : 1;
+
+            // slot 0 may be uninitialised if page not yet full; choose first initialised slot
+            uint16 firstSlot = pageCardinality == PAGE_SIZE ? (localIdx + 1) % PAGE_SIZE : 0;
+            uint32 firstTs = page[firstSlot].blockTimestamp;
+
+            if (oldestWanted >= firstTs || leafCursor < PAGE_SIZE) break;
+            leafCursor -= PAGE_SIZE;
+        }
+
+        // Fetch the resolved leaf *after* the loop to guarantee initialization
+        TruncatedOracle.Observation[PAGE_SIZE] storage obs = _leaf(id, leafCursor);
+
+        uint16 idx = uint16(leafCursor % PAGE_SIZE);
+
+        // Cardinality of *this* leaf (cannot exceed PAGE_SIZE)
+        uint16 card;
+        if (state.cardinality > leafCursor - idx) {
+            card = state.cardinality - (leafCursor - idx);
+        } else {
+            card = 1;
+        }
+        if (card == 0) revert("empty-page-card");
+        if (card > PAGE_SIZE) {
+            card = PAGE_SIZE;
+        }
+
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, pid);
+        uint128 liquidity = StateLibrary.getLiquidity(poolManager, pid);
+
+        (tickCumulatives, secondsPerLiquidityCumulativeX128s) = obs.observe(
+            time,
+            secondsAgos,
+            currentTick,
+            idx,
+            liquidity,
+            card
+        );
+
+        return (tickCumulatives, secondsPerLiquidityCumulativeX128s);
     }
 
     /* ────────────────────── INTERNALS ──────────────────────── */
@@ -590,5 +685,41 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         if (msg.sender != owner) revert OnlyOwner();
         _autoTunePaused[pid] = paused;
         emit AutoTunePaused(pid, paused, uint32(block.timestamp));
+    }
+
+    /* ─────────────────────── public cardinality grow ─────────────────────── */
+    /**
+     * @notice Requests the ring buffer to grow to `cardinalityNext` slots.
+     * @dev Mirrors Uniswap-V3 behaviour. Callable by anyone; growth is capped
+     *      by the TruncatedOracle library's internal MAX_CARDINALITY_ALLOWED.
+     * @param key Encoded PoolKey.
+     * @param cardinalityNext Desired new cardinality.
+     * @return oldNext Previous next-size.
+     * @return newNext Updated next-size after grow.
+     */
+    function increaseCardinalityNext(bytes calldata key, uint16 cardinalityNext)
+        external
+        returns (uint16 oldNext, uint16 newNext)
+    {
+        PoolKey memory decodedKey = abi.decode(key, (PoolKey));
+        bytes32 id = PoolId.unwrap(decodedKey.toId());
+
+        ObservationState storage state = states[id];
+        if (state.cardinality == 0) {
+            revert Errors.OracleOperationFailed("increaseCardinalityNext", "Pool not enabled");
+        }
+
+        oldNext = state.cardinalityNext;
+        if (cardinalityNext <= oldNext) {
+            return (oldNext, oldNext);
+        }
+
+        state.cardinalityNext = TruncatedOracle.grow(
+            _leaf(id, state.cardinalityNext), // leaf storage slot
+            oldNext,
+            cardinalityNext
+        );
+
+        newNext = state.cardinalityNext;
     }
 }
