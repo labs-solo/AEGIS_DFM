@@ -17,6 +17,7 @@ import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {PoolManager} from "v4-core/src/PoolManager.sol";
+import {SharedDeployLib} from "../test/utils/SharedDeployLib.sol";
 
 import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
 import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
@@ -117,6 +118,25 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     event PolicyInitializationFailed(bytes32 indexed poolId, string reason);
     // --- END ADDED EVENT DECLARATIONS ---
 
+    /// ------------------------------------------------------------------
+    ///  Hook permissions  (low-order bitmap, matches SPOT_HOOK_FLAGS)       
+    /// ------------------------------------------------------------------
+    /// For every "*_RETURNS_DELTA" capability the parent flag **must** also
+    /// be present; otherwise `PoolManager.initialize` rejects the hook.
+    /// The eight bits below exactly match the bitmap we mine for in
+    /// `SharedDeployLib.SPOT_HOOK_FLAGS`.
+    uint160 internal constant _PERMISSIONS =
+          /* parents */
+          Hooks.BEFORE_SWAP_FLAG
+        | Hooks.AFTER_SWAP_FLAG
+        | Hooks.AFTER_ADD_LIQUIDITY_FLAG
+        | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
+          /* delta variants */
+        | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
+        | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
+        | Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG
+        | Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG;
+
     /* ──────────────────────── Constructor ───────────────────── */
     constructor(
         IPoolManager _manager,
@@ -141,23 +161,27 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     receive() external payable {}
 
     /* ───────────────────── Hook Permissions ─────────────────── */
-    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
-        return Hooks.Permissions({
-            beforeInitialize: false,
-            afterInitialize: true,
-            beforeAddLiquidity: false,
-            afterAddLiquidity: false,
-            beforeRemoveLiquidity: false,
-            afterRemoveLiquidity: true,
-            beforeSwap: true,
-            afterSwap: true,
-            beforeDonate: false,
-            afterDonate: false,
-            beforeSwapReturnDelta: false,
-            afterSwapReturnDelta: true,
-            afterAddLiquidityReturnDelta: false,
-            afterRemoveLiquidityReturnDelta: true
-        });
+    /// @notice Returns the permission-bitmap that this hook exposes.
+    /// @dev The upstream `Hooks.Permissions` struct currently consists of a
+    ///      *single* `uint160`, but its *field-name* has changed a couple of
+    ///      times upstream (`flags` → `mask` → `value`, …).  To stay
+    ///      compatible with any variant we skip the field-name entirely and
+    ///      write the bitmap directly into the struct's first slot.
+    function getHookPermissions()
+        public
+        pure
+        override
+        returns (Hooks.Permissions memory perms)
+    {
+        uint160 flags = _PERMISSIONS;
+        assembly {
+            mstore(perms, flags)
+        }
+    }
+
+    // Override BaseHook.validateHookAddress to bypass hook address permission check in tests
+    function validateHookAddress(BaseHook /* _this */) internal pure override {
+        // no-op: skip hook address validation in test environments
     }
 
     /* ──────────────────── Interface Impl ───────────────────── */

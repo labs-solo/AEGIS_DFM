@@ -258,103 +258,139 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         nonReentrant
         returns (bool tickWasCapped)
     {
+        // Permission and oracle-enabled checks
         if (msg.sender != hook) revert OnlyHook();
-        bytes32 id = PoolId.unwrap(pid);   // single unwrap for the whole call
+        bytes32 id = PoolId.unwrap(pid);
         if (states[id].cardinality == 0) {
             revert Errors.OracleOperationFailed("pushObservationAndCheckCap", "Pool not enabled");
         }
-
         ObservationState storage state = states[id];
         TruncatedOracle.Observation[PAGE_SIZE] storage obs = _leaf(id, state.index);
         uint16 localIdx = state.index % PAGE_SIZE;     // offset inside the 512-slot page
         uint16 pageBase = state.index - localIdx;      // first global index of this page
+        int24 currentTick;
+        int24 prevTick;
 
-        // Get current tick from PoolManager
-        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, pid);
+        // Second scope: get current tick and check capping
+        {
+            // Get current tick from PoolManager
+            (, currentTick,,) = StateLibrary.getSlot0(poolManager, pid);
 
-        // Check against max ticks per block
-        int24  prevTick      = obs[localIdx].prevTick;
-        uint24 cap           = maxTicksPerBlock[id];
-        int256 tickDelta256 = int256(currentTick) - int256(prevTick);
+            // Check against max ticks per block
+            prevTick = obs[localIdx].prevTick;
+            uint24 cap = maxTicksPerBlock[id];
+            int256 tickDelta256 = int256(currentTick) - int256(prevTick);
 
-        /* ------------------------------------------------------------
-           Use the *absolute* delta while it is still int256 – no cast
-        ------------------------------------------------------------ */
-        uint256 absDelta     = tickDelta256 >= 0
-            ? uint256(tickDelta256)
-            : uint256(-tickDelta256);
+            /* ------------------------------------------------------------
+               Use the *absolute* delta while it is still int256 – no cast
+            ------------------------------------------------------------ */
+            uint256 absDelta = tickDelta256 >= 0
+                ? uint256(tickDelta256)
+                : uint256(-tickDelta256);
 
-        // Inclusive cap: hitting the limit counts as a capped move
-        if (absDelta >= cap) {
-            // Cap (and safe-cast) the tick movement
-            int256 capped = tickDelta256 > 0
-                ? int256(prevTick) + int256(uint256(cap))
-                : int256(prevTick) - int256(uint256(cap));
+            // Inclusive cap: hitting the limit counts as a capped move
+            if (absDelta >= cap) {
+                // Cap (and safe-cast) the tick movement
+                int256 capped = tickDelta256 > 0
+                    ? int256(prevTick) + int256(uint256(cap))
+                    : int256(prevTick) - int256(uint256(cap));
 
-            // safe-cast with explicit range-check
-            currentTick = _toInt24(capped);
-            tickWasCapped = true;
+                // safe-cast with explicit range-check
+                currentTick = _toInt24(capped);
+                tickWasCapped = true;
+            }
         }
 
-        // -------------------------------------------------- //
-        //  ❖ Write the (potentially capped) observation     //
-        //  Preserve the library's returned page-index and   //
-        //  translate it back to a *global* cursor.          //
-        // -------------------------------------------------- //
-        uint128 liquidity = StateLibrary.getLiquidity(poolManager, pid);
+        // Third scope: write observation and update state
+        uint16 newLocalIdx;
+        uint16 newPageCard;
+        {
+            // Get current liquidity
+            uint128 liquidity = StateLibrary.getLiquidity(poolManager, pid);
 
-        /* --------------------------------------------------------------- *
-         *  Page-local lengths                                             *
-         *  - pageCardinality      = populated slots in this 512-slot leaf *
-         *  - pageCardinalityNext  = "room for one more", capped at 512    *
-         * --------------------------------------------------------------- */
-        uint16 pageCardinality = state.cardinality > pageBase
-            ? state.cardinality - pageBase
-            : 1;                           // bootstrap slot
+            /* --------------------------------------------------------------- *
+             *  Page-local lengths                                             *
+             *  - pageCardinality      = populated slots in this 512-slot leaf *
+             *  - pageCardinalityNext  = "room for one more", capped at 512    *
+             * --------------------------------------------------------------- */
+            uint16 pageCardinality = state.cardinality > pageBase
+                ? state.cardinality - pageBase
+                : 1;                           // bootstrap slot
 
-        uint16 pageCardinalityNext = pageCardinality < PAGE_SIZE
-            ? pageCardinality + 1          // open the next empty slot
-            : pageCardinality;             // page already full
+            uint16 pageCardinalityNext = pageCardinality < PAGE_SIZE
+                ? pageCardinality + 1          // open the next empty slot
+                : pageCardinality;             // page already full
 
-        (uint16 newLocalIdx, uint16 newPageCard) = obs.write(
+            // Use helper function to handle the write operation and reduce stack pressure
+            (newLocalIdx, newPageCard) = _writeObservation(
+                obs,
+                localIdx,
+                uint32(block.timestamp),
+                currentTick,
+                liquidity,
+                pageCardinality,
+                pageCardinalityNext
+            );
+        }
+
+        // Fourth scope: update indices and global counters
+        {
+            // Translate the page-local index back to the global cursor.
+            // If we just wrote the last slot of a page and the library wrapped
+            // to 0, jump to the **first slot of the next page** so subsequent
+            // observations fill fresh storage instead of overwriting the old page.
+            if (localIdx == PAGE_SIZE - 1 && newLocalIdx == 0) {
+                unchecked { state.index = pageBase + PAGE_SIZE; } // next leaf
+            } else {
+                unchecked { state.index = pageBase + newLocalIdx; }
+            }
+
+            // ----------- bump global counters (bootstrap slot included) --------------
+            uint32 newGlobalCard;
+            unchecked { newGlobalCard = uint32(pageBase) + uint32(newPageCard); }
+            if (newGlobalCard > state.cardinality) {
+                state.cardinality = uint16(newGlobalCard);
+            }
+
+            // keep `cardinalityNext` one ahead, bounded by the hard limit
+            if (state.cardinalityNext < state.cardinality + 1
+                && state.cardinalityNext < TruncatedOracle.MAX_CARDINALITY_ALLOWED)
+            {
+                state.cardinalityNext = state.cardinality + 1;
+            }
+        }
+
+        // Final scope: update auto-tune frequency
+        {
+            // Update auto-tune frequency counter if capped
+            if (tickWasCapped) {
+                _updateCapFrequency(pid, true);
+            } else {
+                _updateCapFrequency(pid, false);
+            }
+        }
+        
+        return tickWasCapped;
+    }
+
+    /// @dev Helper function to reduce stack pressure in pushObservationAndCheckCap
+    function _writeObservation(
+        TruncatedOracle.Observation[PAGE_SIZE] storage obs,
+        uint16 localIdx,
+        uint32 timestamp,
+        int24 tick,
+        uint128 liquidity,
+        uint16 pageCardinality,
+        uint16 pageCardinalityNext
+    ) internal returns (uint16 newLocalIdx, uint16 newPageCard) {
+        return obs.write(
             localIdx,
-            uint32(block.timestamp),
-            currentTick,
+            timestamp,
+            tick,
             liquidity,
             pageCardinality,
             pageCardinalityNext
         );
-
-        // Translate the page-local index back to the global cursor.
-        // If we just wrote the last slot of a page and the library wrapped
-        // to 0, jump to the **first slot of the next page** so subsequent
-        // observations fill fresh storage instead of overwriting the old page.
-        if (localIdx == PAGE_SIZE - 1 && newLocalIdx == 0) {
-            unchecked { state.index = pageBase + PAGE_SIZE; } // next leaf
-        } else {
-            unchecked { state.index = pageBase + newLocalIdx; }
-        }
-
-        // ----------- bump global counters (bootstrap slot included) --------------
-        uint32 newGlobalCard;
-        unchecked { newGlobalCard = uint32(pageBase) + uint32(newPageCard); }
-        if (newGlobalCard > state.cardinality) {
-            state.cardinality = uint16(newGlobalCard);
-        }
-
-        // keep `cardinalityNext` one ahead, bounded by the hard limit
-        if (state.cardinalityNext < state.cardinality + 1
-            && state.cardinalityNext < TruncatedOracle.MAX_CARDINALITY_ALLOWED)
-        {
-            state.cardinalityNext = state.cardinality + 1;
-        }
-
-        // Update auto-tune frequency counter if capped
-        if (tickWasCapped) {
-            _updateCapFrequency(pid, true);
-        } else {
-            _updateCapFrequency(pid, false);
-        }
     }
 
     /* ─────────────────── VIEW FUNCTIONS ──────────────────────── */

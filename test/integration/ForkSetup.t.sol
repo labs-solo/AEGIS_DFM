@@ -35,6 +35,7 @@ import {IDynamicFeeManager} from "src/interfaces/IDynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
 import {ITruncGeoOracleMulti} from "src/interfaces/ITruncGeoOracleMulti.sol";
 import {SharedDeployLib} from "test/utils/SharedDeployLib.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 
 // Test Routers
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
@@ -93,6 +94,8 @@ contract ForkSetup is Test {
 
     // Variable to track the actual hook address used (set during deployment)
     address internal actualHookAddress;
+    // Tracks the final deployed hook address for cross-test assertions
+    address internal _finalHookAddr;
 
     // --- Constants ---
     bytes public constant ZERO_BYTES = bytes("");
@@ -108,40 +111,6 @@ contract ForkSetup is Test {
     address user1;
     address user2;
     address lpProvider;
-
-    // Helper to deal and approve tokens
-    function _dealAndApprove(IERC20Minimal token, address holder, uint256 amount, address spender) internal {
-        vm.startPrank(holder);
-        deal(address(token), holder, amount);
-        uint256 MAX = type(uint256).max;
-        token.approve(spender, MAX);
-        if (spender != address(poolManager)) {
-            token.approve(address(poolManager), MAX);
-        }
-        if (spender != address(liquidityManager)) {
-            token.approve(address(liquidityManager), MAX);
-        }
-        vm.stopPrank();
-    }
-
-    // Helper to safely create/select fork
-    function _safeFork() internal returns (uint256 forkId) {
-        string memory rpcAlias  = vm.envOr("FORK_RPC_ALIAS", string("unichain_mainnet"));
-        uint256 forkBlock       = vm.envOr("FORK_BLOCK_NUMBER", uint256(0));
-        emit log_named_string("Selected fork RPC alias", rpcAlias);
-        emit log_named_uint   ("Selected fork block number", forkBlock);
-
-        if (forkBlock > 0) {
-            forkId = vm.createSelectFork(rpcAlias, forkBlock); // Uses combined cheatcode
-            if (forkId == 0) {
-                emit log("Block unavailable - falling back to latest");
-            }
-        }
-        if (forkId == 0) { // If block was 0 initially, or fallback needed
-            forkId = vm.createSelectFork(rpcAlias); // Create/select latest block
-        }
-        require(forkId != 0, "Fork creation failed");
-    }
 
     constructor() {
         poolManager = IPoolManager(UNICHAIN_POOL_MANAGER);
@@ -160,20 +129,20 @@ contract ForkSetup is Test {
         vm.deal(testUser, FUND_ETH_AMOUNT);
         emit log_named_address("Test User", testUser);
 
-        deployerPrivateKey = 1;
-        deployerEOA = vm.addr(deployerPrivateKey);
+        // Since Create2.deploy() always executes from address(this), use that as deployer
+        deployerEOA = address(this);
         vm.deal(deployerEOA, FUND_ETH_AMOUNT);
-        emit log_named_address("Deployer EOA (PK=1)", deployerEOA);
-        emit log_named_uint("Deployer EOA ETH Balance", deployerEOA.balance);
+        emit log_named_address("Deployer (test contract)", deployerEOA);
+        emit log_named_uint("Deployer ETH Balance", deployerEOA.balance);
 
         // 3. Get PoolManager Instance (constant address on Unichain)
         emit log_named_address("Using PoolManager", address(poolManager));
 
-        // 4. Deploy All Contracts, Configure, Initialize (within vm.prank)
-        emit log_string("\n--- Starting Full Deployment & Configuration (Pranked) ---");
-        vm.startPrank(deployerEOA);
-
-        // Deploy PolicyManager (standard new)
+        // 4. Deploy All Contracts, Configure, Initialize
+        emit log_string("\n--- Starting Full Deployment & Configuration ---");
+        
+        // First deploy PolicyManager and LiquidityManager
+        // No need for vm.prank since we're already address(this)
         emit log_string("Deploying PolicyManager...");
         uint24[] memory supportedTickSpacings = new uint24[](3);
         supportedTickSpacings[0] = 10;
@@ -189,7 +158,6 @@ contract ForkSetup is Test {
         policyManager = policyManagerImpl; // Use concrete type
         emit log_named_address("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
-        // Deploy LiquidityManager (standard new)
         emit log_string("Deploying LiquidityManager...");
         FullRangeLiquidityManager liquidityManagerImpl =
             new FullRangeLiquidityManager(poolManager, policyManager, deployerEOA);
@@ -201,213 +169,49 @@ contract ForkSetup is Test {
          *  MUTUALLY-CONSISTENT CREATE2 DEPLOYMENT (Oracle ⇄ DFM ⇄ Hook)
          * ------------------------------------------------------------------ */
 
-        // Use SharedDeployLib constants directly
+        // Predict addresses using address(this) as deployer
+        SharedDeployLib.PredictedContracts memory preds = SharedDeployLib._predictContracts(
+            address(this),
+            poolManager,
+            policyManager,
+            IFullRangeLiquidityManager(address(liquidityManager))
+        );
+
+        address oraclePred = preds.oracleAddr;
+        address dfmPred    = preds.dfmAddr;
+        address hookPred   = preds.hookAddr;
+        bytes32 hookSalt   = preds.hookSalt;
+
+        // Re-introduce local constants for salts (used later in setUp)
         bytes32 ORACLE_SALT = SharedDeployLib.ORACLE_SALT;
         bytes32 DFM_SALT    = SharedDeployLib.DFM_SALT;
 
-        // ---------- Predict Oracle, DFM, Hook Addresses (Fixed-Point Iteration) ----------
-        // Deployer for CREATE2 is **this contract** (ForkSetup) because the
-        // `create2` opcode is executed inside library code called here.
-        // CREATE2 helper is compiled *internal*; code executes in this contract.
-        // Therefore the deployer for deterministic prediction is address(this).
-        address c2Deployer = address(this);
-
-        address oraclePred = address(0);
-        address dfmPred    = address(0);
-        address hookPred   = address(0);
-        bytes32 hookSalt   = bytes32(0);
-
-        // --- Fixed-point iteration (find stable addresses) ---
-        for (uint8 i = 0; i < 4; i++) {
-            // Use SharedDeployLib function
-            address newOracle = SharedDeployLib.predictDeterministicAddress(
-                c2Deployer,
-                ORACLE_SALT,
-                type(TruncGeoOracleMulti).creationCode,
-                abi.encode(poolManager, c2Deployer, policyManager, hookPred)
-            );
-            oraclePred = newOracle;
-
-            // Use SharedDeployLib function
-            address newDFM = SharedDeployLib.predictDeterministicAddress(
-                c2Deployer,
-                DFM_SALT,
-                type(DynamicFeeManager).creationCode,
-                abi.encode(policyManager, newOracle, hookPred)
-            );
-            dfmPred = newDFM;
-
-            // Fix shadowing: use a different name for the loop's salt result
-            // Use SharedDeployLib function
-            (bytes32 minedSalt, address newHook) = SharedDeployLib._spotHookSaltAndAddr(
-                c2Deployer,
-                type(Spot).creationCode,
-                abi.encode(
-                    poolManager,
-                    policyManager,
-                    liquidityManager,
-                    TruncGeoOracleMulti(oraclePred),
-                    IDynamicFeeManager(dfmPred),
-                    c2Deployer
-                )
-            );
-            hookPred = newHook; // Update hook prediction
-            // hookSalt = minedSalt; // Update the outer hookSalt if the loop breaks or logic requires
-
-            // If nothing changed, we are stable
-            if (newOracle == oraclePred && newDFM == dfmPred && newHook == hookPred) {
-                // Now we need the *final* salt from the last successful _spotHookSaltAndAddr call
-                hookSalt = minedSalt; // Assign the correctly mined salt
-                break;
-            }
-             // Optimization: If addresses are stable, but loop continues, re-assign the potentially updated salt.
-             // This might not be strictly necessary if the loop always breaks on stability,
-             // but ensures hookSalt reflects the latest calculation within the loop's scope.
-             hookSalt = minedSalt;
-        }
-
-        // ---- Mine real hook salt ONCE with final args -------------
-        // (Expensive operation, done only after convergence)
-        // Use SharedDeployLib function
-        (bytes32 finalMinedHookSalt, address finalPredictedHookAddress) = SharedDeployLib._spotHookSaltAndAddr(
-            c2Deployer,
-            type(Spot).creationCode,
-            abi.encode(
-                poolManager,
-                policyManager,
-                liquidityManager,
-                TruncGeoOracleMulti(oraclePred),
-                IDynamicFeeManager(dfmPred),
-                c2Deployer
-            )
-        );
-
-        // Use the *actually* mined salt and predicted address from the miner
-        hookSalt = finalMinedHookSalt;
-        address finalHookAddr = finalPredictedHookAddress;
-
-        // Sanity check re-prediction (using correct deployer AND args)
-        bytes memory finalHookArgs = abi.encode(poolManager, policyManager, liquidityManager, TruncGeoOracleMulti(oraclePred), IDynamicFeeManager(dfmPred), c2Deployer); // Args already correct here from previous edit
-        address rePredictedHook = SharedDeployLib.predictDeterministicAddress(c2Deployer, hookSalt, type(Spot).creationCode, finalHookArgs);
-        require(rePredictedHook == finalHookAddr, "Hook address miner/predictor mismatch");
-
-        // ---------- 3.  Re-compute *FINAL* Oracle & DFM addresses WITH finalHookAddr ----------
-        // NOTE: we *must* calculate these **after** _spotHookSaltAndAddr has
-        // finalised the salt and (optionally) written SPOT_HOOK_SALT, otherwise
-        // constructor-args will drift and the assertion below will fail.
-
-        // ────────────────────────────────
-        // Rule 5/6/27 – NEVER override deterministic salts in test-time
-        //               logic. Remove the dead env read entirely.
-        // ────────────────────────────────
-        // (Nothing here – deleted)
-
-        // Governance must be an EOA.  Keeping the original deployerEOA
-        // avoids a main-net address collision while maintaining caller /
-        // predictor parity (executor is still `address(this)`).
-        bytes memory oracleArgs = abi.encode(
-            poolManager,
-            deployerEOA,       // ✅ restore EOA governance
-            policyManager,
-            finalHookAddr
-        );
-
-        // --- PREDICT final addresses -------------------------------------
-        // Use `c2Deployer` (`address(this)`) as the executor context
-        // for all address predictions.
-        address finalOracleAddr = SharedDeployLib.predictDeterministicAddress(
-            c2Deployer,           // executor (unchanged)
+        // Deploy Oracle, DFM and the Spot-hook with the *pre-mined* salt / addr
+        _deployCoreContracts(
+            address(this),
             ORACLE_SALT,
-            type(TruncGeoOracleMulti).creationCode,
-            oracleArgs
-        );
-
-        bytes memory dfmArgs = abi.encode(
-            policyManager,
-            finalOracleAddr,
-            finalHookAddr
-        );
-
-        // Predict DFM *using* the final hook and oracle addresses
-        address finalDfmAddr = SharedDeployLib.predictDeterministicAddress(
-            c2Deployer,
             DFM_SALT,
-            type(DynamicFeeManager).creationCode,
-            dfmArgs
+            oraclePred,
+            dfmPred,
+            hookSalt,   // ← from _predictContracts
+            hookPred    // ← from _predictContracts
         );
-
-        emit log_named_address("Predicted Oracle Address", finalOracleAddr);
-        emit log_named_address("Predicted DFM Address",    finalDfmAddr);
-        emit log_named_address("Predicted Hook Address",   finalHookAddr);
-
-        // ---------- 4. Deploy Oracle, DFM, and Hook ----------
-        // Check code length *before* deploying oracle
-        emit log_named_uint("Code length at finalOracleAddr before deploy", finalOracleAddr.code.length);
-
-        // Deploy Oracle
-        emit log_string("Deploying Oracle via CREATE2...");
-
-        // --- DEPLOY contracts via CREATE2 --------------------------------
-        console2.log("Deploying Oracle via CREATE2...");
-        address deployedOracleAddr = SharedDeployLib.deployDeterministic(
-            c2Deployer,
-            ORACLE_SALT,
-            type(TruncGeoOracleMulti).creationCode,
-            oracleArgs                       // <<< single-source of truth
-        );
-        truncGeoOracle = TruncGeoOracleMulti(payable(deployedOracleAddr));
-        emit log_named_address("[DEPLOY] Oracle Deployed at", deployedOracleAddr);
-
-        // Use the actual deployed Oracle address in dfmArgs
-        bytes memory updatedDfmArgs = abi.encode(
-            policyManager,
-            deployedOracleAddr,  // Use actual deployed address 
-            finalHookAddr
-        );
-
-        // Deploy DFM
-        emit log_string("Deploying DFM via CREATE2...");
-        address deployedDfmAddr = SharedDeployLib.deployDeterministic(
-            c2Deployer,
-            DFM_SALT,
-            type(DynamicFeeManager).creationCode,
-            updatedDfmArgs                   // Use updated args with actual Oracle address
-        );
-        dynamicFeeManager = IDynamicFeeManager(deployedDfmAddr);
-        emit log_named_address("[DEPLOY] DFM Deployed at", deployedDfmAddr);
-
-        // Store hook salt & DEPLOY Hook
-        vm.setEnv("SPOT_HOOK_SALT", vm.toString(hookSalt)); // Note: This still happens *after* args are built
-
-        emit log_string("Deploying Spot hook via CREATE2...");
-        actualHookAddress = SharedDeployLib.deploySpotHook(
-            poolManager,
-            policyManager,
-            liquidityManager,
-            TruncGeoOracleMulti(deployedOracleAddr),  // Use actual deployed Oracle
-            dynamicFeeManager,
-            c2Deployer
-        );
-        // Update fullRange with actual hook address
-        fullRange = Spot(payable(actualHookAddress));
-
-        emit log_named_address("Spot hook deployed at:", actualHookAddress);
-
-        // --- Configure Contracts ---
-        emit log_string("Configuring contracts...");
-        FullRangeLiquidityManager(payable(address(liquidityManager))).setAuthorizedHookAddress(actualHookAddress);
-        emit log_string("LiquidityManager configured.");
+        
+        // Continue with the rest of setUp...
 
         // --- Set PoolKey & PoolId ---
         address token0;
         address token1;
         (token0, token1) = WETH_ADDRESS < USDC_ADDRESS ? (WETH_ADDRESS, USDC_ADDRESS) : (USDC_ADDRESS, WETH_ADDRESS);
 
+        // Use pure dynamic-fee flag; the actual fee is supplied by the
+        // DynamicFeeManager, not encoded in the PoolKey itself.
+        uint24 dynamicFee = LPFeeLibrary.DYNAMIC_FEE_FLAG; // 0x800000
         poolKey = PoolKey({
             currency0: Currency.wrap(token0),
             currency1: Currency.wrap(token1),
-            fee: SharedDeployLib.POOL_FEE, // Use dynamic fee flag from library
-            hooks: IHooks(actualHookAddress), // Use the deployed hook address
+            fee: dynamicFee,                    // ← now carries the flag
+            hooks: IHooks(actualHookAddress),
             tickSpacing: SharedDeployLib.TICK_SPACING
         });
         poolId = poolKey.toId();
@@ -433,6 +237,34 @@ contract ForkSetup is Test {
             WETH_ADDRESS, USDC_ADDRESS, priceUSDCperWETH_scaled, wethDecimals, usdcDecimals
         );
         emit log_named_uint("Calculated SqrtPriceX96 for Pool Init", calculatedSqrtPriceX96);
+
+        // Add debug checks for hook validation
+        debugHookFlags();
+        
+        // Get the hook permissions and convert to uint160 for comparison
+        Hooks.Permissions memory perms = fullRange.getHookPermissions();
+        uint160 permBits;
+        assembly {
+            permBits := mload(perms)
+        }
+        uint160 addrBits = uint160(actualHookAddress) & Hooks.ALL_HOOK_MASK;
+        
+        console2.log("Hook Validation Debug:");
+        console2.log("perms (uint160)", uint256(permBits));
+        console2.log("addrBits (uint160)", uint256(addrBits));
+        
+        // Check dependencies using our existing debugHookFlags helper
+        bool beforeSwapDep = !((addrBits & Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG > 0) && (addrBits & Hooks.BEFORE_SWAP_FLAG == 0));
+        bool afterSwapDep = !((addrBits & Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG > 0) && (addrBits & Hooks.AFTER_SWAP_FLAG == 0));
+        bool afterAddLiqDep = !((addrBits & Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG > 0) && (addrBits & Hooks.AFTER_ADD_LIQUIDITY_FLAG == 0));
+        bool afterRemoveLiqDep = !((addrBits & Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG > 0) && (addrBits & Hooks.AFTER_REMOVE_LIQUIDITY_FLAG == 0));
+        
+        console2.log("Dependencies check:");
+        console2.log("- BEFORE_SWAP dependency valid:", beforeSwapDep);
+        console2.log("- AFTER_SWAP dependency valid:", afterSwapDep);
+        console2.log("- AFTER_ADD_LIQ dependency valid:", afterAddLiqDep);
+        console2.log("- AFTER_REMOVE_LIQ dependency valid:", afterRemoveLiqDep);
+        console2.log("All dependencies valid:", beforeSwapDep && afterSwapDep && afterAddLiqDep && afterRemoveLiqDep);
 
         // Library call is internal – no try/catch allowed.
         // It SHOULD NOT revert if pool is properly initialized; we assert.
@@ -485,6 +317,80 @@ contract ForkSetup is Test {
         assertTrue(fullRange.isPoolInitialized(poolKey.toId()), "Spot not initialised");
 
         emit log_string("--- ForkSetup Complete ---");
+    }
+
+    // ---------------------------------------------------------------------
+    //  Phase-3 helper: deploy Oracle, DFM, Spot-hook and configure LM
+    // ---------------------------------------------------------------------
+    function _deployCoreContracts(
+        address c2Deployer,
+        bytes32 ORACLE_SALT,
+        bytes32 DFM_SALT,
+        address oraclePred,
+        address dfmPred,
+        bytes32 hookSalt,   // ← pre-mined
+        address hookPred    // ← pre-mined
+    ) internal {
+        // Log the deployer addresses at deployment time
+        console2.log("[DEPLOY] Deployer passed to deployDeterministic:", c2Deployer);
+        console2.log("[DEPLOY] Actual deployer (address(this)):", address(this));
+
+        // ---------- deploy Oracle ----------
+        bytes memory oracleArgs = abi.encode(poolManager, policyManager, hookPred, c2Deployer);
+        address deployedOracle = SharedDeployLib.deployDeterministic(
+            c2Deployer, ORACLE_SALT, type(TruncGeoOracleMulti).creationCode, oracleArgs
+        );
+        truncGeoOracle = TruncGeoOracleMulti(payable(deployedOracle));
+        require(deployedOracle == oraclePred, "Oracle address mismatch");
+
+        // ---------- deploy DFM ----------
+        bytes memory dfmArgs = abi.encode(policyManager, deployedOracle, hookPred);
+        address deployedDfm = SharedDeployLib.deployDeterministic(
+            c2Deployer, DFM_SALT, type(DynamicFeeManager).creationCode, dfmArgs
+        );
+        dynamicFeeManager = IDynamicFeeManager(deployedDfm);
+        require(deployedDfm == dfmPred, "DFM address mismatch");
+
+        // ------------------------------------------------------------ //
+        //  Deploy the Spot-hook with the already-mined salt / addr     //
+        // ------------------------------------------------------------ //
+        bytes memory finalHookArgs = abi.encode(
+            poolManager,
+            policyManager,
+            liquidityManager,
+            deployedOracle,
+            deployedDfm,
+            c2Deployer
+        );
+        // Deploy hook deterministically – no extra mining needed
+        address deployedHook = SharedDeployLib.deployDeterministic(
+            c2Deployer,
+            hookSalt,
+            type(Spot).creationCode,
+            finalHookArgs
+        );
+
+        console2.log("[DEPLOY] deployedHook:", deployedHook);
+        console2.log("[DEPLOY] hookPred    :", hookPred);
+        console2.log("[DEPLOY] hookSalt    :"); console2.logBytes32(hookSalt);
+
+        require(deployedHook == hookPred, "Hook CREATE2 address mismatch");
+
+        // Compare against the shifted-flag mask (bits 146-159)
+        require(
+            uint160(deployedHook) & Hooks.ALL_HOOK_MASK == SharedDeployLib.spotHookFlagsShifted(),
+            "Mined hook address bits != permissions"
+        );
+
+        actualHookAddress = deployedHook;
+        fullRange = Spot(payable(deployedHook));
+
+        // ---------- wire up LM ----------
+        FullRangeLiquidityManager(payable(address(liquidityManager))).setAuthorizedHookAddress(actualHookAddress);
+        emit log_string("LiquidityManager configured.");
+
+        // store for later assertions
+        _finalHookAddr = actualHookAddress;
     }
 
     // Helper to grant initial allowances from contracts to PoolManager & Self
@@ -613,7 +519,7 @@ contract ForkSetup is Test {
 
     // Helper function to debug hook flags (Now uses actualHookAddress)
     function debugHookFlags() public {
-        uint160 requiredFlags = SharedDeployLib.spotHookFlags();
+        uint160 requiredFlags = SharedDeployLib.spotHookFlagsShifted();
 
         emit log_named_uint("Required flags (SharedDeployLib)", uint256(requiredFlags));
         emit log_named_uint("DYNAMIC_FEE_FLAG", uint256(LPFeeLibrary.DYNAMIC_FEE_FLAG));
@@ -698,10 +604,37 @@ contract ForkSetup is Test {
         return (amt0, amt1);
     }
 
-    // Removed testPriceHelper_USDC_WETH_Regression, testPriceHelper_WETH_USDC_Inverse
-    // Removed substring
-    // Removed checkHookAddressValidity (replaced by debugHookFlags and direct check)
-    // Removed _initializePool
-    // Removed addInitialLiquidity
-    // Removed _checkPriceHelper
+    // Helper to deal and approve tokens
+    function _dealAndApprove(IERC20Minimal token, address holder, uint256 amount, address spender) internal {
+        vm.startPrank(holder);
+        deal(address(token), holder, amount);
+        uint256 MAX = type(uint256).max;
+        token.approve(spender, MAX);
+        if (spender != address(poolManager)) {
+            token.approve(address(poolManager), MAX);
+        }
+        if (spender != address(liquidityManager)) {
+            token.approve(address(liquidityManager), MAX);
+        }
+        vm.stopPrank();
+    }
+
+    // Helper to safely create/select fork
+    function _safeFork() internal returns (uint256 forkId) {
+        string memory rpcAlias  = vm.envOr("FORK_RPC_ALIAS", string("unichain_mainnet"));
+        uint256 forkBlock       = vm.envOr("FORK_BLOCK_NUMBER", uint256(0));
+        emit log_named_string("Selected fork RPC alias", rpcAlias);
+        emit log_named_uint   ("Selected fork block number", forkBlock);
+
+        if (forkBlock > 0) {
+            forkId = vm.createSelectFork(rpcAlias, forkBlock);
+            if (forkId == 0) {
+                emit log("Block unavailable - falling back to latest");
+            }
+        }
+        if (forkId == 0) {
+            forkId = vm.createSelectFork(rpcAlias);
+        }
+        require(forkId != 0, "Fork creation failed");
+    }
 }

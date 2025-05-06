@@ -3,15 +3,13 @@ pragma solidity ^0.8.26;
 
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {ISpot} from "../../src/interfaces/ISpot.sol";
-
-// Imports needed for predictSpotHookAddressForTest
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../../src/interfaces/IFullRangeLiquidityManager.sol";
 import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol";
 import {IDynamicFeeManager} from "../../src/interfaces/IDynamicFeeManager.sol";
+import {DynamicFeeManager} from "../../src/DynamicFeeManager.sol";
 import {Spot} from "../../src/Spot.sol";
-
 import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -36,6 +34,14 @@ error SharedDeployLib__DeploymentFailed();
 library SharedDeployLib {
     Vm constant vm = Vm(0x7109709ECfa91a80626fF3989D68f67F5b1DD12D);
 
+    // Define the struct for predicted contract addresses
+    struct PredictedContracts {
+        address oracleAddr;
+        address dfmAddr;
+        address hookAddr;
+        bytes32 hookSalt;
+    }
+
     // (kept for legacy scripts; **not** used by tests any more)
     address internal constant LEGACY_DEPLOYER = address(0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf);
 
@@ -57,13 +63,22 @@ library SharedDeployLib {
      *  Hook flag constant used by ForkSetup                         *
      *  Matches exactly what Spot.getHookPermissions() returns      *
      * ------------------------------------------------------------- */
-    uint160 internal constant SPOT_HOOK_FLAGS =
-        (Hooks.AFTER_INITIALIZE_FLAG |           // true
-         Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |     // true
-         Hooks.BEFORE_SWAP_FLAG |                // true
-         Hooks.AFTER_SWAP_FLAG |                 // true
-         Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |   // true
-         Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG);  // true
+    // Low-order representation (unshifted) of the flags the Spot hook must
+    // embed in its address.  These correspond 1-for-1 with the symbolic
+    // *_FLAG constants in `Hooks.sol` (which themselves live in the *low* 14
+    // bits).  We keep the canonical unshifted form so external tooling that
+    // reasons about the flag *set* can continue to reuse this constant.
+    uint160 constant SPOT_HOOK_FLAGS =
+        /* parent flags — satisfy the dependency rule */
+        Hooks.BEFORE_SWAP_FLAG
+      | Hooks.AFTER_SWAP_FLAG
+      | Hooks.AFTER_ADD_LIQUIDITY_FLAG
+      | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
+        /* delta variants implemented by Spot */
+      | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
+      | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
+      | Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG
+      | Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG;
 
     /* ----------------------------------------------------------------
      *  Dynamic mask that always covers *all* defined hook-flag bits.
@@ -71,27 +86,43 @@ library SharedDeployLib {
      *  Bump this constant whenever a new flag is added.
      * -------------------------------------------------------------- */
     uint8  private constant TOTAL_HOOK_FLAGS = 14;
+    uint8  private constant _SHIFT = 160 - TOTAL_HOOK_FLAGS; // shift count to align flags with ALL_HOOK_MASK high-order bits
     uint160 private constant _FLAG_MASK_CONST =
-        uint160((uint256(1) << TOTAL_HOOK_FLAGS) - 1) << (160 - TOTAL_HOOK_FLAGS);
+        uint160((uint256(1) << TOTAL_HOOK_FLAGS) - 1) << _SHIFT;
 
     function _FLAG_MASK() private pure returns (uint160) {
         return _FLAG_MASK_CONST;
     }
 
-    function spotHookFlags() internal pure returns (uint160) {
-        return uint160(
-            Hooks.AFTER_INITIALIZE_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
+    /// @notice Returns the Spot-hook flag pattern **already shifted** into
+    /// the high-order flag field used by Uniswap-v4 (bits 146…159).
+    function spotHookFlagsShifted() public pure returns (uint160) {
+        return SPOT_HOOK_FLAGS << _SHIFT;
+    }
+
+    /// @notice Public helper so tests can query / reuse the mask
+    function spotHookFlags() public pure returns (uint160) {
+        return
             Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
+            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
+            Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG |
             Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG
-        );
+            Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG |
+            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG;
     }
 
     /* ------------------------------------------------------------------ *
-     *  Deterministic-address prediction (now **uses** the `deployer` arg) *
+     *  Safe CREATE2 address computation (avoids OZ 0xff alignment bug)
      * ------------------------------------------------------------------ */
+    function _safeCreate2Addr(bytes32 salt, bytes32 codeHash, address deployer) private pure returns (address) {
+        return address(uint160(uint256(keccak256(abi.encodePacked(bytes1(0xFF), deployer, salt, codeHash)))));
+    }
+
+    /* ----------------------------------------------------------------
+     *  Deterministic-address prediction (now **uses** the `deployer` arg) *
+     * ---------------------------------------------------------------- */
 
     function _computeCreate2(
         address deployer,
@@ -108,89 +139,41 @@ library SharedDeployLib {
     /** @dev Predicts a CREATE2 address 
      *  @param deployer The address which will deploy the contract
      *  @param salt A 32-byte value used to create the contract address
-     *  @param bytecode The bytecode of the to-be-deployed contract
+     *  @param creationCode The creation code of the to-be-deployed contract
      *  @param constructorArgs The constructor arguments for the contract
      *  @return The predicted address of the contract
      */
     function predictDeterministicAddress(
         address deployer,
         bytes32 salt,
-        bytes memory bytecode,
+        bytes memory creationCode,
         bytes memory constructorArgs
-    ) internal pure returns (address) {
-        console2.log("Predict Salt:"); console2.logBytes32(salt); // Rule 27
-        // Rule 27 – deep-copy to prevent aliasing between predict & deploy
-        bytes memory frozenArgs = bytes(constructorArgs);
-        bytes memory initCode   = abi.encodePacked(bytecode, frozenArgs);
-        bytes32 codeHash = keccak256(initCode);
-        console2.log("Predict Code Hash:"); console2.logBytes32(codeHash);
-
-        return Create2.computeAddress(salt, codeHash, deployer);
+    ) internal view returns (address) {
+        bytes memory fullInit = abi.encodePacked(creationCode, constructorArgs);
+        bytes32 codeHash = keccak256(fullInit);
+        // Safe Create2 computation to avoid alignment issues
+        address predicted = _safeCreate2Addr(salt, codeHash, deployer);
+        console2.log("DEBUG: SharedDeployLib.predictDeterministicAddress predicted", predicted);
+        return predicted;
     }
 
     /** @dev Performs CREATE2 deploy and returns the address. Reverts on failure */
     function deployDeterministic(
-        address   deployer,            // NEW explicit executor  (Rule 29-ter)
-        bytes32   salt,
-        bytes     memory bytecode,
-        bytes     memory constructorArgs
-    ) internal returns (address addr) {
-        bytes memory frozenArgs = bytes(constructorArgs);
-        bytes memory initCode   = abi.encodePacked(bytecode, frozenArgs);
-        
-        // ► Rule 26: Hash exactly what the EVM will hash (`len` bytes starting *after* the length word)
-        bytes32 codeHash;
-        assembly { codeHash := keccak256(add(initCode, 0x20), mload(initCode)) }
+        address deployer,
+        bytes32 salt,
+        bytes memory creationCode,
+        bytes memory constructorArgs
+    ) internal returns (address deployed) {
+        // Log the init code hash right before deployment
+        bytes memory fullInit = abi.encodePacked(creationCode, constructorArgs);
+        bytes32 initCodeHash = keccak256(fullInit);
+        console2.log("DEPLOY initCodeHash:");
+        console2.logBytes32(initCodeHash);
+        console2.log("DEPLOY constructorArgs:");
+        console2.logBytes(constructorArgs);
 
-        // ►► Rule 29: MOVE salt to a stack-local before any further allocations
-        bytes32 _salt = salt;
-
-        // ───── Logging BEFORE touching free memory (hash is still valid)
-        console2.log("--- Predict Deterministic ---");
-        console2.log("Deploy Salt:");        console2.logBytes32(_salt);
-        console2.log("Deploy Code Hash:");   console2.logBytes32(codeHash);
-        console2.log("Deploy Executor:",     deployer);
-
-        // ---- Rule 28: final deep-copy & re-hash -----------------
-        bytes memory finalCopy = abi.encodePacked(initCode); // fresh copy
-        
-        // Use assembly to hash in the same way as the EVM
-        bytes32 codeHashFinal;
-        assembly { codeHashFinal := keccak256(add(finalCopy, 0x20), mload(finalCopy)) }
-        
-        require(codeHashFinal == codeHash, "initCode mutated");
-
-        // Calculate predicted address (for logging only)
-        address predicted = Create2.computeAddress(_salt, codeHashFinal, deployer);
-        console2.log("Predicted Address:", predicted);
-
-        // Rule 27 guard
-        if (predicted.code.length != 0) {
-            revert("CREATE2 target already has code - pick a different salt");
-        }
-        
-        // Rule 29-ter-bis - Immediately re-hash before create2
-        bytes32 onChainHashFinal;
-        assembly { onChainHashFinal := keccak256(add(finalCopy, 0x20), mload(finalCopy)) }
-        require(onChainHashFinal == codeHashFinal, "hash drift");
-        
-        // Assembly: copy salt into its own local before *any* other op
-        assembly {
-            let tmpSalt := _salt        // Rule 30 – re-freeze
-            addr := create2(
-                0,                      // value
-                add(finalCopy, 0x20),   // code offset
-                mload(finalCopy),       // code length
-                tmpSalt                 // salt
-            )
-        }
-        if (addr == address(0)) revert SharedDeployLib__DeploymentFailed();
-        
-        // Add debug output for deployed address
-        console2.log("ADDR AFTER DEPLOY:", addr);
-        
-        // Note: We accept the CREATE2 result as authoritative rather than comparing against predicted
-        return addr;
+        deployed = Create2.deploy(0, salt, fullInit);
+        return deployed;
     }
 
     /// Derive salt **exactly** as before – tests and production infra rely on the
@@ -215,29 +198,23 @@ library SharedDeployLib {
         bytes     memory creationCode,
         bytes     memory constructorArgs
     ) internal returns (bytes32 salt, address predicted) {
+        // Log the init code hash during prediction
         bytes memory fullInit = abi.encodePacked(creationCode, constructorArgs);
+        bytes32 initCodeHash = keccak256(fullInit);
+        console2.log("PREDICT initCodeHash:");
+        console2.logBytes32(initCodeHash);
+        console2.log("PREDICT constructorArgs:");
+        console2.logBytes(constructorArgs);
 
-        string memory raw = vm.envOr("SPOT_HOOK_SALT", string(""));
-        if (bytes(raw).length != 0) {
-            salt = bytes32(vm.parseBytes(raw));
-            predicted = Create2.computeAddress(salt, keccak256(fullInit), deployer);
-            console2.log("Predicted address:", predicted);
-            console2.log("Deployer used:", deployer);
-
-            bool codeEmpty = predicted.code.length == 0;
-            bool flagsOk = (uint160(predicted) & _FLAG_MASK()) == SPOT_HOOK_FLAGS;
-            if (codeEmpty && flagsOk) {
-                return (salt, predicted);
-            }
-
-            // Salt was supplied but invalid – almost certainly stale.
-            revert("SharedDeployLib: SPOT_HOOK_SALT mismatch; regenerate with current flags");
-        }
-
-        // No env provided: use default test salt for fast, deterministic tests
-        salt = DEFAULT_SPOT_HOOK_SALT;
-        predicted = Create2.computeAddress(salt, keccak256(fullInit), deployer);
-        return (salt, predicted);
+        // Derive salt and address by mining correct hook flags
+        (address hookAddr, bytes32 hookSalt) = HookMiner.find(
+            deployer,
+            spotHookFlagsShifted(),
+            creationCode,
+            constructorArgs
+        );
+        predicted = _safeCreate2Addr(hookSalt, keccak256(fullInit), deployer);
+        return (hookSalt, predicted);
     }
 
     /// @notice Predicts the Spot hook address using the provided deployer and constructor args structure
@@ -291,29 +268,75 @@ library SharedDeployLib {
         );
         bytes memory hookCreationCode = type(Spot).creationCode;
 
-        // 🔒 REUSE the salt that was *already* mined during prediction:
-        // we rely on oracle.getHookAddress() == predicted earlier in ForkSetup.
-        string memory raw = vm.envOr("SPOT_HOOK_SALT", string(""));
-        if (bytes(raw).length == 0) revert("SharedDeployLib: missing SPOT_HOOK_SALT");
-        bytes32 salt = bytes32(vm.parseBytes(raw));
-
-        // recompute predicted with *final* init-code to double-check
-        address predicted = Create2.computeAddress(
-            salt,
-            keccak256(abi.encodePacked(hookCreationCode, spotConstructorArgs)),
-            address(this)
+        // Derive salt and predicted address via unified helper
+        (bytes32 salt, address predicted) = _spotHookSaltAndAddr(
+            _deployer,
+            hookCreationCode,
+            spotConstructorArgs
         );
 
-        // Deploy – will revert automatically if some other tx used the salt
+        // Deploy deterministically and validate
         address deployed = deployDeterministic(
-            address(this),
+            _deployer,
             salt,
             hookCreationCode,
             spotConstructorArgs
         );
 
-        // sanity-check: constructor of `Spot` ensures flags; we double-check address match
         assert(deployed == predicted);
         return deployed;
+    }
+
+    function _predictContracts(
+        address c2Deployer,
+        IPoolManager _pm,
+        IPoolPolicy _policy,
+        IFullRangeLiquidityManager _lm
+    ) internal returns (PredictedContracts memory pc) {
+        //------------------------------------------------------------------//
+        //  Iterate until (oracle, dfm, hook) stop changing -- normally 2-3  //
+        //  rounds max; guarantees a single, self-consistent triple.        //
+        //------------------------------------------------------------------//
+
+        address oracle;
+        address dfm;
+        address hookPred;  // Renamed to match deployment usage
+        bytes32 hookSalt;
+        address lastHook;
+
+        for (uint8 i; i < 5; ++i) {               // hard bail-out guard
+            // 1. mine (or re-mine) a hook that references *current* oracle/dfm
+            (hookSalt, hookPred) = _spotHookSaltAndAddr(  // Store in hookPred
+                c2Deployer,
+                type(Spot).creationCode,
+                abi.encode(_pm, _policy, _lm, oracle, dfm, c2Deployer)
+            );
+
+            // 2. predict oracle/dfm that reference that hook
+            oracle = predictDeterministicAddress(
+                c2Deployer,
+                ORACLE_SALT,
+                type(TruncGeoOracleMulti).creationCode,
+                abi.encode(_pm, _policy, hookPred, c2Deployer)  // Use hookPred consistently
+            );
+
+            dfm = predictDeterministicAddress(
+                c2Deployer,
+                DFM_SALT,
+                type(DynamicFeeManager).creationCode,
+                abi.encode(_policy, oracle, hookPred)  // Use hookPred consistently
+            );
+
+            // 3. fixed-point test *after* oracle & dfm are in sync
+            if (hookPred == lastHook) break;
+            lastHook = hookPred;
+        }
+
+        require(hookPred == lastHook, "Hook fixed-point not reached");
+
+        pc.oracleAddr = oracle;
+        pc.dfmAddr    = dfm;
+        pc.hookAddr   = hookPred;  // Return the final hookPred
+        pc.hookSalt   = hookSalt;
     }
 } 

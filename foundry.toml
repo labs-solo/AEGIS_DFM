@@ -33,9 +33,10 @@ ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
 evm_version = "cancun"
 optimizer = true
-optimizer_runs = 500
+optimizer_runs = 10000
 dotenv = true  # Enable .env file loading
 exclude_paths = ["test/old-tests"]
+via_ir = true
 
 # ──────────────────────────────────────────────────────────────
 # Explicit import remappings (Forge will also scan node_modules
@@ -52,7 +53,7 @@ ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
 evm_version = "cancun"
 optimizer = true
-optimizer_runs = 500
+optimizer_runs = 10000
 
 # Sepolia settings
 eth_rpc_url = "${SEPOLIA_RPC_URL}"
@@ -66,8 +67,9 @@ libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
 evm_version = "cancun"
+via_ir = true
 optimizer = true
-optimizer_runs = 500
+optimizer_runs = 10000
 dotenv = true
 # Unichain Sepolia settings
 eth_rpc_url = "${UNICHAIN_SEPOLIA_RPC_URL}"
