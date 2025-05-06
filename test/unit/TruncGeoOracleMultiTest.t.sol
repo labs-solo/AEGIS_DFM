@@ -350,7 +350,7 @@ contract TruncGeoOracleMultiTest is Test {
     }
 
     /* ------------------------------------------------------------ *
-     * 9.                     NEW TESTS                             *
+     * 9.  📦  **NEW TESTS** – multi-page ring, policy refresh …    *
      * ------------------------------------------------------------ */
 
     /// @notice Push >512 observations to prove the ring really pages
@@ -405,14 +405,14 @@ contract TruncGeoOracleMultiTest is Test {
         assertGt(newCap, oldCap, "cap should have been clamped up to new minCap");
     }
 
-    /// non-owner cannot call refreshPolicyCache (revert tested above but isolated here)
+    /// non-owner cannot call refreshPolicyCache (isolated)
     function testPolicyRefreshOnlyOwner() public {
         vm.prank(alice);
         vm.expectRevert(TruncGeoOracleMulti.OnlyOwner.selector);
         oracle.refreshPolicyCache(pid);
     }
 
-    /// @notice Test that safe int24 cast works for values within bounds
+    /// @notice Fuzz safe-cast helper – any value within int24 bounds must not revert
     function testFuzz_TickCastBounds(int256 raw) public {
         raw = bound(raw, -9_000_000, 9_000_000); // narrower than int24 max
         poolManager.setTick(pid, int24(0));
@@ -426,27 +426,76 @@ contract TruncGeoOracleMultiTest is Test {
     }
 
     /* ------------------------------------------------------------ *
-     * 10. Fuzz regression for extreme policy params                *
+     * 10.  Fuzz regression for extreme policy params               *
      * ------------------------------------------------------------ */
     function testFuzz_PolicyValidation(uint24 minCap) public {
         // stepPpm = 1e9  ➜ should revert (out of 1e6 range)
-        // build a fresh params struct (MockPolicyManager has no getter)
         MockPolicyManager.Params memory p;
         p.minBaseFee      = uint256(minCap == 0 ? 1 : minCap) * 100;
         p.maxBaseFee      = 10_000;          // sane default
-        p.stepPpm         = 1_000_000_000;   // invalid (>1 e6) triggers revert
+        p.stepPpm         = 1_000_000_000;   // invalid (>1 e6)
         p.freqScaling     = 1e18;
-        p.budgetPpm       = 0;               // invalid (0) triggers revert
+        p.budgetPpm       = 0;               // invalid (0)
         p.decayWindow     = 86_400;
         p.updateInterval  = 600;
         p.defaultMaxTicks = 50;
 
-        // Validation now happens in setParams, so expect revert there
         vm.expectRevert("stepPpm-range");
         policy.setParams(pid, p);
+    }
 
-        // The following code won't be reached since revert happens earlier
-        // vm.expectRevert("stepPpm-range");
-        // oracle.refreshPolicyCache(pid);  // validation should trigger in helper
+    /* ------------------------------------------------------------ *
+     * 11.  🔍  **Oracle observation API**                          *
+     * ------------------------------------------------------------ */
+
+    /// helper – push a new observation at `dt` seconds from now with `tick`
+    function _advanceAndPush(int24 tick_, uint32 dt) internal {
+        vm.warp(block.timestamp + dt);
+        poolManager.setTick(pid, tick_);
+        vm.prank(address(hook));
+        oracle.pushObservationAndCheckCap(pid, false);
+    }
+
+    /// @dev 3-point window – check that observe() returns exact cumulatives
+    ///      0 s   : tick = 0      (bootstrap written by enableOracleForPool)
+    ///      10 s  : tick = 10
+    ///      20 s  : tick = 30
+    ///
+    ///  expect cumulatives:
+    ///      t(now)   =  400   (30 * 10  + 10 * 10)
+    ///      t(now-10)=  100   (10 * 10)
+    ///      t(now-20)=    0
+    function testOracleObserveLinearAccumulation() public {
+        bytes memory encKey = abi.encode(poolKey);
+
+        // ── write second & third observations ──
+        _advanceAndPush(10, 10);   // 10 s after bootstrap
+        _advanceAndPush(30, 10);   // another 10 s later (now total 20 s)
+
+        // build query [0,10,20]
+        uint32[] memory sa = new uint32[](3);
+        sa[0] = 0;
+        sa[1] = 10;
+        sa[2] = 20;
+
+        // call observe()
+        (int56[] memory tc,) = oracle.observe(encKey, sa);
+
+        // tick-seconds cumulatives should be increasing with age
+        assertEq(tc.length, 3, "length mismatch");
+        assertEq(tc[0], 400, "cum@now   wrong");
+        assertEq(tc[1], 100, "cum@now-10 wrong");
+        assertEq(tc[2],   0, "cum@now-20 wrong");
+
+        // ⏱️  fast-path cross-check (secondsAgo == 0)
+        uint32[] memory zero = new uint32[](1);
+        zero[0] = 0;
+        (int56[] memory tcNow,) = oracle.observe(encKey, zero);
+        assertEq(tcNow.length, 1);
+        assertEq(tcNow[0], 400, "observe(0) cumulative mismatch");
+
+        // latest-tick sanity
+        (int24 latestTick,) = oracle.getLatestObservation(pid);
+        assertEq(latestTick, 30, "latest tick sanity");
     }
 }

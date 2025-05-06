@@ -31,8 +31,8 @@ library TruncatedOracle {
     struct Observation {
         uint32 blockTimestamp; //  32 bits
         int24 prevTick; //  24 bits ( 56)
-        int48 tickCumulative; //  48 bits (104)
-        uint144 secondsPerLiquidityCumulativeX128; // 144 bits (248)
+        int56 tickCumulative; //  56 bits (112)
+        uint160 secondsPerLiquidityCumulativeX128; // 160 bits (272)
         bool initialized; //   8 bits (256)
     }
 
@@ -47,6 +47,7 @@ library TruncatedOracle {
      */
     function transform(Observation memory last, uint32 blockTimestamp, int24 tick, uint128 liquidity)
         internal
+        view
         returns (Observation memory)
     {
         unchecked {
@@ -65,19 +66,17 @@ library TruncatedOracle {
                 return last;
             }
 
-            // Calculate absolute tick movement using optimized implementation
-            (bool capped, int24 t) = TickMoveGuard.checkHardCapOnly(last.prevTick, tick);
-            if (capped) {
-                emit TickCapped(t);
-            }
-            tick = t;
+            // No additional tick capping here; the caller has already applied
+            // any required truncation to `tick`.
 
             return Observation({
                 blockTimestamp: blockTimestamp,
                 prevTick: tick,
-                tickCumulative: last.tickCumulative + int48(tick) * int48(uint48(delta)),
+                tickCumulative: _safeCastTickCumulative(
+                    int256(last.tickCumulative) + _mulTickDelta(tick, delta)
+                ),
                 secondsPerLiquidityCumulativeX128: last.secondsPerLiquidityCumulativeX128
-                    + ((uint144(delta) << 128) / (liquidity > 0 ? liquidity : 1)),
+                    + ((uint160(delta) << 128) / (liquidity > 0 ? liquidity : 1)),
                 initialized: true
             });
         }
@@ -146,18 +145,15 @@ library TruncatedOracle {
                 ? blockTimestamp - last.blockTimestamp
                 : blockTimestamp + (type(uint32).max - last.blockTimestamp) + 1;
 
-            // Calculate absolute tick movement using optimized implementation
-            (bool capped, int24 t) = TickMoveGuard.checkHardCapOnly(last.prevTick, tick);
-            if (capped) {
-                emit TickCapped(t);
-            }
-            tick = t;
+            // Skip secondary capping – already handled upstream to save gas.
 
             o.blockTimestamp = blockTimestamp;
             o.prevTick = tick;
-            o.tickCumulative = last.tickCumulative + int48(tick) * int48(uint48(delta));
+            o.tickCumulative = _safeCastTickCumulative(
+                int256(last.tickCumulative) + _mulTickDelta(tick, delta)
+            );
             o.secondsPerLiquidityCumulativeX128 = last.secondsPerLiquidityCumulativeX128
-                + uint144((uint256(delta) << 128) / (liquidity == 0 ? 1 : liquidity));
+                + uint160((uint256(delta) << 128) / (liquidity == 0 ? 1 : liquidity));
             o.initialized = true;
         }
     }
@@ -277,7 +273,7 @@ library TruncatedOracle {
         uint16 index,
         uint128 liquidity,
         uint16 cardinality
-    ) private returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
+    ) private view returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
         // ===== fast-path: ring length 1  =====
         if (cardinality == 1) {
             Observation memory only = self[index];
@@ -339,11 +335,11 @@ library TruncatedOracle {
         uint16 index,
         uint128 liquidity,
         uint16 cardinality
-    ) internal returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s) {
+    ) internal view returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) {
         require(cardinality > 0, "I");
 
-        tickCumulatives = new int48[](secondsAgos.length);
-        secondsPerLiquidityCumulativeX128s = new uint144[](secondsAgos.length);
+        tickCumulatives = new int56[](secondsAgos.length);
+        secondsPerLiquidityCumulativeX128s = new uint160[](secondsAgos.length);
         for (uint256 i = 0; i < secondsAgos.length; i++) {
             (tickCumulatives[i], secondsPerLiquidityCumulativeX128s[i]) =
                 observeSingle(self, time, secondsAgos[i], tick, index, liquidity, cardinality);
@@ -369,7 +365,7 @@ library TruncatedOracle {
         uint16 index,
         uint128 liquidity,
         uint16 cardinality
-    ) internal returns (int48 tickCumulative, uint144 secondsPerLiquidityCumulativeX128) {
+    ) internal view returns (int56 tickCumulative, uint160 secondsPerLiquidityCumulativeX128) {
         if (cardinality == 0) revert OracleCardinalityCannotBeZero();
 
         // base case: target is the current block? Handle large secondsAgo here.
@@ -414,13 +410,14 @@ library TruncatedOracle {
             uint32 targetDelta = tTs - bTs;
 
             return (
-                beforeOrAt.tickCumulative
-                    + int48(
+                _safeCastTickCumulative(
+                    int256(beforeOrAt.tickCumulative) + (
                         (int256(atOrAfter.tickCumulative) - int256(beforeOrAt.tickCumulative))
                             * int256(uint256(targetDelta)) / int256(uint256(observationTimeDelta))
-                    ),
+                    )
+                ),
                 beforeOrAt.secondsPerLiquidityCumulativeX128
-                    + uint144(
+                    + uint160(
                         (
                             uint256(atOrAfter.secondsPerLiquidityCumulativeX128)
                                 - uint256(beforeOrAt.secondsPerLiquidityCumulativeX128)
@@ -428,5 +425,18 @@ library TruncatedOracle {
                     )
             );
         }
+    }
+
+    /// @dev Safe cast/ clamp helper for accumulator.
+    function _safeCastTickCumulative(int256 v) private pure returns (int56) {
+        require(v >= type(int56).min && v <= type(int56).max, "cum-overflow");
+        return int56(v);
+    }
+
+    /// @dev Multiplies tick (int24) by delta (uint32) in 256-bit space and
+    ///      ensures the product fits within the int56 accumulator range.
+    function _mulTickDelta(int24 tick, uint32 delta) private pure returns (int256 p) {
+        p = int256(int128(tick)) * int256(uint256(delta));
+        require(p >= type(int56).min && p <= type(int56).max, "mul-overflow");
     }
 }

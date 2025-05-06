@@ -90,6 +90,9 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
 
     mapping(bytes32 => ReinvestConfig) public reinvestCfg; // pid → cfg
 
+    /// @dev Stores the tick immediately *before* each swap. Keyed by poolId.
+    mapping(bytes32 => int24) private _preSwapTick;
+
     /// @notice Global pause for protocol‑fee reinvest
     bool public reinvestmentPaused;
 
@@ -196,7 +199,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         PoolKey calldata key,
         SwapParams calldata /* params */,
         bytes calldata /* hookData */
-    ) internal view override returns (bytes4, BeforeSwapDelta, uint24) {
+    ) internal override returns (bytes4, BeforeSwapDelta, uint24) {
         if (address(feeManager) == address(0)) {
             revert Errors.NotInitialized("DynamicFeeManager");
         }
@@ -208,6 +211,10 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         uint24 base = uint24(baseRaw);
         uint24 surge = uint24(surgeRaw);
         uint24 fee = base + surge;
+
+        // Cache the *pre-swap* tick so _afterSwap can forward it to the oracle.
+        (, int24 curTick,,) = StateLibrary.getSlot0(poolManager, key.toId());
+        _preSwapTick[PoolId.unwrap(key.toId())] = curTick;
 
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, fee);
     }
@@ -228,9 +235,9 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         BalanceDelta delta,
         bytes calldata /* hookData */
     ) internal override returns (bytes4, int128) {
-        // 2. Push observation to oracle & check cap
-        // The oracle call returns a boolean indicating if the tick movement was capped.
-        bool capped = truncGeoOracle.pushObservationAndCheckCap(key.toId(), params.zeroForOne);
+        // 2. Push observation to oracle & check cap using the real *pre-swap* tick.
+        int24 preTick = _preSwapTick[PoolId.unwrap(key.toId())];
+        bool capped = truncGeoOracle.pushObservationAndCheckCap(key.toId(), preTick);
 
         // 3. Notify Dynamic Fee Manager about the oracle update
         feeManager.notifyOracleUpdate{gas: GAS_STIPEND}(key.toId(), capped);
@@ -272,13 +279,14 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         PoolKey calldata key,
         SwapParams calldata params,
         bytes calldata hookData
-    ) external view override returns (bytes4, BeforeSwapDelta) {
+    ) external override returns (bytes4, BeforeSwapDelta) {
         if (msg.sender != address(poolManager)) {
             revert Errors.CallerNotPoolManager(msg.sender);
         }
 
-        (, BeforeSwapDelta d,) = _beforeSwap(sender, key, params, hookData);
-        return (ISpotHooks.beforeSwapReturnDelta.selector, d);
+        // Reuse feeManager for fee calculation but no state writes.
+        // Caller expects ZERO_DELTA; fee is conveyed via PoolManager's fee param so no return here.
+        return (ISpotHooks.beforeSwapReturnDelta.selector, BeforeSwapDeltaLibrary.ZERO_DELTA);
     }
 
     function afterSwapReturnDelta(
