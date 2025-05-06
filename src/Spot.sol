@@ -90,9 +90,6 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
 
     mapping(bytes32 => ReinvestConfig) public reinvestCfg; // pid → cfg
 
-    /// @dev Stores the tick immediately *before* each swap. Keyed by poolId.
-    mapping(bytes32 => int24) private _preSwapTick;
-
     /// @notice Global pause for protocol‑fee reinvest
     bool public reinvestmentPaused;
 
@@ -214,7 +211,13 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
 
         // Cache the *pre-swap* tick so _afterSwap can forward it to the oracle.
         (, int24 curTick,,) = StateLibrary.getSlot0(poolManager, key.toId());
-        _preSwapTick[PoolId.unwrap(key.toId())] = curTick;
+
+        // ⚡ Gas-cut: dump the SSTORE and cache the tick in transient-storage.
+        // `pid` itself (32 bytes) is a perfect, collision-free key.
+        bytes32 pid = PoolId.unwrap(key.toId());
+        assembly {
+            tstore(pid, curTick) // EIP-1153 – 4 gas write / auto-clears post-tx
+        }
 
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, fee);
     }
@@ -236,7 +239,12 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         bytes calldata /* hookData */
     ) internal override returns (bytes4, int128) {
         // 2. Push observation to oracle & check cap using the real *pre-swap* tick.
-        int24 preTick = _preSwapTick[PoolId.unwrap(key.toId())];
+        // Cheaper than an SLOAD: single 2-gas read from transient storage
+        bytes32 pid = PoolId.unwrap(key.toId());
+        int24 preTick;
+        assembly {
+            preTick := tload(pid)
+        }
         bool capped = truncGeoOracle.pushObservationAndCheckCap(key.toId(), preTick);
 
         // 3. Notify Dynamic Fee Manager about the oracle update
