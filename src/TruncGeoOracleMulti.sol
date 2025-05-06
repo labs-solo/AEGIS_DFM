@@ -352,24 +352,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         return _recordObservation(pid, preSwapTick);
     }
 
-    /**
-     * @dev Legacy overload kept for unit-tests with the old `(bool)` param.
-     *      Uses the last stored tick as the reference.
-     */
-    function pushObservationAndCheckCap(PoolId pid, bool /* unused */)
-        external
-        nonReentrant
-        returns (bool tickWasCapped)
-    {
-        if (msg.sender != hook) revert OnlyHook();
-        bytes32 id = PoolId.unwrap(pid);
-        if (states[id].cardinality == 0) {
-            revert Errors.OracleOperationFailed("pushObservationAndCheckCap", "Pool not enabled");
-        }
-        TruncatedOracle.Observation storage latest = _leaf(id, states[id].index)[states[id].index % PAGE_SIZE];
-        return _recordObservation(pid, latest.prevTick);
-    }
-
     /* ─────────────────── VIEW FUNCTIONS ──────────────────────── */
 
     /**

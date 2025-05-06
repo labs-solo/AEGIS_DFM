@@ -155,14 +155,14 @@ contract TruncGeoOracleMultiTest is Test {
 
         // Revert expected when called directly (not by hook)
         vm.expectRevert(TruncGeoOracleMulti.OnlyHook.selector);
-        oracle.pushObservationAndCheckCap(pid, capped);
+        oracle.pushObservationAndCheckCap(pid, int24(0));    // revert path
 
         // --- Advance time before successful call ---
         vm.warp(block.timestamp + 1);
 
         // Should succeed when called via the hook
         vm.startPrank(address(hook)); // only the authorised hook may push
-        oracle.pushObservationAndCheckCap(pid, capped);
+        oracle.pushObservationAndCheckCap(pid, int24(0));    // authorised path
         vm.stopPrank();
 
         // Verify the observation was written (it should be the CAPPED value)
@@ -175,10 +175,10 @@ contract TruncGeoOracleMultiTest is Test {
      * ------------------------------------------------------------ */
     function _writeTwice() internal {
         vm.prank(address(hook));
-        oracle.pushObservationAndCheckCap(pid, false);
+        oracle.pushObservationAndCheckCap(pid, int24(0));
         vm.roll(block.number + 1); // avoid rate-limit guard
         vm.prank(address(hook));
-        oracle.pushObservationAndCheckCap(pid, false);
+        oracle.pushObservationAndCheckCap(pid, int24(0));
     }
 
     function testAutoTuneIncreasesCap() public {
@@ -196,13 +196,13 @@ contract TruncGeoOracleMultiTest is Test {
         poolManager.setTick(pid, int24(startCap) - 1);
         vm.warp(block.timestamp + 1);
         vm.prank(address(hook));
-        oracle.pushObservationAndCheckCap(pid, false);
+        oracle.pushObservationAndCheckCap(pid, int24(0));
 
         // 2️⃣  wait less than the update-interval and push again
         vm.warp(block.timestamp + policy.getBaseFeeUpdateIntervalSeconds(pid) / 2);
         poolManager.setTick(pid, int24(startCap) - 2);
         vm.prank(address(hook));
-        oracle.pushObservationAndCheckCap(pid, false);
+        oracle.pushObservationAndCheckCap(pid, int24(0));
 
         uint24 endCap = oracle.maxTicksPerBlock(idBytes);
         assertEq(endCap, startCap, "Cap should remain unchanged when frequency is inside budget");
@@ -250,7 +250,7 @@ contract TruncGeoOracleMultiTest is Test {
 
         vm.warp(block.timestamp + 1);
         vm.prank(address(hook));
-        oracle.pushObservationAndCheckCap(pid, false);
+        oracle.pushObservationAndCheckCap(pid, int24(0));
 
         (int24 latestTick,) = oracle.getLatestObservation(pid);
         int24 absVal = latestTick >= 0 ? latestTick : -latestTick;
@@ -279,7 +279,7 @@ contract TruncGeoOracleMultiTest is Test {
 
         // Expect the call via hook to succeed, but the tick to be capped
         vm.startPrank(address(hook)); // Use the correct 'hook' variable
-        bool tickWasCapped = oracle.pushObservationAndCheckCap(pid, false);
+        bool tickWasCapped = oracle.pushObservationAndCheckCap(pid, int24(0));
         vm.stopPrank();
 
         assertTrue(tickWasCapped, "Tick SHOULD have been capped");
@@ -305,7 +305,7 @@ contract TruncGeoOracleMultiTest is Test {
 
         // Expect the call via hook to succeed, tick should NOT be capped
         vm.startPrank(address(hook)); // Use the correct 'hook' variable
-        tickWasCapped = oracle.pushObservationAndCheckCap(pid, false);
+        tickWasCapped = oracle.pushObservationAndCheckCap(pid, int24(0));
         vm.stopPrank();
 
         assertFalse(tickWasCapped, "Tick should NOT have been capped (under limit)");
@@ -333,7 +333,7 @@ contract TruncGeoOracleMultiTest is Test {
             poolManager.setTick(pid, int24(startCap) * 2); // trigger cap
             vm.warp(block.timestamp + 10);                 // advance few seconds
             vm.prank(address(hook));
-            oracle.pushObservationAndCheckCap(pid, false);
+            oracle.pushObservationAndCheckCap(pid, int24(0));
             vm.roll(block.number + 1);
         }
 
@@ -343,7 +343,7 @@ contract TruncGeoOracleMultiTest is Test {
         // Push once more to force auto-tune evaluation (no cap this time)
         poolManager.setTick(pid, int24(startCap) / 2);
         vm.prank(address(hook));
-        oracle.pushObservationAndCheckCap(pid, false);
+        oracle.pushObservationAndCheckCap(pid, int24(0));
 
         uint24 newCap = oracle.maxTicksPerBlock(idBytes);
         assertGt(newCap, startCap, "Cap should have loosened after frequent caps");
@@ -363,7 +363,7 @@ contract TruncGeoOracleMultiTest is Test {
             poolManager.setTick(pid, int24(int256(uint256(cap) - 1))); // stay under cap
             vm.warp(block.timestamp + 1);                     // guarantee new ts
             vm.prank(address(hook));
-            oracle.pushObservationAndCheckCap(pid, false);
+            oracle.pushObservationAndCheckCap(pid, int24(0));
         }
 
         //  Bootstrap slot (index 0) + our `pushes` writes
@@ -422,7 +422,7 @@ contract TruncGeoOracleMultiTest is Test {
         // should never revert for values within ±8 388 607
         poolManager.setTick(pid, int24(raw));
         vm.prank(address(hook));
-        oracle.pushObservationAndCheckCap(pid, false);
+        oracle.pushObservationAndCheckCap(pid, int24(0));
     }
 
     /* ------------------------------------------------------------ *
@@ -453,7 +453,7 @@ contract TruncGeoOracleMultiTest is Test {
         vm.warp(block.timestamp + dt);
         poolManager.setTick(pid, tick_);
         vm.prank(address(hook));
-        oracle.pushObservationAndCheckCap(pid, false);
+        oracle.pushObservationAndCheckCap(pid, int24(0));
     }
 
     /// @dev 3-point window – check that observe() returns exact cumulatives
