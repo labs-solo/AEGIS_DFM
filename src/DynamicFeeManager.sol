@@ -127,6 +127,9 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     /// @notice emitted when a pool is successfully initialized
     event PoolInitialized(PoolId indexed id);
 
+    /// @notice emitted when a pool is already initialized
+    event AlreadyInitialized(PoolId indexed id);
+
     /* ─── constants ─────────────────────────────────────────── */
     /// @dev fallback base-fee when the oracle has no data yet (0.5 %)
     uint32 internal constant DEFAULT_BASE_FEE_PPM = 5_000;
@@ -161,7 +164,14 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     }
 
     function initialize(PoolId id, int24 /*initialTick*/ ) external override onlyOwnerOrHook {
-        if (_s[id] != 0) revert AlreadyInitialised();
+        /* --------------------------------------------------------
+         * Idempotency: if the pool is already initialised simply
+         * emit a notice and return without mutating state.
+         * ------------------------------------------------------*/
+        if (_s[id] != 0) {
+            emit AlreadyInitialized(id);
+            return;
+        }
 
         // Fetch the current maxTicksPerBlock from the associated oracle contract
         uint24 maxTicks = oracle.maxTicksPerBlock(PoolId.unwrap(id)); // Direct call
@@ -196,22 +206,20 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         if (tickWasCapped) {
             w1 = w1.setInCap(true).setCapSt(uint40(nowTs));
             emit CapToggled(poolId, true);
+            _s[poolId] = w1; // single SSTORE
+            uint256 newBase = _baseFee(poolId);
+            uint256 newSurge = _surge(poolId, w1);
+            emit FeeStateChanged(poolId, newBase, newSurge, true, nowTs);
         } else if (w1.inCap()) {
             if (_surge(poolId, w1) == 0) {
                 // Check if surge decayed
                 w1 = w1.setInCap(false);
                 emit CapToggled(poolId, false);
+                _s[poolId] = w1;
+                uint256 newBase = _baseFee(poolId);
+                uint256 newSurge = _surge(poolId, w1);
+                emit FeeStateChanged(poolId, newBase, newSurge, false, nowTs);
             }
-        }
-
-        // ── persist + emit only when *fee* actually changed ─────────────
-        if (w1 != w) {
-            _s[poolId] = w1; // single SSTORE
-
-            uint256 newBase = _baseFee(poolId); // Recalculate with potentially new oracle state
-            uint256 newSurge = _surge(poolId, w1); // Recalculate with potentially new state
-            // Always emit fee state change when cap state toggles
-            emit FeeStateChanged(poolId, newBase, newSurge, w1.inCap(), nowTs);
         }
     }
 

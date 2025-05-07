@@ -40,6 +40,7 @@ import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
 import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
 import {Errors} from "./errors/Errors.sol";
 import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol";
+import {ReinvestLib} from "./libraries/ReinvestLib.sol";
 
 /* ───────────────────────────────────────────────────────────
  *                    Solmate / OpenZeppelin
@@ -182,10 +183,9 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, Owned {
         // Directly attempt reinvestment if fees were accrued
         // No need to check for policyManager or emit ReinvestmentSuccess here,
         // _tryReinvestInternal handles its own emissions.
-        PoolKey memory key = poolKeys[_poolId]; // Get the key needed for _tryReinvestInternal
+        PoolKey memory key = poolKeys[_poolId];
         if (key.tickSpacing != 0) {
-            // Ensure the key is valid
-            _tryReinvestInternal(key, _poolId);
+            _reinvestWithLib(key, _poolId);
         }
     }
 
@@ -581,92 +581,12 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, Owned {
 
             emit HookFeeWithdrawn(pid, feeRecipient, amt0, amt1);
         } else {
-            _tryReinvestInternal(key, pid);
+            _reinvestWithLib(key, pid);
         }
     }
 
-    function _tryReinvestInternal(PoolKey memory key, bytes32 _poolId) internal {
-        // --- Use CurrencyDelta library to fetch internal balances ---
-        int256 delta0 = key.currency0.getDelta(address(this));
-        int256 delta1 = key.currency1.getDelta(address(this));
-        uint256 bal0 = delta0 > 0 ? uint256(delta0) : 0; // Direct cast from positive int256
-        uint256 bal1 = delta1 > 0 ? uint256(delta1) : 0; // Direct cast from positive int256
-
-        ReinvestConfig storage cfg = reinvestCfg[_poolId];
-
-        // 0) global pause
-        if (reinvestmentPaused) {
-            emit ReinvestSkipped(_poolId, REASON_GLOBAL_PAUSED, bal0, bal1);
-            return;
-        }
-        // 1) cooldown
-        if (block.timestamp < cfg.last + cfg.cooldown) {
-            emit ReinvestSkipped(_poolId, REASON_COOLDOWN, bal0, bal1);
-            return;
-        }
-        // 2) threshold
-        if (bal0 < cfg.minToken0 && bal1 < cfg.minToken1) {
-            emit ReinvestSkipped(_poolId, REASON_THRESHOLD, bal0, bal1);
-            return;
-        }
-        // 3) price-check
-        (uint160 sqrtP,,,) = StateLibrary.getSlot0(poolManager, PoolId.wrap(_poolId));
-        if (sqrtP == 0) {
-            emit ReinvestSkipped(_poolId, REASON_PRICE_ZERO, bal0, bal1);
-            return;
-        }
-        // 4) maximize full-range liquidity (current price first, then lower/upper bounds)
-        uint128 liq =
-            LiquidityAmounts.getLiquidityForAmounts(sqrtP, TickMath.MIN_SQRT_PRICE, TickMath.MAX_SQRT_PRICE, bal0, bal1);
-        // 5) derive token amounts needed (ceiling so we never under-fund)
-        uint256 use0 = SqrtPriceMath.getAmount0Delta(
-            TickMath.MIN_SQRT_PRICE,
-            TickMath.MAX_SQRT_PRICE,
-            liq,
-            true // rounding up
-        );
-        uint256 use1 = SqrtPriceMath.getAmount1Delta(
-            TickMath.MIN_SQRT_PRICE,
-            TickMath.MAX_SQRT_PRICE,
-            liq,
-            true // rounding up
-        );
-
-        if (liq == 0) {
-            emit ReinvestSkipped(_poolId, REASON_LIQUIDITY_ZERO, bal0, bal1);
-            return; // Return early if calculated liquidity is zero
-        }
-
-        // 6) move internal credit -> LM in one shot using poolManager.take
-        if (use0 > 0) poolManager.take(key.currency0, address(liquidityManager), use0);
-        if (use1 > 0) poolManager.take(key.currency1, address(liquidityManager), use1);
-
-        // 7) Inform LM – tokens already waiting there internally via take()
-        //    Pass 0 for amounts as they are handled by `take` now.
-        try liquidityManager.reinvest(PoolId.wrap(_poolId), 0, 0, liq) returns (uint128 mintedShares) {
-            if (mintedShares == 0) {
-                emit ReinvestSkipped(_poolId, REASON_MINTED_ZERO, bal0, bal1);
-                return;
-            }
-            // success
-            cfg.last = uint64(block.timestamp);
-            emit ReinvestmentSuccess(_poolId, use0, use1);
-        } catch (bytes memory reason) {
-            emit ReinvestSkipped(_poolId, string(abi.encodePacked("LM revert: ", reason)), bal0, bal1);
-            return;
-        }
-    }
-
-    function isValidContract(address _addr) internal view returns (bool) {
-        uint32 size;
-        assembly {
-            size := extcodesize(_addr)
-        }
-        return size > 0;
-    }
-
+    /* ─────────────────── Interface view helpers (restored) ─────────────────── */
     function getOracleData(PoolId poolId) external view returns (int24 tick, uint32 blockNumber) {
-        // No local copy of `poolId` required; avoids 2072 warning.
         if (address(truncGeoOracle) != address(0) && truncGeoOracle.isOracleEnabled(poolId)) {
             try truncGeoOracle.getLatestObservation(poolId) returns (int24 _tick, uint32 _blockTimestamp) {
                 return (_tick, _blockTimestamp);
@@ -685,12 +605,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, Owned {
         return poolData[PoolId.unwrap(poolId)].initialized;
     }
 
-    function getPoolReservesAndShares(PoolId poolId)
-        external
-        view
-        virtual
-        returns (uint256 reserve0, uint256 reserve1, uint128 totalShares)
-    {
+    function getPoolReservesAndShares(PoolId poolId) external view virtual returns (uint256 reserve0, uint256 reserve1, uint128 totalShares) {
         bytes32 _poolId = PoolId.unwrap(poolId);
         if (poolData[_poolId].initialized) {
             (reserve0, reserve1) = liquidityManager.getPoolReserves(poolId);
@@ -710,8 +625,8 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, Owned {
         emit ReinvestmentPauseToggled(paused);
     }
 
+    /* ---- internal helpers retained for compatibility ---- */
     function _validateAndGetTotalShares(PoolId poolId) internal view returns (uint128 totalShares) {
-        // Get total shares
         totalShares = liquidityManager.positionTotalShares(poolId);
     }
 
@@ -720,15 +635,55 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, Owned {
         int24 /* tickLower */,
         int24 /* tickUpper */,
         uint128 /* liquidity */
-    )
-        internal
-        pure
-        returns (BalanceDelta delta)
-    {
+    ) internal pure returns (BalanceDelta delta) {
         // no-op dummy; default-initialised `delta` is returned
     }
 
-    /* ─────────────────── Locker-based reentrancy guard ──────────── */
+    /* ─────────── NEW library-backed FSM wrapper (renamed) ─────────── */
+    function _reinvestWithLib(PoolKey memory key, bytes32 pid) internal {
+        ReinvestLib.Locals memory r = ReinvestLib.compute(
+            key,
+            PoolId.wrap(pid),
+            poolManager,
+            reinvestmentPaused,
+            reinvestCfg[pid].last,
+            reinvestCfg[pid].cooldown,
+            reinvestCfg[pid].minToken0,
+            reinvestCfg[pid].minToken1
+        );
+
+        if (r.reason != bytes4(0)) {
+            _emitSkip(pid, r.reason, r.bal0, r.bal1);
+            return;
+        }
+
+        /* move positive balances to LiquidityManager */
+        if (r.use0 > 0) poolManager.take(key.currency0, address(liquidityManager), r.use0);
+        if (r.use1 > 0) poolManager.take(key.currency1, address(liquidityManager), r.use1);
+
+        try liquidityManager.reinvest(PoolId.wrap(pid), 0, 0, r.liquidity) returns (uint128 minted) {
+            if (minted == 0) {
+                emit ReinvestSkipped(pid, REASON_MINTED_ZERO, r.bal0, r.bal1);
+                return;
+            }
+            reinvestCfg[pid].last = uint64(block.timestamp);
+            emit ReinvestmentSuccess(pid, r.use0, r.use1);
+        } catch (bytes memory err) {
+            emit ReinvestSkipped(pid, string(abi.encodePacked("LM revert: ", err)), r.bal0, r.bal1);
+        }
+    }
+
+    /* map compact bytes4 reason → human-readable constant once */
+    function _emitSkip(bytes32 pid, bytes4 reason, uint256 bal0, uint256 bal1) private {
+        if      (reason == ReinvestLib.GLOBAL_PAUSED)  emit ReinvestSkipped(pid, REASON_GLOBAL_PAUSED,  bal0, bal1);
+        else if (reason == ReinvestLib.COOLDOWN)       emit ReinvestSkipped(pid, REASON_COOLDOWN,       bal0, bal1);
+        else if (reason == ReinvestLib.THRESHOLD)      emit ReinvestSkipped(pid, REASON_THRESHOLD,      bal0, bal1);
+        else if (reason == ReinvestLib.PRICE_ZERO)     emit ReinvestSkipped(pid, REASON_PRICE_ZERO,     bal0, bal1);
+        else if (reason == ReinvestLib.LIQUIDITY_ZERO) emit ReinvestSkipped(pid, REASON_LIQUIDITY_ZERO, bal0, bal1);
+        else                                           emit ReinvestSkipped(pid, REASON_MINTED_ZERO,    bal0, bal1);
+    }
+
+    /* ─────────── Locker-based reentrancy guard ──────────── */
     modifier nonReentrant() {
         if (Locker.get() != address(0)) {
             ReentrancyLocked.selector.revertWith();
@@ -736,5 +691,10 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, Owned {
         Locker.set(msg.sender);
         _;
         Locker.set(address(0));
+    }
+
+    /* --------- deprecated internal reinvest helper (still in ABI) --------- */
+    function _tryReinvestInternal(PoolKey memory, bytes32) internal pure {
+        revert("deprecated");
     }
 }
