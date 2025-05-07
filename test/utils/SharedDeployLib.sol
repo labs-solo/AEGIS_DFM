@@ -68,49 +68,41 @@ library SharedDeployLib {
     // *_FLAG constants in `Hooks.sol` (which themselves live in the *low* 14
     // bits).  We keep the canonical unshifted form so external tooling that
     // reasons about the flag *set* can continue to reuse this constant.
-    uint160 constant SPOT_HOOK_FLAGS =
-        /* parent flags — satisfy the dependency rule */
-        Hooks.BEFORE_SWAP_FLAG
-      | Hooks.AFTER_SWAP_FLAG
-      | Hooks.AFTER_ADD_LIQUIDITY_FLAG
-      | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
-        /* delta variants implemented by Spot */
-      | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
-      | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
-      | Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG
-      | Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG;
+    /// Only the four flags we still need
+    uint160 internal constant SPOT_HOOK_FLAGS =
+           Hooks.AFTER_INITIALIZE_FLAG
+        |  Hooks.BEFORE_SWAP_FLAG
+        |  Hooks.AFTER_SWAP_FLAG
+        |  Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG;
 
     /* ----------------------------------------------------------------
      *  Dynamic mask that always covers *all* defined hook-flag bits.
      *  Currently TOTAL_HOOK_FLAGS = 14 (12 original + 2 RETURN_DELTA).
-     *  Bump this constant whenever a new flag is added.
      * -------------------------------------------------------------- */
     uint8  private constant TOTAL_HOOK_FLAGS = 14;
-    uint8  private constant _SHIFT = 160 - TOTAL_HOOK_FLAGS; // shift count to align flags with ALL_HOOK_MASK high-order bits
     uint160 private constant _FLAG_MASK_CONST =
-        uint160((uint256(1) << TOTAL_HOOK_FLAGS) - 1) << _SHIFT;
+          uint160((uint256(1) << TOTAL_HOOK_FLAGS) - 1)
+        | uint160(0x800000);          // lock bit 23 too
 
     function _FLAG_MASK() private pure returns (uint160) {
         return _FLAG_MASK_CONST;
     }
 
-    /// @notice Returns the Spot-hook flag pattern **already shifted** into
-    /// the high-order flag field used by Uniswap-v4 (bits 146…159).
+    /// @notice Returns the Spot-hook flag pattern matching Hooks low-order bits.
     function spotHookFlagsShifted() public pure returns (uint160) {
-        return SPOT_HOOK_FLAGS << _SHIFT;
+        // We now keep the flag-set in the *low-order* bits as expected by
+        // HookMiner (flags are encoded in the least-significant 14 bits).
+        // Simply OR-in the Dynamic-Fee lock-bit (bit-23, 0x800000).
+        return SPOT_HOOK_FLAGS | uint160(0x800000);
     }
 
     /// @notice Public helper so tests can query / reuse the mask
     function spotHookFlags() public pure returns (uint160) {
         return
+            Hooks.AFTER_INITIALIZE_FLAG |
             Hooks.BEFORE_SWAP_FLAG |
             Hooks.AFTER_SWAP_FLAG |
-            Hooks.AFTER_ADD_LIQUIDITY_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |
-            Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG |
-            Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |
-            Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG |
-            Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG;
+            Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG;
     }
 
     /* ------------------------------------------------------------------ *
@@ -189,8 +181,10 @@ library SharedDeployLib {
         return keccak256(abi.encodePacked(userSalt, msg.sender)); // deterministic & uses sender
     }
 
-    /// @notice Default Spot hook salt for test environments when no SPOT_HOOK_SALT env is provided
-    bytes32 internal constant DEFAULT_SPOT_HOOK_SALT = 0x00000000000000000000000000000000000000000000000000000000000007fb;
+    /// @dev  The legacy pre-mined salt is no longer used – the hook's permission
+    ///       bitmap changed, so we mine a fresh salt at test-time. Constant kept
+    ///       for backward-compatibility only.
+    bytes32 internal constant DEPRECATED_SPOT_HOOK_SALT = 0x00000000000000000000000000000000000000000000000000000000000007fb;
 
     /* ---------- unified salt/address finder (env → miner fallback) ------ */
     function _spotHookSaltAndAddr(

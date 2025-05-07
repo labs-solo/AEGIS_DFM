@@ -118,24 +118,18 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     event PolicyInitializationFailed(bytes32 indexed poolId, string reason);
     // --- END ADDED EVENT DECLARATIONS ---
 
-    /// ------------------------------------------------------------------
-    ///  Hook permissions  (low-order bitmap, matches SPOT_HOOK_FLAGS)       
-    /// ------------------------------------------------------------------
-    /// For every "*_RETURNS_DELTA" capability the parent flag **must** also
-    /// be present; otherwise `PoolManager.initialize` rejects the hook.
-    /// The eight bits below exactly match the bitmap we mine for in
-    /// `SharedDeployLib.SPOT_HOOK_FLAGS`.
+    /* ───────────────────── Hook Permission Bitmap ──────────────────── */
+    /*  Only the four flags we actually implement & need:               */
+    /*      • AFTER_INITIALIZE                                          */
+    /*      • BEFORE_SWAP                                               */
+    /*      • AFTER_SWAP                                                */
+    /*      • AFTER_SWAP_RETURNS_DELTA                                  */
+    /* ---------------------------------------------------------------- */
     uint160 internal constant _PERMISSIONS =
-          /* parents */
-          Hooks.BEFORE_SWAP_FLAG
+          Hooks.AFTER_INITIALIZE_FLAG
+        | Hooks.BEFORE_SWAP_FLAG
         | Hooks.AFTER_SWAP_FLAG
-        | Hooks.AFTER_ADD_LIQUIDITY_FLAG
-        | Hooks.AFTER_REMOVE_LIQUIDITY_FLAG
-          /* delta variants */
-        | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG
-        | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
-        | Hooks.AFTER_ADD_LIQUIDITY_RETURNS_DELTA_FLAG
-        | Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG;
+        | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG;
 
     /* ──────────────────────── Constructor ───────────────────── */
     constructor(
@@ -175,7 +169,9 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     {
         uint160 flags = _PERMISSIONS;
         assembly {
+            perms := mload(0x40)
             mstore(perms, flags)
+            mstore(0x40, add(perms, 0x20))
         }
     }
 
@@ -301,8 +297,8 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
             revert Errors.CallerNotPoolManager(msg.sender);
         }
 
-        (, BeforeSwapDelta d,) = _beforeSwap(sender, key, params, hookData);
-        return (ISpotHooks.beforeSwapReturnDelta.selector, d);
+        // wrapper kept only for ABI compatibility – returns ZERO_DELTA now
+        return (ISpotHooks.beforeSwapReturnDelta.selector, BeforeSwapDeltaLibrary.ZERO_DELTA);
     }
 
     function afterSwapReturnDelta(
