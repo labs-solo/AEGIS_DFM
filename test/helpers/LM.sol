@@ -17,13 +17,23 @@ contract LM {
     ) external payable returns (uint256 s, uint256 a0, uint256 a1) {
         deposits++;
         /* ----------------------------------------------------------------
-         * Re-entrancy test-setup needs **full gas** inside the callback
-         * (the 2300-gas stipend of `.transfer`/`.send` is too small).
-         * Switch to a low-level `.call{value:…}` so the recipient gets
-         * whatever gas remains.
-         * ------------------------------------------------------------- */
-        (bool ok,) = payable(msg.sender).call{value: 1 wei}("");
-        require(ok, "refund failed");
+         * Forward the 1 wei "rebate" to **the recipient passed by Spot**,
+         * not to `msg.sender`, so that the `Reentrant` helper contract
+         * receives the funds and can recurse into `Spot.deposit()` while
+         * the outer call is still in-flight.
+         *
+         * If the recipient re-enters **Spot** (as the re-entrancy test does)
+         * the inner call will revert with `ReentrancyLocked()`.  We *must*
+         * bubble that revert reason up so the outer test can detect it.
+         * -------------------------------------------------------------- */
+        (bool ok, bytes memory ret) = payable(receiver).call{value: 1 wei}("");
+
+        if (!ok) {
+            /// @solidity memory-safe-assembly
+            assembly {
+                revert(add(ret, 0x20), mload(ret)) // bubble original revert
+            }
+        }
         return (100, 1 ether, 1 ether);
     }
 
