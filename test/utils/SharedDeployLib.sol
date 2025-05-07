@@ -145,7 +145,6 @@ library SharedDeployLib {
         bytes32 codeHash = keccak256(fullInit);
         // Safe Create2 computation to avoid alignment issues
         address predicted = _safeCreate2Addr(salt, codeHash, deployer);
-        console2.log("DEBUG: SharedDeployLib.predictDeterministicAddress predicted", predicted);
         return predicted;
     }
 
@@ -158,11 +157,6 @@ library SharedDeployLib {
     ) internal returns (address deployed) {
         // Log the init code hash right before deployment
         bytes memory fullInit = abi.encodePacked(creationCode, constructorArgs);
-        bytes32 initCodeHash = keccak256(fullInit);
-        console2.log("DEPLOY initCodeHash:");
-        console2.logBytes32(initCodeHash);
-        console2.log("DEPLOY constructorArgs:");
-        console2.logBytes(constructorArgs);
 
         deployed = Create2.deploy(0, salt, fullInit);
         return deployed;
@@ -192,14 +186,8 @@ library SharedDeployLib {
         bytes     memory creationCode,
         bytes     memory constructorArgs
     ) internal returns (bytes32 salt, address predicted) {
-        // Log the init code hash during prediction
+        // Prepare init code hash (without emitting logs)
         bytes memory fullInit = abi.encodePacked(creationCode, constructorArgs);
-        bytes32 initCodeHash = keccak256(fullInit);
-        console2.log("PREDICT initCodeHash:");
-        console2.logBytes32(initCodeHash);
-        console2.log("PREDICT constructorArgs:");
-        console2.logBytes(constructorArgs);
-
         // Derive salt and address by mining correct hook flags
         (address hookAddr, bytes32 hookSalt) = HookMiner.find(
             deployer,

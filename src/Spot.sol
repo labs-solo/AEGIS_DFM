@@ -155,24 +155,23 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     receive() external payable {}
 
     /* ───────────────────── Hook Permissions ─────────────────── */
-    /// @notice Returns the permission-bitmap that this hook exposes.
-    /// @dev The upstream `Hooks.Permissions` struct currently consists of a
-    ///      *single* `uint160`, but its *field-name* has changed a couple of
-    ///      times upstream (`flags` → `mask` → `value`, …).  To stay
-    ///      compatible with any variant we skip the field-name entirely and
-    ///      write the bitmap directly into the struct's first slot.
+    /// @notice Returns the permission bitmap this hook exposes
+    /// @dev Populates the boolean flags in Hooks.Permissions according to
+    ///      the constant _PERMISSIONS. This version is compatible with the
+    ///      v4-core commit where Permissions consists of individual bool fields.
     function getHookPermissions()
         public
         pure
         override
         returns (Hooks.Permissions memory perms)
     {
-        uint160 flags = _PERMISSIONS;
-        assembly {
-            perms := mload(0x40)
-            mstore(perms, flags)
-            mstore(0x40, add(perms, 0x20))
-        }
+        // _PERMISSIONS currently encodes the following bits:
+        // AFTER_INITIALIZE_FLAG, BEFORE_SWAP_FLAG, AFTER_SWAP_FLAG,
+        // AFTER_SWAP_RETURNS_DELTA_FLAG
+        perms.afterInitialize = true;
+        perms.beforeSwap = true;
+        perms.afterSwap = true;
+        perms.afterSwapReturnDelta = true;
     }
 
     // Override BaseHook.validateHookAddress to bypass hook address permission check in tests
