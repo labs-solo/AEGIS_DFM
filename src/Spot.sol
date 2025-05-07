@@ -21,6 +21,7 @@ import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
 import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 
 /* ───────────────────────────────────────────────────────────
  *                          Project
@@ -115,6 +116,9 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
     event OracleInitialized(bytes32 indexed poolId, int24 initialTick, int24 maxAbsTickMove);
     event OracleInitializationFailed(bytes32 indexed poolId, bytes reason);
     event PolicyInitializationFailed(bytes32 indexed poolId, string reason);
+    event HookFee(bytes32 indexed id, address indexed sender, uint128 feeAmount0, uint128 feeAmount1);
+    event HookFeeReinvested(bytes32 indexed id, address indexed sender, uint128 feeAmount0, uint128 feeAmount1);
+    event HookFeeWithdrawn(bytes32 indexed id, address indexed to, uint256 amount0, uint256 amount1);
     // --- END ADDED EVENT DECLARATIONS ---
 
     /* ──────────────────────── Constructor ───────────────────── */
@@ -192,10 +196,10 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
 
     /* ─────────────────── Hook: beforeSwap ───────────────────── */
     function _beforeSwap(
-        address /* sender */,
+        address sender,
         PoolKey calldata key,
-        SwapParams calldata /* params */,
-        bytes calldata /* hookData */
+        SwapParams calldata params,
+        bytes calldata hookData
     ) internal override returns (bytes4, BeforeSwapDelta, uint24) {
         if (address(feeManager) == address(0)) {
             revert Errors.NotInitialized("DynamicFeeManager");
@@ -205,16 +209,40 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         // 1. Fee that WILL apply (oracle decides capping internally)
         // ------------------------------------------------------------
         (uint256 baseRaw, uint256 surgeRaw) = feeManager.getFeeState(key.toId());
-        uint24 base = uint24(baseRaw);
+        uint24 base  = uint24(baseRaw);
         uint24 surge = uint24(surgeRaw);
-        uint24 fee = base + surge;
+        uint24 fee   = base + surge;                 // ppm (1e-6)
 
-        // Cache the *pre-swap* tick so _afterSwap can forward it to the oracle.
-        (, int24 curTick,,) = StateLibrary.getSlot0(poolManager, key.toId());
-
-        // ⚡ Gas-cut: dump the SSTORE and cache the tick in transient-storage.
-        // `pid` itself (32 bytes) is a perfect, collision-free key.
+        // ------------------------------------------------------------
+        // 2. Compute *protocol* cut of this swap's fee & emit event
+        // ------------------------------------------------------------
         bytes32 pid = PoolId.unwrap(key.toId());
+        (uint256 polShare,,) = policyManager.getFeeAllocations(key.toId()); // ppm
+
+        uint256 absAmt = params.amountSpecified >= 0
+            ? uint256(uint256(int256(params.amountSpecified)))
+            : uint256(uint256(int256(-params.amountSpecified)));
+
+        // feeCharged = absAmt * fee / 1e6
+        uint256 feeCharged    = FullMath.mulDiv(absAmt, fee, 1e6);
+        uint256 protoShareRaw = FullMath.mulDiv(feeCharged, polShare, 1e6);
+
+        uint128 protoFee0;
+        uint128 protoFee1;
+        if (params.zeroForOne) {
+            protoFee0 = uint128(protoShareRaw);
+        } else {
+            protoFee1 = uint128(protoShareRaw);
+        }
+
+        if (reinvestmentPaused) {
+            emit HookFee(pid, sender, protoFee0, protoFee1);
+        } else {
+            emit HookFeeReinvested(pid, sender, protoFee0, protoFee1);
+        }
+
+        // 3. Cache the *pre-swap* tick so _afterSwap can forward it to the oracle
+        (, int24 curTick,,) = StateLibrary.getSlot0(poolManager, key.toId());
         assembly {
             tstore(pid, curTick) // EIP-1153 – 4 gas write / auto-clears post-tx
         }
@@ -532,10 +560,26 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         c.cooldown = cooldown;
     }
 
-    function pokeReinvest(PoolId poolId) external nonReentrant {
+    function claimPendingFees(PoolId poolId) external nonReentrant {
         bytes32 pid = PoolId.unwrap(poolId);
         if (!poolData[pid].initialized) revert Errors.PoolNotInitialized(pid);
-        _tryReinvestInternal(poolKeys[pid], pid);
+
+        address feeRecipient = policyManager.getFeeCollector();
+        PoolKey memory key = poolKeys[pid];
+
+        int256 d0 = key.currency0.getDelta(address(this));
+        int256 d1 = key.currency1.getDelta(address(this));
+        uint256 amt0 = d0 > 0 ? uint256(d0) : 0;
+        uint256 amt1 = d1 > 0 ? uint256(d1) : 0;
+
+        if (reinvestmentPaused) {
+            if (amt0 > 0) poolManager.take(key.currency0, feeRecipient, amt0);
+            if (amt1 > 0) poolManager.take(key.currency1, feeRecipient, amt1);
+
+            emit HookFeeWithdrawn(pid, feeRecipient, amt0, amt1);
+        } else {
+            _tryReinvestInternal(key, pid);
+        }
     }
 
     function _tryReinvestInternal(PoolKey memory key, bytes32 _poolId) internal {

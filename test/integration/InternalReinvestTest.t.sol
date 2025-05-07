@@ -171,7 +171,7 @@ contract InternalReinvestTest is ForkSetup {
     function test_ReinvestSkippedWhenBelowThreshold() public {
         vm.recordLogs();
         vm.prank(keeper);
-        hook.pokeReinvest(poolId);
+        hook.claimPendingFees(poolId);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 sig = keccak256("ReinvestSkipped(bytes32,string,uint256,uint256)");
@@ -199,7 +199,7 @@ contract InternalReinvestTest is ForkSetup {
         // 3) Attempt reinvest and check for skip reason
         vm.recordLogs();
         vm.prank(keeper);
-        hook.pokeReinvest(poolId);
+        hook.claimPendingFees(poolId);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 sig = keccak256("ReinvestSkipped(bytes32,string,uint256,uint256)");
@@ -219,7 +219,7 @@ contract InternalReinvestTest is ForkSetup {
 
         vm.recordLogs();
         vm.prank(keeper);
-        hook.pokeReinvest(poolId);
+        hook.claimPendingFees(poolId);
 
         logs = vm.getRecordedLogs();
         bytes32 successSig = keccak256("ReinvestmentSuccess(bytes32,uint256,uint256)");
@@ -257,7 +257,7 @@ contract InternalReinvestTest is ForkSetup {
 
         vm.recordLogs();
         vm.prank(keeper);
-        hook.pokeReinvest(poolId);
+        hook.claimPendingFees(poolId);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 successSig = keccak256("ReinvestmentSuccess(bytes32,uint256,uint256)");
@@ -281,7 +281,7 @@ contract InternalReinvestTest is ForkSetup {
         vm.warp(block.timestamp + 1 minutes);
         vm.recordLogs();
         vm.prank(keeper);
-        hook.pokeReinvest(poolId);
+        hook.claimPendingFees(poolId);
 
         logs = vm.getRecordedLogs();
         bytes32 skipSig = keccak256("ReinvestSkipped(bytes32,string,uint256,uint256)");
