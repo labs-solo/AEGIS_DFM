@@ -156,7 +156,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, Owned {
             beforeAddLiquidity: false,
             afterAddLiquidity: false,
             beforeRemoveLiquidity: false,
-            afterRemoveLiquidity: true,
+            afterRemoveLiquidity: false,
             beforeSwap: true,
             afterSwap: true,
             beforeDonate: false,
@@ -164,7 +164,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, Owned {
             beforeSwapReturnDelta: false,
             afterSwapReturnDelta: true,
             afterAddLiquidityReturnDelta: false,
-            afterRemoveLiquidityReturnDelta: true
+            afterRemoveLiquidityReturnDelta: false
         });
     }
 
