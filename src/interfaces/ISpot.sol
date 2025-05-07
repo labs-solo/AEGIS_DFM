@@ -147,5 +147,5 @@ interface ISpot is IHooks {
      * @notice poke the hook to reinvest any accrued fees
      * @param poolId The pool ID to reinvest fees for
      */
-    function pokeReinvest(PoolId poolId) external;
+    function claimPendingFees(PoolId poolId) external;
 }
