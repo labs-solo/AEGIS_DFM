@@ -45,22 +45,25 @@ import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol";
  *                    Solmate / OpenZeppelin
  * ─────────────────────────────────────────────────────────── */
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
+import {CustomRevert} from "v4-core/src/libraries/CustomRevert.sol";
+import {Locker} from "v4-periphery/src/libraries/Locker.sol";
 
 /* ───────────────────────────────────────────────────────────
  *                       Contract: Spot
  * ─────────────────────────────────────────────────────────── */
-contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, Owned {
+contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, Owned {
     using PoolIdLibrary for PoolKey;
     using PoolIdLibrary for PoolId;
     using CurrencyLibrary for Currency;
     using CurrencyDelta for Currency;
     using BalanceDeltaLibrary for BalanceDelta;
+    using CustomRevert for bytes4;
 
     /* ───────────── Custom errors for gas optimization ───────────── */
-    error ImmutableDependencyDeprecated(string dependency);
+    error ImmutableDependencyDeprecated();
     error CustomZeroAddress();
+    error ReentrancyLocked();
 
     /* ───────────────────────── State ───────────────────────── */
     IPoolPolicy public immutable policyManager;
@@ -130,11 +133,11 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         IDynamicFeeManager _feeManager,
         address _initialOwner
     ) BaseHook(_manager) Owned(_initialOwner) {
-        if (address(_manager) == address(0)) revert CustomZeroAddress();
-        if (address(_policyManager) == address(0)) revert CustomZeroAddress();
-        if (address(_liquidityManager) == address(0)) revert CustomZeroAddress();
-        if (address(_oracle) == address(0)) revert CustomZeroAddress();
-        if (address(_feeManager) == address(0)) revert CustomZeroAddress();
+        if (address(_manager) == address(0)) CustomZeroAddress.selector.revertWith();
+        if (address(_policyManager) == address(0)) CustomZeroAddress.selector.revertWith();
+        if (address(_liquidityManager) == address(0)) CustomZeroAddress.selector.revertWith();
+        if (address(_oracle) == address(0)) CustomZeroAddress.selector.revertWith();
+        if (address(_feeManager) == address(0)) CustomZeroAddress.selector.revertWith();
 
         policyManager = _policyManager;
         liquidityManager = _liquidityManager;
@@ -536,7 +539,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
      */
     function setOracleAddress(address /* _oracleAddress */) external onlyGovernance {
         emit DependencySetterDeprecated("oracle");
-        revert ImmutableDependencyDeprecated("oracle");
+        ImmutableDependencyDeprecated.selector.revertWith();
     }
 
     /**
@@ -545,7 +548,7 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
      */
     function setDynamicFeeManager(address /* _dynamicFeeManager */) external onlyGovernance {
         emit DependencySetterDeprecated("dynamicFeeManager");
-        revert ImmutableDependencyDeprecated("dynamicFeeManager");
+        ImmutableDependencyDeprecated.selector.revertWith();
     }
 
     function setReinvestConfig(PoolId poolId, uint256 minToken0, uint256 minToken1, uint64 cooldown)
@@ -723,5 +726,15 @@ contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, ReentrancyGuard, 
         returns (BalanceDelta delta)
     {
         // no-op dummy; default-initialised `delta` is returned
+    }
+
+    /* ─────────────────── Locker-based reentrancy guard ──────────── */
+    modifier nonReentrant() {
+        if (Locker.get() != address(0)) {
+            ReentrancyLocked.selector.revertWith();
+        }
+        Locker.set(msg.sender);
+        _;
+        Locker.set(address(0));
     }
 }
