@@ -335,7 +335,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // read-only sanity check; result not stored
         baseAfter50Percent + surgeFeeAfter50Percent; // silence 2072
 
-        // Warp time forward by 25% of the decay period
+        // Warp time forward by 25% of the decay period (elapsed = 25%)
         uint256 decayPeriod = policyManager.getSurgeDecayPeriodSeconds(pid);
         uint256 decayPeriodSeconds = decayPeriod;
         vm.warp(block.timestamp + decayPeriodSeconds / 4);
@@ -344,7 +344,9 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         (, uint256 surgeAfter25) = dfm.getFeeState(pid); // capture surge, ignore base
 
         // Surge should have decayed to ~75% of original
-        uint256 expectedSurge25 = surgeFeeAfterCap * 3 / 4;   // 75% of peak
+        // After 75% of the decay window has elapsed only 25% of the initial
+        // surge should remain (linear decay).
+        uint256 expectedSurge25 = surgeFeeAfterCap / 4;   // 25% of peak
         assertApproxEqRel(
             surgeAfter25,
             expectedSurge25,
@@ -376,16 +378,11 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         (, uint256 _surgeAfterFullDecay) = dfm.getFeeState(pid);
         assertEq(_surgeAfterFullDecay, 0, "Surge not zero after full decay period");
 
-        // Get fee at 50% decay
+        // Fetch fee state again (time > full decay) to confirm surge is zero
         (, uint256 surgeFeePartialDecay) = dfm.getFeeState(pid); // base not needed
 
-        // Verify partial decay occurred
-        assertApproxEqRel(
-            surgeFeePartialDecay,
-            surgeFeeAfterCap / 2,
-            1e16, // Allow 1% tolerance
-            "Surge not ~50% decayed"
-        );
+        // Surge component should remain zero after full decay has completed
+        assertEq(surgeFeePartialDecay, 0, "Surge should remain zero post-decay");
     }
 
     /**
@@ -400,7 +397,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         bool inCapBeforeDecay = dfm.isCAPEventActive(pid);
         assertTrue(inCapBeforeDecay, "Not in CAP event after trigger");
 
-        // Warp time forward by 25% of the decay period
+        // Warp time forward by 25% of the decay period (elapsed = 25%)
         uint256 decayPeriod = policyManager.getSurgeDecayPeriodSeconds(pid);
         uint256 decayPeriodSeconds = decayPeriod;
         vm.warp(block.timestamp + decayPeriodSeconds / 4);
@@ -409,6 +406,8 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         (, uint256 surgeAfter25) = dfm.getFeeState(pid); // capture surge, ignore base
 
         // Surge should have decayed to ~75% of original
+        // Only 25% of the decay window has elapsed so 75% of the initial surge
+        // should remain (linear decay).
         uint256 expectedSurge25 = surgeFeeAfterCap * 3 / 4;   // 75% of peak
         assertApproxEqRel(
             surgeAfter25,
@@ -441,16 +440,11 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         (, uint256 _surgeAfterFullDecay2) = dfm.getFeeState(pid);
         assertEq(_surgeAfterFullDecay2, 0, "Surge not zero after full decay period");
 
-        // Get fee at 50% decay
+        // Fetch fee state again (time > full decay) to confirm surge is zero
         (, uint256 surgeFeePartialDecay) = dfm.getFeeState(pid); // base not needed
 
-        // Verify partial decay occurred
-        assertApproxEqRel(
-            surgeFeePartialDecay,
-            surgeFeeAfterCap / 2,
-            1e16, // Allow 1% tolerance
-            "Surge not ~50% decayed"
-        );
+        // Surge component should remain zero after full decay has completed
+        assertEq(surgeFeePartialDecay, 0, "Surge should remain zero post-decay");
     }
 
     /**
