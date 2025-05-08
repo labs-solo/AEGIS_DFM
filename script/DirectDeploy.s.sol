@@ -16,6 +16,7 @@ import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
+import {ExtendedPositionManager} from "../src/ExtendedPositionManager.sol";
 
 /**
  * Script to directly deploy the hook with an explicit constructor and salt.
@@ -118,7 +119,12 @@ contract DirectDeploy is Script {
         if (address(liquidityManager) == address(0)) {
             console.log("Deploying LiquidityManager...");
             liquidityManager =
-                new FullRangeLiquidityManager(IPoolManager(UNICHAIN_POOL_MANAGER), IPoolPolicy(address(0)), deployer);
+                new FullRangeLiquidityManager(
+                    IPoolManager(UNICHAIN_POOL_MANAGER),
+                    ExtendedPositionManager(payable(address(0))),
+                    IPoolPolicy(address(0)),
+                    deployer
+                );
             console.log("LiquidityManager deployed at: %s", address(liquidityManager));
         }
 

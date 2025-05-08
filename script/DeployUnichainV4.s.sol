@@ -22,6 +22,7 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
+import {ExtendedPositionManager} from "../src/ExtendedPositionManager.sol";
 
 // Unused imports removed: Spot, FullRangeDynamicFeeManager, DefaultPoolCreationPolicy, HookMiner, Hooks, IERC20
 
@@ -105,7 +106,12 @@ contract DeployUnichainV4 is Script {
         // fullRangeHook.setOracle(address(truncGeoOracle));
 
         // Deploy LiquidityManager
-        liquidityManager = new FullRangeLiquidityManager(poolManager, IPoolPolicy(address(0)), deployerAddress);
+        liquidityManager = new FullRangeLiquidityManager(
+            poolManager,
+            ExtendedPositionManager(payable(address(0))),
+            IPoolPolicy(address(0)),
+            deployerAddress
+        );
 
         // --- Deploy Test Routers ---
         lpRouter = new PoolModifyLiquidityTest(poolManager);
