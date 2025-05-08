@@ -15,6 +15,10 @@ contract PoolPolicyManager_Step is Test {
     address constant OWNER = address(0xBEEF);
     address constant ALICE = address(0xA11CE);
 
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+
     // Add event definition for testing
     event PolicySet(
         PoolId          indexed poolId,
@@ -25,16 +29,18 @@ contract PoolPolicyManager_Step is Test {
 
     /*─────────────────── set-up ───────────────────*/
     function setUp() public {
-        uint24[] memory ticks = new uint24[](2);
-        ticks[0] = 1;
-        ticks[1] = 10;
+        uint24[] memory supportedTickSpacings = new uint24[](2);
+        supportedTickSpacings[0] = 1;
+        supportedTickSpacings[1] = 10;
 
         ppm = new PoolPolicyManager(
             OWNER,
-            5_000,
-            ticks,
-            50_000, // 5% PPM
-            address(0xFEE)
+            EXPECTED_DEFAULT_DYNAMIC_FEE,
+            supportedTickSpacings,
+            1_000_000,
+            address(this),
+            EXPECTED_MIN_DYNAMIC_FEE,
+            EXPECTED_MAX_DYNAMIC_FEE
         );
     }
 

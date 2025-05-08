@@ -77,6 +77,10 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         // Setup approvals
         _dealAndApprove(token0, lpProvider, amount0);
         _dealAndApprove(token1, lpProvider, amount1);
+        // Governance (deployerEOA) is the sender for the FullRangeLiquidityManager deposit – ensure it holds
+        // tokens and has the necessary allowances to avoid TRANSFER_FROM_FAILED.
+        _dealAndApprove(token0, deployerEOA, amount0);
+        _dealAndApprove(token1, deployerEOA, amount1);
         token0.approve(address(manager_), amount0);
         token1.approve(address(manager_), amount1);
 
@@ -116,6 +120,13 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         // ───────────────────────────────────────────────────────────
         uint256 shares;
 
+        // deposit must be executed by governance (deployerEOA)
+        vm.startPrank(deployerEOA);
+        (shares,,) = liquidityManager.deposit(
+            poolKey.toId(), amount0, amount1, 0, 0, lpProvider
+        );
+        vm.stopPrank();
+
         // bytes32 ← direct unwrap; no cast needed
         bytes32 poolIdBytes = PoolId.unwrap(poolKey.toId()); // for hash & indexing
 
@@ -127,8 +138,6 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         uint128 poolLiquidity = frPositions.positionLiquidity(poolIdBytes);
 
         assertTrue(poolLiquidity > 0, "pool-wide V4 liquidity zero");
-
-        shares = liquidityManager.getShares(poolKey.toId());
 
         // Get the actual liquidity from both positions
         bytes32 posKeyDirect = Position.calculatePositionKey(address(this), tickLower, tickUpper, bytes32(0));

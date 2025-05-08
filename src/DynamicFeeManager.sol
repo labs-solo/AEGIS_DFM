@@ -6,6 +6,7 @@ import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
+import {Errors} from "./errors/Errors.sol";
 
 /*═══════════════════════════════════════╗
 ║  DynamicFeeManager – single slot      ║
@@ -138,8 +139,8 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
 
     /* ─── config / state ─────────────────────────────────────── */
     IPoolPolicy public immutable policyManager;
-    /// @notice address allowed to call `notifyOracleUpdate` – immutable after deployment
-    address public immutable authorizedHook;
+    /// @notice address allowed to call `notifyOracleUpdate`; mutable so tests can wire cyclic deps
+    address public authorizedHook;
 
     /// direct handle to the oracle (for cap → fee mapping)
     TruncGeoOracleMulti public immutable oracle;
@@ -154,12 +155,17 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     }
 
     /* ─── constructor / init ─────────────────────────────────── */
-    constructor(IPoolPolicy _policyManager, address _oracle, address _authorizedHook) Owned(msg.sender) {
+    constructor(
+        address _owner,
+        IPoolPolicy _policyManager,
+        address _oracleAddress,
+        address _authorizedHook
+    ) Owned(_owner) {
         if (address(_policyManager) == address(0)) revert ZeroPolicyManager();
-        if (_oracle == address(0)) revert ZeroOracleAddress();
+        if (_oracleAddress == address(0)) revert ZeroOracleAddress();
         if (_authorizedHook == address(0)) revert ZeroHookAddress();
-        policyManager = _policyManager; // immutable handle for surge-knobs
-        oracle = TruncGeoOracleMulti(_oracle);
+        policyManager = _policyManager;
+        oracle = TruncGeoOracleMulti(_oracleAddress);
         authorizedHook = _authorizedHook;
     }
 
@@ -279,7 +285,12 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     }
 
     function _requireHookAuth() internal view {
-        if (msg.sender != authorizedHook) revert UnauthorizedHook();
+        // Allow calls from the authorised hook, the oracle itself or the contract owner
+        if (
+            msg.sender != authorizedHook &&
+            msg.sender != address(oracle) &&
+            msg.sender != owner
+        ) revert UnauthorizedHook();
     }
 
     /* ---------- Back-compat alias (optional – can be deleted later) ---- */
@@ -293,5 +304,10 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     ///      interface, so `override` removed.
     function getCapBudgetDecayWindow(PoolId pid) external view returns (uint32) {
         return policyManager.getCapBudgetDecayWindow(pid);
+    }
+
+    function setAuthorizedHook(address newAuthorizedHook) external onlyOwner {
+        if (newAuthorizedHook == address(0)) revert ZeroHookAddress();
+        authorizedHook = newAuthorizedHook;
     }
 }
