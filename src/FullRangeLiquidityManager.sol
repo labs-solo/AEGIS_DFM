@@ -80,6 +80,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     /// @dev NFT id per pool
     mapping(PoolId => uint256) public positionTokenId;
 
+    /// @dev Tracks whether unlimited Permit2 allowance has been set for a token.
+    mapping(address => bool) private _permit2Approved;
+
     /// @notice Expose getter expected by interface
     function authorizedHookAddress() external view override returns (address) {
         return authorizedHookAddress_;
@@ -341,17 +344,22 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Interact with PositionManager
         // ------------------------------------------------------------------
 
-        uint256 nftId = _getOrCreatePosition(key, poolId);
+        bool created;
+        uint256 nftId;
+        (nftId, created) = _getOrCreatePosition(key, poolId, v4LiquidityForPM, ethNeeded);
 
         // Approvals for Permit2 are handled in test harness / deployment scripts.
 
-        posManager.increaseLiquidity{value: ethNeeded}( // forward only needed ETH
-            nftId,
-            v4LiquidityForPM,
-            type(uint128).max,
-            type(uint128).max,
-            ""
-        );
+        // If the NFT already existed, simply increase liquidity; otherwise the mint already added it.
+        if (!created) {
+            posManager.increaseLiquidity{value: ethNeeded}(
+                nftId,
+                v4LiquidityForPM,
+                type(uint128).max,
+                type(uint128).max,
+                ""
+            );
+        }
 
         // Refund excess ETH
         if (msg.value > ethNeeded) {
@@ -894,37 +902,76 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         shares = positions.totalSupply(PoolId.unwrap(poolId));
     }
 
-    /// @notice Uniswap V4 liquidity currently held by the pool-wide position
-
     /**
-     * @dev Lazily mints a full-range NFT for the given pool if it does not yet exist.
-     * @param key PoolKey of the pool
-     * @param pid PoolId identifier
-     * @return id ERC-721 tokenId representing the position
+     * @dev Lazily creates a full-range position NFT if not existent, optionally
+     *      minting `liquidityDesired` in the same transaction to save gas.
+     *      Returns the tokenId **and** whether it was freshly minted.
+     *      Safe – we grant Permit2 approvals beforehand.
      */
-    function _getOrCreatePosition(PoolKey memory key, PoolId pid) internal returns (uint256 id) {
+    function _getOrCreatePosition(
+        PoolKey memory key,
+        PoolId      pid,
+        uint128     liquidityDesired,
+        uint256     ethNeeded
+    ) internal returns (uint256 id, bool created) {
         id = positionTokenId[pid];
-        if (id != 0) return id;
+        if (id != 0) {
+            // already exists – nothing to mint
+            created = false;
+            return (id, created);
+        }
 
-        // Prepare PositionManager router payload
-        bytes memory actions = abi.encodePacked(uint8(Actions.MINT_POSITION));
-        bytes[] memory params = new bytes[](1);
+        created = true; // we will mint now
+
+        // ------------------------------------------------------------------
+        // Encode router call: single MINT_POSITION with full-range bounds
+        // ------------------------------------------------------------------
+        bytes memory actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
+
+        bytes[] memory params = new bytes[](2);
+        // params[0] – mint the full-range position
         params[0] = abi.encode(
             key,
             TickMath.minUsableTick(key.tickSpacing),
             TickMath.maxUsableTick(key.tickSpacing),
-            uint256(0),
-            uint128(0),
-            uint128(0),
+            uint256(liquidityDesired), // mint full desired liquidity
+            type(uint128).max, // amount0Max (slippage handled in manager)
+            type(uint128).max, // amount1Max
             address(this),
             bytes("")
         );
 
-        bytes memory unlockData = abi.encode(actions, params);
+        // params[1] – settle any resulting deltas for the pair
+        params[1] = abi.encode(key.currency0, key.currency1);
 
-        // Use standard modifyLiquidities to ensure automatic unlock.
-        posManager.modifyLiquidities(unlockData, block.timestamp + 300);
-        id = posManager.nextTokenId() - 1;
-        positionTokenId[pid] = id;
+        // Approve tokens via Permit2 (no-op when allowance already max)
+        _ensurePermit2Approval(Currency.unwrap(key.currency0));
+        _ensurePermit2Approval(Currency.unwrap(key.currency1));
+
+        bytes memory unlockData = abi.encode(actions, params);
+        posManager.modifyLiquidities{value: ethNeeded}(unlockData, block.timestamp + 300);
+
+        id = posManager.nextTokenId() - 1; // PositionManager auto-increments
+        positionTokenId[pid] = id; // cache for future calls
+        return (id, created);
     }
+
+    /// @dev Grant unlimited Permit2 allowance for a token if not already set.
+    ///      Safe to call multiple times; cheap when allowance is already maxed.
+    /// @param token The ERC20 token address (Currency.unwrap(...))
+    function _ensurePermit2Approval(address token) internal {
+        if (_permit2Approved[token]) return;                       // SLOAD ≈ 100 gas
+
+        // First, give Permit2 unlimited allowance on the ERC20 itself so it can pull funds
+        // Safe: one-time max approval, identical to Uniswap v4 PositionManager pattern
+        SafeTransferLib.safeApprove(ERC20(token), address(posManager.permit2()), type(uint256).max);
+
+        // Then, inside Permit2 allow the PositionManager to spend on our behalf (also unlimited)
+        IAllowanceTransfer permit = posManager.permit2();
+        permit.approve(token, address(posManager), type(uint160).max, type(uint48).max);
+
+        _permit2Approved[token] = true;                            // mark approved
+    }
+
+    /// @notice Uniswap V4 liquidity currently held by the pool-wide position
 }

@@ -85,6 +85,10 @@ interface IFullRangeLiquidityManager {
     /// pool-wide position.
     function getShares(PoolId poolId) external view returns (uint256 shares);
 
+    /// @notice Returns the ERC-721 tokenId of the full-range position for the pool.
+    /// @dev Added to expose NFT id for off-chain analytics.
+    function positionTokenId(PoolId poolId) external view returns (uint256 tokenId);
+
     // Removed old positions() returning address
     // Removed positionLiquidity(bytes32 poolId)
 }

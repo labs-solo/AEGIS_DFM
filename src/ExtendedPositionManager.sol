@@ -9,6 +9,7 @@ import {IPoolManager} from "@uniswap/v4-core/src/interfaces/IPoolManager.sol";
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
 import {IPositionDescriptor} from "@uniswap/v4-periphery/src/interfaces/IPositionDescriptor.sol";
 import {IWETH9} from "@uniswap/v4-periphery/src/interfaces/external/IWETH9.sol";
+import {PoolKey} from "@uniswap/v4-core/src/types/PoolKey.sol";
 
 /// @title ExtendedPositionManager
 /// @notice Thin wrapper around Uniswap v4 PositionManager that exposes convenience
@@ -38,17 +39,23 @@ contract ExtendedPositionManager is PositionManager {
         uint128 amount1Max,
         bytes calldata hookData
     ) external payable returns (uint256) {
-        // Build the canonical (actions, params[]) payload expected by PositionManager.modifyLiquidities.
-        bytes memory actions = abi.encodePacked(uint8(Actions.INCREASE_LIQUIDITY));
-        bytes[] memory params = new bytes[](1);
+        // Retrieve the poolKey to know the token pair for settlement
+        (PoolKey memory poolKey,) = IPositionManager(address(this)).getPoolAndPositionInfo(tokenId);
+
+        // Build actions: INCREASE_LIQUIDITY followed by SETTLE_PAIR
+        bytes memory actions = abi.encodePacked(uint8(Actions.INCREASE_LIQUIDITY), uint8(Actions.SETTLE_PAIR));
+
+        // Build params array (length 2)
+        bytes[] memory params = new bytes[](2);
+        // params[0] → INCREASE_LIQUIDITY arguments
         params[0] = abi.encode(tokenId, liquidity, amount0Max, amount1Max, hookData);
+        // params[1] → SETTLE_PAIR arguments (currency0, currency1)
+        params[1] = abi.encode(poolKey.currency0, poolKey.currency1);
 
-        // Encode into unlockData so PositionManager handles PoolManager.unlock/lock cycle internally.
+        // Encode combined payload and execute via PosM
         bytes memory unlockData = abi.encode(actions, params);
-
-        // Delegate to the canonical router – this guarantees the PoolManager is unlocked again afterwards.
         this.modifyLiquidities{value: msg.value}(unlockData, block.timestamp + 300);
-        return tokenId; // convenient in scripts
+        return tokenId;
     }
 
     /// @notice Convenience wrapper to decrease liquidity without manual action encoding.
@@ -64,12 +71,17 @@ contract ExtendedPositionManager is PositionManager {
         uint128 amount1Min,
         bytes calldata hookData
     ) external returns (uint256) {
-        bytes memory actions = abi.encodePacked(uint8(Actions.DECREASE_LIQUIDITY));
-        bytes[] memory params = new bytes[](1);
+        // Retrieve the poolKey to settle after decreasing
+        (PoolKey memory poolKey,) = IPositionManager(address(this)).getPoolAndPositionInfo(tokenId);
+
+        // Build actions: DECREASE_LIQUIDITY → SETTLE_PAIR
+        bytes memory actions = abi.encodePacked(uint8(Actions.DECREASE_LIQUIDITY), uint8(Actions.SETTLE_PAIR));
+
+        bytes[] memory params = new bytes[](2);
         params[0] = abi.encode(tokenId, liquidity, amount0Min, amount1Min, hookData);
+        params[1] = abi.encode(poolKey.currency0, poolKey.currency1);
 
         bytes memory unlockData = abi.encode(actions, params);
-
         this.modifyLiquidities(unlockData, block.timestamp + 300);
         return tokenId;
     }
