@@ -72,8 +72,14 @@ library ReinvestLib {
             r.reason = COOLDOWN;
             return r;
         }
-        /* 2) threshold */
-        if (r.bal0 < minToken0 && r.bal1 < minToken1) {
+        /* 2) threshold
+         * Skip only when **neither** balance meets its per-token minimum.
+         * This lets reinvest proceed when one side alone is large enough,
+         * matching the unit-tests' expectation. Safe because the
+         * full-range mint always uses both tokens proportionally. */
+        bool token0OK = r.bal0 >= minToken0;
+        bool token1OK = r.bal1 >= minToken1;
+        if (!(token0OK || token1OK)) {                // neither side funded
             r.reason = THRESHOLD;
             return r;
         }
