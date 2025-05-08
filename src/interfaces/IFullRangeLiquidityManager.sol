@@ -62,15 +62,6 @@ interface IFullRangeLiquidityManager {
     /* ------------------------------------------------------------------ */
 
     /**
-     * @notice Combined helper used by test-suite to fetch reserves and share
-     *         counter in a single call.
-     */
-    function getPoolReservesAndShares(PoolId poolId)
-        external
-        view
-        returns (uint256 reserve0, uint256 reserve1, uint128 totalShares);
-
-    /**
      * @notice Return an account's share balance for a pool.
      * @dev Keeps the `initialized` boolean to avoid breaking existing test
      *      expectations.
@@ -79,8 +70,6 @@ interface IFullRangeLiquidityManager {
         external
         view
         returns (bool initialized, uint256 shares);
-
-    function removeLiquidity(PoolId poolId, uint128 amount) external returns (int256 amount0, int256 amount1);
 
     /// @notice Returns the total number of ERC-6909 shares minted for the
     /// pool-wide position.

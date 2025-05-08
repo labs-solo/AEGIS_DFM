@@ -20,6 +20,9 @@ library Errors {
     error AccessOnlyOwner(address caller);
     error UnauthorizedCaller(address caller);
     error GovernanceNotInitialized();
+    error HookAddressAlreadySet();
+    error InvalidHookAddress();
+    error ZeroDestination();
 
     // --- Validation & Input ---
     error ValidationDeadlinePassed(uint32 deadline, uint32 blockTime);
