@@ -119,14 +119,16 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         lastTick[pid] = currentTick;
         // -----------------------------
 
-        // Allow the test contract to manage liquidity via PoolManager directly
-        _dealAndApprove(usdc, address(this), type(uint256).max, address(poolManager));
-        _dealAndApprove(weth, address(this), type(uint256).max, address(poolManager));
+        // use a very large, yet finite token amount to bypass stdStorage limitations when `deal`ing
+        uint256 bigAmt = 10 ** 30; // 1e30 units – far exceeds any test requirement
+        _dealAndApprove(usdc, address(this), bigAmt, address(poolManager));
+        _dealAndApprove(weth, address(this), bigAmt, address(poolManager));
 
         // bootstrap not needed – oracle will learn MTB via CAP events
 
         // Set a short decay period for testing
         vm.startPrank(deployerEOA);
+        vm.stopPrank(); // end governance context to avoid lingering pranks
     }
 
     /// @dev Helper to trigger a CAP event by directly notifying the DynamicFeeManager
