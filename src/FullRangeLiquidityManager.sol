@@ -66,9 +66,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     /// @dev deployed once in constructor; immutable reference
     IFullRangePositions public immutable positions;
 
-    /// @dev Total ERC-6909 shares issued for *our* full-range position
-    mapping(PoolId => uint128) public positionTotalShares;
-
     /// @dev Pool keys for lookups
     mapping(PoolId => PoolKey) private _poolKeys;
 
@@ -233,7 +230,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         PoolKey memory key = _poolKeys[poolId];
         (, uint160 sqrtPriceX96,) = getPositionData(poolId);
-        uint128 totalSharesInternal = positionTotalShares[poolId];
+        uint256 _tokenIdTmp = PoolTokenIdUtils.toTokenId(poolId);
+        uint128 totalSharesInternal = uint128(positions.totalSupply(bytes32(_tokenIdTmp)));
 
         if (sqrtPriceX96 == 0 && totalSharesInternal == 0) {
             (sqrtPriceX96,,,) = StateLibrary.getSlot0(manager, poolId);
@@ -317,10 +315,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
 
         uint128 oldTotalSharesInternal = totalSharesInternal;
-        uint128 newTotalSharesInternal = oldTotalSharesInternal + sharesToAdd + uint128(calcResult.lockedAmount);
-        unchecked {
-            positionTotalShares[poolId] = newTotalSharesInternal;
-        }
 
         // ─── lock the first MIN_LOCKED_SHARES by minting to address(0) ───
         if (calcResult.lockedAmount > 0 && lockedShares[poolId] == 0) {
@@ -365,7 +359,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         // Refund excess ETH
         if (msg.value > ethNeeded) {
-            SafeTransferLib.safeTransferETH(msg.sender, msg.value - ethNeeded);
+            uint256 refund = msg.value - ethNeeded;
+            if (refund > 0) SafeTransferLib.safeTransferETH(msg.sender, refund);
         }
 
         emit LiquidityAdded(
@@ -506,8 +501,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             revert Errors.InsufficientShares(sharesToBurn, govShareBalance);
         }
 
-        uint128 totalShares = positionTotalShares[poolId];
-        if (totalShares == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
+        uint256 _tokenIdTmp = PoolTokenIdUtils.toTokenId(poolId);
+        uint128 totalShares = uint128(positions.totalSupply(bytes32(_tokenIdTmp)));
 
         uint128 minLocked = lockedShares[poolId];
         (uint256 reserve0, uint256 reserve1) = getPoolReserves(poolId);
@@ -529,10 +524,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         PoolKey memory key = _poolKeys[poolId];
 
         uint128 oldTotalShares = totalShares;
-        uint128 newTotalShares = oldTotalShares - sharesToBurn.toUint128();
-        unchecked {
-            positionTotalShares[poolId] = newTotalShares;
-        }
 
         // Burn shares from governance (msg.sender)
         FullRangePositions(address(positions)).burn(msg.sender, tokenId, sharesToBurn);
@@ -724,6 +715,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (locked > totalSharesGlobal) revert Errors.ValidationInvalidInput("locked>total");
 
         uint128 usableShares = uint128(totalSharesGlobal - locked);
+        if (sharesToBurn > usableShares) revert Errors.InsufficientShares(sharesToBurn, usableShares);
         if (usableShares == 0) revert Errors.InsufficientShares(sharesToBurn, 0);
 
         v4LiquidityToWithdraw = FullMath.mulDivRoundingUp(totalV4Liquidity, sharesToBurn, usableShares).toUint128();
@@ -735,8 +727,15 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     /*────────────────────────── Configuration ──────────────────────────*/
 
     /// @notice ERC-6909 total shares issued for a pool-wide tokenId
-    function getShares(PoolId poolId) external view override returns (uint256 shares) {
-        shares = positions.totalSupply(PoolId.unwrap(poolId));
+    function getShares(PoolId poolId) external view override returns (uint256) {
+        return positions.totalSupply(PoolId.unwrap(poolId));
+    }
+
+    /// @notice Compatibility getter replacing the old public mapping.
+    ///         Returns the total ERC-6909 shares issued for the pool-wide tokenId.
+    function positionTotalShares(PoolId poolId) external view override returns (uint128) {
+        uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
+        return uint128(positions.totalSupply(bytes32(tokenId)));
     }
 
     /**
@@ -801,6 +800,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     ///      Safe to call multiple times; cheap when allowance is already maxed.
     /// @param token The ERC20 token address (Currency.unwrap(...))
     function _ensurePermit2Approval(address token) internal {
+        if (token == address(0)) return;
         if (_permit2Approved[token]) return;                       // SLOAD ≈ 100 gas
 
         // First, give Permit2 unlimited allowance on the ERC20 itself so it can pull funds
@@ -819,7 +819,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (amount == 0) return;
         if (currency.isAddressZero()) {
             require(msg.value >= amount, "FRLM: insufficient ETH sent");
-            // excess ETH (if any) is refunded by the caller-side wrapper.
+            uint256 refund = msg.value - amount;
+            if (refund > 0) SafeTransferLib.safeTransferETH(msg.sender, refund);
         } else {
             SafeTransferLib.safeTransferFrom(ERC20(Currency.unwrap(currency)), msg.sender, address(this), amount);
         }
@@ -828,9 +829,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     /// @dev Internal mint of ERC-6909 shares to `this` & update accounting.
     function _mintShares(PoolId pid, uint128 shares) internal {
         if (shares == 0) return;
-        unchecked {
-            positionTotalShares[pid] += shares;
-        }
         uint256 tokenId = PoolTokenIdUtils.toTokenId(pid);
         FullRangePositions(address(positions)).mint(address(this), tokenId, shares);
     }
