@@ -44,8 +44,9 @@
     import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
 
     uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 100000;  // 10 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =   3000;  // 0.3 %
+    uint256 constant EXPECTED_DAILY_BUDGET       =  50000;  // 50 000 units
 
     /**
     * @title ForkSetup
@@ -188,10 +189,10 @@
             supportedTickSpacings[2] = 200;
             PoolPolicyManager policyManagerImpl = new PoolPolicyManager(
                 deployerEOA,
-                uint32(EXPECTED_DEFAULT_DYNAMIC_FEE),
+                EXPECTED_DEFAULT_DYNAMIC_FEE,
                 supportedTickSpacings,
-                0,
-                deployerEOA,
+                EXPECTED_DAILY_BUDGET,   // dailyBudget
+                deployerEOA, // feeCollector
                 EXPECTED_MIN_DYNAMIC_FEE,
                 EXPECTED_MAX_DYNAMIC_FEE
             );
@@ -268,7 +269,7 @@
                     c2Deployer,
                     DFM_SALT,
                     type(DynamicFeeManager).creationCode,
-                    abi.encode(policyManager, newOracle, hookPred)
+                    abi.encode(deployerEOA, policyManager, newOracle, hookPred)
                 );
                 dfmPred = newDFM;
 
@@ -358,6 +359,7 @@
             );
 
             bytes memory dfmArgs = abi.encode(
+                deployerEOA,
                 policyManager,
                 finalOracleAddr,
                 finalHookAddr
@@ -396,6 +398,7 @@
 
             // Use the actual deployed Oracle address in dfmArgs
             bytes memory updatedDfmArgs = abi.encode(
+                deployerEOA,
                 policyManager,
                 deployedOracleAddr,  // Use actual deployed address 
                 finalHookAddr

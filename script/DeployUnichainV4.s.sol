@@ -60,6 +60,10 @@ contract DeployUnichainV4 is Script {
     address public constant WETH = 0x4200000000000000000000000000000000000006; // WETH9 on Unichain
     address public constant USDC = 0x078D782b760474a361dDA0AF3839290b0EF57AD6; // Circle USDC on Unichain
 
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+
     function run() external {
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY");
         address deployerAddress = vm.addr(deployerPrivateKey);
@@ -77,11 +81,13 @@ contract DeployUnichainV4 is Script {
         supportedTickSpacings_[1] = 60;
         supportedTickSpacings_[2] = 200;
         policyManager = new PoolPolicyManager(
-            deployerAddress,
-            3000, // defaultDynamicFeePpm
-            supportedTickSpacings_,
-            1e17, // protocolInterestFeePercentage (10%)
-            deployerAddress // feeCollector
+            deployerAddress, // owner
+            EXPECTED_DEFAULT_DYNAMIC_FEE, // defaultDynamicFee. Removed uint32 cast
+            supportedTickSpacings_, // supportedTickSpacings
+            0,
+            msg.sender,
+            EXPECTED_MIN_DYNAMIC_FEE,     // NEW: min base fee
+            EXPECTED_MAX_DYNAMIC_FEE      // NEW: max base fee
         );
 
         // ─── NEW flow: deploy hook first, then pass address to oracle ───

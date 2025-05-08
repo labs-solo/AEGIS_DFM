@@ -69,6 +69,7 @@ library SimpleDeployLib {
 
         /* 2️⃣  Dynamic Fee Manager – oracle known, give sentinel     */
         d.dfm = new DynamicFeeManager(
+            governance,
             policy,
             address(d.oracle),
             FAKE_HOOK

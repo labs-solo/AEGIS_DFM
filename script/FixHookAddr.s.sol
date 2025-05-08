@@ -91,6 +91,7 @@ contract FixHookAddr is Script {
 
         // Deploy Fee Manager with predicted hook address
         feeManager_ = new DynamicFeeManager(
+            owner_,
             policyManager_,
             address(oracle_),
             predictedHook

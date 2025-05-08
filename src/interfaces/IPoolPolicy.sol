@@ -243,12 +243,12 @@ interface IPoolPolicy {
     /**
      * @notice Returns the minimum base fee (in PPM) for the given pool.
      */
-    function getMinBaseFee(PoolId poolId) external view returns (uint256);
+    function getMinBaseFee(PoolId pid) external view returns (uint256);
 
     /**
      * @notice Returns the maximum base fee (in PPM) for the given pool.
      */
-    function getMaxBaseFee(PoolId poolId) external view returns (uint256);
+    function getMaxBaseFee(PoolId pid) external view returns (uint256);
 
     /**
      * @notice DEPRECATED - Returns 0. Kept for backward compatibility.

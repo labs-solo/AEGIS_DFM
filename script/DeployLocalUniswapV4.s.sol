@@ -45,6 +45,10 @@ import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
  * 4. Test utility routers for liquidity and swaps
  */
 contract DeployLocalUniswapV4 is Script {
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+
     // ADD using directive HERE
     using PoolIdLibrary for PoolId;
 
@@ -109,11 +113,13 @@ contract DeployLocalUniswapV4 is Script {
         supportedTickSpacings[1] = 60;
         supportedTickSpacings[2] = 200;
         policyManager = new PoolPolicyManager(
-            governance, // owner / solo governance
-            3_000, // defaultDynamicFeePpm (0.3%)
-            supportedTickSpacings, // allowed tick-spacings
-            1e17, // protocol-interest-fee = 10% (scaled by 1e18)
-            address(0) // fee collector
+            msg.sender,
+            EXPECTED_DEFAULT_DYNAMIC_FEE,
+            supportedTickSpacings,
+            0,
+            msg.sender,
+            EXPECTED_MIN_DYNAMIC_FEE,     // NEW: min base fee
+            EXPECTED_MAX_DYNAMIC_FEE      // NEW: max base fee
         );
         console.log("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
@@ -145,6 +151,7 @@ contract DeployLocalUniswapV4 is Script {
 
         // Deploy DynamicFeeManager AFTER FullRange
         dynamicFeeManager = new DynamicFeeManager(
+            governance, // ADDED owner
             policyManager, // policy
             address(truncGeoOracle), // oracle
             address(fullRange) // authorizedHook

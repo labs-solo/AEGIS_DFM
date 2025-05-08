@@ -90,7 +90,7 @@ contract DynamicFeeManagerTest is Test {
 
         // Deploy DFM
         // ctor is (IPoolPolicy policyMgr, address oracle, address hook)
-        dfm = new DynamicFeeManager(policyManager, address(oracle), address(fullRange)); // Use deployed oracle and hook
+        dfm = new DynamicFeeManager(address(this), policyManager, address(oracle), address(fullRange)); // Use address(this) as owner, deployed oracle and hook
 
         // ... (rest of setup like poolKey, poolId, enableOracle)
         address token0 = address(0xA11CE);

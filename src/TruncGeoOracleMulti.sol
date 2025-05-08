@@ -73,7 +73,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /* ─────────────────── IMMUTABLE STATE ────────────────────── */
     IPoolManager public immutable poolManager;
     IPoolPolicy public immutable policy;
-    address public immutable hook; // The ONLY hook allowed to call `enableOracleForPool` & `pushObservation*`
+    // Hook address (mutable – allows test harness to wire cyclic deps).
+    address public hook;
     address public immutable owner; // Governance address that can refresh policy cache
 
     /* ───────────────────── MUTABLE STATE ────────────────────── */
@@ -131,8 +132,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /// @notice Deploy the oracle and wire the immutable dependencies.
     /// @param _poolManager Canonical v4 `PoolManager` contract
     /// @param _policyContract Governance-controlled policy contract
-    /// @param _hook Whitelisted hook address that is allowed to call
-    ///              `enableOracleForPool` and `pushObservationAndCheckCap`
+    /// @param _hook Hook address (mutable – allows test harness to wire cyclic deps)
     /// @param _owner Governor address that can refresh the cached policy
     /// -----------------------------------------------------------------------
     constructor(
@@ -143,13 +143,12 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     ) {
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_policyContract) == address(0)) revert Errors.ZeroAddress();
-        if (_hook == address(0)) revert Errors.ZeroAddress();
         if (_owner == address(0)) revert Errors.ZeroAddress();
 
         poolManager = _poolManager;
         policy      = _policyContract;
-        hook        = _hook;          // Set immutable hook address
-        owner       = _owner;         // Set immutable owner address
+        hook        = _hook;   // May be zero for test-only simple deploy
+        owner       = _owner;
     }
 
     /**
@@ -703,5 +702,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         );
 
         newNext = state.cardinalityNext;
+    }
+
+    /// @notice One-time setter to wire the hook address in test environments.
+    function setHookAddress(address _hook) external {
+        if (msg.sender != owner) revert OnlyOwner();
+        if (_hook == address(0)) revert Errors.ZeroAddress();
+        if (hook != address(0)) revert Errors.AlreadyInitialized("hook");
+        hook = _hook;
     }
 }

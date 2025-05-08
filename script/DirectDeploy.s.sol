@@ -28,6 +28,9 @@ contract DirectDeploy is Script {
 
     // Constants
     uint256 constant LIQUIDITY_ACCUMULATOR_REACTIVATION_DELAY = 3600; // 1 hour in seconds
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
 
     // Pre-deployed contract addresses from previous steps
     TruncGeoOracleMulti public truncGeoOracle;
@@ -101,7 +104,13 @@ contract DirectDeploy is Script {
             address initialFeeCollector = deployer;
 
             policyManager = new PoolPolicyManager(
-                owner, defaultDynamicFeePpm, supportedTickSpacings, initialProtocolFeePercentage, initialFeeCollector
+                msg.sender,
+                EXPECTED_DEFAULT_DYNAMIC_FEE,
+                supportedTickSpacings,
+                0,
+                msg.sender,
+                EXPECTED_MIN_DYNAMIC_FEE,     // NEW: min base fee
+                EXPECTED_MAX_DYNAMIC_FEE      // NEW: max base fee
             );
             console.log("PolicyManager deployed at: %s", address(policyManager));
         }
@@ -149,6 +158,7 @@ contract DirectDeploy is Script {
         // Now we can continue with the rest of the initialization
         console.log("Initializing dynamic fee manager...");
         dynamicFeeManager = new DynamicFeeManager(
+            deployer,
             IPoolPolicy(address(policyManager)), // policy
             address(truncGeoOracle), // oracle
             address(hook) // authorizedHook

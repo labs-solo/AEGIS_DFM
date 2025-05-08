@@ -50,7 +50,7 @@ library SharedDeployLib {
     /// 🛑  Do **not** hard-code a deployer.  It must be provided by the caller.
 
     /* ---------- flags re-exported so tests don't need hard-coding ------- */
-    uint24  public  constant POOL_FEE     = 3_000; // 0.30%
+    uint24  public  constant POOL_FEE     = uint24(5000 | 0x800000); // 0.50% with dynamic fee flag
     int24   public  constant TICK_SPACING = 60;
 
     /* ------------------------------------------------------------- *
@@ -59,11 +59,9 @@ library SharedDeployLib {
      * ------------------------------------------------------------- */
     uint160 internal constant SPOT_HOOK_FLAGS =
         (Hooks.AFTER_INITIALIZE_FLAG |           // true
-         Hooks.AFTER_REMOVE_LIQUIDITY_FLAG |     // true
          Hooks.BEFORE_SWAP_FLAG |                // true
          Hooks.AFTER_SWAP_FLAG |                 // true
-         Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG |   // true
-         Hooks.AFTER_REMOVE_LIQUIDITY_RETURNS_DELTA_FLAG);  // true
+         Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG);   // true
 
     /* ----------------------------------------------------------------
      *  Dynamic mask that always covers *all* defined hook-flag bits.
