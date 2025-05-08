@@ -38,13 +38,17 @@ contract ExtendedPositionManager is PositionManager {
         uint128 amount1Max,
         bytes calldata hookData
     ) external payable returns (uint256) {
-        bytes memory actions = abi.encodePacked(
-            uint8(Actions.INCREASE_LIQUIDITY),
-            abi.encode(tokenId, liquidity, amount0Max, amount1Max, hookData)
-        );
-        // forward to underlying router
-        this.modifyLiquidities(actions, block.timestamp + 300);
-        return tokenId; // return value not used but convenient in scripting
+        // Build the canonical (actions, params[]) payload expected by PositionManager.modifyLiquidities.
+        bytes memory actions = abi.encodePacked(uint8(Actions.INCREASE_LIQUIDITY));
+        bytes[] memory params = new bytes[](1);
+        params[0] = abi.encode(tokenId, liquidity, amount0Max, amount1Max, hookData);
+
+        // Encode into unlockData so PositionManager handles PoolManager.unlock/lock cycle internally.
+        bytes memory unlockData = abi.encode(actions, params);
+
+        // Delegate to the canonical router – this guarantees the PoolManager is unlocked again afterwards.
+        this.modifyLiquidities{value: msg.value}(unlockData, block.timestamp + 300);
+        return tokenId; // convenient in scripts
     }
 
     /// @notice Convenience wrapper to decrease liquidity without manual action encoding.
@@ -60,11 +64,13 @@ contract ExtendedPositionManager is PositionManager {
         uint128 amount1Min,
         bytes calldata hookData
     ) external returns (uint256) {
-        bytes memory actions = abi.encodePacked(
-            uint8(Actions.DECREASE_LIQUIDITY),
-            abi.encode(tokenId, liquidity, amount0Min, amount1Min, hookData)
-        );
-        this.modifyLiquidities(actions, block.timestamp + 300);
+        bytes memory actions = abi.encodePacked(uint8(Actions.DECREASE_LIQUIDITY));
+        bytes[] memory params = new bytes[](1);
+        params[0] = abi.encode(tokenId, liquidity, amount0Min, amount1Min, hookData);
+
+        bytes memory unlockData = abi.encode(actions, params);
+
+        this.modifyLiquidities(unlockData, block.timestamp + 300);
         return tokenId;
     }
 } 

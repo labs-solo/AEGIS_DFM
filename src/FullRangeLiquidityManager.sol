@@ -35,6 +35,7 @@ import {ExtendedPositionManager} from "./ExtendedPositionManager.sol";
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
 import {IPositionDescriptor} from "v4-periphery/src/interfaces/IPositionDescriptor.sol";
 import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
+import {Actions} from "@uniswap/v4-periphery/src/libraries/Actions.sol";
 
 using SafeCast for uint256;
 using SafeCast for int256;
@@ -905,22 +906,24 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         id = positionTokenId[pid];
         if (id != 0) return id;
 
-        // Mint a zero-liquidity position – actual liquidity will be added later.
-        bytes memory actions = abi.encodePacked(
-            uint8(0x03), // Actions.MINT_POSITION == 3 (see Actions.sol). Use literal to avoid new import.
-            abi.encode(
-                key,
-                TickMath.minUsableTick(key.tickSpacing),
-                TickMath.maxUsableTick(key.tickSpacing),
-                uint256(0),
-                uint128(0),
-                uint128(0),
-                address(this),
-                bytes("")
-            )
+        // Prepare PositionManager router payload
+        bytes memory actions = abi.encodePacked(uint8(Actions.MINT_POSITION));
+        bytes[] memory params = new bytes[](1);
+        params[0] = abi.encode(
+            key,
+            TickMath.minUsableTick(key.tickSpacing),
+            TickMath.maxUsableTick(key.tickSpacing),
+            uint256(0),
+            uint128(0),
+            uint128(0),
+            address(this),
+            bytes("")
         );
 
-        posManager.modifyLiquidities(actions, block.timestamp + 300);
+        bytes memory unlockData = abi.encode(actions, params);
+
+        // Use standard modifyLiquidities to ensure automatic unlock.
+        posManager.modifyLiquidities(unlockData, block.timestamp + 300);
         id = posManager.nextTokenId() - 1;
         positionTokenId[pid] = id;
     }
