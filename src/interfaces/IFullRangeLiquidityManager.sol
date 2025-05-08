@@ -6,6 +6,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IFullRangePositions} from "./IFullRangePositions.sol";
 import {FullRangePositions} from "../token/FullRangePositions.sol";
+import {ExtendedPositionManager} from "../ExtendedPositionManager.sol";
 
 /**
  * @notice Interface for FullRangeLiquidityManager (Phase 1: POL-Only)
@@ -88,6 +89,9 @@ interface IFullRangeLiquidityManager {
     /// @notice Returns the ERC-721 tokenId of the full-range position for the pool.
     /// @dev Added to expose NFT id for off-chain analytics.
     function positionTokenId(PoolId poolId) external view returns (uint256 tokenId);
+
+    /// @notice Returns the ExtendedPositionManager contract used by this manager.
+    function posManager() external view returns (ExtendedPositionManager);
 
     // Removed old positions() returning address
     // Removed positionLiquidity(bytes32 poolId)

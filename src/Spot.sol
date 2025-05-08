@@ -31,7 +31,7 @@
     import {ISpot, DepositParams, WithdrawParams} from "./interfaces/ISpot.sol";
     import {ISpotHooks} from "./interfaces/ISpotHooks.sol";
     import {ITruncGeoOracleMulti} from "./interfaces/ITruncGeoOracleMulti.sol";
-    import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
+    // import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol"; // deprecated
 
     import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
     import {DynamicFeeManager} from "./DynamicFeeManager.sol";
@@ -39,7 +39,7 @@
     import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
     import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
     import {Errors} from "./errors/Errors.sol";
-    import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol";
+    // import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol"; // deprecated
     import {ReinvestLib} from "./libraries/ReinvestLib.sol";
 
     /* ───────────────────────────────────────────────────────────
@@ -53,7 +53,7 @@
     /* ───────────────────────────────────────────────────────────
     *                       Contract: Spot
     * ─────────────────────────────────────────────────────────── */
-    contract Spot is BaseHook, ISpot, ISpotHooks, IUnlockCallback, Owned {
+    contract Spot is BaseHook, ISpot, ISpotHooks, Owned {
         using PoolIdLibrary for PoolKey;
         using PoolIdLibrary for PoolId;
         using CurrencyLibrary for Currency;
@@ -441,40 +441,6 @@
             return (amount0, amount1);
         }
 
-        struct CallbackData {
-            bytes32 poolId;
-            uint8 callbackType;
-            uint128 shares;
-            uint256 amount0;
-            uint256 amount1;
-            address recipient;
-        }
-
-        function unlockCallback(bytes calldata data) external override(IUnlockCallback) returns (bytes memory) {
-            CallbackData memory cbData = abi.decode(data, (CallbackData));
-            bytes32 _poolId = cbData.poolId;
-            if (!poolData[_poolId].initialized) revert Errors.PoolNotInitialized(_poolId);
-            PoolKey memory key = poolKeys[_poolId];
-            ModifyLiquidityParams memory params = ModifyLiquidityParams({
-                tickLower: TickMath.minUsableTick(key.tickSpacing),
-                tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-                liquidityDelta: 0,
-                salt: bytes32(0)
-            });
-            if (cbData.callbackType == 1) {
-                params.liquidityDelta = int256(uint256(cbData.shares));
-            } else {
-                revert("Unknown callback type");
-            }
-            (BalanceDelta delta,) = poolManager.modifyLiquidity(key, params, "");
-
-            // Handle settlement using CurrencySettlerExtension
-            // For reinvest (add liquidity), delta will be negative, triggering settleCurrency
-            CurrencySettlerExtension.handlePoolDelta(poolManager, delta, key.currency0, key.currency1, address(this));
-
-            return abi.encode(delta);
-        }
-
         function _afterInitialize(address, /* sender */ PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
             internal
             virtual
@@ -578,7 +544,8 @@
             if (reinvestmentPaused) {
                 if (amt0 > 0) poolManager.take(key.currency0, feeRecipient, amt0);
                 if (amt1 > 0) poolManager.take(key.currency1, feeRecipient, amt1);
-
+                // emit skip-reason so tests see it
+                emit ReinvestSkipped(pid, REASON_GLOBAL_PAUSED, amt0, amt1);
                 emit HookFeeWithdrawn(pid, feeRecipient, amt0, amt1);
             } else {
                 _reinvestWithLib(key, pid);
