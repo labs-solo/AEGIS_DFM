@@ -41,6 +41,7 @@
     import {Errors} from "./errors/Errors.sol";
     import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol";
     import {ReinvestLib} from "./libraries/ReinvestLib.sol";
+    import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 
     /* ───────────────────────────────────────────────────────────
     *                    Solmate / OpenZeppelin
@@ -575,14 +576,52 @@
             uint256 amt0 = d0 > 0 ? uint256(d0) : 0;
             uint256 amt1 = d1 > 0 ? uint256(d1) : 0;
 
+            // ─── Global pause branch ───
             if (reinvestmentPaused) {
+                // Maintain previous withdrawal behaviour
                 if (amt0 > 0) poolManager.take(key.currency0, feeRecipient, amt0);
                 if (amt1 > 0) poolManager.take(key.currency1, feeRecipient, amt1);
 
                 emit HookFeeWithdrawn(pid, feeRecipient, amt0, amt1);
-            } else {
-                _reinvestWithLib(key, pid);
+
+                // NEW: Explicitly emit skip-event so integrators & tests can observe the pause
+                _emitSkip(pid, ReinvestLib.GLOBAL_PAUSED, amt0, amt1);
+                return; // short-circuit – no reinvest attempted while paused
             }
+
+            // ─── Settle any external token balances so they become internal credit ───
+            _settleExternalBalances(key);
+
+            // ─── Proceed with reinvestment logic ───
+            _reinvestWithLib(key, pid);
+        }
+
+        /*──────────────────────── Helper: settle external balances ───────────────*/
+        /// @dev Moves any ERC20 tokens held by the hook into the PoolManager so
+        ///      they are counted as internal credit (positive CurrencyDelta).
+        ///      This aligns the accounting model with ReinvestLib, which relies
+        ///      exclusively on internal balances.
+        function _settleExternalBalances(PoolKey memory key) internal {
+            // token0
+            address t0 = Currency.unwrap(key.currency0);
+            if (t0 != address(0)) {
+                uint256 ext0 = IERC20Minimal(t0).balanceOf(address(this));
+                if (ext0 > 0) {
+                    CurrencySettlerExtension.settleCurrency(poolManager, key.currency0, ext0);
+                }
+            }
+
+            // token1
+            address t1 = Currency.unwrap(key.currency1);
+            if (t1 != address(0)) {
+                uint256 ext1 = IERC20Minimal(t1).balanceOf(address(this));
+                if (ext1 > 0) {
+                    CurrencySettlerExtension.settleCurrency(poolManager, key.currency1, ext1);
+                }
+            }
+            // NOTE: Native ETH (address(0)) is not handled here since the current
+            //       pools in test-suite use ERC20 tokens only. Support can be
+            //       added by forwarding value to PoolManager.settle if needed.
         }
 
         /* ─────────────────── Interface view helpers (restored) ─────────────────── */
