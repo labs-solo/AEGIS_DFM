@@ -14,8 +14,8 @@ import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
 import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
 import {Position} from "v4-core/src/libraries/Position.sol";
-import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
-import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
+// import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol"; // deprecated
+// import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol"; // deprecated
 
 // --- Solmate / OpenZeppelin Imports ---
 import {Owned} from "solmate/src/auth/Owned.sol";
@@ -30,7 +30,11 @@ import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
 import {Errors} from "./errors/Errors.sol";
 import {FullRangePositions, IFullRangePositions} from "./token/FullRangePositions.sol";
 import {PoolTokenIdUtils} from "./utils/PoolTokenIdUtils.sol";
-import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol";
+import {ExtendedPositionManager} from "./ExtendedPositionManager.sol";
+import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
+import {IPositionDescriptor} from "v4-periphery/src/interfaces/IPositionDescriptor.sol";
+import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
+import {Actions} from "@uniswap/v4-periphery/src/libraries/Actions.sol";
 
 using SafeCast for uint256;
 using SafeCast for int256;
@@ -42,7 +46,7 @@ using CurrencyLibrary for Currency;
  * @notice Manages full-range liquidity positions across multiple pools
  * @dev Phase 1: POL-only, restricted deposits/withdrawals. Core logic kept for Phase 2.
  */
-contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidityManager, IUnlockCallback {
+contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidityManager {
     // Struct for deposit calculation results (kept as internal helper uses it)
     struct DepositCalculationResult {
         uint256 actual0;
@@ -56,6 +60,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     IPoolManager public immutable manager;
     /// @dev Pool Policy Manager reference (optional, for governance lookup)
     IPoolPolicy public immutable policyManager;
+    /// @dev Extended Position Manager reference
+    ExtendedPositionManager public immutable posManager;
 
     /// @dev deployed once in constructor; immutable reference
     IFullRangePositions public immutable positions;
@@ -70,9 +76,37 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     /// Set by the owner via setAuthorizedHookAddress.
     address public authorizedHookAddress_;
 
+    /// @dev NFT id per pool
+    mapping(PoolId => uint256) public positionTokenId;
+
+    /// @dev Tracks whether unlimited Permit2 allowance has been set for a token.
+    mapping(address => bool) private _permit2Approved;
+
     /// @notice Expose getter expected by interface
     function authorizedHookAddress() external view override returns (address) {
         return authorizedHookAddress_;
+    }
+
+    /* ────────── Modifiers ────────── */
+
+    /**
+     * @dev Governance gate.
+     *
+     *  - Deployer/owner (traditional governance) **or**
+     *  - `authorizedHookAddress` (Spot hook) may call the guarded function.
+     */
+    modifier onlyGovernance() {
+        address gov = address(policyManager) != address(0) ? policyManager.getSoloGovernance() : owner;
+        if (msg.sender != gov && msg.sender != authorizedHookAddress_) {
+            revert Errors.AccessOnlyGovernance(msg.sender);
+        }
+        _;
+    }
+
+    /// @dev Restrict to the hook once its address is set.
+    modifier onlyHook() {
+        if (msg.sender != authorizedHookAddress_) revert Errors.AccessNotAuthorized(msg.sender);
+        _;
     }
 
     // ────────────────────────── CONSTANTS ──────────────────────────
@@ -110,59 +144,18 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     // Storage slot constants for V4 state access
     bytes32 private constant POOLS_SLOT = bytes32(uint256(6));
 
-    /// @notice Operation selector sent to the hook/PoolManager via `unlock`
-    enum CallbackType {
-        DEPOSIT,
-        WITHDRAW,
-        REINVEST_PROTOCOL_FEES
-    }
-
-    /// @notice Encoded in `unlock` calldata so Spot ↔︎ LM stay in sync
-    struct CallbackData {
-        PoolId poolId;
-        CallbackType callbackType;
-        uint128 shares; // v4-liquidity to add/remove
-        uint128 oldTotalShares; // bookkeeping
-        uint256 amount0;
-        uint256 amount1;
-        address recipient; // where token balances finally go
-    }
-
-    /* ────────── Modifiers ────────── */
-
-    // Added definitions
-
-    /**
-     * @dev Governance gate.
-     *
-     *  - Deployer/owner (traditional governance) **or**
-     *  - `authorizedHookAddress` (Spot hook) may call the guarded function.
-     *
-     *  This un-blocks protocol-initiated flows such as fee-reinvestment
-     *  where the hook needs to move liquidity on-chain without routing
-     *  through the EOA governor.
-     */
-    modifier onlyGovernance() {
-        address gov = address(policyManager) != address(0) ? policyManager.getSoloGovernance() : owner;
-        if (msg.sender != gov && msg.sender != authorizedHookAddress_) {
-            revert Errors.AccessOnlyGovernance(msg.sender);
-        }
-        _;
-    }
-
-    modifier onlyHook() {
-        if (msg.sender != authorizedHookAddress_) revert Errors.AccessNotAuthorized(msg.sender);
-        _;
-    }
-
     /**
      * @notice Constructor
      * @param _manager The Uniswap V4 pool manager
+     * @param _posManager The Extended Position Manager contract
      * @param _policyManager The Pool Policy Manager contract
      * @param _owner The owner of the contract
      */
-    constructor(IPoolManager _manager, IPoolPolicy _policyManager, address _owner) Owned(_owner) {
+    constructor(IPoolManager _manager, ExtendedPositionManager _posManager, IPoolPolicy _policyManager, address _owner)
+        Owned(_owner)
+    {
         manager = _manager;
+        posManager = _posManager;
         policyManager = _policyManager;
         positions = new FullRangePositions("FullRange Position", "FRP", address(this));
     }
@@ -323,19 +316,24 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             SafeTransferLib.safeTransferFrom(ERC20(Currency.unwrap(key.currency1)), msg.sender, address(this), amount1);
         }
 
-        // Prepare callback data - use v4LiquidityForPM for actual pool liquidity modification
-        CallbackData memory callbackData = CallbackData({
-            poolId: poolId,
-            callbackType: CallbackType.DEPOSIT,
-            shares: v4LiquidityForPM, // Use V4 liquidity amount for modifyLiquidity
-            oldTotalShares: oldTotalSharesInternal,
-            amount0: amount0,
-            amount1: amount1,
-            recipient: address(this)
-        });
+        // ------------------------------------------------------------------
+        // Interact with PositionManager
+        // ------------------------------------------------------------------
 
-        // Unlock calls modifyLiquidity via hook and transfers tokens to PoolManager
-        manager.unlock(abi.encode(callbackData));
+        bool created;
+        uint256 nftId;
+        (nftId, created) = _getOrCreatePosition(key, poolId, v4LiquidityForPM, ethNeeded);
+
+        // If the NFT already existed, simply increase liquidity; otherwise the mint already added it.
+        if (!created) {
+            posManager.increaseLiquidity{value: ethNeeded}(
+                nftId,
+                v4LiquidityForPM,
+                type(uint128).max,
+                type(uint128).max,
+                ""
+            );
+        }
 
         // Refund excess ETH
         if (msg.value > ethNeeded) {
@@ -345,7 +343,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         emit LiquidityAdded(
             poolId, recipient, amount0, amount1, oldTotalSharesInternal, uint128(usableShares), block.timestamp
         );
-        emit PoolStateUpdated(poolId, newTotalSharesInternal, uint8(CallbackType.DEPOSIT));
+        // no longer rely on CallbackType enum, use opType 1 for deposit in new scheme
+        emit PoolStateUpdated(poolId, newTotalSharesInternal, 1);
 
         return (usableShares, amount0, amount1);
     }
@@ -510,18 +509,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // Burn shares from governance (msg.sender)
         FullRangePositions(address(positions)).burn(msg.sender, tokenId, sharesToBurn);
 
-        CallbackData memory callbackData = CallbackData({
-            poolId: poolId,
-            callbackType: CallbackType.WITHDRAW,
-            shares: v4LiquidityToWithdraw,
-            oldTotalShares: oldTotalShares,
-            amount0: amount0,
-            amount1: amount1,
-            recipient: address(this)
-        });
-
-        // Unlock calls modifyLiquidity via hook and transfers tokens from PoolManager
-        manager.unlock(abi.encode(callbackData));
+        // Call PositionManager to remove liquidity from the NFT
+        uint256 nftId = positionTokenId[poolId];
+        posManager.decreaseLiquidity(nftId, v4LiquidityToWithdraw, uint128(amount0Min), uint128(amount1Min), "");
 
         // Transfer withdrawn tokens to the final recipient
         if (amount0 > 0) {
@@ -534,7 +524,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         emit LiquidityRemoved(
             poolId, recipient, amount0, amount1, oldTotalShares, sharesToBurn.toUint128(), block.timestamp
         );
-        emit PoolStateUpdated(poolId, newTotalShares, uint8(CallbackType.WITHDRAW));
+        emit PoolStateUpdated(poolId, newTotalShares, 2);
 
         return (amount0, amount1);
     }
@@ -636,53 +626,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
 
     /**
-     * @notice Callback function called by PoolManager during unlock operations
-     * @param data Encoded callback data containing operation details
-     * @return bytes The encoded BalanceDelta from the operation
+     * @dev legacy unlockCallback removed – PositionManager now handles liquidity changes.
      */
-    function unlockCallback(bytes calldata data) external override returns (bytes memory) {
-        // Only allow calls from the pool manager
-        if (msg.sender != address(manager)) {
-            revert Errors.AccessNotAuthorized(msg.sender);
-        }
-
-        // Decode the callback data
-        CallbackData memory cbData = abi.decode(data, (CallbackData));
-
-        // Verify the pool ID exists
-        PoolKey memory key = _poolKeys[cbData.poolId];
-        if (key.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(cbData.poolId));
-
-        int256 liquidityDelta;
-        address recipient;
-        if (cbData.callbackType == CallbackType.DEPOSIT || cbData.callbackType == CallbackType.REINVEST_PROTOCOL_FEES) {
-            liquidityDelta = int256(uint256(cbData.shares));
-            recipient = address(this); // Tokens stay/settle within LM
-        } else if (cbData.callbackType == CallbackType.WITHDRAW) {
-            liquidityDelta = -int256(uint256(cbData.shares));
-            recipient = cbData.recipient; // Tokens sent to original caller
-        } else {
-            revert Errors.InvalidCallbackType(uint8(cbData.callbackType));
-        }
-
-        // Modify liquidity in the pool using liquidityDelta derived from cbData.shares
-        ModifyLiquidityParams memory params = ModifyLiquidityParams({
-            tickLower: TickMath.minUsableTick(key.tickSpacing),
-            tickUpper: TickMath.maxUsableTick(key.tickSpacing),
-            liquidityDelta: liquidityDelta,
-            salt: bytes32(0)
-        });
-
-        // 1. Add / remove liquidity
-        (BalanceDelta delta,) = manager.modifyLiquidity(key, params, "");
-
-        // Perform settlement
-        CurrencySettlerExtension.handlePoolDelta(manager, delta, key.currency0, key.currency1, recipient);
-
-        // Tell the PoolManager that everything is settled
-        BalanceDelta zeroDelta;
-        return abi.encode(zeroDelta);
-    }
 
     /// helper required by the test-suite
     function getPoolReservesAndShares(PoolId poolId)
@@ -705,62 +650,38 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         payable
         override
         nonReentrant
-        returns (uint128)
+        returns (uint128 mintedShares)
     {
-        // sanity checks
+        // ─── validations ───
+        if (liq == 0) revert Errors.ZeroAmount();
         PoolKey memory key = _poolKeys[poolId];
         if (key.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
-        if (liq == 0) revert Errors.ZeroAmount();
 
-        // build callback data including amounts and liquidity
-        CallbackData memory cb = CallbackData({
-            poolId: poolId,
-            callbackType: CallbackType.REINVEST_PROTOCOL_FEES,
-            shares: liq, // Use provided liquidity
-            oldTotalShares: positionTotalShares[poolId],
-            amount0: use0, // Pass provided amount0 (for event/tracking)
-            amount1: use1, // Pass provided amount1 (for event/tracking)
-            recipient: address(this) // Settlement happens within LM
-        });
+        // ─── pull tokens from caller → this contract ───
+        _takeTokens(key.currency0, use0);
+        _takeTokens(key.currency1, use1);
 
-        // ─── handle native ETH credit first (PoolManager.settle is payable) ───
-        uint256 ethToSend;
-        if (key.currency0.isAddressZero()) ethToSend += use0;
-        if (key.currency1.isAddressZero()) ethToSend += use1;
-        require(msg.value == ethToSend, "Incorrect ETH value for reinvest");
-        if (ethToSend > 0) manager.settle{value: ethToSend}();
+        // ─── ensure Permit2 approvals for ERC20 tokens ───
+        if (!key.currency0.isAddressZero()) _ensurePermit2Approval(Currency.unwrap(key.currency0));
+        if (!key.currency1.isAddressZero()) _ensurePermit2Approval(Currency.unwrap(key.currency1));
 
-        // do the unlock → modifyLiquidity (+ take/settle inside callback) – **no** value forwarded
-        manager.unlock(abi.encode(cb));
+        // ─── mint or fetch the pool-wide NFT ───
+        (uint256 nftId,) = _getOrCreatePosition(key, poolId, 0, 0);
 
-        // (no ERC-20 approvals were set, nothing to clear)
+        // ─── increase liquidity on the PositionManager ───
+        posManager.increaseLiquidity(
+            nftId,
+            liq,
+            type(uint128).max,
+            type(uint128).max,
+            ""
+        );
 
-        // update accounting *and* mint POL shares so users are not diluted
-        // Calculate V2 shares equivalent to the V4 liquidity 'liq' added
-        (uint128 currentV4LiquidityBefore,,) = getPositionData(poolId);
-        uint128 v2SharesEquivalent;
-        if (currentV4LiquidityBefore == 0) {
-            // Handle first reinvest case if needed, simpler 1:1 might suffice for POL?
-            // Or use the _handleFirstDepositInternal math? For POL, 1:1 might be okay.
-            // Let's assume a simple approximation or ratio based on current state if possible
-            // uint128 currentTotalShares = positionTotalShares[poolId]; // V2 Style shares
-            // Need a robust way to map V4 liq delta to V2 share delta
-            // Placeholder: Assume POL shares map 1:1 to V4 liquidity for simplicity in Phase 1
-            v2SharesEquivalent = liq;
-        } else {
-            uint128 currentTotalShares = positionTotalShares[poolId]; // V2 Style shares
-            v2SharesEquivalent = FullMath.mulDiv(liq, currentTotalShares, currentV4LiquidityBefore).toUint128();
-        }
+        // ─── mint ERC-6909 shares to POL treasury (this contract) ───
+        _mintShares(poolId, liq);
 
-        positionTotalShares[poolId] += v2SharesEquivalent; // Add V2-style shares
-        uint256 tokenId = PoolTokenIdUtils.toTokenId(poolId);
-        // Mint POL shares to this contract address
-        FullRangePositions(address(positions)).mint(address(this), tokenId, v2SharesEquivalent);
-
-        // Emit event with the amounts provided by Spot and V4 liquidity added
         emit Reinvested(poolId, liq, use0, use1);
-
-        return v2SharesEquivalent; // Return V2-style shares minted
+        return liq;
     }
 
     /**
@@ -884,6 +805,108 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     /// @notice ERC-6909 total shares issued for a pool-wide tokenId
     function getShares(PoolId poolId) external view override returns (uint256 shares) {
         shares = positions.totalSupply(PoolId.unwrap(poolId));
+    }
+
+    /**
+     * @dev Lazily creates a full-range position NFT if not existent, optionally
+     *      minting `liquidityDesired` in the same transaction to save gas.
+     *      Returns the tokenId **and** whether it was freshly minted.
+     *      Safe – we grant Permit2 approvals beforehand.
+     */
+    function _getOrCreatePosition(
+        PoolKey memory key,
+        PoolId      pid,
+        uint128     liquidityDesired,
+        uint256     ethNeeded
+    ) internal returns (uint256 id, bool created) {
+        id = positionTokenId[pid];
+        if (id != 0) {
+            // already exists – nothing to mint
+            created = false;
+            return (id, created);
+        }
+
+        created = true; // we will mint now
+
+        // ------------------------------------------------------------------
+        // Encode router call: single MINT_POSITION with full-range bounds
+        // ------------------------------------------------------------------
+        bytes memory actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
+
+        bytes[] memory params = new bytes[](2);
+        // params[0] – MINT_POSITION arguments (matches IPositionManager spec)
+        // Note: `liquidityDesired` is already a uint128, so we pass it **without**
+        // widening to uint256. This avoids ABI-decoder truncation that triggered
+        // a SafeCastOverflow revert when v4-core attempted to down-cast the
+        // value back to uint128. (why safe: value ≤ type(uint128).max)
+        params[0] = abi.encode(
+            key,
+            TickMath.minUsableTick(key.tickSpacing),
+            TickMath.maxUsableTick(key.tickSpacing),
+            liquidityDesired,
+            type(uint128).max, // amount0Max (slippage handled in PM)
+            type(uint128).max, // amount1Max
+            address(this),
+            bytes("")
+        );
+
+        // params[1] – settle any resulting deltas for the pair
+        params[1] = abi.encode(key.currency0, key.currency1);
+
+        // Approve tokens via Permit2 (no-op when allowance already max)
+        _ensurePermit2Approval(Currency.unwrap(key.currency0));
+        _ensurePermit2Approval(Currency.unwrap(key.currency1));
+
+        bytes memory unlockData = abi.encode(actions, params);
+        posManager.modifyLiquidities{value: ethNeeded}(unlockData, block.timestamp + 300);
+
+        id = posManager.nextTokenId() - 1; // PositionManager auto-increments
+        positionTokenId[pid] = id; // cache for future calls
+        return (id, created);
+    }
+
+    /// @dev Grant unlimited Permit2 allowance for a token if not already set.
+    ///      Safe to call multiple times; cheap when allowance is already maxed.
+    /// @param token The ERC20 token address (Currency.unwrap(...))
+    function _ensurePermit2Approval(address token) internal {
+        if (_permit2Approved[token]) return;                       // SLOAD ≈ 100 gas
+
+        // First, give Permit2 unlimited allowance on the ERC20 itself so it can pull funds
+        // Safe: one-time max approval, identical to Uniswap v4 PositionManager pattern
+        SafeTransferLib.safeApprove(ERC20(token), address(posManager.permit2()), type(uint256).max);
+
+        // Then, inside Permit2 allow the PositionManager to spend on our behalf (also unlimited)
+        IAllowanceTransfer permit = posManager.permit2();
+        permit.approve(token, address(posManager), type(uint160).max, type(uint48).max);
+
+        _permit2Approved[token] = true;                            // mark approved
+    }
+
+    /// @dev Pull `amount` of `currency` from the caller into this contract. Supports native ETH.
+    function _takeTokens(Currency currency, uint256 amount) internal {
+        if (amount == 0) return;
+        if (currency.isAddressZero()) {
+            require(msg.value >= amount, "FRLM: insufficient ETH sent");
+            // excess ETH (if any) is refunded by the caller-side wrapper.
+        } else {
+            SafeTransferLib.safeTransferFrom(ERC20(Currency.unwrap(currency)), msg.sender, address(this), amount);
+        }
+    }
+
+    /// @dev Internal mint of ERC-6909 shares to `this` & update accounting.
+    function _mintShares(PoolId pid, uint128 shares) internal {
+        if (shares == 0) return;
+        positionTotalShares[pid] += shares;
+        uint256 tokenId = PoolTokenIdUtils.toTokenId(pid);
+        FullRangePositions(address(positions)).mint(address(this), tokenId, shares);
+    }
+
+    /// @notice Emergency escape hatch – owner can pull the NFT out of the manager.
+    function emergencyPullNFT(PoolId pid, address to) external onlyOwner {
+        require(to != address(0), "zero to");
+        uint256 nftId = positionTokenId[pid];
+        require(nftId != 0, "not-minted");
+        posManager.safeTransferFrom(address(this), to, nftId);
     }
 
     /// @notice Uniswap V4 liquidity currently held by the pool-wide position

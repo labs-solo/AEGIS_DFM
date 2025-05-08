@@ -43,6 +43,10 @@
     import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
     import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
 
+    import {ExtendedPositionManager} from "src/ExtendedPositionManager.sol";
+    import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
+    import {IPositionDescriptor} from "@uniswap/v4-periphery/src/interfaces/IPositionDescriptor.sol";
+
     uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
     uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 100000;  // 10 %
     uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =   3000;  // 0.3 %
@@ -200,9 +204,18 @@
             emit log_named_address("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
             // Deploy LiquidityManager (standard new)
+            emit log_string("Deploying Extended PositionManager...");
+            ExtendedPositionManager posm = new ExtendedPositionManager(
+                poolManager,
+                IAllowanceTransfer(PERMIT2_ADDRESS),
+                uint256(300_000),
+                IPositionDescriptor(address(0)),
+                IWETH9(WETH_ADDRESS)
+            );
+
             emit log_string("Deploying LiquidityManager...");
             FullRangeLiquidityManager liquidityManagerImpl =
-                new FullRangeLiquidityManager(poolManager, policyManager, deployerEOA);
+                new FullRangeLiquidityManager(poolManager, posm, policyManager, deployerEOA);
             liquidityManager = IFullRangeLiquidityManager(address(liquidityManagerImpl));
             emit log_named_address("LiquidityManager deployed at", address(liquidityManager));
             require(address(liquidityManager) != address(0), "LiquidityManager deployment failed");
@@ -752,4 +765,6 @@
         // Removed _initializePool
         // Removed addInitialLiquidity
         // Removed _checkPriceHelper
+
+        address internal constant PERMIT2_ADDRESS = 0x000000000022D473030F116dDEE9F6B43aC78BA3;
     }

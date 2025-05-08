@@ -24,7 +24,10 @@ remappings = [
   
   # Local utils & mocks (ADDED)
   "utils/=src/utils/",
-  "mocks/=test/mocks/"
+  "mocks/=test/mocks/",
+
+  # Uniswap Permit2 library – resolves PositionManager dependency
+  "permit2/=node_modules/permit2/"
 ]
 src = "src"
 out = "out"

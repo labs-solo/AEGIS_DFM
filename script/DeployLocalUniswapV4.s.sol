@@ -34,6 +34,7 @@ import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {HookMiner as HMiner} from "v4-periphery/src/utils/HookMiner.sol";
 import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
+import {ExtendedPositionManager} from "../src/ExtendedPositionManager.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -141,7 +142,12 @@ contract DeployLocalUniswapV4 is Script {
 
         // Deploy Liquidity Manager
         liquidityManager =
-            new FullRangeLiquidityManager(IPoolManager(address(poolManager)), IPoolPolicy(address(0)), governance);
+            new FullRangeLiquidityManager(
+                IPoolManager(address(poolManager)),
+                ExtendedPositionManager(payable(address(0))), // placeholder, to be wired later (cast via payable to satisfy compiler)
+                IPoolPolicy(address(0)),
+                governance
+            );
         console.log("LiquidityManager deployed at:", address(liquidityManager));
 
         // Deploy Spot hook (which is MarginHarness in this script)

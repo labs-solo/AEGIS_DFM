@@ -115,20 +115,15 @@
             _ensureHookApprovals();
             address token = Currency.unwrap(cur);
 
-            // 1. Ensure the test has external tokens & approved
-            deal(token, address(this), units);
+            // 1. Give the HOOK the external tokens, not this test contract
+            deal(token, address(hook), units);
+            vm.prank(address(hook));
             ERC20(token).approve(address(pm), units);
 
-            // 2. Call unlock to run our mint+settle in unlockCallback
-            bytes memory data = abi.encode(cur, units, address(hook));
-            pm.unlock(data); // Use pm variable
-
-            // 3. Top up the hook's external ERC20 so pokeReinvest can use it
-            uint256 requiredExternalBalance = units; // units are already token-denominated
-            uint256 currentHookBalance = ERC20(token).balanceOf(address(hook));
-            if (currentHookBalance < requiredExternalBalance) {
-                deal(token, address(hook), requiredExternalBalance - currentHookBalance);
-            }
+            // 2. As the *hook*, settle the tokens with the PoolManager.
+            //    This leaves +units of INTERNAL credit on the hook.
+            vm.prank(address(hook));
+            CurrencySettlerExtension.settleCurrency(pm, cur, units);
         }
 
         /// @dev Add some full‐range liquidity so that pokeReinvest actually has something to grow.

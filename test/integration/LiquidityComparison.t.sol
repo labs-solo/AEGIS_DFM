@@ -10,26 +10,22 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
-import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {Position} from "v4-core/src/libraries/Position.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {LiquidityAmounts}       from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
-import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
-import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {SignedMath} from "@openzeppelin/contracts/utils/math/SignedMath.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {CurrencySettler}                  from "uniswap-hooks/utils/CurrencySettler.sol";
-import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
-import {IFullRangePositions as FRPos} from "src/interfaces/IFullRangePositions.sol";
+import {IAllowanceTransfer}     from "permit2/src/interfaces/IAllowanceTransfer.sol";
+import {ExtendedPositionManager} from "src/ExtendedPositionManager.sol";
+import {Actions}                from "v4-periphery/src/libraries/Actions.sol";
+import {IPositionManager}       from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {PositionInfo} from "v4-periphery/src/libraries/PositionInfoLibrary.sol";
 
-contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
+contract LiquidityComparisonTest is ForkSetup {
     using PoolIdLibrary for PoolKey;
     using SafeTransferLib for ERC20;
     using CurrencyLibrary for Currency;
-    using BalanceDeltaLibrary for BalanceDelta;
-    using CurrencySettler for Currency;
 
     // lpProvider inherited from ForkSetup
     uint128 public constant MIN_LIQUIDITY = 1_000;
@@ -45,14 +41,7 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
     IFullRangeLiquidityManager internal frlm_;
     IERC20Minimal internal token0; // USDC in this test-pool
     IERC20Minimal internal token1; // WETH in this test-pool
-
-    // Callback data for direct minting
-    struct CallbackData {
-        PoolKey poolKey;
-        int24 tickLower;
-        int24 tickUpper;
-        uint128 liquidity; // precalculated
-    }
+    ExtendedPositionManager internal posManager;
 
     function setUp() public override {
         super.setUp();
@@ -62,6 +51,7 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         frlm_ = liquidityManager;
         token0 = usdc;
         token1 = weth;
+        posManager = frlm_.posManager();          // exposed as public immutable
 
         // Fund test account
         vm.startPrank(deployerEOA);
@@ -108,94 +98,89 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         );
 
         // ───────────────────────────────────────────────────────────
-        // ① Direct PoolManager liquidity addition through unlock callback
+        // ① Direct *NFT-based* full-range mint via ExtendedPositionManager
         // ───────────────────────────────────────────────────────────
-        CallbackData memory cbData =
-            CallbackData({poolKey: poolKey, tickLower: tickLower, tickUpper: tickUpper, liquidity: liquidity});
+        //  Allow Permit2 (used internally by PositionManager) to pull our tokens
+        address permit2 = address(posManager.permit2());
+        token0.approve(permit2, amount0);
+        token1.approve(permit2, amount1);
 
-        manager_.unlock(abi.encode(cbData));
+        // Also grant PositionManager unlimited allowance inside Permit2
+        IAllowanceTransfer(permit2).approve(address(token0), address(posManager), type(uint160).max, type(uint48).max);
+        IAllowanceTransfer(permit2).approve(address(token1), address(posManager), type(uint160).max, type(uint48).max);
+
+        bytes memory actions = abi.encodePacked(
+            uint8(Actions.MINT_POSITION),
+            uint8(Actions.SETTLE_PAIR)
+        );
+
+        bytes[] memory params = new bytes[](2);
+        params[0] = abi.encode(
+            poolKey,
+            tickLower,
+            tickUpper,
+            liquidity,          // uint128
+            type(uint128).max,  // slippage guards – amount0Max
+            type(uint128).max,  // amount1Max
+            address(this),      // owner of the NFT
+            bytes("")          // hook data
+        );
+        params[1] = abi.encode(
+            poolKey.currency0,
+            poolKey.currency1
+        );
+
+        // Snapshot balances to measure exact token usage
+        uint256 bal0Before = ERC20(address(token0)).balanceOf(address(this));
+        uint256 bal1Before = ERC20(address(token1)).balanceOf(address(this));
+
+        // No ETH needed – both tokens are ERC-20
+        posManager.modifyLiquidities(abi.encode(actions, params), block.timestamp + 300);
+
+        // Compute token amounts spent by the direct path
+        used0Direct_ = bal0Before - ERC20(address(token0)).balanceOf(address(this));
+        used1Direct_ = bal1Before - ERC20(address(token1)).balanceOf(address(this));
+
+        uint256 tokenIdDirect = posManager.nextTokenId() - 1;
 
         // ───────────────────────────────────────────────────────────
         // ② Same deposit through FullRangeLiquidityManager (lpProvider)
         // ───────────────────────────────────────────────────────────
         uint256 shares;
 
-        // deposit must be executed by governance (deployerEOA)
-        vm.startPrank(deployerEOA);
+        // Snapshot balances to measure exact token usage
+        uint256 bal0BeforeFrlm = ERC20(address(token0)).balanceOf(deployerEOA);
+        uint256 bal1BeforeFrlm = ERC20(address(token1)).balanceOf(deployerEOA);
+
+        vm.startPrank(deployerEOA); // deposit must be executed by governance
         (shares,,) = liquidityManager.deposit(
             poolKey.toId(), amount0, amount1, 0, 0, lpProvider
         );
         vm.stopPrank();
 
-        // bytes32 ← direct unwrap; no cast needed
-        bytes32 poolIdBytes = PoolId.unwrap(poolKey.toId()); // for hash & indexing
+        // Calculate actual tokens used by FRLM path
+        uint256 used0Frlm = bal0BeforeFrlm - ERC20(address(token0)).balanceOf(deployerEOA);
+        uint256 used1Frlm = bal1BeforeFrlm - ERC20(address(token1)).balanceOf(deployerEOA);
 
-        // Access positions directly as a state variable
-        address positionsAddress = address(IFullRangeLiquidityManager(address(liquidityManager)).positions());
-        FRPos frPositions = FRPos(positionsAddress);
+        // ───────────────────────────────────────────────────────────
+        // ③ Compare NFT liquidities via PositionManager helper
+        // ───────────────────────────────────────────────────────────
+        uint256 tokenIdFrlm = frlm_.positionTokenId(poolKey.toId());
 
-        // Call positionLiquidity via the interface
-        uint128 poolLiquidity = frPositions.positionLiquidity(poolIdBytes);
+        (PoolKey memory poolKeyDir, PositionInfo pDir)  = posManager.getPoolAndPositionInfo(tokenIdDirect);
+        (PoolKey memory poolKeyFrlm, PositionInfo pFrlm) = posManager.getPoolAndPositionInfo(tokenIdFrlm);
 
-        assertTrue(poolLiquidity > 0, "pool-wide V4 liquidity zero");
+        // Get actual liquidity from each position
+        uint128 liqDirect = posManager.getPositionLiquidity(tokenIdDirect);
+        uint128 liqFrlm = posManager.getPositionLiquidity(tokenIdFrlm);
 
-        // Get the actual liquidity from both positions
-        bytes32 posKeyDirect = Position.calculatePositionKey(address(this), tickLower, tickUpper, bytes32(0));
-        uint128 liqDirect = StateLibrary.getPositionLiquidity(manager_, poolKey.toId(), posKeyDirect);
+        // Both NFTs must hold the *same* v4-liquidity (+/-1 wei tolerance)
+        assertApproxEqAbs(liqDirect, liqFrlm, 1, "liquidity mismatch");
 
-        // Compare Full Range LM position
-        // Uni V4 liquidity that the manager actually controls - obtained via positionInfo
-        // uint128 liqFrlm = liquidityManager.positionLiquidity(poolIdBytes); // Old call removed
-        // Note: The test seems to directly compare poolLiquidity obtained above with liqDirect
-        //       so liqFrlm might be redundant unless obtained differently.
-        //       Assuming poolLiquidity holds the value obtained via the manager.
-
-        // Compare the liquidity obtained from both paths
-        assertApproxEqRel(poolLiquidity, liqDirect, 1e10, "Manager vs Direct liquidity mismatch");
-
-        // Compare token amounts used (allow ±1 wei difference due to FRLM rounding)
-        // These comparisons were commented out in previous steps and require
-        // correctly obtaining used0FRLM/used1FRLM which seems missing.
-        // Leaving commented.
-        // uint256 diff0 = SignedMath.abs(int256(used0Direct) - int256(used0FRLM));
-        // uint256 diff1 = SignedMath.abs(int256(used1Direct) - int256(used1FRLM));
-        // assertLe(diff0, 1, "token0 diff exceeds 1 wei");
-        // assertLe(diff1, 1, "token1 diff exceeds 1 wei");
-    }
-
-    // settles the owed tokens
-    function unlockCallback(bytes calldata data) external override returns (bytes memory) {
-        require(msg.sender == address(manager_), "only manager");
-        CallbackData memory d = abi.decode(data, (CallbackData));
-
-        ModifyLiquidityParams memory p = ModifyLiquidityParams({
-            tickLower: d.tickLower,
-            tickUpper: d.tickUpper,
-            liquidityDelta: int256(uint256(d.liquidity)),
-            salt: bytes32(0)
-        });
-
-        (BalanceDelta delta,) = manager_.modifyLiquidity(d.poolKey, p, "");
-
-        // Calculate amounts owed *by this contract* (negative delta means we owe)
-        used0Direct_ = delta.amount0() < 0 ? uint256(int256(-delta.amount0())) : 0;
-        used1Direct_ = delta.amount1() < 0 ? uint256(int256(-delta.amount1())) : 0;
-
-        // ─── Settle using CurrencySettler from uniswap-hooks ───
-        Currency currency0 = d.poolKey.currency0;
-        Currency currency1 = d.poolKey.currency1;
-
-        if (used0Direct_ > 0) {
-            // CurrencySettler: sync → transfer → settle
-            currency0.settle(manager_, address(this), used0Direct_, /*burn*/ false);
-        }
-        if (used1Direct_ > 0) {
-            currency1.settle(manager_, address(this), used1Direct_, /*burn*/ false);
-        }
-
-        // Return zero delta to indicate all debts are settled
-        BalanceDelta zeroDelta;
-        return abi.encode(zeroDelta);
+        // Bonus sanity-check: each path consumed (almost) identical token amounts
+        // (differences ≤ 1 wei are tolerated due to rounding)
+        assertLe(SignedMath.abs(int256(used0Direct_) - int256(used0Frlm)), 1, "token0 diff >1");
+        assertLe(SignedMath.abs(int256(used1Direct_) - int256(used1Frlm)), 1, "token1 diff >1");
     }
 
     // Helper to deal and approve tokens
