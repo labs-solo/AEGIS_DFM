@@ -30,6 +30,7 @@
     import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
     import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol"; // Added import
     import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol"; // <-- ADDED IMPORT
+    import {CurrencySettlerExtension} from "src/utils/CurrencySettlerExtension.sol"; // NEW import
 
     // Remove local struct definition, use imported one
     // struct LocalDepositParams {
@@ -44,7 +45,7 @@
     // The re-investment tests can run on the fully-wired environment that
     // `ForkSetup` already gives us – no need to hand-roll another deployer.
 
-    contract InternalReinvestTest is ForkSetup {
+    contract InternalReinvestTest is ForkSetup, IUnlockCallback {
         using CurrencyLibrary for Currency;
         using SafeERC20 for IERC20; // Updated to use IERC20 instead of IERC20Minimal
 
@@ -294,5 +295,26 @@
                 }
             }
             assertTrue(skippedCool, "should skip due to cooldown");
+        }
+
+        /* ---------- PoolManager Unlock Callback ---------- */
+        /// @notice Implements IUnlockCallback so this test contract can be the caller of `PoolManager.unlock`.
+        ///         It settles `units` of `cur` from *this* contract to the PoolManager and then credits the
+        ///         same amount to `hookAddr` via `take`, effectively increasing the hook's internal claim balance.
+        /// @dev    Encoding must match the data packed in `_creditInternalBalance` – `(Currency,uint256,address)`.
+        function unlockCallback(bytes calldata data) external override returns (bytes memory) {
+            require(msg.sender == address(pm), "only manager"); // safety – callback can only originate from PoolManager
+
+            (Currency cur, uint256 units, address hookAddr) = abi.decode(data, (Currency, uint256, address));
+            if (units == 0) return bytes(""); // nothing to do
+
+            // 1. Transfer `units` of `cur` from this contract to the PoolManager (internal credit to this contract)
+            CurrencySettlerExtension.settleCurrency(pm, cur, units);
+
+            // 2. Move that freshly credited internal balance to the hook's claim account
+            pm.take(cur, hookAddr, units);
+
+            // Return empty bytes – PoolManager does not rely on the return payload for this simple op
+            return bytes("");
         }
     }

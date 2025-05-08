@@ -77,6 +77,10 @@ contract LiquidityComparisonTest is ForkSetup, IUnlockCallback {
         // Setup approvals
         _dealAndApprove(token0, lpProvider, amount0);
         _dealAndApprove(token1, lpProvider, amount1);
+        // Governance (deployerEOA) is the sender for the FullRangeLiquidityManager deposit – ensure it holds
+        // tokens and has the necessary allowances to avoid TRANSFER_FROM_FAILED.
+        _dealAndApprove(token0, deployerEOA, amount0);
+        _dealAndApprove(token1, deployerEOA, amount1);
         token0.approve(address(manager_), amount0);
         token1.approve(address(manager_), amount1);
 
