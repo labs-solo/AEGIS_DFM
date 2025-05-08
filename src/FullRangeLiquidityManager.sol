@@ -208,9 +208,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @notice Get the position token contract
      * @return The position token contract
      */
-    function getPositionsContract() external view returns (FullRangePositions) {
-        return FullRangePositions(address(positions));
-    }
+    // getPositionsContract() removed – callers should use the `positions()` public getter instead.
 
     // === LIQUIDITY MANAGEMENT FUNCTIONS ===
 
@@ -722,36 +720,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
 
     /**
-     * @notice Verify pool liquidity and state after operations
-     * @param poolId The pool ID to check
-     * @return liquidity Current liquidity in the pool
-     * @return totalShares Total shares tracked internally
-     */
-    function verifyPoolState(PoolId poolId) external view returns (uint128 liquidity, uint128 totalShares) {
-        // Get actual pool liquidity
-        bytes32 posKey = Position.calculatePositionKey(
-            address(this),
-            TickMath.minUsableTick(_poolKeys[poolId].tickSpacing),
-            TickMath.maxUsableTick(_poolKeys[poolId].tickSpacing),
-            bytes32(0)
-        );
-        liquidity = StateLibrary.getPositionLiquidity(manager, poolId, posKey);
-
-        // Get tracked shares
-        totalShares = positionTotalShares[poolId];
-
-        // Ensure we have more than just locked liquidity
-        require(liquidity > MIN_LOCKED_LIQUIDITY, "Insufficient pool liquidity");
-        require(totalShares > MIN_LOCKED_SHARES, "Insufficient total shares");
-
-        return (liquidity, totalShares);
-    }
-
-    /* ───────────────────────────────────────────────────────────
-     *                     Helper-math (withdraw)
-     * ─────────────────────────────────────────────────────────── */
-
-    /**
      * @dev    Pro-rata math used by withdraw() & emergencyWithdraw():
      *         converts ERC-6909 shares → amounts0/1 and the matching V4-liquidity.
      *
@@ -784,23 +752,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         amount1 = FullMath.mulDiv(reserve1, v4LiquidityToWithdraw, totalV4Liquidity);
     }
 
-    // ────────────────────────────────────────────────────────────────────
-    // missing interface method – placeholder to keep compiler happy
-    // will be implemented in follow-up PR once strategy is finalised
-    function removeLiquidity(PoolId, /*poolId*/ uint128 /*amount*/ )
-        external
-        override
-        nonReentrant
-        returns (int256, int256)
-    {
-        revert("FRLM: removeLiquidity NIY");
-    }
-
     /*────────────────────────── Configuration ──────────────────────────*/
-
-    function setMinPoolBalanceRequired(uint128 _minBalanceRequired) external onlyOwner {
-        // Implementation of the function
-    }
 
     /// @notice ERC-6909 total shares issued for a pool-wide tokenId
     function getShares(PoolId poolId) external view override returns (uint256 shares) {

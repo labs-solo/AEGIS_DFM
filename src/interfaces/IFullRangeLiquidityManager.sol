@@ -80,8 +80,6 @@ interface IFullRangeLiquidityManager {
         view
         returns (bool initialized, uint256 shares);
 
-    function removeLiquidity(PoolId poolId, uint128 amount) external returns (int256 amount0, int256 amount1);
-
     /// @notice Returns the total number of ERC-6909 shares minted for the
     /// pool-wide position.
     function getShares(PoolId poolId) external view returns (uint256 shares);
