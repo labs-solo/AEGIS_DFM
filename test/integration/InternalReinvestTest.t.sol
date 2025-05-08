@@ -248,7 +248,7 @@
                 ERC20(t1).approve(address(liquidityManager), type(uint256).max);
             }
 
-            (,, uint128 liqBefore) = lm.getPoolReservesAndShares(poolId);
+            (,, uint128 liqBefore) = hook.getPoolReservesAndShares(poolId);
             assertTrue(liqBefore > 0, "Liquidity should be > 0 after initial deposit");
 
             vm.recordLogs();
@@ -270,7 +270,7 @@
             assertTrue(success, "ReinvestmentSuccess not emitted");
             assertTrue(used0 > 0 || used1 > 0, "no tokens used");
 
-            (,, uint128 liqAfter) = lm.getPoolReservesAndShares(poolId);
+            (,, uint128 liqAfter) = hook.getPoolReservesAndShares(poolId);
             assertGt(liqAfter, liqBefore, "liquidity did not grow");
 
             // cooldown check

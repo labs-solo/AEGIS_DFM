@@ -138,11 +138,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint128 burnedShares,
         uint256 timestamp
     );
-    event PoolStateUpdated(PoolId indexed poolId, uint128 newTotalShares, uint8 opType);
-    event Reinvested(PoolId indexed poolId, uint128 liquidityMinted, uint256 amount0, uint256 amount1);
-
-    // Storage slot constants for V4 state access
-    bytes32 private constant POOLS_SLOT = bytes32(uint256(6));
+    // Note: optional events "PoolStateUpdated" and "Reinvested" have been pruned.
 
     /**
      * @notice Constructor
@@ -166,9 +162,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @param _hookAddress The address of the Spot hook contract.
      */
     function setAuthorizedHookAddress(address _hookAddress) external onlyOwner {
-        // Ensure it can only be set once
-        require(authorizedHookAddress_ == address(0), "Hook address already set");
-        require(_hookAddress != address(0), "Invalid address");
+        if (authorizedHookAddress_ != address(0)) revert Errors.HookAddressAlreadySet();
+        if (_hookAddress == address(0)) revert Errors.InvalidHookAddress();
         authorizedHookAddress_ = _hookAddress;
         emit AuthorizedHookAddressSet(_hookAddress);
     }
@@ -245,8 +240,41 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Pool price is zero");
         }
 
-        // ——— 3) single‐read slot0 and reuse it for getPoolReserves
-        (uint256 reserve0, uint256 reserve1) = getPoolReservesWithPrice(poolId, sqrtPriceX96);
+        // ——— 3) single‐read slot0 and reuse it to compute pool reserves (inlined)
+        uint256 reserve0;
+        uint256 reserve1;
+        {
+            // Inline of former getPoolReservesWithPrice()
+            PoolKey memory k = key;
+            // Compute position key & bail early if no liquidity
+            bytes32 posKey = Position.calculatePositionKey(
+                address(this),
+                TickMath.minUsableTick(k.tickSpacing),
+                TickMath.maxUsableTick(k.tickSpacing),
+                bytes32(0)
+            );
+            uint128 liq = StateLibrary.getPositionLiquidity(manager, poolId, posKey);
+            if (liq == 0) {
+                reserve0 = 0;
+                reserve1 = 0;
+            } else {
+                int24 lower = TickMath.minUsableTick(k.tickSpacing);
+                int24 upper = TickMath.maxUsableTick(k.tickSpacing);
+                uint160 sqrtA = TickMath.getSqrtPriceAtTick(lower);
+                uint160 sqrtB = TickMath.getSqrtPriceAtTick(upper);
+
+                if (sqrtPriceX96 <= sqrtA) {
+                    reserve0 = SqrtPriceMath.getAmount0Delta(sqrtA, sqrtB, liq, false);
+                    reserve1 = 0;
+                } else if (sqrtPriceX96 >= sqrtB) {
+                    reserve0 = 0;
+                    reserve1 = SqrtPriceMath.getAmount1Delta(sqrtA, sqrtB, liq, false);
+                } else {
+                    reserve0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtB, liq, false);
+                    reserve1 = SqrtPriceMath.getAmount1Delta(sqrtA, sqrtPriceX96, liq, false);
+                }
+            }
+        }
 
         // Declare *after* the reserves are fetched to keep them off the stack
         bool hasToken0Native = key.currency0.isAddressZero();
@@ -290,7 +318,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         uint128 oldTotalSharesInternal = totalSharesInternal;
         uint128 newTotalSharesInternal = oldTotalSharesInternal + sharesToAdd + uint128(calcResult.lockedAmount);
-        positionTotalShares[poolId] = newTotalSharesInternal;
+        unchecked {
+            positionTotalShares[poolId] = newTotalSharesInternal;
+        }
 
         // ─── lock the first MIN_LOCKED_SHARES by minting to address(0) ───
         if (calcResult.lockedAmount > 0 && lockedShares[poolId] == 0) {
@@ -341,8 +371,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         emit LiquidityAdded(
             poolId, recipient, amount0, amount1, oldTotalSharesInternal, uint128(usableShares), block.timestamp
         );
-        // no longer rely on CallbackType enum, use opType 1 for deposit in new scheme
-        emit PoolStateUpdated(poolId, newTotalSharesInternal, 1);
 
         return (usableShares, amount0, amount1);
     }
@@ -502,7 +530,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         uint128 oldTotalShares = totalShares;
         uint128 newTotalShares = oldTotalShares - sharesToBurn.toUint128();
-        positionTotalShares[poolId] = newTotalShares;
+        unchecked {
+            positionTotalShares[poolId] = newTotalShares;
+        }
 
         // Burn shares from governance (msg.sender)
         FullRangePositions(address(positions)).burn(msg.sender, tokenId, sharesToBurn);
@@ -522,7 +552,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         emit LiquidityRemoved(
             poolId, recipient, amount0, amount1, oldTotalShares, sharesToBurn.toUint128(), block.timestamp
         );
-        emit PoolStateUpdated(poolId, newTotalShares, 2);
 
         return (amount0, amount1);
     }
@@ -627,17 +656,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @dev legacy unlockCallback removed – PositionManager now handles liquidity changes.
      */
 
-    /// helper required by the test-suite
-    function getPoolReservesAndShares(PoolId poolId)
-        external
-        view
-        override
-        returns (uint256 reserve0, uint256 reserve1, uint128 totalShares)
-    {
-        (reserve0, reserve1) = getPoolReserves(poolId);
-        totalShares = positionTotalShares[poolId];
-    }
-
     /**
      * @dev Protocol‑fee reinvest – assumes Spot has calculated required amounts.
      *      Amounts/liquidity are provided; this function approves PM and initiates unlock.
@@ -678,45 +696,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // ─── mint ERC-6909 shares to POL treasury (this contract) ───
         _mintShares(poolId, liq);
 
-        emit Reinvested(poolId, liq, use0, use1);
         return liq;
-    }
-
-    /**
-     * @notice Gets pool reserves using a pre-fetched sqrt price to avoid redundant reads.
-     */
-    function getPoolReservesWithPrice(PoolId poolId, uint160 sqrtPriceX96)
-        public
-        view
-        returns (uint256 reserve0, uint256 reserve1)
-    {
-        PoolKey memory k = _poolKeys[poolId];
-        if (k.tickSpacing == 0) revert Errors.PoolNotInitialized(PoolId.unwrap(poolId));
-
-        // 1) compute posKey & bail early if no liquidity
-        bytes32 posKey = Position.calculatePositionKey(
-            address(this), TickMath.minUsableTick(k.tickSpacing), TickMath.maxUsableTick(k.tickSpacing), bytes32(0)
-        );
-        uint128 liq = StateLibrary.getPositionLiquidity(manager, poolId, posKey);
-        if (liq == 0) return (0, 0);
-
-        // 2) now compute boundaries once
-        int24 lower = TickMath.minUsableTick(k.tickSpacing);
-        int24 upper = TickMath.maxUsableTick(k.tickSpacing);
-        uint160 sqrtA = TickMath.getSqrtPriceAtTick(lower);
-        uint160 sqrtB = TickMath.getSqrtPriceAtTick(upper);
-
-        // 3) select correct formula
-        if (sqrtPriceX96 <= sqrtA) {
-            reserve0 = SqrtPriceMath.getAmount0Delta(sqrtA, sqrtB, liq, false);
-            reserve1 = 0;
-        } else if (sqrtPriceX96 >= sqrtB) {
-            reserve0 = 0; // Added missing assignment
-            reserve1 = SqrtPriceMath.getAmount1Delta(sqrtA, sqrtB, liq, false);
-        } else {
-            reserve0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtB, liq, false);
-            reserve1 = SqrtPriceMath.getAmount1Delta(sqrtA, sqrtPriceX96, liq, false);
-        }
     }
 
     /**
@@ -848,14 +828,16 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     /// @dev Internal mint of ERC-6909 shares to `this` & update accounting.
     function _mintShares(PoolId pid, uint128 shares) internal {
         if (shares == 0) return;
-        positionTotalShares[pid] += shares;
+        unchecked {
+            positionTotalShares[pid] += shares;
+        }
         uint256 tokenId = PoolTokenIdUtils.toTokenId(pid);
         FullRangePositions(address(positions)).mint(address(this), tokenId, shares);
     }
 
     /// @notice Emergency escape hatch – owner can pull the NFT out of the manager.
     function emergencyPullNFT(PoolId pid, address to) external onlyOwner {
-        require(to != address(0), "zero to");
+        if (to == address(0)) revert Errors.ZeroDestination();
         uint256 nftId = positionTokenId[pid];
         require(nftId != 0, "not-minted");
         posManager.safeTransferFrom(address(this), to, nftId);

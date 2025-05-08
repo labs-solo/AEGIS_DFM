@@ -62,15 +62,6 @@ interface IFullRangeLiquidityManager {
     /* ------------------------------------------------------------------ */
 
     /**
-     * @notice Combined helper used by test-suite to fetch reserves and share
-     *         counter in a single call.
-     */
-    function getPoolReservesAndShares(PoolId poolId)
-        external
-        view
-        returns (uint256 reserve0, uint256 reserve1, uint128 totalShares);
-
-    /**
      * @notice Return an account's share balance for a pool.
      * @dev Keeps the `initialized` boolean to avoid breaking existing test
      *      expectations.
