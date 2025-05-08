@@ -9,7 +9,11 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Errors} from "src/errors/Errors.sol";
 import {PrecisionConstants} from "src/libraries/PrecisionConstants.sol";
 
-contract PoolPolicyManager_Admin is Test {
+contract PoolPolicyManager_Admin_Test is Test {
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+
     using EventTools for Test;
 
     PoolPolicyManager ppm;
@@ -22,16 +26,18 @@ contract PoolPolicyManager_Admin is Test {
 
     /*────────────────── setup ──────────────────*/
     function setUp() public {
-        uint24[] memory ticks = new uint24[](2);
-        ticks[0] = 1;
-        ticks[1] = 10;
+        uint24[] memory supportedTickSpacings = new uint24[](2);
+        supportedTickSpacings[0] = 1;
+        supportedTickSpacings[1] = 10;
 
         ppm = new PoolPolicyManager(
             OWNER,
-            5_000,
-            ticks,
-            50_000, // 5 % in PPM
-            address(0xFEE)
+            EXPECTED_DEFAULT_DYNAMIC_FEE,
+            supportedTickSpacings,
+            1_000_000,
+            address(this),
+            EXPECTED_MIN_DYNAMIC_FEE,
+            EXPECTED_MAX_DYNAMIC_FEE
         );
     }
 

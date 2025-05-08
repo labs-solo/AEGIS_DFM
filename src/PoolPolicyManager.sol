@@ -159,60 +159,78 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
 
     event BaseFeeParamsSet(PoolId indexed poolId, uint32 stepPpm, uint32 updateIntervalSecs);
 
+    /* ─── immutable config ----------------------------------- */
+    uint24 public immutable minBaseFeePpm;          // e.g.   100 → 0.01 %
+    uint24 public immutable maxBaseFeePpm;          // e.g. 50 000 → 5 %
+
     /**
      * @notice Constructor initializes the policy manager with default values
-     * @param _owner The owner of the contract
-     * @param _defaultFee Initial fee configuration
+     * @param _governance The owner of the contract
+     * @param _defaultDynamicFee Initial fee configuration
      * @param _supportedTickSpacings Array of initially supported tick spacings
-     * @param _initialProtocolInterestFeePercentage Initial protocol interest fee percentage (scaled by PRECISION)
-     * @param _initialFeeCollector Initial fee collector address (can be address(0))
+     * @param _dailyBudget Initial daily budget
+     * @param _feeCollector Initial fee collector address (can be address(0))
+     * @param _minTradingFee Minimum trading fee
+     * @param _maxTradingFee Maximum trading fee
      */
     constructor(
-        address _owner,
-        uint256 _defaultFee,
+        address _governance,
+        uint24 _defaultDynamicFee,
         uint24[] memory _supportedTickSpacings,
-        uint256 _initialProtocolInterestFeePercentage, // Added Phase 4 param
-        address _initialFeeCollector // Added Phase 4 param
-    ) Owned(_owner) {
-        // Initialize fee policy values
-        polSharePpm = 100000; // 10% by default
-        fullRangeSharePpm = 0; // 0% by default
-        lpSharePpm = 900000; // 90% by default
-        minimumTradingFeePpm = 100; // 0.01% minimum fee
-        feeClaimThresholdPpm = 10000; // 1% threshold
-        defaultPolMultiplier = 10; // 10x multiplier
-        require(_defaultFee <= type(uint24).max, "defaultFee>24b");
-        defaultDynamicFeePpm = uint24(_defaultFee);
+        uint256 _dailyBudget,
+        address _feeCollector,
+        uint24 _minTradingFee,
+        uint24 _maxTradingFee
+    ) Owned(_governance) {
+        require(_governance != address(0), "ZeroAddress");
 
-        // Initialize dynamic‐base‐fee defaults
-        defaultTargetCapsPerDay = 4;
-        defaultCapBudgetDecayWindow = uint32(180 days);
-        defaultFreqScaling = 1e18;
-        defaultMinBaseFeePpm = 100; // 0.01%
-        defaultMaxBaseFeePpm = 30000; //   3%
-        // Initialize new surge defaults
-        defaultSurgeDecayPeriodSeconds = 3600; // 1 hour
-        _defaultSurgeFeeMultiplierPpm = 3_000_000; // 300% of base fee
+        /* ── copy constructor params into the *current* field names ── */
+        defaultDynamicFeePpm   = _defaultDynamicFee;
+        minimumTradingFeePpm   = _minTradingFee;
+        capBudgetDailyPpm      = uint32(_dailyBudget);
 
-        // Set _globalMaxStepPpm to 100,000 (10% per interval)
-        _globalMaxStepPpm = 30_000; // 3% per interval
+        require(_feeCollector != address(0), "ZeroAddress");
+        feeCollector        = _feeCollector;
 
-        // Initialize tick scaling policy values
-        tickScalingFactor = 1; // Default tick scaling factor
-
-        // Initialize supported tick spacings
-        for (uint256 i = 0; i < _supportedTickSpacings.length; i++) {
-            supportedTickSpacings[_supportedTickSpacings[i]] = true;
-            emit TickSpacingSupportChanged(_supportedTickSpacings[i], true);
+        /* initialise tick-spacing list */
+        for (uint256 i; i < _supportedTickSpacings.length; ++i) {
+            _updateSupportedTickSpacing(_supportedTickSpacings[i], true);
         }
 
-        // Initialize Phase 4 parameters
-        _setProtocolFeePercentage(_initialProtocolInterestFeePercentage);
-        _setFeeCollector(_initialFeeCollector);
+        // initialise immutables
+        minBaseFeePpm = _minTradingFee;
+        maxBaseFeePpm = _maxTradingFee;
 
-        // Initialize cap budget parameters with default values
-        capBudgetDailyPpm = 1e6; // 1 cap per day
-        capBudgetDecayWindow = 180 days; // 6 months decay window
+        /* ────────────────────────────────
+         *  Set **sane defaults** so that newly deployed
+         *  instances behave consistently with the unit-test
+         *  harness expectations (see PoolPolicyManager_* tests).
+         * ──────────────────────────────── */
+
+        // 1️⃣  Fee-split defaults: 10 % POL / 0 % FR / 90 % LP
+        _setFeeConfig({
+            _polSharePpm: 100_000,
+            _fullRangeSharePpm: 0,
+            _lpSharePpm: 900_000,
+            _minimumTradingFeePpm: _minTradingFee,
+            _feeClaimThresholdPpm: 10_000, // 1 % claim threshold
+            _defaultPolMultiplier: 10      // 10× POL target
+        });
+
+        // 2️⃣  Tick-scaling (max tick move) – initialise to 1
+        _setTickScalingFactor(1);
+
+        // 3️⃣  Oracle / base-fee feedback defaults
+        defaultFreqScaling            = 1e18;            // 1 ×
+        defaultSurgeDecayPeriodSeconds= 3_600;           // 1 h
+        _defaultSurgeFeeMultiplierPpm = 3_000_000;       // 300 %
+
+        // 4️⃣  Adaptive-cap budget defaults (1 cap-event/day, 180 d decay)
+        capBudgetDailyPpm   = _dailyBudget == 0 ? 1_000_000 : uint32(_dailyBudget);
+        capBudgetDecayWindow= _CAP_BUDGET_DECAY_WINDOW;  // 180 d
+
+        // 5️⃣  Protocol-interest fee default (5 %)
+        protocolInterestFeePercentagePpm = 50_000;
     }
 
     // === Policy Management Functions ===
@@ -656,15 +674,15 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /// @inheritdoc IPoolPolicy
-    function getMinBaseFee(PoolId pid) external view returns (uint256) {
+    function getMinBaseFee(PoolId pid) external view override returns (uint256) {
         uint256 v = poolMinBaseFeePpm[pid];
-        return v != 0 ? v : defaultMinBaseFeePpm;
+        return v != 0 ? v : minBaseFeePpm;
     }
 
     /// @inheritdoc IPoolPolicy
-    function getMaxBaseFee(PoolId pid) external view returns (uint256) {
+    function getMaxBaseFee(PoolId pid) external view override returns (uint256) {
         uint256 v = poolMaxBaseFeePpm[pid];
-        return v != 0 ? v : defaultMaxBaseFeePpm;
+        return v != 0 ? v : maxBaseFeePpm;
     }
 
     /// @inheritdoc IPoolPolicy

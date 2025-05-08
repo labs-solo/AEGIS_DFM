@@ -15,17 +15,23 @@ contract PoolPolicyManagerInitTest is Test {
 
     uint24[] internal _tickSpacings;
 
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+
     function setUp() public {
         _tickSpacings = new uint24[](2);
         _tickSpacings[0] = 1;
         _tickSpacings[1] = 10;
 
         ppm = new PoolPolicyManager(
-            OWNER,
-            5_000, // defaultDynamicFeePpm = 0.50 %
+            OWNER,                                  // governance / owner
+            EXPECTED_DEFAULT_DYNAMIC_FEE,
             _tickSpacings,
-            PROTOCOL_FEE_PPM,
-            FEE_COLLECTOR
+            1_000_000,                              // daily budget (ppm)
+            FEE_COLLECTOR,                          // fee collector
+            EXPECTED_MIN_DYNAMIC_FEE,               // min base fee
+            EXPECTED_MAX_DYNAMIC_FEE                // max base fee
         );
     }
 
@@ -78,7 +84,7 @@ contract PoolPolicyManagerInitTest is Test {
         PoolId p = pid(42);
         assertEq(ppm.getFreqScaling(p), 1e18);
         assertEq(ppm.getMinBaseFee(p), 100);
-        assertEq(ppm.getMaxBaseFee(p), 30_000);
+        assertEq(ppm.getMaxBaseFee(p), EXPECTED_MAX_DYNAMIC_FEE);
         assertEq(ppm.getSurgeDecayPeriodSeconds(p), 3_600);
         assertEq(ppm.getSurgeFeeMultiplierPpm(p), 3_000_000);
         assertEq(ppm.getBaseFeeStepPpm(p), 20_000);
