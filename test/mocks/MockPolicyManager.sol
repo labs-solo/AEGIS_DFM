@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
@@ -36,7 +36,7 @@ contract MockPolicyManager is IPoolPolicy {
     /* ------------------------------------------------------------------ */
     mapping(uint24 => bool) private _tickSupported;
     mapping(address => bool) private _currencySupported;
-    
+
     /* configurable per-pool parameters - all have sensible non-zero defaults */
     struct Params {
         uint256 minBaseFee;   // wei
@@ -74,7 +74,7 @@ contract MockPolicyManager is IPoolPolicy {
 
     // --- Stubs for missing IPoolPolicy functions ---
     function getSoloGovernance() external pure override returns (address) { return address(0); }
-    function initializePolicies(PoolId, address, address[] calldata) external override {} 
+    function initializePolicies(PoolId, address, address[] calldata) external override {}
     function handlePoolInitialization(PoolId, PoolKey calldata, uint160, int24, address) external override {}
     function getPolicy(PoolId, PolicyType) external pure override returns (address implementation) { return address(0); }
     function getFeeAllocations(PoolId)
@@ -135,32 +135,32 @@ contract MockPolicyManager is IPoolPolicy {
     function setMaxBaseFee(PoolId id, uint256 fee) external { _p[id].maxBaseFee = fee; }
 
     /* ----------- getters used by the oracle ----------- */
-    function getMinBaseFee(PoolId id) external view override returns (uint256) { 
-        return _p[id].minBaseFee != 0 ? _p[id].minBaseFee : 100; 
+    function getMinBaseFee(PoolId id) external view override returns (uint256) {
+        return _p[id].minBaseFee != 0 ? _p[id].minBaseFee : 100;
     }
-    
-    function getMaxBaseFee(PoolId id) external view override returns (uint256) { 
-        return _p[id].maxBaseFee != 0 ? _p[id].maxBaseFee : 10_000; 
+
+    function getMaxBaseFee(PoolId id) external view override returns (uint256) {
+        return _p[id].maxBaseFee != 0 ? _p[id].maxBaseFee : 10_000;
     }
-    
-    function getBaseFeeStepPpm(PoolId id) external view override returns (uint32) { 
-        return _p[id].stepPpm != 0 ? _p[id].stepPpm : 50_000; 
+
+    function getBaseFeeStepPpm(PoolId id) external view override returns (uint32) {
+        return _p[id].stepPpm != 0 ? _p[id].stepPpm : 50_000;
     }
-    
-    function getDailyBudgetPpm(PoolId id) external view override returns (uint32) { 
-        return _p[id].budgetPpm != 0 ? _p[id].budgetPpm : 100_000; 
+
+    function getDailyBudgetPpm(PoolId id) external view override returns (uint32) {
+        return _p[id].budgetPpm != 0 ? _p[id].budgetPpm : 100_000;
     }
-    
-    function getCapBudgetDecayWindow(PoolId id) external view override returns (uint32) { 
-        return _p[id].decayWindow != 0 ? _p[id].decayWindow : 86_400; 
+
+    function getCapBudgetDecayWindow(PoolId id) external view override returns (uint32) {
+        return _p[id].decayWindow != 0 ? _p[id].decayWindow : 86_400;
     }
-    
-    function getBaseFeeUpdateIntervalSeconds(PoolId id) external view override returns (uint32) { 
-        return _p[id].updateInterval != 0 ? _p[id].updateInterval : 600; 
+
+    function getBaseFeeUpdateIntervalSeconds(PoolId id) external view override returns (uint32) {
+        return _p[id].updateInterval != 0 ? _p[id].updateInterval : 600;
     }
-    
-    function getDefaultMaxTicksPerBlock(PoolId id) external view override returns (uint24) { 
-        return _p[id].defaultMaxTicks != 0 ? _p[id].defaultMaxTicks : 50; 
+
+    function getDefaultMaxTicksPerBlock(PoolId id) external view override returns (uint24) {
+        return _p[id].defaultMaxTicks != 0 ? _p[id].defaultMaxTicks : 50;
     }
 
     /* ----------- new selector needed by interface ----------- */

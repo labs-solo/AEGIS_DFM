@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
@@ -299,10 +299,10 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         // Get current price
         (uint160 sqrtPriceBefore, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
-        
+
         // Set a limit slightly away from current price, but not MIN_SQRT_PRICE
         uint160 limitSqrtP = uint160(uint256(sqrtPriceBefore) * 9 / 10); // 90% of current price
-        
+
         _dealAndApprove(usdc, user1, uint256(largeSwapAmount), address(swapRouter)); // Ensure user1 has funds
 
         // The swap should trigger a CAP event

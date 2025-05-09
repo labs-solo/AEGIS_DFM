@@ -1,5 +1,5 @@
     // SPDX-License-Identifier: BUSL-1.1
-    pragma solidity ^0.8.26;
+    pragma solidity ^0.8.27;
 
     import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
     import {Test} from "forge-std/Test.sol";
@@ -413,7 +413,7 @@
             bytes memory updatedDfmArgs = abi.encode(
                 deployerEOA,
                 policyManager,
-                deployedOracleAddr,  // Use actual deployed address 
+                deployedOracleAddr,  // Use actual deployed address
                 finalHookAddr
             );
 
@@ -754,7 +754,7 @@
             vm.stopPrank();
             return (amt0, amt1);
         }
-        
+
         function testDebugHookFlags() public {
         debugHookFlags();   // just prints the required vs. actual flag-bits
         }

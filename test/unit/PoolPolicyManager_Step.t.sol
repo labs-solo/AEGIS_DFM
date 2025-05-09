@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.26;
+pragma solidity ^0.8.27;
 
 import "forge-std/Test.sol";
 import "../lib/EventTools.sol";
@@ -95,7 +95,7 @@ contract PoolPolicyManager_Step is Test {
     /*──────────────── Surge decay period ────────────────*/
     function testOwnerCanOverrideSurgeDecay() public {
         PoolId pool = pid(7);
-        
+
         // Set decay to 12h, check event
         vm.expectEmit(true, true, true, true);
         emit PolicySet(pool, IPoolPolicy.PolicyType.FEE, address(uint160(12 hours)), OWNER);
@@ -125,7 +125,7 @@ contract PoolPolicyManager_Step is Test {
     /*──────────────── Surge fee multiplier ─────────────*/
     function testOwnerCanOverrideSurgeMultiplier() public {
         PoolId pool = pid(9);
-        
+
         // Set multiplier to 2x, check event
         vm.expectEmit(true, true, true, true);
         emit PolicySet(pool, IPoolPolicy.PolicyType.FEE, address(uint160(2_000_000)), OWNER);

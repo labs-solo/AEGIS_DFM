@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.26;
+pragma solidity ^0.8.27;
 
 import {Script} from "forge-std/Script.sol";
 // logging (use canonical wildcard import so solc resolves correct library)

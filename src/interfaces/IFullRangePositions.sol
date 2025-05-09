@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 /// @title  Minimal interface for Full-Range share token
 /// @notice We purposefully stay **ERC-6909-only** – no ERC-1155 surface.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";

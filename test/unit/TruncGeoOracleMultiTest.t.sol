@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 /*───────────────────────────────────────────────────────────────────────────*\
 │  TruncGeoOracleMulti – unit-level test-suite                               │
@@ -104,8 +104,8 @@ contract TruncGeoOracleMultiTest is Test {
         console.log("Deploying oracle...");
         // ── deploy oracle pointing to *this* hook ----------------------------------
         oracle = new TruncGeoOracleMulti(
-            IPoolManager(address(poolManager)), 
-            IPoolPolicy(address(policy)), 
+            IPoolManager(address(poolManager)),
+            IPoolPolicy(address(policy)),
             address(hook),
             address(this) // Test contract as owner
         );
@@ -290,7 +290,7 @@ contract TruncGeoOracleMultiTest is Test {
 
         // Get the current state index to access the correct observation
         (,uint16 currentIndex,) = oracle.states(pidBytes);
-        
+
         // Verify using getLatestObservation instead, which should correctly return the capped value
         (int24 observedTick,) = oracle.getLatestObservation(pid);
         assertEq(observedTick, expectedCappedTick, "Latest observation tick should match capped value");
@@ -315,7 +315,7 @@ contract TruncGeoOracleMultiTest is Test {
 
         // Get the current state index again
         (,currentIndex,) = oracle.states(pidBytes);
-        
+
         // Use getLatestObservation instead, which returns the correct value:
         (int24 observedUncappedTick,) = oracle.getLatestObservation(pid);
         assertEq(observedUncappedTick, underLimitTick, "Latest observation tick should match uncapped value");

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26; // Use caret for consistency
+pragma solidity ^0.8.27; // Use caret for consistency
 
 import {Test, console2} from "forge-std/Test.sol"; // Added console2
 import {ForkSetup} from "./ForkSetup.t.sol";
@@ -367,13 +367,13 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
 
         // Surge fee should be unchanged after the non-cap notification
         assertEq(surgeFeeAfterNotify, surgeAfter25, "Surge fee incorrectly changed by non-cap oracle update");
-        
+
         // Base fee should still match initial value (due to rate limiting)
         assertEq(baseAfterNotify, baseAfterCap, "Base fee incorrectly changed after non-cap update");
 
         // Now fast-forward to complete decay
         vm.warp(block.timestamp + policyManager.getSurgeDecayPeriodSeconds(pid));
-        
+
         // Verify surge is now zero
         (, uint256 _surgeAfterFullDecay) = dfm.getFeeState(pid);
         assertEq(_surgeAfterFullDecay, 0, "Surge not zero after full decay period");
@@ -429,13 +429,13 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
 
         // Surge fee should be unchanged after the non-cap notification
         assertEq(surgeFeeAfterNotify, surgeAfter25, "Surge fee incorrectly changed by non-cap oracle update");
-        
+
         // Base fee should still match initial value (due to rate limiting)
         assertEq(baseAfterNotify, baseAfterCap, "Base fee incorrectly changed after non-cap update");
 
         // Now fast-forward to complete decay
         vm.warp(block.timestamp + policyManager.getSurgeDecayPeriodSeconds(pid));
-        
+
         // Verify surge is now zero
         (, uint256 _surgeAfterFullDecay2) = dfm.getFeeState(pid);
         assertEq(_surgeAfterFullDecay2, 0, "Surge not zero after full decay period");

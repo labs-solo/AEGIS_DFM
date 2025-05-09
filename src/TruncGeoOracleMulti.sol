@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 import {SafeCast}        from "@openzeppelin/contracts/utils/math/SafeCast.sol";
@@ -165,14 +165,14 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /// -----------------------------------------------------------------------
     function refreshPolicyCache(PoolId pid) external {
         if (msg.sender != owner) revert OnlyOwner();
-        
+
         bytes32 id = PoolId.unwrap(pid);
         if (states[id].cardinality == 0) {
             revert Errors.OracleOperationFailed("refreshPolicyCache", "Pool not enabled");
         }
-        
+
         CachedPolicy storage pc = _policy[id];
-        
+
         // Re-fetch all policy parameters
         pc.minCap         = SafeCast.toUint24(policy.getMinBaseFee(pid) / 100);
         pc.maxCap         = SafeCast.toUint24(policy.getMaxBaseFee(pid) / 100);
@@ -180,9 +180,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         pc.budgetPpm      = policy.getDailyBudgetPpm(pid);
         pc.decayWindow    = policy.getCapBudgetDecayWindow(pid);
         pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(pid);
-        
+
         _validatePolicy(pc);
-        
+
         // Ensure current maxTicksPerBlock is within new min/max bounds
         uint24 currentCap = maxTicksPerBlock[id];
         if (currentCap < pc.minCap) {
@@ -192,7 +192,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
             maxTicksPerBlock[id] = pc.maxCap;
             emit MaxTicksPerBlockUpdated(pid, currentCap, pc.maxCap, uint32(block.timestamp));
         }
-        
+
         emit PolicyCacheRefreshed(pid);
     }
 
@@ -370,10 +370,10 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @return blockTimestamp The timestamp of the latest observation.
      */
     /// @notice Return the most recent observation stored for `pid`.
-    /// @dev    - Gas optimisation -  
-    ///         We *do not* copy the whole `Observation` struct to memory.  
+    /// @dev    - Gas optimisation -
+    ///         We *do not* copy the whole `Observation` struct to memory.
     ///         Instead we keep a **storage** reference and read just the two
-    ///         fields we need, saving ~120 gas per call.  
+    ///         fields we need, saving ~120 gas per call.
     ///         **⚠️  IMPORTANT:** the field order (`prevTick`, `blockTimestamp`)
     ///         must stay in-sync with `TruncatedOracle.Observation` layout.
     function getLatestObservation(PoolId pid)
@@ -632,7 +632,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         }
 
         uint24 diff = currentCap > newCap ? currentCap - newCap : newCap - currentCap;
-        
+
         if (newCap != currentCap) {
             maxTicksPerBlock[id] = newCap;
             _lastMaxTickUpdate[pid] = uint32(block.timestamp);

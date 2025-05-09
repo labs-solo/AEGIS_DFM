@@ -1,4 +1,4 @@
-pragma solidity 0.8.26;
+pragma solidity 0.8.27;
 
 // SPDX-License-Identifier: MIT
 
@@ -85,4 +85,4 @@ contract ExtendedPositionManager is PositionManager {
         this.modifyLiquidities(unlockData, block.timestamp + 300);
         return tokenId;
     }
-} 
+}
