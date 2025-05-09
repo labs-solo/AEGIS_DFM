@@ -21,7 +21,7 @@ remappings = [
 
   # uniswap hooks (locally cloned)
   "uniswap-hooks/=node_modules/uniswap-hooks/src/",
-  
+
   # Local utils & mocks (ADDED)
   "utils/=src/utils/",
   "mocks/=test/mocks/",
@@ -34,7 +34,7 @@ out = "out"
 libs = ["lib"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
-solc_version = "0.8.26"
+solc_version = "0.8.27"
 evm_version = "cancun"
 viaIR = true
 optimizer = true
@@ -57,7 +57,7 @@ out = "out"
 libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
-solc_version = "0.8.26"
+solc_version = "0.8.27"
 evm_version = "cancun"
 viaIR = false
 # Sepolia settings
@@ -71,7 +71,7 @@ out = "out"
 libs = ["node_modules"]
 ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
-solc_version = "0.8.26"
+solc_version = "0.8.27"
 evm_version = "cancun"
 viaIR = false
 dotenv = true

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
@@ -156,7 +156,7 @@ contract PoolManagerStub {
         bytes32 POOLS_SLOT = bytes32(uint256(6));
         bytes32 slotKey = keccak256(abi.encode(PoolId.unwrap(pid), POOLS_SLOT));
         Slot0 memory s = slots[slotKey];
-        // Safe conversion: int24 → uint24 
+        // Safe conversion: int24 → uint24
         require(s.tick >= 0, "PoolManagerStub: negative tick");
         uint24 tick = uint24(uint256(int256(s.tick)));
         return (s.sqrtPriceX96, tick, s.psf, s.pwf);
@@ -249,8 +249,8 @@ contract FullRangeLiquidityManagerUnitTest is Test {
 
         // deploy FRLM (owner = gov)
         frlm = new FRLMHarness(
-            IPoolManager(address(pm)), 
-            ExtendedPositionManager(payable(address(posm))), 
+            IPoolManager(address(pm)),
+            ExtendedPositionManager(payable(address(posm))),
             gov
         );
 
@@ -385,4 +385,4 @@ contract FullRangeLiquidityManagerUnitTest is Test {
         // totalShares mapping updated
         assertEq(uint256(frlm.positionTotalShares(pid)), shares + 1_000, "totalShares mismatch");
     }
-} 
+}

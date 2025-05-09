@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 /// @title PolicyValidator
 /// @notice Re-usable runtime-validation for fee-cap policy structs
@@ -36,4 +36,4 @@ library PolicyValidator {
         require(decayWindow    >  0,                    "decayWindow=0");
         require(updateInterval >  0,                    "updateInterval=0");
     }
-} 
+}

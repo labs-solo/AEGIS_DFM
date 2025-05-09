@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -51,4 +51,4 @@ contract LM {
     function getPoolReserves(PoolId) external pure returns (uint256, uint256) { return (0,0); }
     function positionTotalShares(PoolId) external pure returns (uint128) { return 1e18; }
     function storePoolKey(PoolId, PoolKey calldata) external {}
-} 
+}

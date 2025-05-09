@@ -1,4 +1,4 @@
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 import "forge-std/Test.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {Spot}        from "src/Spot.sol";
@@ -51,7 +51,7 @@ contract HookValidate is Test {
         uint160 hookFlags = uint160(uint256(uint160(address(hookAddr)))) & uint160(Hooks.ALL_HOOK_MASK);
         emit log_named_uint("Required flags", uint256(SpotFlags.required()));
         emit log_named_uint("Actual hook flags", uint256(hookFlags));
-        
+
         // Print the dynamic fee flag for comparison
         emit log_named_uint("DYNAMIC_FEE_FLAG", uint256(LPFeeLibrary.DYNAMIC_FEE_FLAG));
 
@@ -76,4 +76,4 @@ contract HookValidate is Test {
         emit log_named_uint("getHookPermissions flags", uint256(permFlags));
         emit log_named_uint("SpotFlags.required()", uint256(SpotFlags.required()));
     }
-} 
+}

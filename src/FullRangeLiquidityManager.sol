@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 // --- Uniswap V4 / Periphery Imports ---
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";

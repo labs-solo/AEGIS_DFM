@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -175,7 +175,7 @@ library SimpleDeployLib {
         // Get the flags directly from the hook address
         uint160 flags = uint160(hookAddr) & uint160(Hooks.ALL_HOOK_MASK);
 
-        bool depCheck1 = !(flags & Hooks.BEFORE_SWAP_FLAG > 0) 
+        bool depCheck1 = !(flags & Hooks.BEFORE_SWAP_FLAG > 0)
             && (flags & Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG > 0);
         console2.log("Dependency Check 1 (NO BS_F && BS_RDF):");
         console2.logBool(depCheck1);
@@ -203,4 +203,4 @@ library SimpleDeployLib {
 
         return d;
     }
-} 
+}

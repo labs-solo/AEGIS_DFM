@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.26;
+pragma solidity ^0.8.27;
 
 import "forge-std/Script.sol";
 // import {Strings} from "@openzeppelin/contracts/utils/Strings.sol"; // Removed
@@ -128,8 +128,8 @@ contract DeployLocalUniswapV4 is Script {
         console.log("Deploying TruncGeoOracleMulti...");
         DummyFullRangeHook fullRangeHook = new DummyFullRangeHook(address(0));
         truncGeoOracle = new TruncGeoOracleMulti(
-            poolManager, 
-            policyManager, 
+            poolManager,
+            policyManager,
             address(fullRangeHook),
             msg.sender // Use deployer as owner
         );

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 /*----------------------------------------------------------
  *  DynamicFeeManager Unit-Tests (Foundry)
@@ -207,15 +207,15 @@ contract DynamicFeeManagerUnitTest is Test {
         console.log("Base fee:", baseFee);
         console.log("Multiplier:", policy.multiplier());
         console.log("Expected surge:", baseFee * policy.multiplier() / 1e6);
-        
+
         vm.expectEmit(true, true, false, true);
         // timestamp can be ignored by expectEmit, only check indexed and data fields
         emit FeeStateChanged(PID, baseFee, baseFee * policy.multiplier() / 1e6, true, uint32(block.timestamp));
-        
+
         // Trigger CAP event via hook - ensure we're pranked as HOOK before the call
         vm.prank(HOOK);
         dfm.notifyOracleUpdate(PID, true);
-        
+
         // Debug actual values after update
         (uint256 actualBase, uint256 actualSurge) = dfm.getFeeState(PID);
         console.log("Actual base:", actualBase);
@@ -273,4 +273,4 @@ contract DynamicFeeManagerUnitTest is Test {
         policy.setParams(policy.decay(), policy.multiplier(), 1234);
         assertEq(dfm.getCapBudgetDecayWindow(PID), 1234);
     }
-} 
+}
