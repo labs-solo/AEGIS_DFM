@@ -379,6 +379,13 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             );
         }
 
+        // Grant PositionManager contract permission to modify the NFT it just minted.
+        // Without this approval, subsequent INCREASE/DECREASE_LIQUIDITY actions that
+        // the PositionManager executes internally (where `msg.sender` is the
+        // PositionManager itself) would fail the ownership check and revert with
+        // `NotApproved`.
+        posManager.approve(address(posManager), nftId);
+
         // Refund excess ETH
         if (msg.value > ethNeeded) {
             uint256 refund = msg.value - ethNeeded;
@@ -830,6 +837,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         id = posManager.nextTokenId() - 1; // PositionManager auto-increments
         positionTokenId[pid] = id; // cache for future calls
+        // Grant PositionManager contract permission to modify the NFT it just minted.
+        // Without this approval, subsequent INCREASE/DECREASE_LIQUIDITY actions that
+        // the PositionManager executes internally (where `msg.sender` is the
+        // PositionManager itself) would fail the ownership check and revert with
+        // `NotApproved`.
+        posManager.approve(address(posManager), id);
         return (id, created);
     }
 
