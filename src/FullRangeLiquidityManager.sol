@@ -435,11 +435,16 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             uint256 actual0 = FullMath.mulDiv(shares, reserve0, totalSharesInternal);
             uint256 actual1 = FullMath.mulDiv(shares, reserve1, totalSharesInternal);
 
-            // Calculate the V4 liquidity corresponding to these actual amounts
+            // --- Memoise TickMath calls (gas optimisation) ---
+            int24  lowerTick      = TickMath.minUsableTick(tickSpacing);
+            int24  upperTick      = TickMath.maxUsableTick(tickSpacing);
+            uint160 sqrtRatioAX96 = TickMath.getSqrtPriceAtTick(lowerTick);
+            uint160 sqrtRatioBX96 = TickMath.getSqrtPriceAtTick(upperTick);
+
             result.v4LiquidityForCallback = LiquidityAmounts.getLiquidityForAmounts(
                 sqrtPriceX96,
-                TickMath.getSqrtPriceAtTick(TickMath.minUsableTick(tickSpacing)),
-                TickMath.getSqrtPriceAtTick(TickMath.maxUsableTick(tickSpacing)),
+                sqrtRatioAX96,
+                sqrtRatioBX96,
                 actual0,
                 actual1
             );
