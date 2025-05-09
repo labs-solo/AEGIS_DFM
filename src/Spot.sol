@@ -62,46 +62,41 @@
         using CustomRevert for bytes4;
 
         /* ───────────── Custom errors for gas optimization ───────────── */
-        error ImmutableDependencyDeprecated();
         error CustomZeroAddress();
         error ReentrancyLocked();
 
         /* ───────────────────────── State ───────────────────────── */
-        IPoolPolicy public immutable policyManager;
+        IPoolPolicy                public immutable policyManager;
         IFullRangeLiquidityManager public immutable liquidityManager;
+        TruncGeoOracleMulti        public immutable truncGeoOracle;
+        IDynamicFeeManager         public immutable feeManager;
 
-        TruncGeoOracleMulti public immutable truncGeoOracle;
-        IDynamicFeeManager public immutable feeManager;
+        /* ──────────────  packed storage for every PoolId ────────────── */
+        struct PoolState {
+            /* meta-data & flags */
+            bool    initialized;
+            bool    emergencyState;
+            uint64  lastSwapTs;
 
-        // Gas stipend for external calls to prevent re-entrancy
-        uint256 private constant GAS_STIPEND = 100000;
+            /* immutable at init */
+            PoolKey key;
 
-        struct PoolData {
-            bool initialized;
-            bool emergencyState;
-            uint64 lastSwapTs; // last swap timestamp
-        }
-
-        mapping(bytes32 => PoolData) public poolData; // pid → data
-        mapping(bytes32 => PoolKey) public poolKeys; // pid → key
-
-        /*  reinvest settings         */
-        struct ReinvestConfig {
+            /* reinvest-config / state */
             uint256 minToken0;
             uint256 minToken1;
-            uint64 last; // last execution ts
-            uint64 cooldown; // seconds
+            uint64  lastReinvest;
+            uint64  cooldown;
         }
 
-        mapping(bytes32 => ReinvestConfig) public reinvestCfg; // pid → cfg
+        mapping(bytes32 => PoolState) public pools; // pid → state
+
+        // Gas-stipend for fee-manager callback
+        uint256 private constant GAS_STIPEND = 100_000;
 
         /// @notice Global pause for protocol‑fee reinvest
         bool public reinvestmentPaused;
 
         event ReinvestmentPauseToggled(bool paused);
-
-        // Add a deprecation event
-        event DependencySetterDeprecated(string name);
 
         // Skip‑reason constants
         string private constant REASON_GLOBAL_PAUSED = "globalPaused";
@@ -183,7 +178,7 @@
             // Directly attempt reinvestment if fees were accrued
             // No need to check for policyManager or emit ReinvestmentSuccess here,
             // _tryReinvestInternal handles its own emissions.
-            PoolKey memory key = poolKeys[_poolId];
+            PoolKey memory key = pools[_poolId].key;
             if (key.tickSpacing != 0) {
                 _reinvestWithLib(key, _poolId);
             }
@@ -406,10 +401,10 @@
             returns (uint256 shares, uint256 amount0, uint256 amount1)
         {
             bytes32 _poolId = PoolId.unwrap(params.poolId);
-            PoolData storage data = poolData[_poolId];
+            PoolState storage data = pools[_poolId];
             if (!data.initialized) revert Errors.PoolNotInitialized(_poolId);
             if (data.emergencyState) revert Errors.PoolInEmergencyState(_poolId);
-            PoolKey memory key = poolKeys[_poolId];
+            PoolKey memory key = data.key;
             bool hasNative = key.currency0.isAddressZero() || key.currency1.isAddressZero();
             if (msg.value > 0 && !hasNative) revert Errors.NonzeroNativeValue();
             (shares, amount0, amount1) = liquidityManager.deposit{value: msg.value}(
@@ -432,7 +427,7 @@
             returns (uint256 amount0, uint256 amount1)
         {
             bytes32 _poolId = PoolId.unwrap(params.poolId);
-            PoolData storage data = poolData[_poolId];
+            PoolState storage data = pools[_poolId];
             if (!data.initialized) revert Errors.PoolNotInitialized(_poolId);
             (amount0, amount1) = liquidityManager.withdraw(
                 params.poolId, params.sharesToBurn, params.amount0Min, params.amount1Min, msg.sender
@@ -448,10 +443,13 @@
             returns (bytes4)
         {
             bytes32 _poolId = PoolId.unwrap(key.toId());
-            if (poolData[_poolId].initialized) revert Errors.PoolAlreadyInitialized(_poolId);
+            if (pools[_poolId].initialized) revert Errors.PoolAlreadyInitialized(_poolId);
             if (sqrtPriceX96 == 0) revert Errors.InvalidPrice(sqrtPriceX96);
-            poolKeys[_poolId] = key;
-            poolData[_poolId] = PoolData({initialized: true, emergencyState: false, lastSwapTs: uint64(block.timestamp)});
+            PoolState storage ps = pools[_poolId];
+            ps.key           = key;
+            ps.initialized   = true;
+            ps.emergencyState = false;
+            ps.lastSwapTs    = uint64(block.timestamp);
             if (address(truncGeoOracle) != address(0) && address(key.hooks) == address(this)) {
                 try truncGeoOracle.enableOracleForPool(key) {
                     emit OracleInitialized(_poolId, tick, TickMoveGuard.HARD_ABS_CAP);
@@ -482,7 +480,7 @@
             returns (bool isInitialized, uint256[2] memory reserves, uint128 totalShares, uint256 tokenId)
         {
             bytes32 _poolId = PoolId.unwrap(poolId);
-            PoolData storage data = poolData[_poolId];
+            PoolState storage data = pools[_poolId];
             isInitialized = data.initialized;
             if (isInitialized) {
                 (reserves[0], reserves[1]) = liquidityManager.getPoolReserves(poolId);
@@ -494,27 +492,9 @@
 
         function setPoolEmergencyState(PoolId poolId, bool isEmergency) external virtual onlyGovernance {
             bytes32 _poolId = PoolId.unwrap(poolId);
-            if (!poolData[_poolId].initialized) revert Errors.PoolNotInitialized(_poolId);
-            poolData[_poolId].emergencyState = isEmergency;
+            if (!pools[_poolId].initialized) revert Errors.PoolNotInitialized(_poolId);
+            pools[_poolId].emergencyState = isEmergency;
             emit PoolEmergencyStateChanged(_poolId, isEmergency);
-        }
-
-        /**
-        * @notice DEPRECATED: Oracle address is now immutable and set in constructor
-        * @dev This function will always revert but is kept for backwards compatibility
-        */
-        function setOracleAddress(address /* _oracleAddress */) external onlyGovernance {
-            emit DependencySetterDeprecated("oracle");
-            ImmutableDependencyDeprecated.selector.revertWith();
-        }
-
-        /**
-        * @notice DEPRECATED: DynamicFeeManager is now immutable and set in constructor
-        * @dev This function will always revert but is kept for backwards compatibility
-        */
-        function setDynamicFeeManager(address /* _dynamicFeeManager */) external onlyGovernance {
-            emit DependencySetterDeprecated("dynamicFeeManager");
-            ImmutableDependencyDeprecated.selector.revertWith();
         }
 
         function setReinvestConfig(PoolId poolId, uint256 minToken0, uint256 minToken1, uint64 cooldown)
@@ -522,19 +502,19 @@
             onlyGovernance
         {
             bytes32 pid = PoolId.unwrap(poolId);
-            if (!poolData[pid].initialized) revert Errors.PoolNotInitialized(pid);
-            ReinvestConfig storage c = reinvestCfg[pid];
-            c.minToken0 = minToken0;
-            c.minToken1 = minToken1;
-            c.cooldown = cooldown;
+            if (!pools[pid].initialized) revert Errors.PoolNotInitialized(pid);
+            PoolState storage ps = pools[pid];
+            ps.minToken0 = minToken0;
+            ps.minToken1 = minToken1;
+            ps.cooldown  = cooldown;
         }
 
         function claimPendingFees(PoolId poolId) external nonReentrant {
             bytes32 pid = PoolId.unwrap(poolId);
-            if (!poolData[pid].initialized) revert Errors.PoolNotInitialized(pid);
+            if (!pools[pid].initialized) revert Errors.PoolNotInitialized(pid);
 
             address feeRecipient = policyManager.getFeeCollector();
-            PoolKey memory key = poolKeys[pid];
+            PoolKey memory key = pools[pid].key;
 
             int256 d0 = key.currency0.getDelta(address(this));
             int256 d1 = key.currency1.getDelta(address(this));
@@ -564,17 +544,17 @@
 
         function getPoolKey(PoolId poolId) external view virtual returns (PoolKey memory) {
             bytes32 _poolId = PoolId.unwrap(poolId);
-            if (!poolData[_poolId].initialized) revert Errors.PoolNotInitialized(_poolId);
-            return poolKeys[_poolId];
+            if (!pools[_poolId].initialized) revert Errors.PoolNotInitialized(_poolId);
+            return pools[_poolId].key;
         }
 
         function isPoolInitialized(PoolId poolId) external view virtual returns (bool) {
-            return poolData[PoolId.unwrap(poolId)].initialized;
+            return pools[PoolId.unwrap(poolId)].initialized;
         }
 
         function getPoolReservesAndShares(PoolId poolId) external view virtual returns (uint256 reserve0, uint256 reserve1, uint128 totalShares) {
             bytes32 _poolId = PoolId.unwrap(poolId);
-            if (poolData[_poolId].initialized) {
+            if (pools[_poolId].initialized) {
                 (reserve0, reserve1) = liquidityManager.getPoolReserves(poolId);
                 totalShares = liquidityManager.positionTotalShares(poolId);
             }
@@ -592,20 +572,6 @@
             emit ReinvestmentPauseToggled(paused);
         }
 
-        /* ---- internal helpers retained for compatibility ---- */
-        function _validateAndGetTotalShares(PoolId poolId) internal view returns (uint128 totalShares) {
-            totalShares = liquidityManager.positionTotalShares(poolId);
-        }
-
-        function _addLiquidity(
-            PoolKey memory /* key */,
-            int24 /* tickLower */,
-            int24 /* tickUpper */,
-            uint128 /* liquidity */
-        ) internal pure returns (BalanceDelta delta) {
-            // no-op dummy; default-initialised `delta` is returned
-        }
-
         /* ─────────── NEW library-backed FSM wrapper (renamed) ─────────── */
         function _reinvestWithLib(PoolKey memory key, bytes32 pid) internal {
             ReinvestLib.Locals memory r = ReinvestLib.compute(
@@ -613,10 +579,10 @@
                 PoolId.wrap(pid),
                 poolManager,
                 reinvestmentPaused,
-                reinvestCfg[pid].last,
-                reinvestCfg[pid].cooldown,
-                reinvestCfg[pid].minToken0,
-                reinvestCfg[pid].minToken1
+                pools[pid].lastReinvest,
+                pools[pid].cooldown,
+                pools[pid].minToken0,
+                pools[pid].minToken1
             );
 
             if (r.reason != bytes4(0)) {
@@ -633,7 +599,7 @@
                     emit ReinvestSkipped(pid, REASON_MINTED_ZERO, r.bal0, r.bal1);
                     return;
                 }
-                reinvestCfg[pid].last = uint64(block.timestamp);
+                pools[pid].lastReinvest = uint64(block.timestamp);
                 emit ReinvestmentSuccess(pid, r.use0, r.use1);
             } catch (bytes memory err) {
                 emit ReinvestSkipped(pid, string(abi.encodePacked("LM revert: ", err)), r.bal0, r.bal1);
@@ -658,11 +624,6 @@
             Locker.set(msg.sender);
             _;
             Locker.set(address(0));
-        }
-
-        /* --------- deprecated internal reinvest helper (still in ABI) --------- */
-        function _tryReinvestInternal(PoolKey memory, bytes32) internal pure {
-            revert("deprecated");
         }
 
         // Override validateHookAddress to skip validation during construction

@@ -38,9 +38,11 @@ solc_version = "0.8.27"
 evm_version = "cancun"
 viaIR = true
 optimizer = true
-optimizer_runs = 1
+optimizer_runs = 10000
 dotenv = true  # Enable .env file loading
-exclude_paths = ["test/old-tests"]
+exclude_paths = [
+  "test/old-tests",            # legacy tests already excluded
+]
 
 # ──────────────────────────────────────────────────────────────
 # Explicit import remappings (Forge will also scan node_modules

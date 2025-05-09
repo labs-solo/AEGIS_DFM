@@ -198,42 +198,16 @@ contract SpotUnitTest is Test {
 
         require(address(spot) == expectedAddr, "hook addr mismatch");
 
-        /* ---------- prime  poolData & poolKeys so that `deposit()`
+        /* ---------- prime  pools mapping so that `deposit()`
          * ---------- passes all its guards (→ tests re-entrancy)      */
 
-        // ---- actual storage layout ----------------------------------
-        //  BaseHook → slots 0-3, Owned.owner → slot-4.
-        //  Spot's own state therefore starts at slot-5 **in byte-code**, but
-        //  the compiler packs the constant pool before that first free slot,
-        //  leaving our two mappings at **slot-1** (poolData) and **slot-2**
-        //  (poolKeys).  Confirm with `forge inspect Spot storageLayout`.
+        // Storage layout reference:
+        //   owner                  → slot-0  (inherited)
+        //   pools mapping          → slot-1  (see `forge inspect Spot storageLayout`)
 
-        // poolData.initialized = true
-        bytes32 dataSlot = keccak256(abi.encode(PID_BYTES, uint256(1))); // mapping @ slot-1
-        vm.store(address(spot), dataSlot, bytes32(uint256(1)));
-
-        // poolKeys[PID] = dummy full-range key
-        bytes32 keySlot = keccak256(abi.encode(PID_BYTES, uint256(2))); // mapping @ slot-2
-
-        // Store the PoolKey struct
-        // First word: currency0 and currency1 (packed addresses)
-        vm.store(
-            address(spot),
-            keySlot,
-            bytes32(uint256(uint160(address(0))) | (uint256(uint160(address(0xBEEF))) << 160))
-        );
-        // Second word: fee and tickSpacing
-        vm.store(
-            address(spot),
-            bytes32(uint256(keySlot) + 1),
-            bytes32(uint256(uint24(0)) | (uint256(uint24(1)) << 24))
-        );
-        // Third word: hooks address
-        vm.store(
-            address(spot),
-            bytes32(uint256(keySlot) + 2),
-            bytes32(uint256(uint160(address(spot))))
-        );
+        // pools[PID].initialized = true
+        bytes32 poolSlot = keccak256(abi.encode(PID_BYTES, uint256(1))); // mapping @ slot-1
+        vm.store(address(spot), poolSlot, bytes32(uint256(1)));
 
         // Verify initialization worked
         require(spot.isPoolInitialized(PID), "Pool not initialized after setup");
@@ -311,8 +285,16 @@ contract SpotUnitTest is Test {
         spot.setPoolEmergencyState(PID, false); // caller = governance → OK now
         spot.setReinvestConfig(PID, 1,2,3);
 
-        (uint256 min0,uint256 min1,uint64 last,uint64 cd) =
-            spot.reinvestCfg(PID_BYTES);
+        (
+            , /* initialized */
+            , /* emergencyState */
+            , /* lastSwapTs */
+            , /* PoolKey */
+            uint256 min0,
+            uint256 min1,
+            uint64  last,
+            uint64  cd
+        ) = spot.pools(PID_BYTES);
         assertEq(min0, 1);
         assertEq(min1, 2);
         assertEq(cd  , 3);

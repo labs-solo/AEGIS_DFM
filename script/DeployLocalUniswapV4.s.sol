@@ -167,7 +167,6 @@ contract DeployLocalUniswapV4 is Script {
         // Step 4: Configure deployed contracts
         console.log("Configuring contracts...");
         liquidityManager.setAuthorizedHookAddress(address(fullRange));
-        fullRange.setDynamicFeeManager(address(dynamicFeeManager)); // Set DFM on FullRange
 
         // Initialize Pool (requires hook address in key now)
         key.hooks = IHooks(address(fullRange)); // Update key with actual hook address
