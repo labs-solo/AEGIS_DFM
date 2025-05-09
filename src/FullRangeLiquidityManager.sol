@@ -107,8 +107,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
 
     // ────────────────────────── CONSTANTS ──────────────────────────
-    uint128 private constant MIN_LOCKED_SHARES = 1_000; // Kept for first deposit calc
-    uint128 private constant MIN_LOCKED_LIQUIDITY = 1_000; // V4 liq seed
+    uint128 private constant MIN_LOCKED_SHARES = 1_000;           // seed-liquidity shares
+    uint128 private constant MAX_SHARES        = type(uint128).max - 1e18; // hard cap (≈3e38 wei TVL)
 
     // Permanently-locked ERC-6909 shares (min-liquidity analogue)
     mapping(PoolId => uint128) public lockedShares; // Kept
@@ -136,6 +136,21 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint256 timestamp
     );
     // Note: optional events "PoolStateUpdated" and "Reinvested" have been pruned.
+
+    /* ──────────────  Circuit-breaker  ─────────────── */
+    bool public paused;
+    event Paused(bool state);
+
+    modifier notPaused() {
+        require(!paused, "FRLM: paused");
+        _;
+    }
+
+    /// @notice Owner can pause or un-pause critical flows.
+    function setPaused(bool _p) external onlyOwner {
+        paused = _p;
+        emit Paused(_p);
+    }
 
     /**
      * @notice Constructor
@@ -179,8 +194,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      * @param key The PoolKey corresponding to the Pool ID.
      */
     function storePoolKey(PoolId poolId, PoolKey calldata key) external override onlyHook {
-        // Prevent overwriting existing keys? Optional check.
-        // if (_poolKeys[poolId].tickSpacing != 0) revert PoolKeyAlreadyStored(poolId);
+        if (_poolKeys[poolId].tickSpacing != 0) {
+            revert Errors.ValidationInvalidInput("PoolKey already stored");
+        }
         _poolKeys[poolId] = key;
         emit PoolKeyStored(poolId, key);
     }
@@ -221,6 +237,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         payable
         override
         nonReentrant
+        notPaused
         onlyGovernance
         returns (uint256 usableShares, uint256 amount0, uint256 amount1)
     {
@@ -229,13 +246,18 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (amount0Desired == 0 && amount1Desired == 0) revert Errors.ZeroAmount(); // Must desire some amount
 
         PoolKey memory key = _poolKeys[poolId];
-        (, uint160 sqrtPriceX96,) = getPositionData(poolId);
+        uint160 sqrtPriceX96;
+        {
+            (, sqrtPriceX96,) = getPositionData(poolId);
+            if (sqrtPriceX96 == 0) {
+                (sqrtPriceX96,,,) = StateLibrary.getSlot0(manager, poolId);
+            }
+        }
         uint256 _tokenIdTmp = PoolTokenIdUtils.toTokenId(poolId);
         uint128 totalSharesInternal = uint128(positions.totalSupply(bytes32(_tokenIdTmp)));
 
         if (sqrtPriceX96 == 0 && totalSharesInternal == 0) {
-            (sqrtPriceX96,,,) = StateLibrary.getSlot0(manager, poolId);
-            if (sqrtPriceX96 == 0) revert Errors.ValidationInvalidInput("Pool price is zero");
+            revert Errors.ValidationInvalidInput("Pool price is zero");
         }
 
         // ——— 3) single‐read slot0 and reuse it to compute pool reserves (inlined)
@@ -364,7 +386,13 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
 
         emit LiquidityAdded(
-            poolId, recipient, amount0, amount1, oldTotalSharesInternal, uint128(usableShares), block.timestamp
+            poolId,
+            recipient,
+            amount0,
+            amount1,
+            oldTotalSharesInternal,
+            uint128(usableShares),
+            block.timestamp
         );
 
         return (usableShares, amount0, amount1);
@@ -401,6 +429,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
                 reserve1 == 0 ? type(uint256).max : FullMath.mulDiv(amount1Desired, totalSharesInternal, reserve1);
             uint128 shares = (shares0 < shares1 ? shares0 : shares1).toUint128();
             if (shares == 0) revert Errors.ZeroAmount();
+            require(uint256(totalSharesInternal) + shares <= MAX_SHARES, "FRLM: share cap");
 
             // Calculate actual amounts needed for these V2 shares
             uint256 actual0 = FullMath.mulDiv(shares, reserve0, totalSharesInternal);
@@ -470,7 +499,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
 
         uint128 usableV2Shares = (totalV2Shares - minLiq128).toUint128();
-        // Note: Original check usableV2Shares == 0 seems redundant if totalV2Shares >= minLiq128 and minLiq128 > 0
+        // Cap shares to MAX_SHARES to ensure bounded supply
+        require(minLiq128 + usableV2Shares <= MAX_SHARES, "FRLM: share cap");
 
         result.actual0 = actual0;
         result.actual1 = actual1;
@@ -488,6 +518,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         external
         override
         nonReentrant
+        notPaused
         onlyGovernance
         returns (uint256 amount0, uint256 amount1)
     {
@@ -657,6 +688,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         payable
         override
         nonReentrant
+        notPaused
         returns (uint128 mintedShares)
     {
         // ─── validations ───
@@ -830,6 +862,12 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     function _mintShares(PoolId pid, uint128 shares) internal {
         if (shares == 0) return;
         uint256 tokenId = PoolTokenIdUtils.toTokenId(pid);
+        unchecked {
+            require(
+                positions.totalSupply(bytes32(tokenId)) + shares <= MAX_SHARES,
+                "FRLM: share cap"
+            );
+        }
         FullRangePositions(address(positions)).mint(address(this), tokenId, shares);
     }
 
@@ -842,4 +880,6 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
 
     /// @notice Uniswap V4 liquidity currently held by the pool-wide position
+
+    uint256[50] private __gap;
 }
