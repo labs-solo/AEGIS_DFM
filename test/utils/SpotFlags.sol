@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 
@@ -18,4 +18,4 @@ library SpotFlags {
             /* AFTER_SWAP_RETURN_DELTA       */  Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
         );
     }
-} 
+}

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.26;
+pragma solidity ^0.8.27;
 
 import "forge-std/Test.sol";
 import "../lib/EventTools.sol";
@@ -126,7 +126,7 @@ contract PoolPolicyManager_Tick is Test {
         // Check if current value matches desired value
         int24 prevFactor = ppm.getTickScalingFactor();
         assertNotEq(prevFactor, 3);
-        
+
         vm.expectEmit(true, true, true, true);
         // The function setTickScalingFactor incorrectly emits VTIER(2) instead of TICK_SCALING(1)
         // Adjusting expectation to match the actual emitted event for now.

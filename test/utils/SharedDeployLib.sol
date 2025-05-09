@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.27;
 
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {ISpot} from "../../src/interfaces/ISpot.sol";
@@ -44,7 +44,7 @@ library SharedDeployLib {
     //  Single-source constants for CREATE2 salts used across every test
     // --------------------------------------------------------------------- //
     bytes32 public constant ORACLE_SALT      = keccak256("TRUNC_GEO_ORACLE");
-    
+
     bytes32 public constant DFM_SALT         = keccak256("DYNAMIC_FEE_MANAGER");
 
     /// 🛑  Do **not** hard-code a deployer.  It must be provided by the caller.
@@ -103,7 +103,7 @@ library SharedDeployLib {
         return address(uint160(uint256(digest))); // ← lower 20-bytes
     }
 
-    /** @dev Predicts a CREATE2 address 
+    /** @dev Predicts a CREATE2 address
      *  @param deployer The address which will deploy the contract
      *  @param salt A 32-byte value used to create the contract address
      *  @param bytecode The bytecode of the to-be-deployed contract
@@ -135,7 +135,7 @@ library SharedDeployLib {
     ) internal returns (address addr) {
         bytes memory frozenArgs = bytes(constructorArgs);
         bytes memory initCode   = abi.encodePacked(bytecode, frozenArgs);
-        
+
         // ► Rule 26: Hash exactly what the EVM will hash (`len` bytes starting *after* the length word)
         bytes32 codeHash;
         assembly { codeHash := keccak256(add(initCode, 0x20), mload(initCode)) }
@@ -151,11 +151,11 @@ library SharedDeployLib {
 
         // ---- Rule 28: final deep-copy & re-hash -----------------
         bytes memory finalCopy = abi.encodePacked(initCode); // fresh copy
-        
+
         // Use assembly to hash in the same way as the EVM
         bytes32 codeHashFinal;
         assembly { codeHashFinal := keccak256(add(finalCopy, 0x20), mload(finalCopy)) }
-        
+
         require(codeHashFinal == codeHash, "initCode mutated");
 
         // Calculate predicted address (for logging only)
@@ -166,12 +166,12 @@ library SharedDeployLib {
         if (predicted.code.length != 0) {
             revert("CREATE2 target already has code - pick a different salt");
         }
-        
+
         // Rule 29-ter-bis - Immediately re-hash before create2
         bytes32 onChainHashFinal;
         assembly { onChainHashFinal := keccak256(add(finalCopy, 0x20), mload(finalCopy)) }
         require(onChainHashFinal == codeHashFinal, "hash drift");
-        
+
         // Assembly: copy salt into its own local before *any* other op
         assembly {
             let tmpSalt := _salt        // Rule 30 – re-freeze
@@ -183,10 +183,10 @@ library SharedDeployLib {
             )
         }
         if (addr == address(0)) revert SharedDeployLib__DeploymentFailed();
-        
+
         // Add debug output for deployed address
         console2.log("ADDR AFTER DEPLOY:", addr);
-        
+
         // Note: We accept the CREATE2 result as authoritative rather than comparing against predicted
         return addr;
     }
@@ -313,4 +313,4 @@ library SharedDeployLib {
         assert(deployed == predicted);
         return deployed;
     }
-} 
+}

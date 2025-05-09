@@ -12,11 +12,11 @@ importers:
         specifier: 5.3.0
         version: 5.3.0
       '@uniswap/v4-core':
-        specifier: git+https://github.com/Uniswap/v4-core.git#main
-        version: https://codeload.github.com/Uniswap/v4-core/tar.gz/a7cf038cd568801a79a9b4cf92cd5b52c95c8585
+        specifier: git+https://github.com/labs-solo/v4-core.git#use-sol-0.8.27
+        version: https://codeload.github.com/labs-solo/v4-core/tar.gz/1dc32430eee5be3677ff5992959b6e0221b5fead
       '@uniswap/v4-periphery':
-        specifier: git+https://github.com/Uniswap/v4-periphery.git#main
-        version: https://codeload.github.com/Uniswap/v4-periphery/tar.gz/444c526b77d804590f0d7bc5a481af5a3277c952
+        specifier: git+https://github.com/labs-solo/v4-periphery.git#use-sol-0.8.27
+        version: https://codeload.github.com/labs-solo/v4-periphery/tar.gz/026a6d84510ef114850c560ba710a3a194b20390
       ds-test:
         specifier: github:dapphub/ds-test#master
         version: https://codeload.github.com/dapphub/ds-test/tar.gz/e282159d5170298eb2455a6c05280ab5a73a4ef0
@@ -48,12 +48,12 @@ packages:
     resolution: {tarball: https://codeload.github.com/Uniswap/permit2/tar.gz/cc56ad0f3439c502c246fc5cfcc3db92bb8b7219}
     version: 1.0.0
 
-  '@uniswap/v4-core@https://codeload.github.com/Uniswap/v4-core/tar.gz/a7cf038cd568801a79a9b4cf92cd5b52c95c8585':
-    resolution: {tarball: https://codeload.github.com/Uniswap/v4-core/tar.gz/a7cf038cd568801a79a9b4cf92cd5b52c95c8585}
+  '@uniswap/v4-core@https://codeload.github.com/labs-solo/v4-core/tar.gz/1dc32430eee5be3677ff5992959b6e0221b5fead':
+    resolution: {tarball: https://codeload.github.com/labs-solo/v4-core/tar.gz/1dc32430eee5be3677ff5992959b6e0221b5fead}
     version: 1.0.1
 
-  '@uniswap/v4-periphery@https://codeload.github.com/Uniswap/v4-periphery/tar.gz/444c526b77d804590f0d7bc5a481af5a3277c952':
-    resolution: {tarball: https://codeload.github.com/Uniswap/v4-periphery/tar.gz/444c526b77d804590f0d7bc5a481af5a3277c952}
+  '@uniswap/v4-periphery@https://codeload.github.com/labs-solo/v4-periphery/tar.gz/026a6d84510ef114850c560ba710a3a194b20390':
+    resolution: {tarball: https://codeload.github.com/labs-solo/v4-periphery/tar.gz/026a6d84510ef114850c560ba710a3a194b20390}
     version: 1.0.1
 
   '@yarnpkg/lockfile@1.1.0':
@@ -349,9 +349,9 @@ snapshots:
 
   '@uniswap/permit2@https://codeload.github.com/Uniswap/permit2/tar.gz/cc56ad0f3439c502c246fc5cfcc3db92bb8b7219': {}
 
-  '@uniswap/v4-core@https://codeload.github.com/Uniswap/v4-core/tar.gz/a7cf038cd568801a79a9b4cf92cd5b52c95c8585': {}
+  '@uniswap/v4-core@https://codeload.github.com/labs-solo/v4-core/tar.gz/1dc32430eee5be3677ff5992959b6e0221b5fead': {}
 
-  '@uniswap/v4-periphery@https://codeload.github.com/Uniswap/v4-periphery/tar.gz/444c526b77d804590f0d7bc5a481af5a3277c952': {}
+  '@uniswap/v4-periphery@https://codeload.github.com/labs-solo/v4-periphery/tar.gz/026a6d84510ef114850c560ba710a3a194b20390': {}
 
   '@yarnpkg/lockfile@1.1.0': {}
 

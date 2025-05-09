@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.26;
+pragma solidity ^0.8.27;
 
 import "forge-std/Test.sol";
 import "../lib/EventTools.sol";
@@ -204,7 +204,7 @@ contract PoolPolicyManager_Admin_Test is Test {
     function testOwnerUpdatesBudgetAndWindow() public {
         // Get current values to determine if events should emit
         ppm.getBudgetAndWindow(pid(0)); // call to read state, discard return values - silence 2072
-        
+
         // Set the new values
         vm.prank(OWNER);
         ppm.setDailyBudgetPpm(2_000_000); // 2 caps/day
