@@ -19,3 +19,8 @@ script/run_with_alchemy.sh
 
 # macOS system files
 .DS_Store
+
+# Python virtual environment
+.venv/
+__pycache__/
+*.pyc
