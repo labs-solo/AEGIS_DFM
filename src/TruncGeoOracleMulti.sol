@@ -500,6 +500,18 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         return (tickCumulatives, secondsPerLiquidityCumulativeX128s);
     }
 
+    /**
+     * @notice Gets the current price for a pool with freshness check
+     * @param key The pool key
+     * @return sqrtPriceX96 The current sqrt price X96
+     */
+    function getPrice(PoolKey memory key) external view returns (uint160 sqrtPriceX96) {
+        uint32 maxAge = 1_800; // 30 min
+        uint32 lastUpdated = _lastObservationTimestamp(key.toId());
+        if (block.timestamp - lastUpdated > maxAge) revert Errors.StaleOracle();
+        (sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, key.toId());
+    }
+
     /* ────────────────────── INTERNALS ──────────────────────── */
 
     /**
@@ -710,5 +722,18 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         if (_hook == address(0)) revert Errors.ZeroAddress();
         if (hook != address(0)) revert Errors.AlreadyInitialized("hook");
         hook = _hook;
+    }
+
+    /// @dev Returns the timestamp of the most recent observation for a pool
+    ///      or 0 if the oracle has not yet been enabled.
+    function _lastObservationTimestamp(PoolId pid) internal view returns (uint32) {
+        bytes32 id = PoolId.unwrap(pid);
+        ObservationState memory state = states[id];
+        if (state.cardinality == 0) return 0;
+
+        // Derive the 512-slot page that contains the latest observation
+        TruncatedOracle.Observation[PAGE_SIZE] storage page = _leaf(id, state.index);
+        TruncatedOracle.Observation storage obs = page[state.index % PAGE_SIZE];
+        return obs.blockTimestamp;
     }
 }
