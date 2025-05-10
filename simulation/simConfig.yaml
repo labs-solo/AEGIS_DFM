@@ -1,0 +1,11 @@
+pair:
+  token0: TKNA
+  token1: TKNB
+initialPrice: 1.0
+initialLiquidity:
+  token0: 1000000000000000000000  # 1e21 wei
+  token1: 1000000000000000000000
+feeParams:
+  defaultBaseFeePpm: 3000
+  minBaseFeePpm: 100
+  maxBaseFeePpm: 50000 
