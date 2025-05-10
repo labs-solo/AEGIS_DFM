@@ -22,6 +22,19 @@ ARTIFACTS = WORKSPACE / "out"
 # Flags required by Spot.getHookPermissions(): AFTER_INITIALIZE | BEFORE_SWAP | AFTER_SWAP | AFTER_SWAP_RETURNS_DELTA
 REQUIRED_HOOK_FLAGS = 0x10C4  # see @uniswap/v4-core/libraries/Hooks.sol
 HOOK_MASK = (1 << 14) - 1
+FEE = 3000  # 0.3% fee
+TICK_SPACING = 60  # standard tick spacing for 0.3% fee tier
+
+def bytes32(value):
+    """Convert a value to bytes32."""
+    if isinstance(value, int):
+        return value.to_bytes(32, byteorder='big')
+    elif isinstance(value, str):
+        return value.encode().ljust(32, b'\0')
+    elif isinstance(value, bytes):
+        return value.ljust(32, b'\0')
+    else:
+        raise ValueError("Unsupported type for bytes32 conversion")
 
 class PoaMiddleware:
     def __init__(self, w3: Web3) -> None:
@@ -108,10 +121,6 @@ def find_salt_for_flags(deployer: str, creation_code: bytes, flags: int, max_loo
 # -------------------------------------------------------------
 #  Main orchestrator
 # -------------------------------------------------------------
-
-def bytes32(value):
-    """Convert a value to bytes32."""
-    return value.to_bytes(32, byteorder='big')
 
 def main():
     # 0. Connect (or start) local Anvil
@@ -267,13 +276,10 @@ def main():
     # Authorise hook in DFM & LM; wire oracle
     dfm.functions.setAuthorizedHook(spot_addr).transact({"from": deployer})
     liquidityManager.functions.setAuthorizedHookAddress(spot_addr).transact({"from": deployer})
-    oracle.functions.setHookAddress(spot_addr).transact({"from": deployer})
 
     # ---------------------------------------------------------
     # 11. Build PoolKey & initialize pool
     # ---------------------------------------------------------
-    FEE = 3000
-    TICK_SPACING = 60
     pool_key = (
         token0,
         token1,
@@ -281,19 +287,27 @@ def main():
         TICK_SPACING,
         spot_addr,
     )
-    init_price = float(config.get("initialPrice", 1.0))  # configurable starting price
+    init_price = float(config.get("initialPrice", 1.0))
     sqrt_price_x96 = int((math.sqrt(init_price)) * (1 << 96))
     
+    # Set hook address in Oracle
+    oracle.functions.setHookAddress(spot_addr).transact({"from": deployer})
+
     # Initialize pool in PoolManager (this will trigger Spot hook's _afterInitialize)
     poolManager.functions.initialize(pool_key, sqrt_price_x96).transact({"from": deployer})
 
-    # Set reinvest config with no cooldown and minimum thresholds
+    # Initialize Oracle for the pool
     pool_id = Web3.keccak(
         encode(
             ['address', 'address', 'uint24', 'int24', 'address'],
             [token0, token1, FEE, TICK_SPACING, spot_addr]
         )
     )
+
+    # Initialize DynamicFeeManager for the pool
+    dfm.functions.initialize(pool_id, 0).transact({"from": deployer})
+
+    # Set reinvest config with no cooldown and minimum thresholds
     spotHook.functions.setReinvestConfig(
         pool_id,  # poolId
         0,  # minToken0
@@ -336,18 +350,31 @@ def main():
 
     MIN_TICK = -887272
     MAX_TICK = 887272
+    lp_router_c = w3.eth.contract(address=lp_router_addr, abi=abi_liqT)
     
-    # Calculate liquidity based on the smaller token amount (in terms of value)
-    # For 1:1 price, we can use the smaller token amount directly
-    liquidity = min(amount0, amount1)
+    # Create the PoolKey tuple
+    pool_key = (token0, token1, FEE, TICK_SPACING, spot_addr)
     
-    modify_params = (
-        MIN_TICK,
-        MAX_TICK,
-        liquidity,  # liquidityDelta (calculated from token amounts)
-        bytes32(0)  # salt
-    )
-    lpRouter.functions.modifyLiquidity(pool_key, modify_params, b"").transact({"from": lp_provider, "gas": 1000000})
+    # Calculate liquidity - use a more conservative amount
+    # We'll use 1/10th of the token amounts to avoid any potential overflow
+    liquidity = min(amount0, amount1) // 10
+    
+    # Ensure ticks are multiples of tick spacing
+    tick_spacing = TICK_SPACING
+    min_tick = (MIN_TICK // tick_spacing) * tick_spacing
+    max_tick = (MAX_TICK // tick_spacing) * tick_spacing
+    
+    # Create the ModifyLiquidityParams tuple with adjusted ticks
+    modify_params = (min_tick, max_tick, liquidity, bytes32(0))
+    
+    # Call modifyLiquidity with the correct parameters
+    lp_router_c.functions.modifyLiquidity(
+        pool_key,  # PoolKey tuple
+        modify_params,  # ModifyLiquidityParams tuple
+        b"",  # hookData
+        False,  # settleUsingBurn
+        False  # takeClaims
+    ).transact({"from": lp_provider, "gas": 1_000_000})  # Added explicit gas limit
     print("Initial liquidity added.")
 
     # ---------------------------------------------------------
@@ -498,6 +525,15 @@ def setup_simulation():
     ).contractAddress
     dfm = w3.eth.contract(address=dfm_addr, abi=abi_dfm)
 
+    # Initialize DynamicFeeManager for the pool
+    pool_id = Web3.keccak(
+        encode(
+            ['address', 'address', 'uint24', 'int24', 'address'],
+            [token0, token1, FEE, TICK_SPACING, oracle_addr]
+        )
+    )
+    dfm.functions.initialize(pool_id, 0).transact({"from": deployer})
+
     factory = compile_create2_factory(w3)
 
     spot_args = encode(
@@ -512,7 +548,6 @@ def setup_simulation():
     spotHook = w3.eth.contract(address=spot_addr, abi=abi_spot)
     dfm.functions.setAuthorizedHook(spot_addr).transact({"from": deployer})
     liquidityManager.functions.setAuthorizedHookAddress(spot_addr).transact({"from": deployer})
-    oracle.functions.setHookAddress(spot_addr).transact({"from": deployer})
 
     # Pool init
     pool_key = (
@@ -528,13 +563,15 @@ def setup_simulation():
     # Initialize pool in PoolManager (this will trigger Spot hook's _afterInitialize)
     poolManager.functions.initialize(pool_key, sqrt_price_x96).transact({"from": deployer})
 
-    # Set reinvest config with no cooldown and minimum thresholds
+    # Initialize Oracle for the pool
     pool_id = Web3.keccak(
         encode(
             ['address', 'address', 'uint24', 'int24', 'address'],
             [token0, token1, FEE, TICK_SPACING, spot_addr]
         )
     )
+
+    # Set reinvest config with no cooldown and minimum thresholds
     spotHook.functions.setReinvestConfig(
         pool_id,  # poolId
         0,  # minToken0
@@ -565,13 +602,39 @@ def setup_simulation():
     MIN_TICK = -887272
     MAX_TICK = 887272
     lp_router_c = w3.eth.contract(address=lp_router_addr, abi=abi_liqT)
+    
+    # Create the PoolKey tuple
+    pool_key = (token0, token1, FEE, TICK_SPACING, spot_addr)
+    
+    # Calculate liquidity - use a more conservative amount
+    # We'll use 1/10th of the token amounts to avoid any potential overflow
+    liquidity = min(amount0, amount1) // 10
+    
+    # Ensure ticks are multiples of tick spacing
+    tick_spacing = TICK_SPACING
+    min_tick = (MIN_TICK // tick_spacing) * tick_spacing
+    max_tick = (MAX_TICK // tick_spacing) * tick_spacing
+    
+    # Create the ModifyLiquidityParams tuple with adjusted ticks
+    modify_params = (min_tick, max_tick, liquidity, bytes32(0))
+    
+    # Call modifyLiquidity with the correct parameters
     lp_router_c.functions.modifyLiquidity(
-        pool_key,
-        (MIN_TICK, MAX_TICK, amount0, amount1, 0, 0, lp_provider),
-    ).transact({"from": lp_provider})
+        pool_key,  # PoolKey tuple
+        modify_params,  # ModifyLiquidityParams tuple
+        b"",  # hookData
+        False,  # settleUsingBurn
+        False  # takeClaims
+    ).transact({"from": lp_provider, "gas": 1_000_000})  # Added explicit gas limit
 
-    pool_id = poolManager.functions.toId(pool_key).call()
+    # Calculate pool ID from key
+    pool_id = Web3.keccak(
+        encode(
+            ['address', 'address', 'uint24', 'int24', 'address'],
+            [token0, token1, FEE, TICK_SPACING, spot_addr]
+        )
+    )
 
     accounts = {"deployer": deployer, "user": user, "lp_provider": lp_provider}
 
-    return w3, pool_id, poolManager, policyManager, dfm, swapRouter, accounts 
+    return w3, pool_id, pool_key, poolManager, policyManager, dfm, swapRouter, accounts 

@@ -9,10 +9,9 @@ def test_base_fee_up():
     """Stress market with large swings so that CAP events drive base fee up."""
 
     # Arrange – environment
-    w3, pool_id, poolManager, policyManager, dfm, swapRouter, accounts = orch.setup_simulation()
+    w3, pool_id, pool_key, poolManager, policyManager, dfm, swapRouter, accounts = orch.setup_simulation()
 
     tracker = FeeTracker(dfm, pool_id)
-    pool_key = poolManager.functions.toKey(pool_id).call()
 
     cap_event_count = 0
 
@@ -38,3 +37,26 @@ def test_base_fee_up():
     assert base_fee == max_base_fee, "Base fee should have risen to maximum under heavy volatility"
     assert cap_event_count > 0, "At least one CAP event should have occurred"
     assert surge_fee == 0 or cap_event_count > 0  # Surge fee may have decayed by end of test 
+
+    # Flush CSV outputs
+    tracker.finalize()
+
+    import csv, os
+    results_dir = os.path.join(os.path.dirname(__file__), '..', 'simulation', 'results')
+    fee_csv = os.path.join(results_dir, 'fee_and_cap_metrics.csv')
+    cap_csv = os.path.join(results_dir, 'cap_event_log.csv')
+
+    # Both CSVs should exist
+    assert os.path.isfile(fee_csv), "Daily fee metrics CSV not generated"
+    assert os.path.isfile(cap_csv), "CAP event log CSV not generated"
+
+    with open(fee_csv, newline='') as f:
+        rows = list(csv.DictReader(f))
+        assert len(rows) == 1  # one simulated day
+        assert int(rows[0]['CapEventCount']) >= cap_event_count >= 1
+        assert int(rows[0]['TotalSurgeFeeCollected']) >= 0
+
+    with open(cap_csv, newline='') as f:
+        lines = list(csv.reader(f))
+        # header + at least one CAP event row
+        assert len(lines) >= 2 

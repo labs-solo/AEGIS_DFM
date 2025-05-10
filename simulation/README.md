@@ -42,6 +42,32 @@ This directory contains the Python-based simulation environment for testing and 
    anvil --version
    ```
 
+## Managing Anvil Node
+
+The simulator requires a local Anvil node to run. There are two ways to handle this:
+
+1. **Let the simulator manage Anvil (Recommended)**:
+   - The simulator will automatically start and manage an Anvil instance
+   - Before running, ensure no existing Anvil is running:
+     ```bash
+     # Check for running Anvil (Unix/macOS)
+     lsof -i :8545
+     
+     # Kill any existing Anvil process
+     kill -9 $(lsof -ti:8545)
+     ```
+
+2. **Use an existing Anvil node**:
+   - If you prefer to manage Anvil yourself:
+     ```bash
+     # Start Anvil manually
+     anvil --port 8545
+     
+     # Or use a custom port
+     anvil --port 8555
+     export ANVIL_URI=http://127.0.0.1:8555
+     ```
+
 ## Configuration
 
 The simulator behavior can be customized through `simConfig.yaml`. Key parameters include:
@@ -73,10 +99,12 @@ feeParams:
 2. Run the basic simulation (from repository root):
 
    ```bash
+   # First, ensure no existing Anvil is running
+   kill -9 $(lsof -ti:8545)  # Unix/macOS only
+   
+   # Then run the simulator
    python -m simulation.orchestrator
    ```
-
-   Note: The simulator will automatically start a local Anvil node if one is not running. If you get a "port in use" error, ensure no other Anvil instance is running.
 
 3. Run specific test scenarios:
 
@@ -119,18 +147,34 @@ Key components:
 
 ## Troubleshooting
 
-1. If Anvil connection fails:
-   - Check if another Anvil instance is already running (`lsof -i :8545` on Unix/macOS)
-   - Kill any existing Anvil processes and try again
-   - Verify Foundry installation with `forge --version`
+1. If you get "Address already in use (os error 48)":
+   ```bash
+   # Check what's using port 8545
+   lsof -i :8545
+   
+   # Kill the existing Anvil process
+   kill -9 $(lsof -ti:8545)
+   
+   # Try running the simulator again
+   python -m simulation.orchestrator
+   ```
 
-2. If contract deployment fails:
+2. If Anvil connection fails:
+   - Verify Foundry installation with `forge --version`
+   - Try using a different port:
+     ```bash
+     export ANVIL_URI=http://127.0.0.1:8555
+     anvil --port 8555  # In a separate terminal
+     python -m simulation.orchestrator
+     ```
+
+3. If contract deployment fails:
    - Ensure contracts are built (`forge build`)
    - Check virtual environment is activated
    - Verify all Python dependencies are installed
    - Check the gas limit in the deployment transaction
 
-3. If fee updates aren't occurring:
+4. If fee updates aren't occurring:
    - Verify timeStep configuration
    - Check blockchain time advancement in test scenarios
    - Review DynamicFeeManager contract logs
