@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 from web3.contract import Contract
+import os
 
 
 class FeeTracker:
@@ -33,6 +34,19 @@ class FeeTracker:
         self._cap_event_start: int | None = None
         self._cap_events: list[tuple[int, int]] = []  # (start_step, end_step)
         self._finalized: bool = False
+
+        # ---------------- Phase 3 additions ----------------
+        # Track granular fee components per swap so that extended simulations
+        # (e.g. dual-pool arbitrage tests) can make assertions about collected
+        # fees without having to parse on-chain events post-hoc.
+        # Units used: **percentage** (not ppm) so that tests can express human
+        # readable values such as 0.30 for a 0.30 % fee tier.
+        self.base_fees: list[float] = []   # base component per swap (percent)
+        self.surge_fees: list[float] = []  # surge component per swap (percent)
+        self.fees: list[float] = []        # total fee per swap (percent)
+
+        # CAP event registry used by Phase 3 tests
+        self.cap_events: list[dict] = []   # Each item: {"time": int, ...details}
 
     # ------------------------------------------------------------------
     # Helpers
@@ -144,4 +158,53 @@ class FeeTracker:
         try:
             self.finalize()
         except Exception:  # pragma: no cover – best-effort during interpreter shutdown
-            pass 
+            pass
+
+    # ------------------------------------------------------------------
+    # Phase 3 public helpers (non-intrusive for Phase 2 callers)
+    # ------------------------------------------------------------------
+
+    def record_swap(self, base_fee: float, applied_fee: float) -> None:  # noqa: D401
+        """Record the fee breakdown of a swap.
+
+        Parameters
+        ----------
+        base_fee : float
+            Base liquidity-provider fee (percentage, e.g. 0.30 for 0.30 %).
+        applied_fee : float
+            Actual fee applied once surge component is included – must be
+            >= *base_fee*.
+        """
+
+        surge_fee = max(applied_fee - base_fee, 0.0)
+        self.base_fees.append(base_fee)
+        self.surge_fees.append(surge_fee)
+        self.fees.append(applied_fee)
+
+    def record_cap_event(self, timestamp: int, details: dict | None = None) -> None:  # noqa: D401
+        """Register that a CAP event was triggered at *timestamp* (minutes).
+
+        Additional details (like the pool prices) can be attached via *details*.
+        The structure is kept intentionally flexible for downstream analysis.
+        """
+
+        payload = {"time": timestamp}
+        if details:
+            payload.update(details)
+        self.cap_events.append(payload)
+
+    def save_csv(self, filepath: str | os.PathLike) -> None:
+        """Write a compact CSV with base/surge/total fee history.
+
+        This is separate from the legacy `_write_outputs()` data because Phase 3
+        simulations may wish to dump a single CSV rather than the two legacy
+        outputs.  The legacy writer is still invoked via :py:meth:`finalize` so
+        older tests remain unaffected.
+        """
+
+        Path(filepath).parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["swap_index", "base_fee", "surge_fee", "total_fee"])
+            for idx, (b, s, t) in enumerate(zip(self.base_fees, self.surge_fees, self.fees)):
+                writer.writerow([idx, b, s, t]) 

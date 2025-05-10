@@ -23,8 +23,14 @@ def test_base_fee_down():
 
     for step in range(24):
         sqrt_limit = int((math.sqrt(1.001)) * (1 << 96))  # ~0.1% move cap
-        swap_params = (False, 10 ** 18, sqrt_limit)
-        swapRouter.functions.swap(pool_key, swap_params).transact(
+        swap_params = {
+            "zeroForOne": False,
+            "amountSpecified": 10 ** 18,
+            "sqrtPriceLimitX96": sqrt_limit
+        }
+        options = (False, False)  # (unwrap WETH, pay in link)
+        data = b""
+        swapRouter.functions.swap(pool_key, swap_params, options, data).transact(
             {"from": accounts["user"], "gas": 1_000_000}
         )
 

@@ -19,8 +19,14 @@ def test_base_fee_up():
     # ensure oracle truncation / CAP logic kicks in.
     for step in range(24):
         sqrt_limit = 1  # force extreme swap
-        swap_params = (True, 10 ** 24, sqrt_limit)
-        swapRouter.functions.swap(pool_key, swap_params).transact(
+        swap_params = {
+            "zeroForOne": True,
+            "amountSpecified": 10 ** 24,
+            "sqrtPriceLimitX96": sqrt_limit
+        }
+        options = (False, False)  # (unwrap WETH, pay in link)
+        data = b""
+        swapRouter.functions.swap(pool_key, swap_params, options, data).transact(
             {"from": accounts["user"], "gas": 1_000_000}
         )
 
