@@ -118,7 +118,7 @@ curl -s -X POST -H "Content-Type: application/json" --data "{\"jsonrpc\":\"2.0\"
 # Create a script to add liquidity using forge script
 cat > script/AddLiquidity.s.sol << EOL
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.26;
+pragma solidity 0.8.27;
 
 import "forge-std/Script.sol";
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
@@ -210,7 +210,7 @@ EOL
 
 # Compile and run the script
 echo "Building project..."
-forge build --use solc:0.8.26 || { echo "Build failed"; exit 1; }
+forge build --use solc:0.8.27 || { echo "Build failed"; exit 1; }
 
 echo "Running add liquidity script..."
 forge script script/AddLiquidity.s.sol:AddLiquidity --rpc-url http://localhost:8545 --private-key $PRIVATE_KEY --broadcast -vvv || { echo "Add liquidity failed"; exit 1; }

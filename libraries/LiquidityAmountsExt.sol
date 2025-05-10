@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity 0.8.26;
+pragma solidity 0.8.27;
 
 import {LiquidityAmounts} from "@uniswap/v4-periphery/libraries/LiquidityAmounts.sol";
 import {TickMath}        from "@uniswap/v4-core/libraries/TickMath.sol";

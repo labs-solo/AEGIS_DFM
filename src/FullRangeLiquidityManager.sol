@@ -135,6 +135,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint128 burnedShares,
         uint256 timestamp
     );
+    /// @notice Emitted when the owner pulls the NFT out in an emergency.
+    event EmergencyNFTWithdrawn(PoolId indexed poolId, address indexed to, uint256 tokenId);
     // Note: optional events "PoolStateUpdated" and "Reinvested" have been pruned.
 
     /* ──────────────  Circuit-breaker  ─────────────── */
@@ -246,6 +248,9 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (amount0Desired == 0 && amount1Desired == 0) revert Errors.ZeroAmount(); // Must desire some amount
 
         PoolKey memory key = _poolKeys[poolId];
+        // ------------------------------------------------------------------
+        // Fetch current price – first try the existing position (mock-friendly)
+        // ------------------------------------------------------------------
         uint160 sqrtPriceX96;
         {
             (, sqrtPriceX96,) = getPositionData(poolId);
@@ -253,46 +258,41 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
                 (sqrtPriceX96,,,) = StateLibrary.getSlot0(manager, poolId);
             }
         }
-        uint256 _tokenIdTmp = PoolTokenIdUtils.toTokenId(poolId);
-        uint128 totalSharesInternal = uint128(positions.totalSupply(bytes32(_tokenIdTmp)));
+
+        uint128 totalSharesInternal = uint128(positions.totalSupply(bytes32(PoolTokenIdUtils.toTokenId(poolId))));
 
         if (sqrtPriceX96 == 0 && totalSharesInternal == 0) {
             revert Errors.ValidationInvalidInput("Pool price is zero");
         }
 
-        // ——— 3) single‐read slot0 and reuse it to compute pool reserves (inlined)
+        // --- Compute full-range ticks once and reuse ---
+        int24 lowerTick = TickMath.minUsableTick(key.tickSpacing);
+        int24 upperTick = TickMath.maxUsableTick(key.tickSpacing);
+
+        // Single posKey calculation
+        bytes32 posKey = Position.calculatePositionKey(address(this), lowerTick, upperTick, bytes32(0));
+
+        // Fetch liquidity for the position
+        uint128 liq = StateLibrary.getPositionLiquidity(manager, poolId, posKey);
+
         uint256 reserve0;
         uint256 reserve1;
-        {
-            // Inline of former getPoolReservesWithPrice()
-            PoolKey memory k = key;
-            // Compute position key & bail early if no liquidity
-            bytes32 posKey = Position.calculatePositionKey(
-                address(this),
-                TickMath.minUsableTick(k.tickSpacing),
-                TickMath.maxUsableTick(k.tickSpacing),
-                bytes32(0)
-            );
-            uint128 liq = StateLibrary.getPositionLiquidity(manager, poolId, posKey);
-            if (liq == 0) {
-                reserve0 = 0;
-                reserve1 = 0;
-            } else {
-                int24 lower = TickMath.minUsableTick(k.tickSpacing);
-                int24 upper = TickMath.maxUsableTick(k.tickSpacing);
-                uint160 sqrtA = TickMath.getSqrtPriceAtTick(lower);
-                uint160 sqrtB = TickMath.getSqrtPriceAtTick(upper);
+        if (liq == 0) {
+            reserve0 = 0;
+            reserve1 = 0;
+        } else {
+            uint160 sqrtA = TickMath.getSqrtPriceAtTick(lowerTick);
+            uint160 sqrtB = TickMath.getSqrtPriceAtTick(upperTick);
 
-                if (sqrtPriceX96 <= sqrtA) {
-                    reserve0 = SqrtPriceMath.getAmount0Delta(sqrtA, sqrtB, liq, false);
-                    reserve1 = 0;
-                } else if (sqrtPriceX96 >= sqrtB) {
-                    reserve0 = 0;
-                    reserve1 = SqrtPriceMath.getAmount1Delta(sqrtA, sqrtB, liq, false);
-                } else {
-                    reserve0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtB, liq, false);
-                    reserve1 = SqrtPriceMath.getAmount1Delta(sqrtA, sqrtPriceX96, liq, false);
-                }
+            if (sqrtPriceX96 <= sqrtA) {
+                reserve0 = SqrtPriceMath.getAmount0Delta(sqrtA, sqrtB, liq, false);
+                reserve1 = 0;
+            } else if (sqrtPriceX96 >= sqrtB) {
+                reserve0 = 0;
+                reserve1 = SqrtPriceMath.getAmount1Delta(sqrtA, sqrtB, liq, false);
+            } else {
+                reserve0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtB, liq, false);
+                reserve1 = SqrtPriceMath.getAmount1Delta(sqrtA, sqrtPriceX96, liq, false);
             }
         }
 
@@ -882,6 +882,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         uint256 nftId = positionTokenId[pid];
         require(nftId != 0, "not-minted");
         posManager.safeTransferFrom(address(this), to, nftId);
+        emit EmergencyNFTWithdrawn(pid, to, nftId);
     }
 
     /// @notice Uniswap V4 liquidity currently held by the pool-wide position

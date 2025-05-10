@@ -3,7 +3,7 @@
 # Clean and build the project
 echo "Building contracts..."
 forge clean
-forge build --use solc:0.8.26
+forge build --use solc:0.8.27
 
 # Create a temporary file to store contract names
 contract_files=$(find src -name "*.sol" | sort)
@@ -26,7 +26,7 @@ for file in $contract_files; do
         fi
         
         # Get the deployed bytecode
-        bytecode=$(forge inspect --use solc:0.8.26 "$contract" deployedBytecode 2>/dev/null)
+        bytecode=$(forge inspect --use solc:0.8.27 "$contract" deployedBytecode 2>/dev/null)
         
         # Check if bytecode retrieval was successful
         if [ $? -eq 0 ] && [ -n "$bytecode" ] && [ "$bytecode" != "null" ] && [ "$bytecode" != "{}" ]; then

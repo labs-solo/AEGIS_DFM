@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
+pragma solidity ^0.8.27;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 
@@ -74,6 +74,8 @@ library Errors {
     error InvalidPrice(uint160 sqrtPriceX96);
     error InvalidLiquidity();
     error InvalidInput();
+    error StaleOracle();
+    error FeeTooHigh();
     error AmountTooLarge(uint256 amount, uint256 maximum);
     error SlippageExceeded(uint256 required, uint256 actual);
     error CalculationError(string reason);
