@@ -291,8 +291,17 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         {
             TruncatedOracle.Observation storage lastObs =
                 _leaf(id, state.index)[state.index % PAGE_SIZE];
-            if (lastObs.blockTimestamp == uint32(block.timestamp)) {
-                // merge-in-place
+
+            // Merge **only** when the ring is already full _and_ we are about
+            // to overwrite the newest slot (cursor is stable).  During the
+            // growth phase we must allocate a fresh slot for *every* write –
+            // even if the timestamp repeats – otherwise `cardinality` would
+            // stall below its theoretical maximum (regression found by
+            // testMaxCapacityWrapOverwritesOldest).
+            if (lastObs.blockTimestamp == uint32(block.timestamp)
+                && state.cardinality == TruncatedOracle.MAX_CARDINALITY_ALLOWED)
+            {
+                // in-place update when fully saturated
                 lastObs.prevTick = currentTick;
                 _updateCapFrequency(pid, tickWasCapped);
                 return tickWasCapped;
@@ -313,7 +322,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
          * --------------------------------------------------------------- */
         uint16 pageCardinality = state.cardinality > pageBase
             ? state.cardinality - pageBase
-            : 1;                           // bootstrap slot
+            : state.cardinality;           // still filling the first (or new) page
 
         uint16 pageCardinalityNext = pageCardinality < PAGE_SIZE
             ? pageCardinality + 1          // open the next empty slot
@@ -344,21 +353,61 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         }
 
         if (wroteNewSlot) {
-            // Translate the page-local index back to the global cursor.
-            // If we just wrote the last slot of a page and the library wrapped
-            // to 0, jump to the **first slot of the next page** so subsequent
-            // observations fill fresh storage instead of overwriting the old page.
+            // ------------------------------------------------------------------
+            //  Translate the page-local index returned by TruncatedOracle.write
+            //  back into a *global* cursor.  Special-case the situation where we
+            //  have just written the LAST slot of the current 512-slot page and
+            //  the library wrapped the local index back to 0 (newLocalIdx == 0).
+            //  In that scenario we either (a) advance to the first slot of the
+            //  next page, or (b) wrap the entire ring once MAX_CARDINALITY is
+            //  reached.  Crucially, we must ensure that the freshly written
+            //  observation is present in the destination page so that
+            //  getLatestObservation() and observe() see consistent data.
+            // ------------------------------------------------------------------
             if (localIdx == PAGE_SIZE - 1 && newLocalIdx == 0) {
-                unchecked {
-                    uint16 nextIndex = pageBase + PAGE_SIZE; // first slot of next page
-                    if (nextIndex == TruncatedOracle.MAX_CARDINALITY_ALLOWED) {
-                        // Wrap-around: restart at index 0 to overwrite oldest page (FIFO)
-                        state.index = 0;
-                    } else {
-                        state.index = nextIndex;
+                // We crossed a page boundary.
+                if (state.cardinality < TruncatedOracle.MAX_CARDINALITY_ALLOWED) {
+                    // ----------------------------------------------------------
+                    //  (a) Still growing – allocate/use the next page.  Copy the
+                    //      observation we just wrote (currently sitting at
+                    //      obs[0]) into the first slot of that *next* page so
+                    //      that the global cursor always points at the latest
+                    //      data.
+                    // ----------------------------------------------------------
+                    TruncatedOracle.Observation storage written = obs[0];
+                    TruncatedOracle.Observation[PAGE_SIZE] storage nextPage =
+                        _leaf(id, pageBase + PAGE_SIZE);
+
+                    nextPage[0].blockTimestamp                    = written.blockTimestamp;
+                    nextPage[0].prevTick                          = written.prevTick;
+                    nextPage[0].tickCumulative                    = written.tickCumulative;
+                    nextPage[0].secondsPerLiquidityCumulativeX128 = written.secondsPerLiquidityCumulativeX128;
+                    nextPage[0].initialized                       = true;
+
+                    unchecked {
+                        state.index = pageBase + PAGE_SIZE; // first slot of next page
                     }
+                } else {
+                    // ----------------------------------------------------------
+                    //  (b) Ring saturated – perform a full wrap so that we
+                    //      overwrite the OLDEST page.  This is global index 0.
+                    //      Copy the freshly written obs[0] into the beginning
+                    //      of page 0 before updating the cursor.
+                    // ----------------------------------------------------------
+                    TruncatedOracle.Observation storage written = obs[0];
+                    TruncatedOracle.Observation[PAGE_SIZE] storage firstPage =
+                        _leaf(id, 0);
+
+                    firstPage[0].blockTimestamp                    = written.blockTimestamp;
+                    firstPage[0].prevTick                          = written.prevTick;
+                    firstPage[0].tickCumulative                    = written.tickCumulative;
+                    firstPage[0].secondsPerLiquidityCumulativeX128 = written.secondsPerLiquidityCumulativeX128;
+                    firstPage[0].initialized                       = true;
+
+                    unchecked { state.index = 0; }
                 }
             } else {
+                // Normal in-page advance (no page boundary crossed).
                 unchecked { state.index = pageBase + newLocalIdx; }
             }
 
