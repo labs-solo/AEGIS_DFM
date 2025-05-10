@@ -29,11 +29,42 @@ library PolicyValidator {
         uint32 decayWindow,
         uint32 updateInterval
     ) internal pure {
-        require(stepPpm        != 0 && stepPpm   <= PPM, "stepPpm-range");
-        require(budgetPpm      != 0 && budgetPpm <= PPM, "budgetPpm-range");
-        require(minCap         != 0,                    "minCap=0");
-        require(maxCap         >= minCap,               "cap-bounds");
-        require(decayWindow    >  0,                    "decayWindow=0");
-        require(updateInterval >  0,                    "updateInterval=0");
+        require(minCap      > 0,                         "PV:min=0");
+        require(maxCap      >= minCap,                   "PV:max<min");
+        require(stepPpm     > 0 && stepPpm < PPM,        "PV:step");
+        require(budgetPpm   > 0 && budgetPpm < PPM,      "PV:budget");
+        require(decayWindow > 0,                         "PV:decay");
+        require(updateInterval > 0,                      "PV:updateInt");
+    }
+
+    /// --------------------------------------------------------------------
+    /// @notice Clamp `currentCap` one "step" toward the policy bounds.
+    /// @dev    Used by `TruncGeoOracleMulti` to reduce repetitive math.
+    /// @param  currentCap  The present maxTicksPerBlock.
+    /// @param  minCap      Minimum cap from policy.
+    /// @param  maxCap      Maximum cap from policy.
+    /// @param  stepPpm     Step size in ppm.
+    /// @param  increase    Direction: true → loosen cap, false → tighten.
+    /// @return newCap      The adjusted cap (never outside [minCap,maxCap]).
+    /// @return diff        Absolute delta between old & new cap.
+    /// --------------------------------------------------------------------
+    function clampCap(
+        uint24 currentCap,
+        uint24 minCap,
+        uint24 maxCap,
+        uint32 stepPpm,
+        bool   increase
+    ) internal pure returns (uint24 newCap, uint24 diff) {
+        // step = ceil(currentCap * stepPpm / 1e6, min 1)
+        uint24 step = uint24(uint256(currentCap) * stepPpm / PPM);
+        if (step == 0) step = 1;
+
+        if (increase) {
+            newCap = currentCap + step > maxCap ? maxCap : currentCap + step;
+        } else {
+            newCap = currentCap > step + minCap ? currentCap - step : minCap;
+        }
+
+        diff = currentCap > newCap ? currentCap - newCap : newCap - currentCap;
     }
 }
