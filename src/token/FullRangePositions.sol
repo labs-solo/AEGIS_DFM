@@ -47,7 +47,10 @@ contract FullRangePositions is ERC6909Claims, IFullRangePositions {
      * @param amount Amount to mint
      */
     function mint(address to, uint256 id, uint256 amount) external onlyMinter {
+        // Call internal _mint directly since we inherit it
         _mint(to, id, amount);
+        // Track per-pool total supply (bytes32-cast for cheap keying)
+        _totalSupply[bytes32(id)] += amount;
     }
 
     /**
@@ -58,6 +61,7 @@ contract FullRangePositions is ERC6909Claims, IFullRangePositions {
      */
     function burn(address from, uint256 id, uint256 amount) external onlyMinter {
         _burn(from, id, amount);
+        _totalSupply[bytes32(id)] -= amount;
     }
 
     /**
@@ -68,18 +72,7 @@ contract FullRangePositions is ERC6909Claims, IFullRangePositions {
      */
     function burnFrom(address from, uint256 id, uint256 amount) external onlyMinter {
         _burnFrom(from, id, amount);
-    }
-
-    function _mint(bytes32 id, address to, uint256 amount) internal {
-        PositionInfo storage p = _positions[id];
-        p.balanceOf[to] += amount;
-        _totalSupply[id] += amount;
-    }
-
-    function _burn(bytes32 id, address from, uint256 amount) internal {
-        PositionInfo storage p = _positions[id];
-        p.balanceOf[from] -= amount;
-        _totalSupply[id] -= amount;
+        _totalSupply[bytes32(id)] -= amount;
     }
 
     /* ───────────────────────── PUBLIC GETTERS ───────────────────────── */
@@ -96,5 +89,10 @@ contract FullRangePositions is ERC6909Claims, IFullRangePositions {
     /// @inheritdoc IFullRangePositions
     function shareBalance(bytes32 id, address owner) external view override returns (uint256) {
         return _positions[id].balanceOf[owner];
+    }
+
+    /* ── Internal helpers for per-pool liquidity (not ERC-6909 balances) ── */
+    function _setPositionLiquidity(bytes32 id, uint128 liq) internal {
+        _positions[id].liquidity = liq; // used by LiquidityManager for bookkeeping
     }
 }

@@ -25,7 +25,6 @@ import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
 import {FullRangeLiquidityManager} from "../../src/FullRangeLiquidityManager.sol";
 import {IDynamicFeeManager} from "../../src/interfaces/IDynamicFeeManager.sol";
 import {DynamicFeeManager} from "../../src/DynamicFeeManager.sol";
-import {TickCheck} from "../../src/libraries/TickCheck.sol";
 import {PoolPolicyManager} from "../../src/PoolPolicyManager.sol";
 import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol";
 import {Spot} from "../../src/Spot.sol";

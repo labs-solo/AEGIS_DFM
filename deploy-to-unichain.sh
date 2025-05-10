@@ -80,8 +80,8 @@ echo "Cleaning previous build artifacts..."
 forge clean || { echo "Failed to clean build artifacts"; exit 1; }
 
 # Build the project
-echo "Building project with Solidity 0.8.26..."
-forge build --use solc:0.8.26 || { echo "Build failed"; exit 1; }
+echo "Building project with Solidity 0.8.27..."
+forge build --use solc:0.8.27 || { echo "Build failed"; exit 1; }
 
 # Deploy to local fork and save the output
 echo "Deploying to local Unichain fork..."

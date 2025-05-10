@@ -10,7 +10,6 @@ import {ERC20} from "solmate/src/tokens/ERC20.sol";
 // Import the new interface and implementation
 import {IDynamicFeeManager} from "../../src/interfaces/IDynamicFeeManager.sol";
 import {DynamicFeeManager} from "../../src/DynamicFeeManager.sol";
-import {TickCheck} from "../../src/libraries/TickCheck.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";

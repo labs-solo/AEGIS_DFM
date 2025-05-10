@@ -124,6 +124,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     event POLFeeCollectorSet(address indexed oldCollector, address indexed newCollector);
     event ProtocolInterestFeePercentageSet(uint256 oldPercentage, uint256 newPercentage);
     event AuthorizedReinvestorSet(address indexed reinvestor, bool isAuthorized);
+    event DynamicFeeChanged(uint32 newFee);
 
     // New state for surge fee policy
     mapping(bytes32 => uint32) private _maxStepPpm;
@@ -193,8 +194,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         feeCollector        = _feeCollector;
 
         /* initialise tick-spacing list */
-        for (uint256 i; i < _supportedTickSpacings.length; ++i) {
+        for (uint256 i; i < _supportedTickSpacings.length;) {
             _updateSupportedTickSpacing(_supportedTickSpacings[i], true);
+            unchecked { ++i; }
         }
 
         // initialise immutables
@@ -273,13 +275,14 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         if (implementations.length != 4) revert Errors.InvalidPolicyImplementationsLength(implementations.length);
 
         // Set each policy type with its implementation
-        for (uint8 i = 0; i < 4; i++) {
+        for (uint8 i = 0; i < 4;) {
             address implementation = implementations[i];
             if (implementation == address(0)) revert Errors.ZeroAddress();
 
             PolicyType policyType = PolicyType(i);
             _policies[poolId][policyType] = implementation;
             emit PolicySet(poolId, policyType, implementation, msg.sender);
+            unchecked { ++i; }
         }
     }
 
@@ -412,9 +415,10 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      * @param feePpm New default dynamic fee in PPM
      */
     function setDefaultDynamicFee(uint256 feePpm) external onlyOwner {
-        if (feePpm < 1 || feePpm > 1000000) revert Errors.ParameterOutOfRange(feePpm, 1, 1000000);
+        if (feePpm < 1 || feePpm > 50_000) revert Errors.FeeTooHigh();
         defaultDynamicFeePpm = uint24(feePpm);
         emit DefaultDynamicFeeSet(uint24(defaultDynamicFeePpm), uint24(feePpm));
+        emit DynamicFeeChanged(uint32(feePpm));
     }
 
     /**
@@ -501,12 +505,13 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     {
         if (tickSpacings.length != allowed.length) revert Errors.ArrayLengthMismatch();
 
-        for (uint256 i = 0; i < tickSpacings.length; i++) {
+        for (uint256 i; i < tickSpacings.length;) {
             supportedTickSpacings[tickSpacings[i]] = allowed[i];
             emit TickSpacingSupportChanged(tickSpacings[i], allowed[i]);
             emit PolicySet(
                 PoolId.wrap(bytes32(0)), PolicyType.VTIER, address(uint160(uint256(allowed[i] ? 1 : 0))), msg.sender
             );
+            unchecked { ++i; }
         }
     }
 
