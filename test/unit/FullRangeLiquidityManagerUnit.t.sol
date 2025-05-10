@@ -104,6 +104,9 @@ contract PositionManagerStub {
 
     // emergencyPullNFT
     function safeTransferFrom(address, address, uint256) external {}
+
+    /// @notice FRLM calls this after mint; no-op stub to avoid revert
+    function approve(address, uint256) external {}
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -130,13 +133,16 @@ contract PoolManagerStub {
             return bytes32(0);
         }
 
-        // Pack Slot0 exactly as v4-core:
-        // | [0..159] sqrtPriceX96 | [160..183] tick | [184..191] psf | [192..199] pwf | rest zero |
+        // Pack Slot0 exactly as v4-core (see StateLibrary.getSlot0):
+        // | [  0..159] sqrtPriceX96 |
+        // | [160..183] tick         |
+        // | [184..207] protocolFee  |
+        // | [208..231] lpFee        |
         return bytes32(
-            (uint256(s.sqrtPriceX96) << 96) |
-            (uint256(uint24(uint256(int256(s.tick)))) << 72) |
-            (uint256(s.psf) << 64) |
-            (uint256(s.pwf) << 56)
+            uint256(s.sqrtPriceX96)                               |               // lower 160 bits
+            (uint256(uint24(uint256(int256(s.tick)))) << 160)    |               // next 24 bits
+            (uint256(s.psf)                       << 184)        |               // protocol fee
+            (uint256(s.pwf)                       << 208)                        // lp fee
         );
     }
 

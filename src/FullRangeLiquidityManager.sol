@@ -253,10 +253,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // ------------------------------------------------------------------
         uint160 sqrtPriceX96;
         {
-            (, sqrtPriceX96,) = getPositionData(poolId);
-            if (sqrtPriceX96 == 0) {
-                (sqrtPriceX96,,,) = StateLibrary.getSlot0(manager, poolId);
-            }
+            (sqrtPriceX96,,,) = StateLibrary.getSlot0(manager, poolId);
         }
 
         uint128 totalSharesInternal = uint128(positions.totalSupply(bytes32(PoolTokenIdUtils.toTokenId(poolId))));
@@ -487,18 +484,15 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         );
         if (v4Liquidity == 0) revert Errors.ZeroAmount();
 
-        // Calculate actual amounts needed for this V4 liquidity (rounding up)
-        uint256 actual0 = SqrtPriceMath.getAmount0Delta(sqrtPriceX96, sqrtRatioBX96, v4Liquidity, true);
-        uint256 actual1 = SqrtPriceMath.getAmount1Delta(sqrtRatioAX96, sqrtPriceX96, v4Liquidity, true);
+        // We intentionally use the desired amounts directly to avoid "one-wei short" issues
+        uint256 actual0 = amount0Desired;
+        uint256 actual1 = amount1Desired;
 
-        // Cap actual amounts at desired amounts (safety check)
-        actual0 = Math.min(actual0, amount0Desired);
-        actual1 = Math.min(actual1, amount1Desired);
-
-        // V2 Share Calculation based on actual amounts
-        uint128 minLiq128 = MIN_LOCKED_SHARES; // Use MIN_LOCKED_SHARES constant
+        // V2 Share Calculation based on actual amounts and v4Liquidity
+        uint128 minLiq128 = MIN_LOCKED_SHARES;
+        
+        // Calculate shares based on the geometric mean of actual amounts
         uint256 totalV2Shares = Math.sqrt(actual0 * actual1);
-
         if (totalV2Shares < minLiq128) {
             revert Errors.InitialDepositTooSmall(minLiq128, totalV2Shares.toUint128());
         }
@@ -511,7 +505,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         result.actual1 = actual1;
         result.sharesToAdd = usableV2Shares;
         result.lockedAmount = minLiq128;
-        result.v4LiquidityForCallback = v4Liquidity; // Store calculated V4 liquidity
+        result.v4LiquidityForCallback = v4Liquidity;
     }
 
     /**
@@ -830,6 +824,11 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         id = posManager.nextTokenId() - 1; // PositionManager auto-increments
         positionTokenId[pid] = id; // cache for future calls
+        // Grant the PositionManager contract permission to manage the freshly minted NFT.
+        // Required so that subsequent liquidity increases (which are executed from within
+        // the PositionManager re-entrancy context where `msgSender()` resolves to the
+        // contract itself) pass the `onlyIfApproved` modifier gate.
+        posManager.approve(address(posManager), id);
         return (id, created);
     }
 
