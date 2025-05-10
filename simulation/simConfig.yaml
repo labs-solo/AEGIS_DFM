@@ -3,9 +3,13 @@ pair:
   token1: TKNB
 initialPrice: 1.0
 initialLiquidity:
-  token0: 1000000000000000000000  # 1e21 wei
-  token1: 1000000000000000000000
+  token0: 1000000000000000000  # 1e18 wei (1 token)
+  token1: 1000000000000000000  # 1e18 wei (1 token)
 feeParams:
   defaultBaseFeePpm: 3000
   minBaseFeePpm: 100
-  maxBaseFeePpm: 50000 
+  maxBaseFeePpm: 50000
+# Optional surgeFeeMultiplierPpm: 0
+# Optional surgeDecayPeriodSeconds: 3600
+# Simulation granularity – default 900 seconds (15m) but overridden in Phase 2 loops
+# timeStep: 300 

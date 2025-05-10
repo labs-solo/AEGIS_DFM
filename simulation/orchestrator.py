@@ -5,45 +5,34 @@ import json
 import math
 import shutil
 from pathlib import Path
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Callable, Any
+import yaml
 
 from web3 import Web3
 from web3.types import RPCEndpoint, RPCResponse
-from web3.contract.contract import Contract
+from web3.contract import Contract
 from eth_typing import URI
 from eth_abi import encode
 
 # -------------------------------------------------------------
 #  Constants & helpers
 # -------------------------------------------------------------
-WORKSPACE = Path(__file__).resolve().parent.parent
+WORKSPACE = Path(__file__).parent.parent
 ARTIFACTS = WORKSPACE / "out"
 # Flags required by Spot.getHookPermissions(): AFTER_INITIALIZE | BEFORE_SWAP | AFTER_SWAP | AFTER_SWAP_RETURNS_DELTA
 REQUIRED_HOOK_FLAGS = 0x10C4  # see @uniswap/v4-core/libraries/Hooks.sol
 HOOK_MASK = (1 << 14) - 1
 
-# Custom POA middleware for Anvil
 class PoaMiddleware:
-    def __init__(self, w3):
+    def __init__(self, w3: Web3) -> None:
         self.w3 = w3
 
-    def wrap_make_request(self, make_request):
-        def middleware(method, params):
-            response = make_request(RPCEndpoint(method), params)
-            # Add required jsonrpc field if missing
-            if isinstance(response, dict) and "jsonrpc" not in response and "result" in response:
-                response["jsonrpc"] = "2.0"
-                response["id"] = 1
-            # Handle block responses
-            if method in ("eth_getBlockByNumber", "eth_getBlockByHash") and "result" in response:
-                result = response["result"]
-                if result and "difficulty" not in result:
-                    result["difficulty"] = "0x0"
-                    result["totalDifficulty"] = "0x0"
-            return response
+    def wrap_make_request(self, make_request: Callable[[RPCEndpoint, Any], Any]) -> Callable[[RPCEndpoint, Any], Any]:
+        def middleware(method: RPCEndpoint, params: Any) -> Any:
+            return make_request(method, params)
         return middleware
 
-def poa_middleware(w3):
+def poa_middleware(w3: Web3) -> PoaMiddleware:
     return PoaMiddleware(w3)
 
 # --- Solidity source for a minimal CREATE2 factory ---
@@ -69,13 +58,10 @@ contract Create2Factory {
 # -------------------------------------------------------------
 
 def load_artifact(name: str):
-    """Return ABI + bytecode for a given file under /out."""
-    path = ARTIFACTS / name
-    if not path.exists():
-        raise FileNotFoundError(f"Artifact {name} not found under /out. Did you run `forge build`?")
-    with open(path) as f:
-        data = json.load(f)
-    return data["abi"], data["bytecode"]["object"]
+    """Load a compiled contract artifact from the out directory."""
+    with open(WORKSPACE / "out" / name) as f:
+        artifact = json.loads(f.read())
+        return artifact["abi"], artifact["bytecode"]["object"]
 
 
 def compile_create2_factory(w3: Web3) -> Contract:
@@ -123,6 +109,10 @@ def find_salt_for_flags(deployer: str, creation_code: bytes, flags: int, max_loo
 #  Main orchestrator
 # -------------------------------------------------------------
 
+def bytes32(value):
+    """Convert a value to bytes32."""
+    return value.to_bytes(32, byteorder='big')
+
 def main():
     # 0. Connect (or start) local Anvil
     anvil_uri = os.getenv("ANVIL_URI", "http://127.0.0.1:8545")
@@ -133,14 +123,23 @@ def main():
         if not Web3(Web3.HTTPProvider(anvil_uri)).is_connected():
             raise RuntimeError("Failed to connect to local anvil node.")
     w3 = Web3(Web3.HTTPProvider(anvil_uri))
-    # Anvil uses PoA; add middleware so eth_getBlock works correctly under web3.py >= 6
-    w3.middleware_onion.inject(poa_middleware, layer=0)
 
     deployer = w3.eth.accounts[0]
     user = w3.eth.accounts[1]
     lp_provider = w3.eth.accounts[2]
 
     print("Connected to Anvil – chainId:", w3.eth.chain_id)
+
+    # ---------------------------------------------------------
+    # Load optional simulation configuration (simConfig.yaml)
+    # ---------------------------------------------------------
+    config: dict = {}
+    try:
+        with open(WORKSPACE / "simulation" / "simConfig.yaml") as cf:
+            config = yaml.safe_load(cf) or {}
+            print("Loaded simConfig.yaml")
+    except FileNotFoundError:
+        print("Warning: simConfig.yaml not found – using default hard-coded parameters.")
 
     # ---------------------------------------------------------
     # 1. Load required artefacts (PoolManager, MockERC20, etc.)
@@ -189,12 +188,12 @@ def main():
     supported_ts = [10, 60, 200]
     tx_hash = PolicyManager.constructor(
         deployer,
-        3000,  # default base fee ppm
+        config.get("feeParams", {}).get("defaultBaseFeePpm", 3000),
         supported_ts,
         0,
         deployer,
-        100,
-        50000,
+        config.get("feeParams", {}).get("minBaseFeePpm", 100),
+        config.get("feeParams", {}).get("maxBaseFeePpm", 50000),
     ).transact({"from": deployer})
     policy_addr = w3.eth.wait_for_transaction_receipt(tx_hash).contractAddress
     policyManager = w3.eth.contract(address=policy_addr, abi=abi_policy)
@@ -282,9 +281,25 @@ def main():
         TICK_SPACING,
         spot_addr,
     )
-    init_price = 1.0  # start at price 1:1
+    init_price = float(config.get("initialPrice", 1.0))  # configurable starting price
     sqrt_price_x96 = int((math.sqrt(init_price)) * (1 << 96))
+    
+    # Initialize pool in PoolManager (this will trigger Spot hook's _afterInitialize)
     poolManager.functions.initialize(pool_key, sqrt_price_x96).transact({"from": deployer})
+
+    # Set reinvest config with no cooldown and minimum thresholds
+    pool_id = Web3.keccak(
+        encode(
+            ['address', 'address', 'uint24', 'int24', 'address'],
+            [token0, token1, FEE, TICK_SPACING, spot_addr]
+        )
+    )
+    spotHook.functions.setReinvestConfig(
+        pool_id,  # poolId
+        0,  # minToken0
+        0,  # minToken1
+        0   # cooldown
+    ).transact({"from": deployer})
 
     # ---------------------------------------------------------
     # 12. Deploy test routers
@@ -304,51 +319,259 @@ def main():
     tokenA_c = w3.eth.contract(address=token0, abi=abi_token)
     tokenB_c = w3.eth.contract(address=token1, abi=abi_token)
 
-    amount0 = 10 ** 21  # 1,000 TKNA
-    amount1 = 10 ** 21  # 1,000 TKNB
+    init_liq = config.get("initialLiquidity", {})
+    amount0 = int(init_liq.get("token0", 10 ** 21))
+    amount1 = int(init_liq.get("token1", 10 ** 21))
 
     tokenA_c.functions.mint(lp_provider, amount0).transact({"from": deployer})
     tokenB_c.functions.mint(lp_provider, amount1).transact({"from": deployer})
 
-    # approvals
-    for t in (tokenA_c, tokenB_c):
-        t.functions.approve(lp_router_addr, 2 ** 256 - 1).transact({"from": lp_provider})
+    # Approve tokens for PoolManager
+    tokenA_c.functions.approve(pool_manager_addr, 2 ** 256 - 1).transact({"from": lp_provider})
+    tokenB_c.functions.approve(pool_manager_addr, 2 ** 256 - 1).transact({"from": lp_provider})
+
+    # Approve tokens for LPRouter
+    tokenA_c.functions.approve(lp_router_addr, 2 ** 256 - 1).transact({"from": lp_provider})
+    tokenB_c.functions.approve(lp_router_addr, 2 ** 256 - 1).transact({"from": lp_provider})
 
     MIN_TICK = -887272
     MAX_TICK = 887272
+    
+    # Calculate liquidity based on the smaller token amount (in terms of value)
+    # For 1:1 price, we can use the smaller token amount directly
+    liquidity = min(amount0, amount1)
+    
     modify_params = (
         MIN_TICK,
         MAX_TICK,
-        amount0,
-        amount1,
-        0,
-        0,
-        lp_provider,
+        liquidity,  # liquidityDelta (calculated from token amounts)
+        bytes32(0)  # salt
     )
-    lpRouter.functions.modifyLiquidity(pool_key, modify_params).transact({"from": lp_provider})
+    lpRouter.functions.modifyLiquidity(pool_key, modify_params, b"").transact({"from": lp_provider, "gas": 1000000})
     print("Initial liquidity added.")
+
+    # ---------------------------------------------------------
+    # 13b. Optional dynamic fee parameter overrides from config
+    # ---------------------------------------------------------
+    if "feeParams" in config:
+        fee_conf = config["feeParams"]
+        # Update default base fee if provided
+        if "defaultBaseFeePpm" in fee_conf:
+            policyManager.functions.setDefaultDynamicFee(fee_conf["defaultBaseFeePpm"]).transact({"from": deployer})
+        # Pool-specific limits or multipliers
+        pool_id = Web3.keccak(
+            encode(
+                ['address', 'address', 'uint24', 'int24', 'address'],
+                [token0, token1, FEE, TICK_SPACING, spot_addr]
+            )
+        )
+        if "surgeFeeMultiplierPpm" in fee_conf:
+            try:
+                policyManager.functions.setSurgeFeeMultiplier(pool_id, fee_conf["surgeFeeMultiplierPpm"]).transact({"from": deployer})
+            except ValueError:
+                # Function might not exist in older artifact versions – ignore gracefully
+                pass
 
     # ---------------------------------------------------------
     # 14. Perform a single swap (move price by small amount)
     # ---------------------------------------------------------
-    sqrt_limit = int((math.sqrt(1.05)) * (1 << 96))
+    sqrt_limit = int((math.sqrt(1.004)) * (1 << 96))  # Only 0.4% price movement (about 40 ticks)
     swap_params = (
-        False,           # zeroForOne?
-        10 ** 20,        # amountSpecified (large)
-        sqrt_limit,
+        (token0, token1, 3000, 60, spot_addr),  # pool_key
+        (False, 10 ** 18, sqrt_limit),          # swap_params (1 token)
+        (False, False),                         # skip_ahead
+        b""                                     # hook_data
     )
-    swapRouter.functions.swap(pool_key, swap_params).transact({"from": user, "gas": 1_000_000})
+    swapRouter.functions.swap(swap_params[0], swap_params[1], swap_params[2], swap_params[3]).transact({"from": user, "gas": 1_000_000})
     print("Swap executed.")
 
     # ---------------------------------------------------------
     # 15. Query fee state for sanity
     # ---------------------------------------------------------
-    pool_id = poolManager.functions.toId(pool_key).call()
     base_fee, surge_fee = dfm.functions.getFeeState(pool_id).call()
-    print("BaseFee:", base_fee, "SurgeFee:", surge_fee)
+    print("BaseFee:", base_fee, "SurgeFee:", surge_fee, "TotalFee:", base_fee + surge_fee)
     assert surge_fee == 0, "Surge fee should be 0 immediately after first small swap"
     print("Phase 1 simulation SUCCESS ✅")
 
 
 if __name__ == "__main__":
-    main() 
+    main()
+
+
+# -------------------------------------------------------------
+#  Utility: reusable deployment for test harness / simulations
+# -------------------------------------------------------------
+
+
+def setup_simulation():
+    """Deploy the local Uniswap V4 + AEGIS test environment and return key handles.
+
+    The environment mirrors the logic in `main()` but stops before executing the
+    demo swap so that callers can run custom simulations.  A dict of commonly
+    used accounts is also returned to simplify caller code.
+    """
+
+    # Ensure Anvil is running (spawn if necessary)
+    anvil_uri = os.getenv("ANVIL_URI", "http://127.0.0.1:8545")
+    if not Web3(Web3.HTTPProvider(anvil_uri)).is_connected():
+        subprocess.Popen(["anvil", "--port", "8545"], stdout=subprocess.PIPE)
+        time.sleep(3)
+
+    # Re-run main deployment steps but *without* the final swap & assertions.
+    # To avoid code duplication, we copy the code above manually; if this file
+    # grows, consider refactoring into helper functions.
+
+    w3 = Web3(Web3.HTTPProvider(anvil_uri))
+
+    deployer = w3.eth.accounts[0]
+    user = w3.eth.accounts[1]
+    lp_provider = w3.eth.accounts[2]
+
+    # Load config (if any)
+    config: dict = {}
+    try:
+        with open(WORKSPACE / "simulation" / "simConfig.yaml") as cf:
+            config = yaml.safe_load(cf) or {}
+    except FileNotFoundError:
+        pass
+
+    # ---------------- Artefacts ----------------
+    abi_pm, byte_pm = load_artifact("PoolManager.sol/PoolManager.json")
+    abi_token, byte_token = load_artifact("MockERC20.sol/MockERC20.json")
+    abi_policy, byte_policy = load_artifact("PoolPolicyManager.sol/PoolPolicyManager.json")
+    abi_oracle, byte_oracle = load_artifact("TruncGeoOracleMulti.sol/TruncGeoOracleMulti.json")
+    abi_lm, byte_lm = load_artifact("FullRangeLiquidityManager.sol/FullRangeLiquidityManager.json")
+    abi_dfm, byte_dfm = load_artifact("DynamicFeeManager.sol/DynamicFeeManager.json")
+    abi_spot, byte_spot = load_artifact("Spot.sol/Spot.json")
+    abi_swapT, byte_swapT = load_artifact("PoolSwapTest.sol/PoolSwapTest.json")
+    abi_liqT, byte_liqT = load_artifact("PoolModifyLiquidityTest.sol/PoolModifyLiquidityTest.json")
+
+    PoolManager = w3.eth.contract(abi=abi_pm, bytecode=byte_pm)
+    MockERC20 = w3.eth.contract(abi=abi_token, bytecode=byte_token)
+    PolicyManager = w3.eth.contract(abi=abi_policy, bytecode=byte_policy)
+    Oracle = w3.eth.contract(abi=abi_oracle, bytecode=byte_oracle)
+    LiquidityManager = w3.eth.contract(abi=abi_lm, bytecode=byte_lm)
+    DynamicFeeManager = w3.eth.contract(abi=abi_dfm, bytecode=byte_dfm)
+    SpotHook = w3.eth.contract(abi=abi_spot, bytecode=byte_spot)
+    SwapRouterC = w3.eth.contract(abi=abi_swapT, bytecode=byte_swapT)
+    LPRouterC = w3.eth.contract(abi=abi_liqT, bytecode=byte_liqT)
+
+    # ---------------- Deploy contracts ----------------
+    pool_manager_addr = w3.eth.wait_for_transaction_receipt(
+        PoolManager.constructor(Web3.to_checksum_address("0x" + "00" * 20)).transact({"from": deployer})
+    ).contractAddress
+    poolManager = w3.eth.contract(address=pool_manager_addr, abi=abi_pm)
+
+    tokenA = w3.eth.wait_for_transaction_receipt(
+        MockERC20.constructor("TokenA", "TKNA", 18).transact({"from": deployer})
+    ).contractAddress
+    tokenB = w3.eth.wait_for_transaction_receipt(
+        MockERC20.constructor("TokenB", "TKNB", 18).transact({"from": deployer})
+    ).contractAddress
+    token0, token1 = sorted([tokenA, tokenB], key=lambda x: int(x, 16))
+
+    policy_addr = w3.eth.wait_for_transaction_receipt(
+        PolicyManager.constructor(
+            deployer,
+            config.get("feeParams", {}).get("defaultBaseFeePpm", 3000),
+            [10, 60, 200],
+            0,
+            deployer,
+            config.get("feeParams", {}).get("minBaseFeePpm", 100),
+            config.get("feeParams", {}).get("maxBaseFeePpm", 50000),
+        ).transact({"from": deployer})
+    ).contractAddress
+    policyManager = w3.eth.contract(address=policy_addr, abi=abi_policy)
+
+    oracle_addr = w3.eth.wait_for_transaction_receipt(
+        Oracle.constructor(pool_manager_addr, policy_addr, Web3.to_checksum_address("0x" + "00" * 20), deployer).transact({"from": deployer})
+    ).contractAddress
+    oracle = w3.eth.contract(address=oracle_addr, abi=abi_oracle)
+
+    lm_addr = w3.eth.wait_for_transaction_receipt(
+        LiquidityManager.constructor(pool_manager_addr, Web3.to_checksum_address("0x" + "00" * 20), policy_addr, deployer).transact({"from": deployer})
+    ).contractAddress
+    liquidityManager = w3.eth.contract(address=lm_addr, abi=abi_lm)
+
+    dfm_addr = w3.eth.wait_for_transaction_receipt(
+        DynamicFeeManager.constructor(deployer, policy_addr, oracle_addr, deployer).transact({"from": deployer})
+    ).contractAddress
+    dfm = w3.eth.contract(address=dfm_addr, abi=abi_dfm)
+
+    factory = compile_create2_factory(w3)
+
+    spot_args = encode(
+        ["address", "address", "address", "address", "address", "address"],
+        [pool_manager_addr, policy_addr, lm_addr, oracle_addr, dfm_addr, deployer],
+    )
+    creation_code = bytes.fromhex(byte_spot.replace("0x", "")) + spot_args
+    salt, predicted_addr = find_salt_for_flags(factory.address, creation_code, REQUIRED_HOOK_FLAGS)
+    factory.functions.deploy(creation_code, salt.to_bytes(32, "big")).transact({"from": deployer, "gas": 30_000_000})
+    spot_addr = predicted_addr
+
+    spotHook = w3.eth.contract(address=spot_addr, abi=abi_spot)
+    dfm.functions.setAuthorizedHook(spot_addr).transact({"from": deployer})
+    liquidityManager.functions.setAuthorizedHookAddress(spot_addr).transact({"from": deployer})
+    oracle.functions.setHookAddress(spot_addr).transact({"from": deployer})
+
+    # Pool init
+    pool_key = (
+        token0,
+        token1,
+        3000,
+        60,
+        spot_addr,
+    )
+    init_price = float(config.get("initialPrice", 1.0))
+    sqrt_price_x96 = int((math.sqrt(init_price)) * (1 << 96))
+    
+    # Initialize pool in PoolManager (this will trigger Spot hook's _afterInitialize)
+    poolManager.functions.initialize(pool_key, sqrt_price_x96).transact({"from": deployer})
+
+    # Set reinvest config with no cooldown and minimum thresholds
+    pool_id = Web3.keccak(
+        encode(
+            ['address', 'address', 'uint24', 'int24', 'address'],
+            [token0, token1, FEE, TICK_SPACING, spot_addr]
+        )
+    )
+    spotHook.functions.setReinvestConfig(
+        pool_id,  # poolId
+        0,  # minToken0
+        0,  # minToken1
+        0   # cooldown
+    ).transact({"from": deployer})
+
+    swap_router_addr = w3.eth.wait_for_transaction_receipt(SwapRouterC.constructor(pool_manager_addr).transact({"from": deployer})).contractAddress
+    lp_router_addr = w3.eth.wait_for_transaction_receipt(LPRouterC.constructor(pool_manager_addr).transact({"from": deployer})).contractAddress
+    swapRouter = w3.eth.contract(address=swap_router_addr, abi=abi_swapT)
+
+    tokenA_c = w3.eth.contract(address=token0, abi=abi_token)
+    tokenB_c = w3.eth.contract(address=token1, abi=abi_token)
+
+    init_liq = config.get("initialLiquidity", {})
+    amount0 = int(init_liq.get("token0", 10 ** 21))
+    amount1 = int(init_liq.get("token1", 10 ** 21))
+
+    tokenA_c.functions.mint(lp_provider, amount0).transact({"from": deployer})
+    tokenB_c.functions.mint(lp_provider, amount1).transact({"from": deployer})
+
+    tokenA_c.functions.approve(pool_manager_addr, 2 ** 256 - 1).transact({"from": lp_provider})
+    tokenB_c.functions.approve(pool_manager_addr, 2 ** 256 - 1).transact({"from": lp_provider})
+
+    tokenA_c.functions.approve(lp_router_addr, 2 ** 256 - 1).transact({"from": lp_provider})
+    tokenB_c.functions.approve(lp_router_addr, 2 ** 256 - 1).transact({"from": lp_provider})
+
+    MIN_TICK = -887272
+    MAX_TICK = 887272
+    lp_router_c = w3.eth.contract(address=lp_router_addr, abi=abi_liqT)
+    lp_router_c.functions.modifyLiquidity(
+        pool_key,
+        (MIN_TICK, MAX_TICK, amount0, amount1, 0, 0, lp_provider),
+    ).transact({"from": lp_provider})
+
+    pool_id = poolManager.functions.toId(pool_key).call()
+
+    accounts = {"deployer": deployer, "user": user, "lp_provider": lp_provider}
+
+    return w3, pool_id, poolManager, policyManager, dfm, swapRouter, accounts 
