@@ -498,4 +498,57 @@ contract TruncGeoOracleMultiTest is Test {
         (int24 latestTick,) = oracle.getLatestObservation(pid);
         assertEq(latestTick, 30, "latest tick sanity");
     }
+
+    /* ------------------------------------------------------------ *
+     * 12.  Boundary wrap & same-block across page tests            *
+     * ------------------------------------------------------------ */
+
+    function testSameBlockAcrossPageBoundary() public {
+        // Pre-fill indices 1-510 (bootstrap slot is 0).
+        for (uint16 i = 0; i < 510; ++i) {
+            vm.warp(block.timestamp + 1);
+            vm.prank(address(hook));
+            oracle.pushObservationAndCheckCap(pid, 0);
+        }
+
+        // First swap writes at index 511 (page boundary)
+        vm.prank(address(hook));
+        oracle.pushObservationAndCheckCap(pid, 1);
+        uint16 cardBefore = oracle.cardinality(pid); // expected 512
+
+        // Second swap **same block** – should merge with previous, not create a slot
+        vm.prank(address(hook));
+        oracle.pushObservationAndCheckCap(pid, 2);
+        uint16 cardAfter = oracle.cardinality(pid);
+        assertEq(cardAfter, cardBefore, "same-block swap created extra obs");
+
+        // Basic observe smoke-check to ensure continuity
+        bytes memory encKey = abi.encode(poolKey);
+        uint32[] memory sa = new uint32[](3);
+        sa[0] = 0;
+        sa[1] = 1;
+        sa[2] = 2;
+        oracle.observe(encKey, sa); // should not revert
+    }
+
+    function testMaxCapacityWrapOverwritesOldest() public {
+        // We already have 1 bootstrap; add 8191 to reach 8192 total
+        for (uint32 i = 0; i < 8191; ++i) {
+            vm.warp(block.timestamp + 1);
+            vm.prank(address(hook));
+            oracle.pushObservationAndCheckCap(pid, 0);
+        }
+        assertEq(oracle.cardinality(pid), 8192, "cardinality should saturate");
+
+        uint16 idxBefore = oracle.index(pid);
+
+        // Next observation overwrites oldest and wraps index to 0
+        vm.warp(block.timestamp + 1);
+        vm.prank(address(hook));
+        oracle.pushObservationAndCheckCap(pid, 0);
+
+        assertEq(oracle.cardinality(pid), 8192, "cardinality grew past max");
+        uint16 idxAfter = oracle.index(pid);
+        assertEq(idxAfter, (idxBefore + 1) & 0x1FFF, "index did not wrap FIFO");
+    }
 }

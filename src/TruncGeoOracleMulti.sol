@@ -279,6 +279,26 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
             tickWasCapped = true;
         }
 
+        /**
+         * ────────────────────────────────────────────────────────────────
+         *  Same-block merge guard  – preserves the one-observation-per-block
+         *  invariant even when the write cursor has just flipped to a new
+         *  page.  If the most recent observation (pointed to by `state.index`)
+         *  already shares the current block.timestamp, simply update its
+         *  tick and exit early without allocating a new slot.
+         * ----------------------------------------------------------------
+         */
+        {
+            TruncatedOracle.Observation storage lastObs =
+                _leaf(id, state.index)[state.index % PAGE_SIZE];
+            if (lastObs.blockTimestamp == uint32(block.timestamp)) {
+                // merge-in-place
+                lastObs.prevTick = currentTick;
+                _updateCapFrequency(pid, tickWasCapped);
+                return tickWasCapped;
+            }
+        }
+
         // -------------------------------------------------- //
         //  ❖ Write the (potentially capped) observation     //
         //  Preserve the library's returned page-index and   //
@@ -329,7 +349,15 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
             // to 0, jump to the **first slot of the next page** so subsequent
             // observations fill fresh storage instead of overwriting the old page.
             if (localIdx == PAGE_SIZE - 1 && newLocalIdx == 0) {
-                unchecked { state.index = pageBase + PAGE_SIZE; } // next leaf
+                unchecked {
+                    uint16 nextIndex = pageBase + PAGE_SIZE; // first slot of next page
+                    if (nextIndex == TruncatedOracle.MAX_CARDINALITY_ALLOWED) {
+                        // Wrap-around: restart at index 0 to overwrite oldest page (FIFO)
+                        state.index = 0;
+                    } else {
+                        state.index = nextIndex;
+                    }
+                }
             } else {
                 unchecked { state.index = pageBase + newLocalIdx; }
             }
@@ -433,6 +461,22 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /// @notice Hard-coded saturation threshold used by the frequency counter.
     function getCapFreqMax() external pure returns (uint64) {
         return CAP_FREQ_MAX;
+    }
+
+    /**
+     * @notice Convenience view returning the current observation count for a pool.
+     * @dev    Mirrors the `cardinality` field inside the public mapping but avoids
+     *         tuple unpacking in tests.
+     */
+    function cardinality(PoolId pid) external view returns (uint16) {
+        return states[PoolId.unwrap(pid)].cardinality;
+    }
+
+    /**
+     * @notice Convenience view returning the ring cursor (index) for a pool.
+     */
+    function index(PoolId pid) external view returns (uint16) {
+        return states[PoolId.unwrap(pid)].index;
     }
 
     /**
