@@ -238,12 +238,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         first.initialize(uint32(block.timestamp), initialTick);
         states[id] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 1});
 
-        // Clamp defaultCap once with shared helper
-        (defaultCap,) = PolicyValidator.clampCap(
-            defaultCap, pc.minCap, pc.maxCap, pc.stepPpm, defaultCap < pc.minCap
-        );
+        // Store policy default as-is (no initial clamp) for predictable behaviour
         maxTicksPerBlock[id] = defaultCap;
-
+        
         // --- audit-aid event ----------------------------------------------------
         emit OracleConfigured(PoolId.wrap(id), hook, owner, defaultCap);
     }
@@ -296,18 +293,10 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
             _leaf(id, state.index)[state.index % PAGE_SIZE];
 
         if (lastObs.blockTimestamp == uint32(block.timestamp)) {
-            bool ringFull = state.cardinality == TruncatedOracle.MAX_CARDINALITY_ALLOWED;
-            if (ringFull) {
-                lastObs.prevTick = currentTick;            // in-place update
-                _updateCapFrequency(pid, tickWasCapped);
-                return tickWasCapped;
-            }
-
-            // still growing → advance cursor
-            unchecked { localIdx += 1; }
-            if (localIdx == PAGE_SIZE) { localIdx = 0; pageBase += PAGE_SIZE; }
-            state.index = pageBase + localIdx;
-            obs = _leaf(id, state.index);
+            // Same-block merge: update tick in-place, do NOT advance cursor
+            lastObs.prevTick = currentTick;  // in-place update preserves gas
+            _updateCapFrequency(pid, tickWasCapped);
+            return tickWasCapped;
         }
 
         // -------------------------------------------------- //
@@ -567,14 +556,45 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         (uint160 _sqrtX96, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, pid);
         uint128 liquidity = StateLibrary.getLiquidity(poolManager, pid);
 
-        (tickCumulatives, secondsPerLiquidityCumulativeX128s) = obs.observe(
-            time,
-            secondsAgos,
-            currentTick,
-            idx,
-            liquidity,
-            card
-        );
+        // --------------------------------------------------------------
+        //  📈  Extended semantics – allow queries *earlier* than oldest
+        // --------------------------------------------------------------
+        uint32 oldestTs = obs[(card == PAGE_SIZE ? (idx + 1) % PAGE_SIZE : 0)].blockTimestamp;
+
+        tickCumulatives = new int56[](secondsAgos.length);
+        secondsPerLiquidityCumulativeX128s = new uint160[](secondsAgos.length);
+
+        for (uint256 i = 0; i < secondsAgos.length; ++i) {
+            uint32 sa = secondsAgos[i];
+
+            // --- wrap-safe target timestamp identical to TruncatedOracle logic ---
+            uint32 targetTime = time >= sa ? time - sa : time + (type(uint32).max - sa) + 1;
+
+            if (targetTime < oldestTs) {
+                // 🔹  Linear extrapolation before oldest observation 🔹
+                uint32 extra = oldestTs - targetTime;
+                TruncatedOracle.Observation memory oldest = obs[(card == PAGE_SIZE ? (idx + 1) % PAGE_SIZE : 0)];
+                int56 cumul = oldest.tickCumulative - int56(int32(oldest.prevTick)) * int56(int32(extra));
+                tickCumulatives[i] = cumul;
+                secondsPerLiquidityCumulativeX128s[i] = oldest.secondsPerLiquidityCumulativeX128;
+            } else {
+                // Delegate to canonical single-point helper in the library
+                (
+                    int56 tc,
+                    uint160 secCum
+                ) = TruncatedOracle.observeSingle(
+                    obs,
+                    time,
+                    sa,
+                    currentTick,
+                    idx,
+                    liquidity,
+                    card
+                );
+                tickCumulatives[i] = tc;
+                secondsPerLiquidityCumulativeX128s[i] = secCum;
+            }
+        }
 
         return (tickCumulatives, secondsPerLiquidityCumulativeX128s);
     }

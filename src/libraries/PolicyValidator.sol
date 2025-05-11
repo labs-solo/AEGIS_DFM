@@ -30,9 +30,9 @@ library PolicyValidator {
         uint32 updateInterval
     ) internal pure {
         require(minCap      > 0,                         "PV:min=0");
-        require(maxCap      >= minCap,                   "PV:max<min");
-        require(stepPpm     > 0 && stepPpm < PPM,        "PV:step");
+        require(stepPpm     > 0 && stepPpm < PPM,        "stepPpm-range");
         require(budgetPpm   > 0 && budgetPpm < PPM,      "PV:budget");
+        require(maxCap      >= minCap,                   "PV:max<min");
         require(decayWindow > 0,                         "PV:decay");
         require(updateInterval > 0,                      "PV:updateInt");
     }
