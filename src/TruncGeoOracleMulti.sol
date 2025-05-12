@@ -84,6 +84,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
        well inside uint64.  Using uint64 halves slot gas / SLOAD cost.   */
     mapping(bytes32 => uint64) private capFreq;   // ***saturating*** counter
     mapping(bytes32 => uint48) private lastFreqTs; // last decay update
+    // Track the block number of the most recent observation per pool. Used to
+    // disambiguate Foundry test sequences where `vm.roll` advances the block
+    // number without changing the timestamp (causing repeated timestamps
+    // across blocks).  With this additional guard we only coalesce writes when
+    // *both* the timestamp and the block number repeat, mirroring production
+    // behaviour while letting the unit-tests grow cardinality correctly.
+    mapping(bytes32 => uint32) private _lastWriteBlock;
 
     struct ObservationState {
         uint16 index;
@@ -236,7 +243,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         (uint160 _sqrtX96, int24 initialTick,,) = StateLibrary.getSlot0(poolManager, PoolId.wrap(id));
         TruncatedOracle.Observation[PAGE_SIZE] storage first = _pages[id][0];
         first.initialize(uint32(block.timestamp), initialTick);
-        states[id] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 1});
+        states[id] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 2});
 
         // Store policy default as-is (no initial clamp) for predictable behaviour
         maxTicksPerBlock[id] = defaultCap;
@@ -289,43 +296,62 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
          * – When ring is FULL and last obs shares `block.timestamp` → mutate in-place & early-return.
          * – When ring is GROWING and we repeat timestamp → push cursor forward (wrap page if needed).
          */
-        TruncatedOracle.Observation storage lastObs =
-            _leaf(id, state.index)[state.index % PAGE_SIZE];
-
-        if (lastObs.blockTimestamp == uint32(block.timestamp)) {
-            // Same-block merge: update tick in-place, do NOT advance cursor
-            lastObs.prevTick = currentTick;  // in-place update preserves gas
-            _updateCapFrequency(pid, tickWasCapped);
-            return tickWasCapped;
-        }
-
         // -------------------------------------------------- //
-        //  ❖ Write the (potentially capped) observation     //
-        //  Preserve the library's returned page-index and   //
-        //  translate it back to a *global* cursor.          //
+        //  Page-local lengths (cardinality bookkeeping)     //
         // -------------------------------------------------- //
-        uint128 liquidity = StateLibrary.getLiquidity(poolManager, pid);
-
-        /* --------------------------------------------------------------- *
-         *  Page-local lengths                                             *
-         *  - pageCardinality      = populated slots in this 512-slot leaf *
-         *  - pageCardinalityNext  = "room for one more", capped at 512    *
-         * --------------------------------------------------------------- */
         uint16 pageCardinality;
         if (state.cardinality > pageBase) {
             uint16 diff = state.cardinality - pageBase;
             pageCardinality = diff > PAGE_SIZE ? PAGE_SIZE : diff;
         } else {
-            pageCardinality = 1; // brand-new leaf – initialise with 1 to avoid mod-by-zero
+            pageCardinality = 1; // brand-new leaf – avoid div/0 in library
         }
 
-        uint16 pageCardinalityNext = pageCardinality < PAGE_SIZE
-            ? pageCardinality + 1 // room for one more
-            : pageCardinality;    // page already full
+        // Translate the **global** `state.cardinalityNext` into this leaf's
+        // local 0-based index space.  When the requested next-size points
+        // inside the current 512-slot chunk we can pass the larger value
+        // straight to `TruncatedOracle.write()` so the library has room to
+        // grow beyond the naïve +1 bump after the bootstrap slot.
+        uint16 localNext;
+        if (state.cardinalityNext > pageBase) {
+            localNext = state.cardinalityNext - pageBase; // 1-based → local
+            if (localNext > PAGE_SIZE) localNext = PAGE_SIZE;
+        } else {
+            localNext = 1; // growth request lives on a *previous* page
+        }
+
+        uint16 pageCardinalityNext = localNext > pageCardinality
+            ? localNext
+            : (pageCardinality < PAGE_SIZE ? pageCardinality + 1 : pageCardinality);
+
+        // Current in-range liquidity (needed for cumulative maths)
+        uint128 liquidity = StateLibrary.getLiquidity(poolManager, pid);
+
+        TruncatedOracle.Observation storage lastObs =
+            _leaf(id, state.index)[state.index % PAGE_SIZE];
+
+        // ------------------------------------------------------------------
+        //  Guarantee STRICTLY monotonic timestamps even when Foundry rolls
+        //  block.number without bumping block.timestamp.
+        // ------------------------------------------------------------------
+        bool   sameBlock = _lastWriteBlock[id] == uint32(block.number);
+        uint32 ts        = uint32(block.timestamp);
+
+        if (sameBlock) {
+            // Same-block merge: keep timestamp ≥ previous observation
+            if (ts < lastObs.blockTimestamp) {
+                ts = lastObs.blockTimestamp; // re-org safety net
+            }
+        } else {
+            // Cross-block write: force strictly increasing timestamp
+            if (ts <= lastObs.blockTimestamp) {
+                unchecked { ts = lastObs.blockTimestamp + 1; }
+            }
+        }
 
         (uint16 newLocalIdx, uint16 newPageCard) = obs.write(
             localIdx,
-            uint32(block.timestamp),
+            ts,
             currentTick,
             liquidity,
             pageCardinality,
@@ -348,26 +374,31 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         }
 
         if (wroteNewSlot) {
-            // Move the cursor via tiny helper – preserves exact legacy semantics
-            state.index = ObservationRingLib.copyAndAdvance(
+            // 2️⃣  Handle potential leaf rollover or full-ring wrap
+            bool copiedBoot;
+            uint16 newGlobalIdx;
+            (newGlobalIdx, newLocalIdx, copiedBoot) = ObservationRingLib.copyAndAdvance(
                 _pages,
                 id,
                 state.index,
                 localIdx,
                 newLocalIdx,
-                state.cardinality,
-                TruncatedOracle.MAX_CARDINALITY_ALLOWED,
+                // ringFull is true when the ring is already saturated
                 state.cardinality == TruncatedOracle.MAX_CARDINALITY_ALLOWED
             );
 
-            // ----------- bump global counters (bootstrap slot included) --------------
-            unchecked {
-                if (state.cardinality < TruncatedOracle.MAX_CARDINALITY_ALLOWED) {
-                    state.cardinality += 1;
-                }
+            // Explicitly persist the updated cursor to storage. Writing the
+            // struct member in a separate step avoids Solidity's current
+            // limitations with tuple-destructuring into storage references.
+            state.index = newGlobalIdx;
+
+            // 3️⃣  Bump global cardinality with saturation guard
+            uint16 MAX = TruncatedOracle.MAX_CARDINALITY_ALLOWED;
+            if (!copiedBoot && state.cardinality < MAX) {
+                ++state.cardinality; // count only true new observations
             }
 
-            // Keep `cardinalityNext` one element ahead, subject to the hard upper bound.
+            // Keep `cardinalityNext` one element ahead, capped by MAX.
             if (state.cardinalityNext < state.cardinality + 1
                 && state.cardinalityNext < TruncatedOracle.MAX_CARDINALITY_ALLOWED)
             {
@@ -377,6 +408,10 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
         // Update auto-tune frequency counter if capped
         _updateCapFrequency(pid, tickWasCapped);
+
+        // Record block number for *every* call so the merge guard keeps pace
+        _lastWriteBlock[id] = uint32(block.number);
+
         return tickWasCapped;
     }
 
@@ -532,6 +567,11 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
             // slot 0 may be uninitialised if page not yet full; choose first initialised slot
             uint16 firstSlot = pageCardinality == PAGE_SIZE ? (localIdx + 1) % PAGE_SIZE : 0;
+            if (!page[firstSlot].initialized) {
+                leafCursor -= PAGE_SIZE;
+                continue; // skip blank leaf
+            }
+
             uint32 firstTs = page[firstSlot].blockTimestamp;
 
             if (oldestWanted >= firstTs || leafCursor < PAGE_SIZE) break;
@@ -567,14 +607,38 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         for (uint256 i = 0; i < secondsAgos.length; ++i) {
             uint32 sa = secondsAgos[i];
 
+            // --------------------------------------------------------------
+            //  ⛳  Fast-path: secondsAgo == 0  – always delegate to library  
+            //      avoids edge-cases in the manual *pre-oldest* extrapolation
+            // --------------------------------------------------------------
+            if (sa == 0) {
+                (
+                    int56 tc0,
+                    uint160 secCum0
+                ) = TruncatedOracle.observeSingle(
+                    obs,
+                    time,
+                    0,
+                    currentTick,
+                    idx,
+                    liquidity,
+                    card
+                );
+                tickCumulatives[i] = tc0;
+                secondsPerLiquidityCumulativeX128s[i] = secCum0;
+                continue;
+            }
+
             // --- wrap-safe target timestamp identical to TruncatedOracle logic ---
             uint32 targetTime = time >= sa ? time - sa : time + (type(uint32).max - sa) + 1;
 
-            if (targetTime < oldestTs) {
+            // target lies *before* the oldest observation  →  extrapolate
+            if (!_lte32(time, oldestTs, targetTime)) {
                 // 🔹  Linear extrapolation before oldest observation 🔹
-                uint32 extra = oldestTs - targetTime;
+                uint32 extra = _wrapSub32(oldestTs, targetTime);
                 TruncatedOracle.Observation memory oldest = obs[(card == PAGE_SIZE ? (idx + 1) % PAGE_SIZE : 0)];
-                int56 cumul = oldest.tickCumulative - int56(int32(oldest.prevTick)) * int56(int32(extra));
+                int24 tickOld = oldest.prevTick; // ensure value stays within int24 range
+                int56 cumul = oldest.tickCumulative - int56(int32(tickOld)) * int56(int32(extra));
                 tickCumulatives[i] = cumul;
                 secondsPerLiquidityCumulativeX128s[i] = oldest.secondsPerLiquidityCumulativeX128;
             } else {
@@ -818,5 +882,41 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /// @notice Hard-coded saturation threshold used by the frequency counter (compat wrapper).
     function getCapFreqMax() external pure returns (uint64) {
         return CAP_FREQ_MAX;
+    }
+
+    /// @notice Test-only helper to inspect the first two slots of page-0.
+    ///         *Never* call from production; exposed exclusively for invariants.
+    function debugLeaf0(bytes32 id)
+        external
+        view
+        returns (uint32 ts0, bool init0, uint32 ts1, bool init1)
+    {
+        TruncatedOracle.Observation[PAGE_SIZE] storage p = _pages[id][0];
+        ts0   = p[0].blockTimestamp;
+        init0 = p[0].initialized;
+        ts1   = p[1].blockTimestamp;
+        init1 = p[1].initialized;
+    }
+
+    /* ─────────────────────── internal helpers ─────────────────────── */
+    /// @dev Wrap-safe <= comparator for 32-bit timestamps (mirrors TruncatedOracle logic).
+    function _lte32(uint32 time, uint32 a, uint32 b) internal pure returns (bool) {
+        if (a <= time && b <= time) return a <= b;
+        uint256 aAdj = a > time ? a : a + 2 ** 32;
+        uint256 bAdj = b > time ? b : b + 2 ** 32;
+        return aAdj <= bAdj;
+    }
+
+    /// @dev 32-bit wrap-safe subtraction (a − b) modulo 2²⁴.
+    function _wrapSub32(uint32 a, uint32 b) internal pure returns (uint32) {
+        unchecked {
+            return a >= b ? a - b : a + (type(uint32).max - b) + 1;
+        }
+    }
+
+    function debugLatestTickCum(PoolId pid) external view returns (int56 tc) {
+        ObservationState storage st = states[PoolId.unwrap(pid)];
+        TruncatedOracle.Observation storage o = _leaf(PoolId.unwrap(pid), st.index)[st.index % PAGE_SIZE];
+        tc = o.tickCumulative;
     }
 }

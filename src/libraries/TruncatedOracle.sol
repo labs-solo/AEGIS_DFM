@@ -368,12 +368,16 @@ library TruncatedOracle {
     ) internal view returns (int56 tickCumulative, uint160 secondsPerLiquidityCumulativeX128) {
         if (cardinality == 0) revert OracleCardinalityCannotBeZero();
 
-        // base case: target is the current block? Handle large secondsAgo here.
-        if (secondsAgo == 0 || secondsAgo > type(uint32).max) {
+        if (secondsAgo == 0) {
             Observation memory last = self[index];
+
+            // If we're not in the exact same block‑timestamp as the stored
+            // observation, simulate the forward accumulator values in‑memory
+            // so callers get fresh data without an extra SSTORE.
             if (last.blockTimestamp != time) {
                 last = transform(last, time, tick, liquidity);
             }
+
             return (last.tickCumulative, last.secondsPerLiquidityCumulativeX128);
         }
 

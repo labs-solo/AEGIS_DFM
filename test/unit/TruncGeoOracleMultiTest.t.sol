@@ -19,7 +19,6 @@ import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
 import {Errors} from "../../src/errors/Errors.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import "forge-std/console.sol";
 
 /* ───────────────────────────── Local Stubs ─────────────────────────────── */
 
@@ -61,20 +60,19 @@ contract TruncGeoOracleMultiTest is Test {
     /*  setup                                                  */
     /* ------------------------------------------------------- */
     function setUp() public {
-        console.log("Setting up test...");
+        // Setting up test...
         policy = new MockPolicyManager();
         poolManager = new MockPoolManager();
 
-        console.log("Deploying hook...");
-        // ── deploy hook FIRST ------------------------------------------------------
+        // Deploying hook...
         hook = new DummyFullRangeHook(address(0));
-        console.log("Hook deployed at:", address(hook));
+        // Hook deployed
 
         // Create mock tokens for the PoolKey *after* hook exists so we can embed it
         address token0 = address(0xA11CE);
         address token1 = address(0xB0B);
 
-        console.log("Creating PoolKey...");
+        // Creating PoolKey...
         poolKey = PoolKey({
             currency0: Currency.wrap(token0),
             currency1: Currency.wrap(token1),
@@ -84,7 +82,7 @@ contract TruncGeoOracleMultiTest is Test {
         });
 
         pid = poolKey.toId();
-        console.log("PoolKey created with hooks address:", address(poolKey.hooks));
+        // PoolKey created
 
         /* ------------------------------------------------------------------ *
          *  Configure mock policy with non-zero params so oracle invariants   *
@@ -101,26 +99,23 @@ contract TruncGeoOracleMultiTest is Test {
         p.defaultMaxTicks = 50;
         policy.setParams(pid, p);
 
-        console.log("Deploying oracle...");
-        // ── deploy oracle pointing to *this* hook ----------------------------------
+        // Deploying oracle...
         oracle = new TruncGeoOracleMulti(
             IPoolManager(address(poolManager)),
             IPoolPolicy(address(policy)),
             address(hook),
             address(this) // Test contract as owner
         );
-        console.log("Oracle deployed at:", address(oracle));
+        // Oracle deployed
 
-        console.log("Setting oracle in hook...");
-        // ── set oracle address in hook (one-time operation) -----------------------
+        // Setting oracle in hook...
         hook.setOracle(address(oracle));
-        console.log("Oracle address set in hook");
+        // Oracle address set in hook
 
-        console.log("Enabling oracle for pool...");
-        // ── enable oracle for the pool (must be called by *that* hook) --------------
+        // Enabling oracle for pool...
         vm.prank(address(hook)); // msg.sender == fullRangeHook
         oracle.enableOracleForPool(poolKey);
-        console.log("Oracle enabled for pool");
+        // Oracle enabled for pool
     }
 
     /* gas logger helper (does not fail CI) */
@@ -249,6 +244,7 @@ contract TruncGeoOracleMultiTest is Test {
         poolManager.setTick(pid, boundedTick);
 
         vm.warp(block.timestamp + 1);
+        vm.roll(block.number + 1);
         vm.prank(address(hook));
         oracle.pushObservationAndCheckCap(pid, int24(0));
 
@@ -271,11 +267,11 @@ contract TruncGeoOracleMultiTest is Test {
 
         // --- Test capping logic ---
         // Advance time to ensure observation is written
+        vm.roll(block.number + 1);
         vm.warp(block.timestamp + 1);
 
-        // DEBUG: Log prevTick before the call
+        // debug prevTick before capping call
         (int24 tickBefore,) = oracle.getLatestObservation(pid);
-        console.log("prevTick before capping call:", tickBefore);
 
         // Expect the call via hook to succeed, but the tick to be capped
         vm.startPrank(address(hook)); // Use the correct 'hook' variable
@@ -301,7 +297,8 @@ contract TruncGeoOracleMultiTest is Test {
         poolManager.setTick(pid, underLimitTick);
 
         // Advance time again
-        vm.warp(block.timestamp + 1);
+        vm.roll(block.number + 1); // ensure new block to satisfy 1-write-per-block invariant
+        vm.warp(block.timestamp + 2);
 
         // Expect the call via hook to succeed, tick should NOT be capped
         vm.startPrank(address(hook)); // Use the correct 'hook' variable
@@ -356,16 +353,28 @@ contract TruncGeoOracleMultiTest is Test {
     /// @notice Push >512 observations to prove the ring really pages
     function testPagedRingStoresAcrossPages() public {
         uint16 pushes = 530;                   // crosses page boundary (PAGE_SIZE = 512)
+        _printState("before paging test");
         uint24 cap    = oracle.maxTicksPerBlock(PoolId.unwrap(pid));
+        vm.roll(block.number + 1); // start fresh block
 
         for (uint16 i = 1; i <= pushes; ++i) {
+            // Mine next block first? –> NO.
+            // 1️⃣ bump ts, 2️⃣ roll block
+            vm.warp(block.timestamp + 2);        // ensure new second first
+            vm.roll(block.number + 1);           // then mine next block
+
+            if (i % 128 == 0) {
+                _printState("");
+            }
+
             // safe ladder-cast: uint24 -> uint256 -> int256 -> int24
             poolManager.setTick(pid, int24(int256(uint256(cap) - 1))); // stay under cap
-            vm.warp(block.timestamp + 1);                     // guarantee new ts
             vm.prank(address(hook));
             oracle.pushObservationAndCheckCap(pid, int24(0));
         }
 
+        _printState("after paging writes");
+        _printPage0();
         //  Bootstrap slot (index 0) + our `pushes` writes
         (, uint16 cardinality,) = oracle.states(PoolId.unwrap(pid));
         assertEq(
@@ -416,6 +425,7 @@ contract TruncGeoOracleMultiTest is Test {
     function testFuzz_TickCastBounds(int256 raw) public {
         raw = bound(raw, -9_000_000, 9_000_000); // narrower than int24 max
         poolManager.setTick(pid, int24(0));
+        vm.roll(block.number + 1);
         vm.warp(block.timestamp + 1);
         vm.prank(address(hook));
 
@@ -454,6 +464,7 @@ contract TruncGeoOracleMultiTest is Test {
         poolManager.setTick(pid, tick_);
         vm.prank(address(hook));
         oracle.pushObservationAndCheckCap(pid, int24(0));
+        vm.roll(block.number + 1);
     }
 
     /// @dev 3-point window – check that observe() returns exact cumulatives
@@ -466,11 +477,13 @@ contract TruncGeoOracleMultiTest is Test {
     ///      t(now-10)=  100   (10 * 10)
     ///      t(now-20)=    0
     function testOracleObserveLinearAccumulation() public {
+        _printState("observe-accum setup");
         bytes memory encKey = abi.encode(poolKey);
 
         // ── write second & third observations ──
         _advanceAndPush(10, 10);   // 10 s after bootstrap
         _advanceAndPush(30, 10);   // another 10 s later (now total 20 s)
+        _printState("after 2 pushes - about to call observe");
 
         // build query [0,10,20]
         uint32[] memory sa = new uint32[](3);
@@ -505,10 +518,20 @@ contract TruncGeoOracleMultiTest is Test {
 
     function testSameBlockAcrossPageBoundary() public {
         // Pre-fill indices 1-510 (bootstrap slot is 0).
+        vm.roll(block.number + 1); // start fresh block
         for (uint16 i = 0; i < 510; ++i) {
-            vm.warp(block.timestamp + 1);
+            // Mine next block first? –> NO.
+            // 1️⃣ bump ts, 2️⃣ roll block
+            vm.warp(block.timestamp + 2);        // ensure new second first
+            vm.roll(block.number + 1);           // then mine next block
+
+            if (i % 128 == 0) {
+                _printState("");
+            }
+
             vm.prank(address(hook));
             oracle.pushObservationAndCheckCap(pid, 0);
+            vm.roll(block.number + 1);
         }
 
         // First swap writes at index 511 (page boundary)
@@ -532,12 +555,23 @@ contract TruncGeoOracleMultiTest is Test {
     }
 
     function testMaxCapacityWrapOverwritesOldest() public {
+        _printState("before saturation loop");
         // We already have 1 bootstrap; add 8191 to reach 8192 total
+        vm.roll(block.number + 1); // start fresh block
         for (uint32 i = 0; i < 8191; ++i) {
-            vm.warp(block.timestamp + 1);
+            // Mine next block first? –> NO.
+            // 1️⃣ bump ts, 2️⃣ roll block
+            vm.warp(block.timestamp + 2);        // ensure new second first
+            vm.roll(block.number + 1);           // then mine next block
+
+            if (i % 1024 == 0) {
+                _printState("");
+            }
+
             vm.prank(address(hook));
             oracle.pushObservationAndCheckCap(pid, 0);
         }
+        _printState("");
         assertEq(oracle.cardinality(pid), 8192, "cardinality should saturate");
 
         uint16 idxBefore = oracle.index(pid);
@@ -546,9 +580,25 @@ contract TruncGeoOracleMultiTest is Test {
         vm.warp(block.timestamp + 1);
         vm.prank(address(hook));
         oracle.pushObservationAndCheckCap(pid, 0);
+        vm.roll(block.number + 1);
 
+        _printState("");
         assertEq(oracle.cardinality(pid), 8192, "cardinality grew past max");
         uint16 idxAfter = oracle.index(pid);
         assertEq(idxAfter, (idxBefore + 1) & 0x1FFF, "index did not wrap FIFO");
+    }
+
+    /* ───────────────────────── DEBUG HELPERS ───────────────────────── */
+    /// pretty-print the oracle's high-level state
+    function _printState(string memory tag) internal view {
+        (uint16 card, uint16 idx, uint64 freq, uint24 cap) = oracle.getState(pid);
+        // logging removed
+    }
+
+    /// dump first two observations of page-0 to verify bootstrap / merge
+    function _printPage0() internal view {
+        (uint32 ts0, bool init0, uint32 ts1, bool init1) =
+            oracle.debugLeaf0(PoolId.unwrap(pid));
+        // logging removed
     }
 }

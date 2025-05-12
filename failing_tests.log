@@ -1,7 +1,7 @@
 No files changed, compilation skipped
 
 Ran 3 tests for test/unit/TruncGeoOracleMultiTest.t.sol:TruncGeoOracleMultiTest
-[FAIL: cardinality should saturate: 2 != 8192] testMaxCapacityWrapOverwritesOldest() (gas: 70116891)
+[FAIL: cardinality should saturate: 2 != 8192] testMaxCapacityWrapOverwritesOldest() (gas: 70223305)
 Logs:
   Setting up test...
   Deploying hook...
@@ -15,7 +15,7 @@ Logs:
   Enabling oracle for pool...
   Oracle enabled for pool
 
-[FAIL: TargetPredatesOldestObservation(1, 4294967287 [4.294e9])] testOracleObserveLinearAccumulation() (gas: 182790)
+[FAIL: TargetPredatesOldestObservation(1, 4294967287 [4.294e9])] testOracleObserveLinearAccumulation() (gas: 183852)
 Logs:
   Setting up test...
   Deploying hook...
@@ -29,7 +29,7 @@ Logs:
   Enabling oracle for pool...
   Oracle enabled for pool
 
-[FAIL: cardinality wrong after multi-page growth (must include bootstrap slot): 2 != 531] testPagedRingStoresAcrossPages() (gas: 6437415)
+[FAIL: cardinality wrong after multi-page growth (must include bootstrap slot): 2 != 531] testPagedRingStoresAcrossPages() (gas: 6692829)
 Logs:
   Setting up test...
   Deploying hook...
@@ -43,14 +43,14 @@ Logs:
   Enabling oracle for pool...
   Oracle enabled for pool
 
-Suite result: FAILED. 0 passed; 3 failed; 0 skipped; finished in 83.54ms (90.23ms CPU time)
+Suite result: FAILED. 0 passed; 3 failed; 0 skipped; finished in 84.07ms (91.27ms CPU time)
 
-Ran 1 test suite in 102.37ms (83.54ms CPU time): 0 tests passed, 3 failed, 0 skipped (3 total tests)
+Ran 1 test suite in 102.70ms (84.07ms CPU time): 0 tests passed, 3 failed, 0 skipped (3 total tests)
 
 Failing tests:
 Encountered 3 failing tests in test/unit/TruncGeoOracleMultiTest.t.sol:TruncGeoOracleMultiTest
-[FAIL: cardinality should saturate: 2 != 8192] testMaxCapacityWrapOverwritesOldest() (gas: 70116891)
-[FAIL: TargetPredatesOldestObservation(1, 4294967287 [4.294e9])] testOracleObserveLinearAccumulation() (gas: 182790)
-[FAIL: cardinality wrong after multi-page growth (must include bootstrap slot): 2 != 531] testPagedRingStoresAcrossPages() (gas: 6437415)
+[FAIL: cardinality should saturate: 2 != 8192] testMaxCapacityWrapOverwritesOldest() (gas: 70223305)
+[FAIL: TargetPredatesOldestObservation(1, 4294967287 [4.294e9])] testOracleObserveLinearAccumulation() (gas: 183852)
+[FAIL: cardinality wrong after multi-page growth (must include bootstrap slot): 2 != 531] testPagedRingStoresAcrossPages() (gas: 6692829)
 
 Encountered a total of 3 failing tests, 0 tests succeeded

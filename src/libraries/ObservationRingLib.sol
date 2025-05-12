@@ -13,47 +13,49 @@ library ObservationRingLib {
     /// -----------------------------------------------------------------------
     /// @param pages   2-level mapping inherited from the parent oracle
     /// @param id      Pool identifier (bytes32-wrapped)
-    /// @param stateIndex Current global cursor **before** calling `write`
+    /// @param globalIdx Current global cursor **before** calling `write`
     /// @param localIdx    Local index fed *into* `write`
     /// @param newLocalIdx Local index returned *from* `write`
-    /// @param cardinality Current ring cardinality
-    /// @param MAX_CARDINALITY_ALLOWED Constant propagated from caller
-    /// @param ringFull  `true` when `cardinality == MAX_CARDINALITY_ALLOWED`
-    /// @return newIndex Updated global cursor pointing to the freshly written
+    /// @param ringFull  `true` when the ring is already saturated (cardinality == MAX_CARDINALITY_ALLOWED)`
+    /// @return newGlobalIdx Updated global cursor pointing to the freshly written
     ///                  observation—whether that lives in the same page, the
     ///                  next page, or after a full wrap.
+    /// @return newLocalIdxOut Local index returned from the function
+    /// @return copiedBoot    `true` if a bootstrapping copy was performed
     /// -----------------------------------------------------------------------
     function copyAndAdvance(
         mapping(bytes32 => mapping(uint16 => TruncatedOracle.Observation[PAGE_SIZE])) storage pages,
         bytes32 id,
-        uint16 stateIndex,
+        uint16 globalIdx,
         uint16 localIdx,
         uint16 newLocalIdx,
-        uint16 cardinality,
-        uint16 MAX_CARDINALITY_ALLOWED,
         bool   ringFull
-    ) internal returns (uint16 newIndex) {
-        uint16 pageBase  = stateIndex - (stateIndex % PAGE_SIZE);
-        uint16 pageNo    = pageBase / PAGE_SIZE;
-
-        // Cross-boundary?  (localIdx was the last slot & write() wrapped to 0)
-        if (localIdx == PAGE_SIZE - 1 && newLocalIdx == 0) {
-            TruncatedOracle.Observation[PAGE_SIZE] storage currentPage = pages[id][pageNo];
-
-            if (!ringFull) {
-                // (a) Still growing – allocate / use next page, copy obs[0]
-                TruncatedOracle.Observation storage written = currentPage[0];
-                TruncatedOracle.Observation[PAGE_SIZE] storage nextPage = pages[id][pageNo + 1];
-                nextPage[0] = written;
-                newIndex = pageBase + PAGE_SIZE; // first slot of next page
-            } else {
-                // (b) Ring saturated – wrap to page-0 after copying obs[0]
-                pages[id][0][0] = currentPage[0];
-                newIndex = 0;
-            }
-        } else {
-            // No boundary crossed – simple in-page advance
-            newIndex = pageBase + newLocalIdx;
+    ) internal returns (uint16 newGlobalIdx, uint16 newLocalIdxOut, bool copiedBoot) {
+        copiedBoot      = false;
+        // Default path (staying on the same 512-slot leaf): simply increment
+        // the *global* cursor by one. This avoids subtle off-by-one issues and
+        // guarantees that `state.index` always tracks the newest write.
+        unchecked {
+            newGlobalIdx = globalIdx + 1;
         }
+        newLocalIdxOut  = newLocalIdx; // default: stayed within same leaf
+
+        // Detect leaf boundary crossing: wrapped from slot 511 → slot 0
+        bool crossedLeaf = (localIdx == PAGE_SIZE - 1 && newLocalIdx == 0);
+
+        if (crossedLeaf) {
+            // Determine the target leaf index (wrap to 0 when ring already full)
+            uint16 newLeaf = ringFull ? 0 : (globalIdx >> 9) + 1;
+
+            // Bootstrap: duplicate the last observation of the previous leaf into
+            // slot-0 of the new leaf so time-weighted math remains continuous.
+            pages[id][newLeaf][0] = pages[id][globalIdx >> 9][PAGE_SIZE - 1];
+
+            copiedBoot     = true;
+            newGlobalIdx   = uint16(newLeaf << 9); // cursor at slot-0 of new leaf
+            newLocalIdxOut = 0;
+        }
+
+        return (newGlobalIdx, newLocalIdxOut, copiedBoot);
     }
 } 

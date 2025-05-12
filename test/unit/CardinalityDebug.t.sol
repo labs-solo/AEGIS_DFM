@@ -68,4 +68,30 @@ contract CardinalityDebug is Test {
             emit log_named_uint("idx", idx);
         }
     }
+
+    function test_debug_roll_warp() public {
+        for(uint256 i=0;i<5;i++){
+            vm.roll(block.number +1);
+            vm.warp(block.timestamp +1);
+            emit log_named_uint("ts", block.timestamp);
+            vm.prank(address(hook));
+            oracle.pushObservationAndCheckCap(pid,0);
+            uint16 card = oracle.cardinality(pid);
+            emit log_named_uint("card",card);
+            uint16 idx = oracle.index(pid);
+            emit log_named_uint("idx", idx);
+        }
+    }
+
+    function test_debug_warp_then_roll() public {
+        for(uint256 i=0;i<5;i++){
+            vm.warp(block.timestamp +1);
+            vm.roll(block.number +1);
+            emit log_named_uint("ts2", block.timestamp);
+            vm.prank(address(hook));
+            oracle.pushObservationAndCheckCap(pid,0);
+            emit log_named_uint("card2", oracle.cardinality(pid));
+            emit log_named_uint("idx2", oracle.index(pid));
+        }
+    }
 } 
