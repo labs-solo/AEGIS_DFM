@@ -5,6 +5,7 @@
     import {Vm} from "forge-std/Vm.sol";
     import {ForkSetup} from "./ForkSetup.t.sol";
     import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+    import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 
     // import {StateLibrary}   from "v4-core/src/libraries/StateLibrary.sol"; // Keep commented out
     import {PoolId} from "v4-core/src/types/PoolId.sol";
@@ -30,7 +31,7 @@
     // import {PoolModifyLiquidityTest} from "./integration/routers/PoolModifyLiquidityTest.sol"; // Keep commented out
     import {TickMath} from "v4-core/src/libraries/TickMath.sol";
     import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
-    import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol"; // Added import
+    
     import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol"; // <-- ADDED IMPORT
     import {CurrencySettlerExtension} from "src/utils/CurrencySettlerExtension.sol"; // NEW import
 
@@ -51,14 +52,14 @@
 
     contract InternalReinvestTest is ForkSetup, IUnlockCallback {
         using CurrencyLibrary for Currency;
-        using SafeERC20 for IERC20; // Updated to use IERC20 instead of IERC20Minimal
+        using SafeERC20 for IERC20;
 
         address internal keeper = makeAddr("keeper");
         address internal feeSink = makeAddr("feeSink");
 
         Spot internal hook;
         IFullRangeLiquidityManager internal lm;
-        IPoolManager internal pm; // Renamed from poolManager for consistency with snippet
+        IPoolManager internal pm;
         IPoolPolicy internal policyMgr;
 
         Currency internal c0;
@@ -83,12 +84,20 @@
             vm.prank(address(liquidityManager));
             IERC20Minimal(t1).approve(address(poolManager), MAX);
 
-            // ── Hook must let FLM pull for deposits *and* PM pull for debt settlement
+            // ── Hook approvals
             vm.startPrank(address(hook));
+            // for deposits
             ERC20(t0).approve(address(liquidityManager), MAX);
             ERC20(t1).approve(address(liquidityManager), MAX);
+            // for PoolManager-driven pulls
             ERC20(t0).approve(address(poolManager), MAX);
             ERC20(t1).approve(address(poolManager), MAX);
+            // Let the hook spend its own tokens when it calls CurrencySettler.settle
+            ERC20(t0).approve(address(hook), MAX);
+            ERC20(t1).approve(address(hook), MAX);
+            // Allow test contract to spend hook's tokens
+            ERC20(t0).approve(address(this), MAX);
+            ERC20(t1).approve(address(this), MAX);
             vm.stopPrank();
         }
 
@@ -114,18 +123,15 @@
         }
 
         /* ---------- helpers --------------------------------------------------- */
-        /// @dev credits `units` of `cur` to the hook's *claim* balance
+        /// @dev credits `units` of `cur` to the hook's *internal* balance
         function _creditInternalBalance(Currency cur, uint256 units) internal {
             _ensureHookApprovals();
             address token = Currency.unwrap(cur);
 
-            // 1. Give the HOOK the external tokens, not this test contract, but grant approval to test contract
+            // 1. Fund the hook with external tokens
             deal(token, address(hook), units);
-            vm.prank(address(hook));
-            ERC20(token).approve(address(this), units);
 
-            // 2. As the *hook*, settle the tokens with the PoolManager.
-            //    This leaves +units of INTERNAL credit on the hook.
+            // 2. From the hook's context call CurrencySettler.settle
             vm.prank(address(hook));
             settleCurrency(pm, cur, address(hook), units);
         }
@@ -308,24 +314,20 @@
             assertTrue(skippedCool, "should skip due to cooldown");
         }
 
-        /* ---------- PoolManager Unlock Callback ---------- */
-        /// @notice Implements IUnlockCallback so this test contract can be the caller of `PoolManager.unlock`.
-        ///         It settles `units` of `cur` from *this* contract to the PoolManager and then credits the
-        ///         same amount to `hookAddr` via `take`, effectively increasing the hook's internal claim balance.
-        /// @dev    Encoding must match the data packed in `_creditInternalBalance` – `(Currency,uint256,address)`.
+        /* ---------- unlock callback used by step 3 above ---------- */
         function unlockCallback(bytes calldata data) external override returns (bytes memory) {
-            require(msg.sender == address(pm), "only manager"); // safety – callback can only originate from PoolManager
+            require(msg.sender == address(pm), "only PM");
 
-            (Currency cur, uint256 units, address hookAddr) = abi.decode(data, (Currency, uint256, address));
-            if (units == 0) return bytes(""); // nothing to do
+            (Currency cur, uint256 amt, address payer) =
+                abi.decode(data, (Currency, uint256, address));
 
-            // 1. Transfer `units` of `cur` from this contract to the PoolManager (internal credit to this contract)
-            CurrencySettlerExtension.settleCurrency(pm, cur, units);
+            // pull `amt` of `cur` from `payer` (the hook) into PM internal balance
+            CurrencySettler.settle(cur, pm, payer, amt, /*burn*/ false);
 
-            // 2. Move that freshly credited internal balance to the hook's claim account
-            pm.take(cur, hookAddr, units);
+            // ✅ Leave the credit inside PoolManager; the hook now has a positive
+            // internal delta that ReinvestLib can detect and use.
 
-            // Return empty bytes – PoolManager does not rely on the return payload for this simple op
-            return bytes("");
+            return "";
         }
+
     }
