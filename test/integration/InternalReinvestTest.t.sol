@@ -11,6 +11,8 @@
     import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
     import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
+    import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
+
     // Changed to absolute src imports
     import {Spot} from "src/Spot.sol";
     import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
@@ -31,6 +33,8 @@
     import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol"; // Added import
     import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol"; // <-- ADDED IMPORT
     import {CurrencySettlerExtension} from "src/utils/CurrencySettlerExtension.sol"; // NEW import
+
+    import "forge-std/console.sol";
 
     // Remove local struct definition, use imported one
     // struct LocalDepositParams {
@@ -115,15 +119,27 @@
             _ensureHookApprovals();
             address token = Currency.unwrap(cur);
 
-            // 1. Give the HOOK the external tokens, not this test contract
+            // 1. Give the HOOK the external tokens, not this test contract, but grant approval to test contract
             deal(token, address(hook), units);
             vm.prank(address(hook));
-            ERC20(token).approve(address(pm), units);
+            ERC20(token).approve(address(this), units);
 
             // 2. As the *hook*, settle the tokens with the PoolManager.
             //    This leaves +units of INTERNAL credit on the hook.
             vm.prank(address(hook));
-            CurrencySettlerExtension.settleCurrency(pm, cur, units);
+            settleCurrency(pm, cur, address(hook), units);
+        }
+
+        function settleCurrency(IPoolManager manager, Currency currency, address payer, uint256 amount) internal {
+            if (amount == 0) return;
+
+            if (currency.isAddressZero()) {
+                // Use Uniswap's standard CurrencySettler with native ETH
+                CurrencySettler.settle(currency, manager, payer, amount, false);
+            } else {
+                // For ERC20 tokens
+                CurrencySettler.settle(currency, manager, payer, amount, false);
+            }
         }
 
         /// @dev Add some full‐range liquidity so that pokeReinvest actually has something to grow.
