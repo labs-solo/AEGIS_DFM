@@ -17,6 +17,7 @@
     import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
     import {TickMath} from "v4-core/src/libraries/TickMath.sol";
     import {PoolManager} from "v4-core/src/PoolManager.sol";
+    import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
 
     import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
     import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
@@ -596,8 +597,12 @@
             }
 
             /* move positive balances to LiquidityManager */
-            if (r.use0 > 0) poolManager.take(key.currency0, address(liquidityManager), r.use0);
-            if (r.use1 > 0) poolManager.take(key.currency1, address(liquidityManager), r.use1);
+            if (r.use0 > 0) {
+                CurrencySettler.settle(key.currency0, poolManager, address(this), r.use0, /*burn*/ false);
+            }
+            if (r.use1 > 0) {
+                CurrencySettler.settle(key.currency1, poolManager, address(this), r.use1, /*burn*/ false);
+            }
 
             try liquidityManager.reinvest(PoolId.wrap(pid), 0, 0, r.liquidity) returns (uint128 minted) {
                 if (minted == 0) {
