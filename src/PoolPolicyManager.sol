@@ -161,8 +161,8 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     event BaseFeeParamsSet(PoolId indexed poolId, uint32 stepPpm, uint32 updateIntervalSecs);
 
     /* ─── immutable config ----------------------------------- */
-    uint24 public immutable minBaseFeePpm;          // e.g.   100 → 0.01 %
-    uint24 public immutable maxBaseFeePpm;          // e.g. 50 000 → 5 %
+    uint24 public immutable minBaseFeePpm; // e.g.   100 → 0.01 %
+    uint24 public immutable maxBaseFeePpm; // e.g. 50 000 → 5 %
 
     /**
      * @notice Constructor initializes the policy manager with default values
@@ -186,17 +186,19 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         require(_governance != address(0), "ZeroAddress");
 
         /* ── copy constructor params into the *current* field names ── */
-        defaultDynamicFeePpm   = _defaultDynamicFee;
-        minimumTradingFeePpm   = _minTradingFee;
-        capBudgetDailyPpm      = uint32(_dailyBudget);
+        defaultDynamicFeePpm = _defaultDynamicFee;
+        minimumTradingFeePpm = _minTradingFee;
+        capBudgetDailyPpm = uint32(_dailyBudget);
 
         require(_feeCollector != address(0), "ZeroAddress");
-        feeCollector        = _feeCollector;
+        feeCollector = _feeCollector;
 
         /* initialise tick-spacing list */
         for (uint256 i; i < _supportedTickSpacings.length;) {
             _updateSupportedTickSpacing(_supportedTickSpacings[i], true);
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
         // initialise immutables
@@ -216,20 +218,20 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
             _lpSharePpm: 900_000,
             _minimumTradingFeePpm: _minTradingFee,
             _feeClaimThresholdPpm: 10_000, // 1 % claim threshold
-            _defaultPolMultiplier: 10      // 10× POL target
+            _defaultPolMultiplier: 10 // 10× POL target
         });
 
         // 2️⃣  Tick-scaling (max tick move) – initialise to 1
         _setTickScalingFactor(1);
 
         // 3️⃣  Oracle / base-fee feedback defaults
-        defaultFreqScaling            = 1e18;            // 1 ×
-        defaultSurgeDecayPeriodSeconds= 3_600;           // 1 h
-        _defaultSurgeFeeMultiplierPpm = 3_000_000;       // 300 %
+        defaultFreqScaling = 1e18; // 1 ×
+        defaultSurgeDecayPeriodSeconds = 3_600; // 1 h
+        _defaultSurgeFeeMultiplierPpm = 3_000_000; // 300 %
 
         // 4️⃣  Adaptive-cap budget defaults (1 cap-event/day, 180 d decay)
-        capBudgetDailyPpm   = _dailyBudget == 0 ? 1_000_000 : uint32(_dailyBudget);
-        capBudgetDecayWindow= _CAP_BUDGET_DECAY_WINDOW;  // 180 d
+        capBudgetDailyPpm = _dailyBudget == 0 ? 1_000_000 : uint32(_dailyBudget);
+        capBudgetDecayWindow = _CAP_BUDGET_DECAY_WINDOW; // 180 d
 
         // 5️⃣  Protocol-interest fee default (5 %)
         protocolInterestFeePercentagePpm = 50_000;
@@ -282,7 +284,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
             PolicyType policyType = PolicyType(i);
             _policies[poolId][policyType] = implementation;
             emit PolicySet(poolId, policyType, implementation, msg.sender);
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -511,7 +515,9 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
             emit PolicySet(
                 PoolId.wrap(bytes32(0)), PolicyType.VTIER, address(uint160(uint256(allowed[i] ? 1 : 0))), msg.sender
             );
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 
@@ -797,23 +803,11 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         return v != 0 ? v : _TARGET_CAPS_PER_DAY;
     }
 
-    function getDailyBudgetPpm(PoolId /* pid */)
-        external
-        view
-        virtual
-        override
-        returns (uint32)
-    {
+    function getDailyBudgetPpm(PoolId /* pid */ ) external view virtual override returns (uint32) {
         return capBudgetDailyPpm;
     }
 
-    function getCapBudgetDecayWindow(PoolId /* pid */)
-        external
-        view
-        virtual
-        override
-        returns (uint32)
-    {
+    function getCapBudgetDecayWindow(PoolId /* pid */ ) external view virtual override returns (uint32) {
         return capBudgetDecayWindow;
     }
 
@@ -821,7 +815,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      * @inheritdoc IPoolPolicy
      * @dev All currencies are considered supported by default in this implementation.
      */
-    function isSupportedCurrency(Currency /* currency */) external pure override returns (bool) {
+    function isSupportedCurrency(Currency /* currency */ ) external pure override returns (bool) {
         return true;
     }
 
@@ -830,11 +824,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
      * @return budgetPerDay Daily budget in PPM
      * @return decayWindow Decay window in seconds
      */
-    function getBudgetAndWindow(PoolId /* poolId */)
-        external
-        view
-        returns (uint32 budgetPerDay, uint32 decayWindow)
-    {
+    function getBudgetAndWindow(PoolId /* poolId */ ) external view returns (uint32 budgetPerDay, uint32 decayWindow) {
         budgetPerDay = capBudgetDailyPpm;
         decayWindow = capBudgetDecayWindow;
     }

@@ -62,10 +62,7 @@ interface ITruncGeoOracleMulti {
     function observe(bytes calldata key, uint32[] calldata secondsAgos)
         external
         view
-        returns (
-            int56[]  memory tickCumulatives,
-            uint160[] memory secondsPerLiquidityCumulativeX128s
-        );
+        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s);
 
     /**
      * @notice Increases the cardinality of the oracle observation array

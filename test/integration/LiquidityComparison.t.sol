@@ -11,15 +11,15 @@ import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {LiquidityAmounts}       from "v4-periphery/src/libraries/LiquidityAmounts.sol";
+import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
 import {SignedMath} from "@openzeppelin/contracts/utils/math/SignedMath.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {IAllowanceTransfer}     from "permit2/src/interfaces/IAllowanceTransfer.sol";
+import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
 import {ExtendedPositionManager} from "src/ExtendedPositionManager.sol";
-import {Actions}                from "v4-periphery/src/libraries/Actions.sol";
-import {IPositionManager}       from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {Actions} from "v4-periphery/src/libraries/Actions.sol";
+import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {PositionInfo} from "v4-periphery/src/libraries/PositionInfoLibrary.sol";
 
 contract LiquidityComparisonTest is ForkSetup {
@@ -51,7 +51,7 @@ contract LiquidityComparisonTest is ForkSetup {
         frlm_ = liquidityManager;
         token0 = usdc;
         token1 = weth;
-        posManager = frlm_.posManager();          // exposed as public immutable
+        posManager = frlm_.posManager(); // exposed as public immutable
 
         // Fund test account
         vm.startPrank(deployerEOA);
@@ -109,26 +109,20 @@ contract LiquidityComparisonTest is ForkSetup {
         IAllowanceTransfer(permit2).approve(address(token0), address(posManager), type(uint160).max, type(uint48).max);
         IAllowanceTransfer(permit2).approve(address(token1), address(posManager), type(uint160).max, type(uint48).max);
 
-        bytes memory actions = abi.encodePacked(
-            uint8(Actions.MINT_POSITION),
-            uint8(Actions.SETTLE_PAIR)
-        );
+        bytes memory actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
 
         bytes[] memory params = new bytes[](2);
         params[0] = abi.encode(
             poolKey,
             tickLower,
             tickUpper,
-            liquidity,          // uint128
-            type(uint128).max,  // slippage guards – amount0Max
-            type(uint128).max,  // amount1Max
-            address(this),      // owner of the NFT
-            bytes("")          // hook data
+            liquidity, // uint128
+            type(uint128).max, // slippage guards – amount0Max
+            type(uint128).max, // amount1Max
+            address(this), // owner of the NFT
+            bytes("") // hook data
         );
-        params[1] = abi.encode(
-            poolKey.currency0,
-            poolKey.currency1
-        );
+        params[1] = abi.encode(poolKey.currency0, poolKey.currency1);
 
         // Snapshot balances to measure exact token usage
         uint256 bal0Before = ERC20(address(token0)).balanceOf(address(this));
@@ -153,9 +147,7 @@ contract LiquidityComparisonTest is ForkSetup {
         uint256 bal1BeforeFrlm = ERC20(address(token1)).balanceOf(deployerEOA);
 
         vm.startPrank(deployerEOA); // deposit must be executed by governance
-        (shares,,) = liquidityManager.deposit(
-            poolKey.toId(), amount0, amount1, 0, 0, lpProvider
-        );
+        (shares,,) = liquidityManager.deposit(poolKey.toId(), amount0, amount1, 0, 0, lpProvider);
         vm.stopPrank();
 
         // Calculate actual tokens used by FRLM path
@@ -167,7 +159,7 @@ contract LiquidityComparisonTest is ForkSetup {
         // ───────────────────────────────────────────────────────────
         uint256 tokenIdFrlm = frlm_.positionTokenId(poolKey.toId());
 
-        (PoolKey memory poolKeyDir, PositionInfo pDir)  = posManager.getPoolAndPositionInfo(tokenIdDirect);
+        (PoolKey memory poolKeyDir, PositionInfo pDir) = posManager.getPoolAndPositionInfo(tokenIdDirect);
         (PoolKey memory poolKeyFrlm, PositionInfo pFrlm) = posManager.getPoolAndPositionInfo(tokenIdFrlm);
 
         // Get actual liquidity from each position

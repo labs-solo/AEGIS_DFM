@@ -10,9 +10,9 @@ import {Errors} from "src/errors/Errors.sol";
 import {PrecisionConstants} from "src/libraries/PrecisionConstants.sol";
 
 contract PoolPolicyManager_Admin_Test is Test {
-    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     using EventTools for Test;
 

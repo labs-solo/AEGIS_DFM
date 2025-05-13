@@ -17,9 +17,9 @@ contract PoolPolicyManager_Tick is Test {
     address constant OWNER = address(0xBEEF);
     address constant ALICE = address(0xA11CE); // non-owner
 
-    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     /*─────────────────── set-up ───────────────────*/
     function setUp() public {
@@ -40,8 +40,8 @@ contract PoolPolicyManager_Tick is Test {
 
     /*────────────────── Constructor defaults ──────────────────*/
     function testConstructorSeedsSupportedTickSpacings() public view {
-        assertTrue (ppm.isTickSpacingSupported(1));
-        assertTrue (ppm.isTickSpacingSupported(10));
+        assertTrue(ppm.isTickSpacingSupported(1));
+        assertTrue(ppm.isTickSpacingSupported(10));
         assertFalse(ppm.isTickSpacingSupported(60));
     }
 

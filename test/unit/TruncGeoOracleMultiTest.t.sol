@@ -91,13 +91,13 @@ contract TruncGeoOracleMultiTest is Test {
          *  hold during enableOracleForPool().                                *
          * ------------------------------------------------------------------ */
         MockPolicyManager.Params memory p;
-        p.minBaseFee      = 100;      // 1 tick
-        p.maxBaseFee      = 10_000;   // 100 ticks
-        p.stepPpm         = 50_000;   // 5 %
-        p.freqScaling     = 1e18;     // no scaling
-        p.budgetPpm       = 100_000;  // 10 %
-        p.decayWindow     = 86_400;   // 1 day
-        p.updateInterval  = 600;      // 10 min
+        p.minBaseFee = 100; // 1 tick
+        p.maxBaseFee = 10_000; // 100 ticks
+        p.stepPpm = 50_000; // 5 %
+        p.freqScaling = 1e18; // no scaling
+        p.budgetPpm = 100_000; // 10 %
+        p.decayWindow = 86_400; // 1 day
+        p.updateInterval = 600; // 10 min
         p.defaultMaxTicks = 50;
         policy.setParams(pid, p);
 
@@ -155,14 +155,14 @@ contract TruncGeoOracleMultiTest is Test {
 
         // Revert expected when called directly (not by hook)
         vm.expectRevert(TruncGeoOracleMulti.OnlyHook.selector);
-        oracle.pushObservationAndCheckCap(pid, int24(0));    // revert path
+        oracle.pushObservationAndCheckCap(pid, int24(0)); // revert path
 
         // --- Advance time before successful call ---
         vm.warp(block.timestamp + 1);
 
         // Should succeed when called via the hook
         vm.startPrank(address(hook)); // only the authorised hook may push
-        oracle.pushObservationAndCheckCap(pid, int24(0));    // authorised path
+        oracle.pushObservationAndCheckCap(pid, int24(0)); // authorised path
         vm.stopPrank();
 
         // Verify the observation was written (it should be the CAPPED value)
@@ -243,9 +243,7 @@ contract TruncGeoOracleMultiTest is Test {
         bytes32 idBytes = PoolId.unwrap(pid);
         uint24 cap = oracle.maxTicksPerBlock(idBytes);
 
-        int24 boundedTick = int24(
-            bound(int256(seedTick), -int256(uint256(cap) * 2), int256(uint256(cap) * 2))
-        );
+        int24 boundedTick = int24(bound(int256(seedTick), -int256(uint256(cap) * 2), int256(uint256(cap) * 2)));
         poolManager.setTick(pid, boundedTick);
 
         vm.warp(block.timestamp + 1);
@@ -289,7 +287,7 @@ contract TruncGeoOracleMultiTest is Test {
         (int24 latestTick,) = oracle.getLatestObservation(pid); // Use getter for latest info
 
         // Get the current state index to access the correct observation
-        (,uint16 currentIndex,) = oracle.states(pidBytes);
+        (, uint16 currentIndex,) = oracle.states(pidBytes);
 
         // Verify using getLatestObservation instead, which should correctly return the capped value
         (int24 observedTick,) = oracle.getLatestObservation(pid);
@@ -314,7 +312,7 @@ contract TruncGeoOracleMultiTest is Test {
         (latestTick,) = oracle.getLatestObservation(pid); // Use getter
 
         // Get the current state index again
-        (,currentIndex,) = oracle.states(pidBytes);
+        (, currentIndex,) = oracle.states(pidBytes);
 
         // Use getLatestObservation instead, which returns the correct value:
         (int24 observedUncappedTick,) = oracle.getLatestObservation(pid);
@@ -331,7 +329,7 @@ contract TruncGeoOracleMultiTest is Test {
         // Hit the cap 5 times quickly (simulate heavy volatility)
         for (uint8 i; i < 5; ++i) {
             poolManager.setTick(pid, int24(startCap) * 2); // trigger cap
-            vm.warp(block.timestamp + 10);                 // advance few seconds
+            vm.warp(block.timestamp + 10); // advance few seconds
             vm.prank(address(hook));
             oracle.pushObservationAndCheckCap(pid, int24(0));
             vm.roll(block.number + 1);
@@ -355,38 +353,30 @@ contract TruncGeoOracleMultiTest is Test {
 
     /// @notice Push >512 observations to prove the ring really pages
     function testPagedRingStoresAcrossPages() public {
-        uint16 pushes = 530;                   // crosses page boundary (PAGE_SIZE = 512)
-        uint24 cap    = oracle.maxTicksPerBlock(PoolId.unwrap(pid));
+        uint16 pushes = 530; // crosses page boundary (PAGE_SIZE = 512)
+        uint24 cap = oracle.maxTicksPerBlock(PoolId.unwrap(pid));
 
         for (uint16 i = 1; i <= pushes; ++i) {
             // safe ladder-cast: uint24 -> uint256 -> int256 -> int24
             poolManager.setTick(pid, int24(int256(uint256(cap) - 1))); // stay under cap
-            vm.warp(block.timestamp + 1);                     // guarantee new ts
+            vm.warp(block.timestamp + 1); // guarantee new ts
             vm.prank(address(hook));
             oracle.pushObservationAndCheckCap(pid, int24(0));
         }
 
         //  Bootstrap slot (index 0) + our `pushes` writes
         (, uint16 cardinality,) = oracle.states(PoolId.unwrap(pid));
-        assertEq(
-            cardinality,
-            pushes + 1,
-            "cardinality wrong after multi-page growth (must include bootstrap slot)"
-        );
+        assertEq(cardinality, pushes + 1, "cardinality wrong after multi-page growth (must include bootstrap slot)");
 
         // ── latest observation must be the last one we wrote ──
         (int24 tick,) = oracle.getLatestObservation(pid);
-        assertEq(
-            tick,
-            int24(int256(uint256(cap) - 1)),
-            "latest tick mismatch after paging"
-        );
+        assertEq(tick, int24(int256(uint256(cap) - 1)), "latest tick mismatch after paging");
     }
 
     /// @notice Owner can refresh the cached policy; cap is clamped into new bounds
     function testPolicyRefreshAdjustsCap() public {
         bytes32 idBytes = PoolId.unwrap(pid);
-        uint24 oldCap   = oracle.maxTicksPerBlock(idBytes);
+        uint24 oldCap = oracle.maxTicksPerBlock(idBytes);
 
         //  set new *higher* minBaseFee so old cap is now too small
         policy.setMinBaseFee(pid, (oldCap + 10) * 100); // oracle divides by 100
@@ -431,13 +421,13 @@ contract TruncGeoOracleMultiTest is Test {
     function testFuzz_PolicyValidation(uint24 minCap) public {
         // stepPpm = 1e9  ➜ should revert (out of 1e6 range)
         MockPolicyManager.Params memory p;
-        p.minBaseFee      = uint256(minCap == 0 ? 1 : minCap) * 100;
-        p.maxBaseFee      = 10_000;          // sane default
-        p.stepPpm         = 1_000_000_000;   // invalid (>1 e6)
-        p.freqScaling     = 1e18;
-        p.budgetPpm       = 0;               // invalid (0)
-        p.decayWindow     = 86_400;
-        p.updateInterval  = 600;
+        p.minBaseFee = uint256(minCap == 0 ? 1 : minCap) * 100;
+        p.maxBaseFee = 10_000; // sane default
+        p.stepPpm = 1_000_000_000; // invalid (>1 e6)
+        p.freqScaling = 1e18;
+        p.budgetPpm = 0; // invalid (0)
+        p.decayWindow = 86_400;
+        p.updateInterval = 600;
         p.defaultMaxTicks = 50;
 
         vm.expectRevert("stepPpm-range");
@@ -469,8 +459,8 @@ contract TruncGeoOracleMultiTest is Test {
         bytes memory encKey = abi.encode(poolKey);
 
         // ── write second & third observations ──
-        _advanceAndPush(10, 10);   // 10 s after bootstrap
-        _advanceAndPush(30, 10);   // another 10 s later (now total 20 s)
+        _advanceAndPush(10, 10); // 10 s after bootstrap
+        _advanceAndPush(30, 10); // another 10 s later (now total 20 s)
 
         // build query [0,10,20]
         uint32[] memory sa = new uint32[](3);
@@ -485,7 +475,7 @@ contract TruncGeoOracleMultiTest is Test {
         assertEq(tc.length, 3, "length mismatch");
         assertEq(tc[0], 400, "cum@now   wrong");
         assertEq(tc[1], 100, "cum@now-10 wrong");
-        assertEq(tc[2],   0, "cum@now-20 wrong");
+        assertEq(tc[2], 0, "cum@now-20 wrong");
 
         // ⏱️  fast-path cross-check (secondsAgo == 0)
         uint32[] memory zero = new uint32[](1);

@@ -29,9 +29,9 @@ contract DirectDeploy is Script {
 
     // Constants
     uint256 constant LIQUIDITY_ACCUMULATOR_REACTIVATION_DELAY = 3600; // 1 hour in seconds
-    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     // Pre-deployed contract addresses from previous steps
     TruncGeoOracleMulti public truncGeoOracle;
@@ -110,21 +110,20 @@ contract DirectDeploy is Script {
                 supportedTickSpacings,
                 0,
                 msg.sender,
-                EXPECTED_MIN_DYNAMIC_FEE,     // NEW: min base fee
-                EXPECTED_MAX_DYNAMIC_FEE      // NEW: max base fee
+                EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
+                EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
             );
             console.log("PolicyManager deployed at: %s", address(policyManager));
         }
 
         if (address(liquidityManager) == address(0)) {
             console.log("Deploying LiquidityManager...");
-            liquidityManager =
-                new FullRangeLiquidityManager(
-                    IPoolManager(UNICHAIN_POOL_MANAGER),
-                    ExtendedPositionManager(payable(address(0))),
-                    IPoolPolicy(address(0)),
-                    deployer
-                );
+            liquidityManager = new FullRangeLiquidityManager(
+                IPoolManager(UNICHAIN_POOL_MANAGER),
+                ExtendedPositionManager(payable(address(0))),
+                IPoolPolicy(address(0)),
+                deployer
+            );
             console.log("LiquidityManager deployed at: %s", address(liquidityManager));
         }
 

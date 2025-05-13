@@ -33,8 +33,8 @@ library SimpleDeployLib {
 
     struct Deployed {
         TruncGeoOracleMulti oracle;
-        DynamicFeeManager   dfm;
-        Spot                hook;
+        DynamicFeeManager dfm;
+        Spot hook;
     }
 
     /// @param manager    PoolManager instance (immutable addr on Unichain forks)
@@ -42,10 +42,10 @@ library SimpleDeployLib {
     /// @param lm          LiquidityManager already deployed in the harness
     /// @param governance  Address considered the governance/owner for the deps
     function deployAll(
-        IPoolManager               manager,
-        PoolPolicyManager          policy,
+        IPoolManager manager,
+        PoolPolicyManager policy,
         IFullRangeLiquidityManager lm,
-        address                    governance
+        address governance
     ) internal returns (Deployed memory d) {
         /* ------------------------------------------------------- *
          *  Constants                                              *
@@ -60,20 +60,15 @@ library SimpleDeployLib {
         d.oracle = new TruncGeoOracleMulti(
             manager,
             policy,
-            address(0),        // temporary hook – patched below
-            address(this)      // owner = ForkSetup (msg.sender here)
+            address(0), // temporary hook – patched below
+            address(this) // owner = ForkSetup (msg.sender here)
         );
 
         console2.log("Oracle.owner:");
         console2.logAddress(d.oracle.owner());
 
         /* 2️⃣  Dynamic Fee Manager – oracle known, give sentinel     */
-        d.dfm = new DynamicFeeManager(
-            governance,
-            policy,
-            address(d.oracle),
-            FAKE_HOOK
-        );
+        d.dfm = new DynamicFeeManager(governance, policy, address(d.oracle), FAKE_HOOK);
 
         /* ------------------------------------------------------- *
          * 3️⃣  Spot hook – mine flagged address *after* oracle/dfm *
@@ -103,10 +98,7 @@ library SimpleDeployLib {
         console2.log("Mined address flags:");
         console2.logUint(minedFlags);
 
-        require(
-            minedFlags == uint160(SpotFlags.required()),
-            "SimpleDeployLib: mined address has unexpected flags"
-        );
+        require(minedFlags == uint160(SpotFlags.required()), "SimpleDeployLib: mined address has unexpected flags");
 
         console2.log("--- DEBUG SimpleDeployLib ---");
         console2.log("Deployer (address(this)):");
@@ -118,11 +110,7 @@ library SimpleDeployLib {
         console2.log("Salt from HookMiner (bytes32):");
         console2.logBytes32(salt);
 
-        address hookAddr = Create2.deploy(
-            0,
-            salt,
-            abi.encodePacked(type(Spot).creationCode, spotArgs)
-        );
+        address hookAddr = Create2.deploy(0, salt, abi.encodePacked(type(Spot).creationCode, spotArgs));
         d.hook = Spot(payable(hookAddr));
 
         console2.log("Deployed Hook Address (hookAddr):");
@@ -175,12 +163,10 @@ library SimpleDeployLib {
         // Get the flags directly from the hook address
         uint160 flags = uint160(hookAddr) & uint160(Hooks.ALL_HOOK_MASK);
 
-        bool depCheck1 = !(flags & Hooks.BEFORE_SWAP_FLAG > 0)
-            && (flags & Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG > 0);
+        bool depCheck1 = !(flags & Hooks.BEFORE_SWAP_FLAG > 0) && (flags & Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG > 0);
         console2.log("Dependency Check 1 (NO BS_F && BS_RDF):");
         console2.logBool(depCheck1);
-        bool depCheck2 = !(flags & Hooks.AFTER_SWAP_FLAG > 0)
-            && (flags & Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG > 0);
+        bool depCheck2 = !(flags & Hooks.AFTER_SWAP_FLAG > 0) && (flags & Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG > 0);
         console2.log("Dependency Check 2 (NO AS_F && AS_RDF):");
         console2.logBool(depCheck2);
 
@@ -191,10 +177,7 @@ library SimpleDeployLib {
         console2.log("Final Check Part 2 (fee.isDynamicFee()):");
         console2.logBool(finalCheck_isDynamic);
 
-        bool isValid = Hooks.isValidHookAddress(
-            hooksInstance,
-            uint24(LPFeeLibrary.DYNAMIC_FEE_FLAG)
-        );
+        bool isValid = Hooks.isValidHookAddress(hooksInstance, uint24(LPFeeLibrary.DYNAMIC_FEE_FLAG));
         console2.log("Hooks.isValidHookAddress returned:");
         console2.logBool(isValid);
         console2.log("--- END DEBUG SimpleDeployLib ---");

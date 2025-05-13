@@ -15,16 +15,13 @@ contract PoolPolicyManager_Step is Test {
     address constant OWNER = address(0xBEEF);
     address constant ALICE = address(0xA11CE);
 
-    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     // Add event definition for testing
     event PolicySet(
-        PoolId          indexed poolId,
-        IPoolPolicy.PolicyType indexed policyType,
-        address         implementation,
-        address         indexed setter
+        PoolId indexed poolId, IPoolPolicy.PolicyType indexed policyType, address implementation, address indexed setter
     );
 
     /*─────────────────── set-up ───────────────────*/

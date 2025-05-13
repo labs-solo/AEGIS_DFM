@@ -25,11 +25,7 @@ interface IDynamicFeeManager {
      * @param timestamp    Emission block timestamp
      */
     event FeeStateChanged(
-        PoolId indexed poolId,
-        uint256 baseFeePpm,
-        uint256 surgeFeePpm,
-        bool inCapEvent,
-        uint32 timestamp
+        PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent, uint32 timestamp
     );
 
     /* ─────── Mutators (called by hook / factory) ──────────────────────── */

@@ -155,12 +155,9 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     }
 
     /* ─── constructor / init ─────────────────────────────────── */
-    constructor(
-        address _owner,
-        IPoolPolicy _policyManager,
-        address _oracleAddress,
-        address _authorizedHook
-    ) Owned(_owner) {
+    constructor(address _owner, IPoolPolicy _policyManager, address _oracleAddress, address _authorizedHook)
+        Owned(_owner)
+    {
         if (address(_policyManager) == address(0)) revert ZeroPolicyManager();
         if (_oracleAddress == address(0)) revert ZeroOracleAddress();
         if (_authorizedHook == address(0)) revert ZeroHookAddress();
@@ -182,7 +179,9 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         // Fetch the current maxTicksPerBlock from the associated oracle contract
         uint24 maxTicks = oracle.maxTicksPerBlock(PoolId.unwrap(id)); // Direct call
         uint256 baseFee;
-        unchecked { baseFee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM; }
+        unchecked {
+            baseFee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM;
+        }
 
         // Initialize state
         uint32 ts = uint32(block.timestamp);
@@ -233,7 +232,9 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     function _baseFee(PoolId id) private view returns (uint256) {
         uint24 maxTicks = oracle.maxTicksPerBlock(PoolId.unwrap(id)); // Direct call
         uint256 fee;
-        unchecked { fee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM; }
+        unchecked {
+            fee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM;
+        }
         return fee == 0 ? DEFAULT_BASE_FEE_PPM : fee; // Use default if oracle returns 0
     }
 
@@ -274,7 +275,9 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         bytes32 poolBytes = PoolId.unwrap(id);
         uint24 maxTicks = oracle.maxTicksPerBlock(poolBytes); // Direct call
         uint256 currentBaseFee;
-        unchecked { currentBaseFee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM; }
+        unchecked {
+            currentBaseFee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM;
+        }
         if (currentBaseFee == 0) {
             currentBaseFee = DEFAULT_BASE_FEE_PPM; // Use default if oracle returns 0
         }
@@ -286,11 +289,9 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
 
     function _requireHookAuth() internal view {
         // Allow calls from the authorised hook, the oracle itself or the contract owner
-        if (
-            msg.sender != authorizedHook &&
-            msg.sender != address(oracle) &&
-            msg.sender != owner
-        ) revert UnauthorizedHook();
+        if (msg.sender != authorizedHook && msg.sender != address(oracle) && msg.sender != owner) {
+            revert UnauthorizedHook();
+        }
     }
 
     /* ---------- Back-compat alias (optional – can be deleted later) ---- */

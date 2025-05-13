@@ -107,8 +107,8 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     }
 
     // ────────────────────────── CONSTANTS ──────────────────────────
-    uint128 private constant MIN_LOCKED_SHARES = 1_000;           // seed-liquidity shares
-    uint128 private constant MAX_SHARES        = type(uint128).max - 1e18; // hard cap (≈3e38 wei TVL)
+    uint128 private constant MIN_LOCKED_SHARES = 1_000; // seed-liquidity shares
+    uint128 private constant MAX_SHARES = type(uint128).max - 1e18; // hard cap (≈3e38 wei TVL)
 
     // Permanently-locked ERC-6909 shares (min-liquidity analogue)
     mapping(PoolId => uint128) public lockedShares; // Kept
@@ -141,6 +141,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
     /* ──────────────  Circuit-breaker  ─────────────── */
     bool public paused;
+
     event Paused(bool state);
 
     modifier notPaused() {
@@ -368,11 +369,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         // If the NFT already existed, simply increase liquidity; otherwise the mint already added it.
         if (!created) {
             posManager.increaseLiquidity{value: ethNeeded}(
-                nftId,
-                v4LiquidityForPM,
-                type(uint128).max,
-                type(uint128).max,
-                ""
+                nftId, v4LiquidityForPM, type(uint128).max, type(uint128).max, ""
             );
         }
 
@@ -383,13 +380,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         }
 
         emit LiquidityAdded(
-            poolId,
-            recipient,
-            amount0,
-            amount1,
-            oldTotalSharesInternal,
-            uint128(usableShares),
-            block.timestamp
+            poolId, recipient, amount0, amount1, oldTotalSharesInternal, uint128(usableShares), block.timestamp
         );
 
         return (usableShares, amount0, amount1);
@@ -433,18 +424,13 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
             uint256 actual1 = FullMath.mulDiv(shares, reserve1, totalSharesInternal);
 
             // --- Memoise TickMath calls (gas optimisation) ---
-            int24  lowerTick      = TickMath.minUsableTick(tickSpacing);
-            int24  upperTick      = TickMath.maxUsableTick(tickSpacing);
+            int24 lowerTick = TickMath.minUsableTick(tickSpacing);
+            int24 upperTick = TickMath.maxUsableTick(tickSpacing);
             uint160 sqrtRatioAX96 = TickMath.getSqrtPriceAtTick(lowerTick);
             uint160 sqrtRatioBX96 = TickMath.getSqrtPriceAtTick(upperTick);
 
-            result.v4LiquidityForCallback = LiquidityAmounts.getLiquidityForAmounts(
-                sqrtPriceX96,
-                sqrtRatioAX96,
-                sqrtRatioBX96,
-                actual0,
-                actual1
-            );
+            result.v4LiquidityForCallback =
+                LiquidityAmounts.getLiquidityForAmounts(sqrtPriceX96, sqrtRatioAX96, sqrtRatioBX96, actual0, actual1);
 
             result.actual0 = actual0;
             result.actual1 = actual1;
@@ -490,7 +476,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
 
         // V2 Share Calculation based on actual amounts and v4Liquidity
         uint128 minLiq128 = MIN_LOCKED_SHARES;
-        
+
         // Calculate shares based on the geometric mean of actual amounts
         uint256 totalV2Shares = Math.sqrt(actual0 * actual1);
         if (totalV2Shares < minLiq128) {
@@ -707,13 +693,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         (uint256 nftId,) = _getOrCreatePosition(key, poolId, 0, 0);
 
         // ─── increase liquidity on the PositionManager ───
-        posManager.increaseLiquidity(
-            nftId,
-            liq,
-            type(uint128).max,
-            type(uint128).max,
-            ""
-        );
+        posManager.increaseLiquidity(nftId, liq, type(uint128).max, type(uint128).max, "");
 
         // ─── mint ERC-6909 shares to POL treasury (this contract) ───
         _mintShares(poolId, liq);
@@ -775,12 +755,10 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
      *      Returns the tokenId **and** whether it was freshly minted.
      *      Safe – we grant Permit2 approvals beforehand.
      */
-    function _getOrCreatePosition(
-        PoolKey memory key,
-        PoolId      pid,
-        uint128     liquidityDesired,
-        uint256     ethNeeded
-    ) internal returns (uint256 id, bool created) {
+    function _getOrCreatePosition(PoolKey memory key, PoolId pid, uint128 liquidityDesired, uint256 ethNeeded)
+        internal
+        returns (uint256 id, bool created)
+    {
         id = positionTokenId[pid];
         if (id != 0) {
             // already exists – nothing to mint
@@ -837,7 +815,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
     /// @param token The ERC20 token address (Currency.unwrap(...))
     function _ensurePermit2Approval(address token) internal {
         if (token == address(0)) return;
-        if (_permit2Approved[token]) return;                       // SLOAD ≈ 100 gas
+        if (_permit2Approved[token]) return; // SLOAD ≈ 100 gas
 
         // First, give Permit2 unlimited allowance on the ERC20 itself so it can pull funds
         // Safe: one-time max approval, identical to Uniswap v4 PositionManager pattern
@@ -847,7 +825,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         IAllowanceTransfer permit = posManager.permit2();
         permit.approve(token, address(posManager), type(uint160).max, type(uint48).max);
 
-        _permit2Approved[token] = true;                            // mark approved
+        _permit2Approved[token] = true; // mark approved
     }
 
     /// @dev Pull `amount` of `currency` from the caller into this contract. Supports native ETH.
@@ -867,10 +845,7 @@ contract FullRangeLiquidityManager is Owned, ReentrancyGuard, IFullRangeLiquidit
         if (shares == 0) return;
         uint256 tokenId = PoolTokenIdUtils.toTokenId(pid);
         unchecked {
-            require(
-                positions.totalSupply(bytes32(tokenId)) + shares <= MAX_SHARES,
-                "FRLM: share cap"
-            );
+            require(positions.totalSupply(bytes32(tokenId)) + shares <= MAX_SHARES, "FRLM: share cap");
         }
         FullRangePositions(address(positions)).mint(address(this), tokenId, shares);
     }

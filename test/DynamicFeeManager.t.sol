@@ -54,7 +54,7 @@ contract DynamicFeeManagerTest is Test {
         // IPoolPolicy  _policy  = IPoolPolicy(address(0));
 
         // Stand-in objects – we never touch them again, so avoid "unused" warnings
-        IPoolPolicy  _policy = IPoolPolicy(address(0));
+        IPoolPolicy _policy = IPoolPolicy(address(0));
 
         // (The dummy PoolManager literal below was producing 6133. Remove it.)
 
@@ -65,13 +65,13 @@ contract DynamicFeeManagerTest is Test {
 
         // configure mock policy for this pool (same values as above)
         MockPolicyManager.Params memory pp;
-        pp.minBaseFee      = 100;
-        pp.maxBaseFee      = 10_000;
-        pp.stepPpm         = 50_000;
-        pp.freqScaling     = 1e18;
-        pp.budgetPpm       = 100_000;
-        pp.decayWindow     = 86_400;
-        pp.updateInterval  = 600;
+        pp.minBaseFee = 100;
+        pp.maxBaseFee = 10_000;
+        pp.stepPpm = 50_000;
+        pp.freqScaling = 1e18;
+        pp.budgetPpm = 100_000;
+        pp.decayWindow = 86_400;
+        pp.updateInterval = 600;
         pp.defaultMaxTicks = 50;
 
         // NB: poolKey/poolId are created later, so we temporarily create a dummy id
@@ -81,9 +81,9 @@ contract DynamicFeeManagerTest is Test {
         // Deploy Oracle with hook address
         oracle = new TruncGeoOracleMulti(
             IPoolManager(address(poolManager)),
-            policyManager,                 // policy contract
-            address(fullRange),      // authorised hook
-            address(this)            // owner / governance
+            policyManager, // policy contract
+            address(fullRange), // authorised hook
+            address(this) // owner / governance
         );
         // Set oracle address on hook (if needed by tests)
         // fullRange.setOracle(address(oracle));
@@ -123,8 +123,8 @@ contract DynamicFeeManagerTest is Test {
     }
 
     /// @dev helper that updates the oracle's cap through its own setter
-    function _setCap(PoolId /* pid */, uint24 /* cap */) internal {  // 5667 x2
-        // no-op in tests
+    function _setCap(PoolId, /* pid */ uint24 /* cap */ ) internal { // 5667 x2
+            // no-op in tests
     }
 
     function testInitializeIdempotent() public {

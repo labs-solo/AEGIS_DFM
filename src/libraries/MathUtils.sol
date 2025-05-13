@@ -796,13 +796,9 @@ library MathUtils {
      * @notice Returns `baseFee ± (baseFee * adjustmentPercent / 1e6)`.
      * @dev `isIncrease` is intentionally unused in this placeholder (warning 5667).
      */
-    function calculateFeeAdjustment(
-        uint256 baseFee,
-        uint256 adjustmentPercent,
-        bool    /* isIncrease */
-    )
+    function calculateFeeAdjustment(uint256 baseFee, uint256 adjustmentPercent, bool /* isIncrease */ )
         internal
-        pure                                       // 2018: no storage reads
+        pure // 2018: no storage reads
         returns (uint256 adjustedFee)
     {
         // Example maths; replace with real logic when implemented

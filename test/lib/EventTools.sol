@@ -25,13 +25,9 @@ library EventTools {
      * @param impl The implementation address
      * @param setter The address setting the policy
      */
-    function expectPolicySet(
-        Test /* t */,
-        PoolId pid,
-        IPoolPolicy.PolicyType ptype,
-        address impl,
-        address setter
-    ) internal {
+    function expectPolicySet(Test, /* t */ PoolId pid, IPoolPolicy.PolicyType ptype, address impl, address setter)
+        internal
+    {
         vm.expectEmit(true, true, true, true);
         emit PolicySet(pid, ptype, impl, setter);
     }
@@ -45,7 +41,7 @@ library EventTools {
      * @param setter The address setting the policy
      */
     function expectPolicySetIf(
-        Test /* t */,
+        Test, /* t */
         bool willEmit,
         PoolId pid,
         IPoolPolicy.PolicyType ptype,
@@ -67,7 +63,7 @@ library EventTools {
      * @param checkData Whether to check the data
      */
     function expectEmitIf(
-        Test /* t */,
+        Test, /* t */
         bool willEmit,
         bool checkTopic1,
         bool checkTopic2,
@@ -79,7 +75,7 @@ library EventTools {
         }
     }
 
-    function expectReinvestorDenied(address /* who */) internal {
+    function expectReinvestorDenied(address /* who */ ) internal {
         vm.expectRevert(abi.encodeWithSelector(Errors.Unauthorized.selector));
     }
 }

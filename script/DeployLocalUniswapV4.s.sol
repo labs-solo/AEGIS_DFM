@@ -46,9 +46,9 @@ import {ExtendedPositionManager} from "../src/ExtendedPositionManager.sol";
  * 4. Test utility routers for liquidity and swaps
  */
 contract DeployLocalUniswapV4 is Script {
-    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     // ADD using directive HERE
     using PoolIdLibrary for PoolId;
@@ -119,8 +119,8 @@ contract DeployLocalUniswapV4 is Script {
             supportedTickSpacings,
             0,
             msg.sender,
-            EXPECTED_MIN_DYNAMIC_FEE,     // NEW: min base fee
-            EXPECTED_MAX_DYNAMIC_FEE      // NEW: max base fee
+            EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
+            EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
         );
         console.log("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
@@ -141,13 +141,12 @@ contract DeployLocalUniswapV4 is Script {
         console.log("Deploying FullRange components...");
 
         // Deploy Liquidity Manager
-        liquidityManager =
-            new FullRangeLiquidityManager(
-                IPoolManager(address(poolManager)),
-                ExtendedPositionManager(payable(address(0))), // placeholder, to be wired later (cast via payable to satisfy compiler)
-                IPoolPolicy(address(0)),
-                governance
-            );
+        liquidityManager = new FullRangeLiquidityManager(
+            IPoolManager(address(poolManager)),
+            ExtendedPositionManager(payable(address(0))), // placeholder, to be wired later (cast via payable to satisfy compiler)
+            IPoolPolicy(address(0)),
+            governance
+        );
         console.log("LiquidityManager deployed at:", address(liquidityManager));
 
         // Deploy Spot hook (which is MarginHarness in this script)
@@ -196,12 +195,7 @@ contract DeployLocalUniswapV4 is Script {
     }
 
     // Update _deployFullRange to accept and use PoolId and governance
-    function _deployFullRange(
-        address _deployer,
-        PoolId /* _poolId */,
-        PoolKey memory /* _key */,
-        address _governance
-    )
+    function _deployFullRange(address _deployer, PoolId, /* _poolId */ PoolKey memory, /* _key */ address _governance)
         internal
         returns (Spot)
     {
@@ -273,11 +267,7 @@ contract DeployLocalUniswapV4 is Script {
         return hook;
     }
 
-    function _onPoolCreated(
-        IPoolManager /* manager */,
-        uint160      /* sqrtPriceX96 */,
-        int24        /* tick */
-    ) internal pure {
+    function _onPoolCreated(IPoolManager, /* manager */ uint160, /* sqrtPriceX96 */ int24 /* tick */ ) internal pure {
         // logging stripped; nothing else to do
     }
 }

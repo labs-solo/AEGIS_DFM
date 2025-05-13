@@ -14,9 +14,9 @@ contract PoolPolicyManager_Fee is Test {
 
     PoolPolicyManager ppm;
 
-    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     /* ------------------------------------------------------------ */
     /*                           Actors                             */
@@ -34,7 +34,7 @@ contract PoolPolicyManager_Fee is Test {
         supportedTickSpacings[1] = 10;
 
         ppm = new PoolPolicyManager(
-            OWNER,                                  // governance / owner
+            OWNER, // governance / owner
             EXPECTED_DEFAULT_DYNAMIC_FEE,
             supportedTickSpacings,
             1_000_000,
@@ -193,9 +193,9 @@ contract PoolPolicyManager_Fee is Test {
     /*          5. Minimum POL target & multiplier hierarchy        */
     /* ------------------------------------------------------------ */
     function testDefaultPOLTargetCalc() public view {
-        uint256 liq  = 2e18;
-        uint256 fee  = 4_000; // 0.40 %
-        uint256 want = liq * fee * 10 / 1e12;  // default multiplier 10
+        uint256 liq = 2e18;
+        uint256 fee = 4_000; // 0.40 %
+        uint256 want = liq * fee * 10 / 1e12; // default multiplier 10
         assertEq(ppm.getMinimumPOLTarget(pid(7), liq, fee), want);
     }
 

@@ -41,15 +41,15 @@ contract MockPolicy {
     }
 
     // ---- getters consumed by DFM ----
-    function getSurgeDecayPeriodSeconds(PoolId /*pid*/) external view returns (uint256) {
+    function getSurgeDecayPeriodSeconds(PoolId /*pid*/ ) external view returns (uint256) {
         return decay;
     }
 
-    function getSurgeFeeMultiplierPpm(PoolId /*pid*/) external view returns (uint24) {
+    function getSurgeFeeMultiplierPpm(PoolId /*pid*/ ) external view returns (uint24) {
         return multiplier;
     }
 
-    function getCapBudgetDecayWindow(PoolId /*pid*/) external view returns (uint32) {
+    function getCapBudgetDecayWindow(PoolId /*pid*/ ) external view returns (uint32) {
         return window;
     }
 
@@ -197,7 +197,9 @@ contract DynamicFeeManagerUnitTest is Test {
     }
 
     /* ──────────────── Fee-state & CAP flow ──────────────── */
-    event FeeStateChanged(PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent, uint32 timestamp);
+    event FeeStateChanged(
+        PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent, uint32 timestamp
+    );
 
     function _initAndCap() internal returns (uint256 baseFee) {
         _initAsOwner();

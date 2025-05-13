@@ -224,7 +224,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
 
         // Get base fee after trigger
         (uint256 baseAfterCap,) = dfm.getFeeState(pid);
-        uint256 initialSurge = baseAfterCap * /* _mult */ policyManager.getSurgeFeeMultiplierPpm(pid) / 1e6;
+        uint256 initialSurge = baseAfterCap /* _mult */ * policyManager.getSurgeFeeMultiplierPpm(pid) / 1e6;
 
         // Warp partway into decay
         vm.warp(block.timestamp + (decayPeriod / 4));
@@ -345,11 +345,11 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // Surge should have decayed to ~75% of original
         // After 75% of the decay window has elapsed only 25% of the initial
         // surge should remain (linear decay).
-        uint256 expectedSurge25 = surgeFeeAfterCap / 4;   // 25% of peak
+        uint256 expectedSurge25 = surgeFeeAfterCap / 4; // 25% of peak
         assertApproxEqRel(
             surgeAfter25,
             expectedSurge25,
-            1e16,                                // 1% tolerance
+            1e16, // 1% tolerance
             "Unexpected surge fee after 25% decay"
         );
 
@@ -407,11 +407,11 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         // Surge should have decayed to ~75% of original
         // Only 25% of the decay window has elapsed so 75% of the initial surge
         // should remain (linear decay).
-        uint256 expectedSurge25 = surgeFeeAfterCap * 3 / 4;   // 75% of peak
+        uint256 expectedSurge25 = surgeFeeAfterCap * 3 / 4; // 75% of peak
         assertApproxEqRel(
             surgeAfter25,
             expectedSurge25,
-            1e16,                                // 1% tolerance
+            1e16, // 1% tolerance
             "Unexpected surge fee after 25% decay"
         );
 

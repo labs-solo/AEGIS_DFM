@@ -226,7 +226,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // We no longer store pre-swap balances – not needed by assertions.
 
         // Capture slot0 before the swap (needed for direction assertions)
-        (uint160 _sqrtBefore, int24 _tickBefore, ,) = StateLibrary.getSlot0(poolManager, poolId);
+        (uint160 _sqrtBefore, int24 _tickBefore,,) = StateLibrary.getSlot0(poolManager, poolId);
 
         // --- snapshot fee-collector balances before swap ---
         address feeCollector = policyManager.getFeeCollector();
@@ -242,8 +242,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         _swapWETHToUSDC(user1, swapAmount, 0); // This now includes the hook notification
 
         // Get new price after first swap
-        (uint160 sqrtPriceX96After, int24 tickAfter,,) =
-            StateLibrary.getSlot0(poolManager, poolId);
+        (uint160 sqrtPriceX96After, int24 tickAfter,,) = StateLibrary.getSlot0(poolManager, poolId);
         // uint256 wethBalanceAfter = weth.balanceOf(user1); <-- Removed
         // uint256 usdcBalanceAfter = usdc.balanceOf(user1); <-- Removed
         // Post-swap balances also unused – omit to silence 2072.
@@ -255,10 +254,10 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // Price direction checks remain the same
         if (wethIsToken0) {
             assertTrue(sqrtPriceX96After < _sqrtBefore, "Price direction mismatch 0->1");
-            assertTrue(tickAfter < _tickBefore,     "Tick direction mismatch 0->1");
+            assertTrue(tickAfter < _tickBefore, "Tick direction mismatch 0->1");
         } else {
             assertTrue(sqrtPriceX96After > _sqrtBefore, "Price direction mismatch 1->0");
-            assertTrue(tickAfter > _tickBefore,     "Tick direction mismatch 1->0");
+            assertTrue(tickAfter > _tickBefore, "Tick direction mismatch 1->0");
         }
 
         // Fee shouldn't have changed significantly from one small swap if interval > 0
@@ -308,11 +307,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         vm.startPrank(user1);
         swapRouter.swap(
             poolKey,
-            SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: largeSwapAmount,
-                sqrtPriceLimitX96: limitSqrtP
-            }),
+            SwapParams({zeroForOne: zeroForOne, amountSpecified: largeSwapAmount, sqrtPriceLimitX96: limitSqrtP}),
             PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}),
             ZERO_BYTES
         );
@@ -332,11 +327,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         vm.startPrank(user1);
         swapRouter.swap(
             poolKey,
-            SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: largeSwapAmount,
-                sqrtPriceLimitX96: newPriceLimit
-            }),
+            SwapParams({zeroForOne: zeroForOne, amountSpecified: largeSwapAmount, sqrtPriceLimitX96: newPriceLimit}),
             PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}),
             ZERO_BYTES
         );
@@ -344,8 +335,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         // Now the maxTicksPerBlock should have been able to change
         uint256 newMaxTicks = oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId));
-        (uint256 _baseAfterSecond, uint256 _surgeAfterSecond) =
-            dfm.getFeeState(poolId);
+        (uint256 _baseAfterSecond, uint256 _surgeAfterSecond) = dfm.getFeeState(poolId);
 
         // Check that maxTicks has changed, but within step limit
         uint32 stepPpm = policyManager.getBaseFeeStepPpm(poolId);

@@ -1,13 +1,14 @@
 pragma solidity ^0.8.27;
+
 import "forge-std/Test.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {Spot}        from "src/Spot.sol";
-import {PM}          from "test/unit/SpotUnitTest.t.sol";   // the tiny stub PM used earlier
-import {SpotFlags}   from "test/utils/SpotFlags.sol";
-import {HookMiner}   from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
-import {Create2}     from "@openzeppelin/contracts/utils/Create2.sol";
-import {Hooks}       from "v4-core/src/libraries/Hooks.sol";
-import {IHooks}      from "v4-core/src/interfaces/IHooks.sol";
+import {Spot} from "src/Spot.sol";
+import {PM} from "test/unit/SpotUnitTest.t.sol"; // the tiny stub PM used earlier
+import {SpotFlags} from "test/utils/SpotFlags.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
+import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 
 contract HookValidate is Test {
@@ -31,14 +32,9 @@ contract HookValidate is Test {
             liquidityManager,
             oracle,
             feeManager,
-            address(this)                             // initialOwner
+            address(this) // initialOwner
         );
-        ( , bytes32 salt) = HookMiner.find(
-            address(this),
-            SpotFlags.required(),
-            type(Spot).creationCode,
-            args
-        );
+        (, bytes32 salt) = HookMiner.find(address(this), SpotFlags.required(), type(Spot).creationCode, args);
         address payable hookAddr = payable(Create2.deploy(0, salt, abi.encodePacked(type(Spot).creationCode, args)));
 
         // 3. Now check if the hook address is valid using Hooks library directly
