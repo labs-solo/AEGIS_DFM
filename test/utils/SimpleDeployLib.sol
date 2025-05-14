@@ -53,7 +53,7 @@ library SimpleDeployLib {
         address FAKE_HOOK = address(uint160(uint256(0xBEEF)));
 
         /* ------------------------------------------------------- *
-         * 1️⃣  Oracle – deploy it with ForkSetup as *temporary*    *
+         * 1️⃣  Oracle – deploy it with LocalSetup as *temporary*    *
          *      owner so we can wire the hook immediately, then    *
          *      (optionally) hand ownership back to `governance`.  *
          * ------------------------------------------------------- */
@@ -61,7 +61,7 @@ library SimpleDeployLib {
             manager,
             policy,
             address(0), // temporary hook – patched below
-            address(this) // owner = ForkSetup (msg.sender here)
+            address(this) // owner = LocalSetup (msg.sender here)
         );
 
         console2.log("Oracle.owner:");
@@ -131,11 +131,11 @@ library SimpleDeployLib {
         // Dynamic Fee Manager: authorise the real hook
         d.dfm.setAuthorizedHook(hookAddr);
 
-        console2.log("ForkSetup address (this):");
+        console2.log("LocalSetup address (this):");
         console2.logAddress(address(this));
         console2.log("Calling setHookAddress...");
 
-        // Exit deployer prank context so ForkSetup (this) becomes msg.sender
+        // Exit deployer prank context so LocalSetup (this) becomes msg.sender
         VM.stopPrank();
 
         // Oracle: store the hook address

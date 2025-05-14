@@ -3,7 +3,7 @@ pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
-import {ForkSetup} from "./ForkSetup.t.sol";
+import {LocalSetup} from "./LocalSetup.t.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
@@ -22,12 +22,12 @@ import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {PositionInfo} from "v4-periphery/src/libraries/PositionInfoLibrary.sol";
 
-contract LiquidityComparisonTest is ForkSetup {
+contract LiquidityComparisonTest is LocalSetup {
     using PoolIdLibrary for PoolKey;
     using SafeTransferLib for ERC20;
     using CurrencyLibrary for Currency;
 
-    // lpProvider inherited from ForkSetup
+    // lpProvider inherited from LocalSetup
     uint128 public constant MIN_LIQUIDITY = 1_000;
 
     // ──────────────────────────────────────────────
@@ -36,7 +36,7 @@ contract LiquidityComparisonTest is ForkSetup {
     uint256 private used0Direct_;
     uint256 private used1Direct_;
 
-    // handy aliases to the objects ForkSetup already deploys
+    // handy aliases to the objects LocalSetup already deploys
     IPoolManager internal manager_;
     IFullRangeLiquidityManager internal frlm_;
     IERC20Minimal internal token0; // USDC in this test-pool
@@ -46,7 +46,7 @@ contract LiquidityComparisonTest is ForkSetup {
     function setUp() public override {
         super.setUp();
 
-        // wire-up the live contracts from ForkSetup
+        // wire-up the live contracts from LocalSetup
         manager_ = poolManager;
         frlm_ = liquidityManager;
         token0 = usdc;

@@ -6,6 +6,7 @@ remappings = [
   # openzeppelin - ensure both @openzeppelin/contracts and openzeppelin point to src
   "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
   "openzeppelin/=node_modules/@openzeppelin/contracts/", # Keep this low-priority fallback
+  "openzeppelin-contracts/=node_modules/@openzeppelin/", # Uniswap deps require this mapping
 
   # core test libs
   "forge-std/=node_modules/forge-std/src/",
@@ -36,9 +37,9 @@ ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
 solc_version = "0.8.27"
 evm_version = "cancun"
-viaIR = true
-optimizer = true
-optimizer_runs = 10000
+viaIR = true # TODO: make false; would require refactoring to avoid stack too deep
+optimizer = false # TODO: create a profile with optimizer off for quick compilation when testing
+optimizer_runs = 1 # 10000
 dotenv = true  # Enable .env file loading
 exclude_paths = [
   "test/old-tests",            # legacy tests already excluded

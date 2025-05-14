@@ -35,7 +35,7 @@ contract InvariantLiquiditySettlement is Test {
         // TODO: User needs to implement Fixture.deploy()
         // (lm, pm, key, user) = Fixture.deploy();
         // Example placeholder (replace with actual fixture logic):
-        // ForkSetup fs = new ForkSetup();
+        // LocalSetup fs = new LocalSetup();
         // fs.setUp();
         // lm = fs.liquidityManager();
         // pm = fs.poolManager();

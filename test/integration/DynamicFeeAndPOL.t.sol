@@ -3,7 +3,7 @@ pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
-import "./ForkSetup.t.sol";
+import "./LocalSetup.t.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
@@ -44,7 +44,7 @@ import {INITIAL_LP_USDC, INITIAL_LP_WETH} from "../utils/TestConstants.sol";
  * @dev This test suite builds upon the static deployment and configuration tests in
  *      DeploymentAndConfig.t.sol by focusing on the behavioral aspects of the system.
  */
-contract DynamicFeeAndPOLTest is ForkSetup {
+contract DynamicFeeAndPOLTest is LocalSetup {
     using PoolIdLibrary for PoolKey;
     using SafeTransferLib for ERC20;
     using BalanceDeltaLibrary for BalanceDelta;
@@ -66,7 +66,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
     uint256 public constant SMALL_SWAP_AMOUNT_USDC = 300 * 10 ** 6;
 
     function setUp() public override {
-        super.setUp(); // Deploy contracts via ForkSetup
+        super.setUp(); // Deploy contracts via LocalSetup
 
         // Cast deployed manager to the new interface
         dfm = IDynamicFeeManager(address(dynamicFeeManager));
@@ -101,11 +101,11 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         //
         // ── HOOK / ORACLE WIRING ────────────────────────────
         //
-        // Wiring is now handled correctly in ForkSetup.setUp()
+        // Wiring is now handled correctly in LocalSetup.setUp()
         // The lines below redeploying the oracle were incorrect and are removed.
 
-        // Ensure pool is enabled in the oracle deployed by ForkSetup
-        // This might already be handled if the hook deployed by ForkSetup calls enableOracleForPool
+        // Ensure pool is enabled in the oracle deployed by LocalSetup
+        // This might already be handled if the hook deployed by LocalSetup calls enableOracleForPool
         // or if the pool initialization logic triggers it.
         // Adding a check or explicit call if needed:
         address oracleAddr = address(oracle);
@@ -185,7 +185,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         vm.startPrank(sender);
         amountOutMinimum; // silence warning
         address token0 = Currency.unwrap(poolKey.currency0);
-        bool wethIsToken0 = token0 == WETH_ADDRESS;
+        bool wethIsToken0 = token0 == address(_WETH9);
         uint160 sqrtPriceLimitX96;
         (uint160 currentSqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
 
@@ -220,7 +220,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
     function test_B1_Swap_AppliesDefaultFee() public {
         address token0 = Currency.unwrap(poolKey.currency0);
-        bool wethIsToken0 = token0 == WETH_ADDRESS;
+        bool wethIsToken0 = token0 == address(_WETH9);
         // uint256 wethBalanceBefore = weth.balanceOf(user1); <-- Removed
         // balances captured only for manual debugging – remove to silence 2072
         // We no longer store pre-swap balances – not needed by assertions.

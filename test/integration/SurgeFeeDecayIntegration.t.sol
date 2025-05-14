@@ -2,7 +2,7 @@
 pragma solidity ^0.8.27; // Use caret for consistency
 
 import {Test, console2} from "forge-std/Test.sol"; // Added console2
-import {ForkSetup} from "./ForkSetup.t.sol";
+import {LocalSetup} from "./LocalSetup.t.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
@@ -19,10 +19,9 @@ import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
 import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol"; // <-- Added import
 
 // Renamed contract for clarity
-contract SurgeFeeDecayTest is Test, ForkSetup {
+contract SurgeFeeDecayTest is Test, LocalSetup {
     using PoolIdLibrary for PoolKey; // Add using directive for PoolIdLibrary
 
-    PoolKey internal key;
     PoolId internal pid;
 
     // Use the interface type
@@ -42,7 +41,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
     bool public showTickInfo = true;
 
     function setUp() public override {
-        super.setUp(); // Calls ForkSetup which deploys contracts including dynamicFeeManager
+        super.setUp(); // Calls LocalSetup which deploys contracts including dynamicFeeManager
 
         // Cache pool details; use inherited usdc/weth
         key = poolKey;
@@ -86,7 +85,7 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         deal(address(usdc), address(swapper), 100_000 * 1e6);
         deal(address(weth), address(swapper), 100 ether);
 
-        vm.stopPrank(); // Ensure prank is stopped from ForkSetup if any
+        vm.stopPrank(); // Ensure prank is stopped from LocalSetup if any
         ERC20(address(usdc)).approve(address(poolManager), type(uint256).max);
         ERC20(address(weth)).approve(address(poolManager), type(uint256).max);
         ERC20(address(usdc)).approve(address(swapper), type(uint256).max);
@@ -95,12 +94,12 @@ contract SurgeFeeDecayTest is Test, ForkSetup {
         emit log_string("--- Full Deployment & Configuration Complete ---");
 
         // 5. Final Sanity Checks (Optional, covered by testForkSetupComplete)
-        emit log_string("ForkSetup complete.");
+        emit log_string("LocalSetup complete.");
 
         //
         // ── HOOK / ORACLE WIRING ────────────────────────────
         //
-        // Ensure pool is enabled in the oracle deployed by ForkSetup
+        // Ensure pool is enabled in the oracle deployed by LocalSetup
         // Cast to concrete type for isOracleEnabled check
         address oracleAddr = address(oracle);
         if (!TruncGeoOracleMulti(oracleAddr).isOracleEnabled(pid)) {

@@ -2,12 +2,15 @@
 pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
-import {ForkSetup} from "./ForkSetup.t.sol";
+
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
+
+import {LocalSetup} from "./LocalSetup.t.sol";
+
 // Local Interfaces for type-safety
 import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
 import {FullRangeLiquidityManager} from "../../src/FullRangeLiquidityManager.sol";
@@ -18,9 +21,9 @@ import {Owned} from "solmate/src/auth/Owned.sol";
 /// @title Deployment and Configuration Integration Tests
 /// @notice Verifies correct deployment and initial configuration/linkages of core contracts.
 /// @dev Corresponds to Section A of the Integration_Testing_Plan.md
-contract DeploymentAndConfigTest is ForkSetup {
-    // --- Expected Values (PLACEHOLDERS - Replace with actual values from deployment script or ForkSetup.sol) ---
-    // These should ideally be defined in ForkSetup.sol or loaded from deployment artifacts
+contract DeploymentAndConfigTest is LocalSetup {
+    // --- Expected Values (PLACEHOLDERS - Replace with actual values from deployment script or LocalSetup.sol) ---
+    // These should ideally be defined in LocalSetup.sol or loaded from deployment artifacts
     uint24 internal constant EXPECTED_POL_SHARE_PPM = 100_000; // Updated: 10%
     uint24 internal constant EXPECTED_MIN_FEE_PPM = 100; // Updated: 0.01%
     int24 internal constant EXPECTED_TICK_SCALING = 1; // Match the implementation
@@ -103,14 +106,14 @@ contract DeploymentAndConfigTest is ForkSetup {
         // Read liquidity using StateLibrary
         // (call omitted – value not needed)
 
-        // Check hook address implicitly: We assume poolId derived in ForkSetup used the correct hook.
+        // Check hook address implicitly: We assume poolId derived in LocalSetup used the correct hook.
         // The test verifies that *a* pool exists for this poolId in the PoolManager.
         // A direct check like assertEq(poolManager.getHookForPool(poolId), address(fullRange)) would be ideal if available.
         // Optional: Check if liquidity > 0 if initial liquidity is added in setup
         // assertTrue(liquidity > 0, "Pool has zero initial liquidity");
 
-        // Verify token ordering (WETH/USDC) - assumes poolId is correctly loaded in ForkSetup
-        // Access currencies from poolKey (assumed available from ForkSetup) instead of poolId
+        // Verify token ordering (WETH/USDC) - assumes poolId is correctly loaded in LocalSetup
+        // Access currencies from poolKey (assumed available from LocalSetup) instead of poolId
         address token0 = Currency.unwrap(poolKey.currency0);
         address token1 = Currency.unwrap(poolKey.currency1);
         assertTrue(

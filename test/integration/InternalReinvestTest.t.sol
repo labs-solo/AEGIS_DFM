@@ -3,7 +3,7 @@ pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
-import {ForkSetup} from "./ForkSetup.t.sol";
+import {LocalSetup} from "./LocalSetup.t.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 
 // import {StateLibrary}   from "v4-core/src/libraries/StateLibrary.sol"; // Keep commented out
@@ -47,16 +47,16 @@ import "forge-std/console.sol";
 // }
 
 // The re-investment tests can run on the fully-wired environment that
-// `ForkSetup` already gives us – no need to hand-roll another deployer.
+// `LocalSetup` already gives us – no need to hand-roll another deployer.
 
-contract InternalReinvestTest is ForkSetup, IUnlockCallback {
+contract InternalReinvestTest is LocalSetup, IUnlockCallback {
     using CurrencyLibrary for Currency;
     using SafeERC20 for IERC20; // Updated to use IERC20 instead of IERC20Minimal
 
     address internal keeper = makeAddr("keeper");
     address internal feeSink = makeAddr("feeSink");
 
-    Spot internal hook;
+    Spot internal spotHook;
     IFullRangeLiquidityManager internal lm;
     IPoolManager internal pm; // Renamed from poolManager for consistency with snippet
     IPoolPolicy internal policyMgr;
@@ -84,7 +84,7 @@ contract InternalReinvestTest is ForkSetup, IUnlockCallback {
         IERC20Minimal(t1).approve(address(poolManager), MAX);
 
         // ── Hook must let FLM pull for deposits *and* PM pull for debt settlement
-        vm.startPrank(address(hook));
+        vm.startPrank(address(spotHook));
         ERC20(t0).approve(address(liquidityManager), MAX);
         ERC20(t1).approve(address(liquidityManager), MAX);
         ERC20(t0).approve(address(poolManager), MAX);
@@ -96,7 +96,7 @@ contract InternalReinvestTest is ForkSetup, IUnlockCallback {
     function setUp() public override {
         super.setUp();
 
-        hook = Spot(payable(fullRange));
+        spotHook = Spot(payable(fullRange));
         lm = IFullRangeLiquidityManager(liquidityManager);
         pm = poolManager; // Assign pm
         policyMgr = policyManager;
@@ -107,27 +107,27 @@ contract InternalReinvestTest is ForkSetup, IUnlockCallback {
         vm.deal(keeper, 10 ether);
 
         vm.prank(policyMgr.getSoloGovernance());
-        hook.setReinvestConfig(poolId, MIN0, MIN1, COOLDOWN);
+        spotHook.setReinvestConfig(poolId, MIN0, MIN1, COOLDOWN);
 
         token0 = Currency.unwrap(c0);
         token1 = Currency.unwrap(c1);
     }
 
     /* ---------- helpers --------------------------------------------------- */
-    /// @dev credits `units` of `cur` to the hook's *claim* balance
+    /// @dev credits `units` of `cur` to the spotHook's *claim* balance
     function _creditInternalBalance(Currency cur, uint256 units) internal {
         _ensureHookApprovals();
         address token = Currency.unwrap(cur);
 
         // 1. Give the HOOK the external tokens, not this test contract, but grant approval to test contract
-        deal(token, address(hook), units);
-        vm.prank(address(hook));
+        deal(token, address(spotHook), units);
+        vm.prank(address(spotHook));
         ERC20(token).approve(address(this), units);
 
-        // 2. As the *hook*, settle the tokens with the PoolManager.
-        //    This leaves +units of INTERNAL credit on the hook.
-        vm.prank(address(hook));
-        settleCurrency(pm, cur, address(hook), units);
+        // 2. As the *spotHook*, settle the tokens with the PoolManager.
+        //    This leaves +units of INTERNAL credit on the spotHook.
+        vm.prank(address(spotHook));
+        settleCurrency(pm, cur, address(spotHook), units);
     }
 
     function settleCurrency(IPoolManager manager, Currency currency, address payer, uint256 amount) internal {
@@ -145,22 +145,22 @@ contract InternalReinvestTest is ForkSetup, IUnlockCallback {
     /// @dev Add some full‐range liquidity so that pokeReinvest actually has something to grow.
     function _addInitialLiquidity(uint256 amount0, uint256 amount1) internal {
         _ensureHookApprovals();
-        // 1) Fund the hook directly with the tokens it will deposit
+        // 1) Fund the spotHook directly with the tokens it will deposit
         address t0 = Currency.unwrap(c0);
         address t1 = Currency.unwrap(c1);
-        deal(t0, address(hook), amount0);
-        deal(t1, address(hook), amount1);
+        deal(t0, address(spotHook), amount0);
+        deal(t1, address(spotHook), amount1);
 
-        // 2) Let the liquidityManager pull them from the hook
-        // Prank as hook to approve liquidityManager
-        vm.prank(address(hook));
+        // 2) Let the liquidityManager pull them from the spotHook
+        // Prank as spotHook to approve liquidityManager
+        vm.prank(address(spotHook));
         ERC20(t0).approve(address(liquidityManager), type(uint256).max);
-        vm.prank(address(hook));
+        vm.prank(address(spotHook));
         ERC20(t1).approve(address(liquidityManager), type(uint256).max);
         // also approve PoolManager for subsequent settle() pulls
-        vm.prank(address(hook));
+        vm.prank(address(spotHook));
         ERC20(t0).approve(address(poolManager), type(uint256).max);
-        vm.prank(address(hook));
+        vm.prank(address(spotHook));
         ERC20(t1).approve(address(poolManager), type(uint256).max);
 
         // 3) Call Spot.deposit to mint some shares (full‐range)
@@ -176,14 +176,14 @@ contract InternalReinvestTest is ForkSetup, IUnlockCallback {
 
         // Call deposit from governance
         vm.prank(deployerEOA); // Use governance for deposit
-        hook.deposit(params);
+        spotHook.deposit(params);
     }
 
     /* ---------- Test 1 ---------------------------------------------------- */
     function test_ReinvestSkippedWhenBelowThreshold() public {
         vm.recordLogs();
         vm.prank(keeper);
-        hook.claimPendingFees(poolId);
+        spotHook.claimPendingFees(poolId);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 sig = keccak256("ReinvestSkipped(bytes32,string,uint256,uint256)");
@@ -206,12 +206,12 @@ contract InternalReinvestTest is ForkSetup, IUnlockCallback {
 
         // 2) Enable global pause
         vm.prank(policyMgr.getSoloGovernance());
-        hook.setReinvestmentPaused(true);
+        spotHook.setReinvestmentPaused(true);
 
         // 3) Attempt reinvest and check for skip reason
         vm.recordLogs();
         vm.prank(keeper);
-        hook.claimPendingFees(poolId);
+        spotHook.claimPendingFees(poolId);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 sig = keccak256("ReinvestSkipped(bytes32,string,uint256,uint256)");
@@ -227,11 +227,11 @@ contract InternalReinvestTest is ForkSetup, IUnlockCallback {
 
         // 4) Disable global pause and check success
         vm.prank(policyMgr.getSoloGovernance());
-        hook.setReinvestmentPaused(false);
+        spotHook.setReinvestmentPaused(false);
 
         vm.recordLogs();
         vm.prank(keeper);
-        hook.claimPendingFees(poolId);
+        spotHook.claimPendingFees(poolId);
 
         logs = vm.getRecordedLogs();
         bytes32 successSig = keccak256("ReinvestmentSuccess(bytes32,uint256,uint256)");
@@ -248,28 +248,28 @@ contract InternalReinvestTest is ForkSetup, IUnlockCallback {
         // Note: Using raw amounts here. Might need conversion based on decimals.
         _addInitialLiquidity(100 * (10 ** 6), 1 ether / 10); // e.g. 100 USDC (6 dec), 0.1 WETH (18 dec)
 
-        // 1) Credit hook's claim balances for both sides
-        _creditInternalBalance(c0, 10); // credit hook's claim balances for both sides
+        // 1) Credit spotHook's claim balances for both sides
+        _creditInternalBalance(c0, 10); // credit spotHook's claim balances for both sides
         _creditInternalBalance(c1, MIN1);
 
-        // 1.6) Approve the liquidityManager to pull both tokens from the hook.
+        // 1.6) Approve the liquidityManager to pull both tokens from the spotHook.
         //      Without this, reinvest will revert in the transferFrom/settle step.
         {
             address t0 = Currency.unwrap(c0);
             address t1 = Currency.unwrap(c1);
-            // Prank as the hook to set approvals
-            vm.prank(address(hook));
+            // Prank as the spotHook to set approvals
+            vm.prank(address(spotHook));
             ERC20(t0).approve(address(liquidityManager), type(uint256).max);
-            vm.prank(address(hook));
+            vm.prank(address(spotHook));
             ERC20(t1).approve(address(liquidityManager), type(uint256).max);
         }
 
-        (,, uint128 liqBefore) = hook.getPoolReservesAndShares(poolId);
+        (,, uint128 liqBefore) = spotHook.getPoolReservesAndShares(poolId);
         assertTrue(liqBefore > 0, "Liquidity should be > 0 after initial deposit");
 
         vm.recordLogs();
         vm.prank(keeper);
-        hook.claimPendingFees(poolId);
+        spotHook.claimPendingFees(poolId);
 
         Vm.Log[] memory logs = vm.getRecordedLogs();
         bytes32 successSig = keccak256("ReinvestmentSuccess(bytes32,uint256,uint256)");
@@ -286,14 +286,14 @@ contract InternalReinvestTest is ForkSetup, IUnlockCallback {
         assertTrue(success, "ReinvestmentSuccess not emitted");
         assertTrue(used0 > 0 || used1 > 0, "no tokens used");
 
-        (,, uint128 liqAfter) = hook.getPoolReservesAndShares(poolId);
+        (,, uint128 liqAfter) = spotHook.getPoolReservesAndShares(poolId);
         assertGt(liqAfter, liqBefore, "liquidity did not grow");
 
         // cooldown check
         vm.warp(block.timestamp + 1 minutes);
         vm.recordLogs();
         vm.prank(keeper);
-        hook.claimPendingFees(poolId);
+        spotHook.claimPendingFees(poolId);
 
         logs = vm.getRecordedLogs();
         bytes32 skipSig = keccak256("ReinvestSkipped(bytes32,string,uint256,uint256)");
@@ -311,7 +311,7 @@ contract InternalReinvestTest is ForkSetup, IUnlockCallback {
     /* ---------- PoolManager Unlock Callback ---------- */
     /// @notice Implements IUnlockCallback so this test contract can be the caller of `PoolManager.unlock`.
     ///         It settles `units` of `cur` from *this* contract to the PoolManager and then credits the
-    ///         same amount to `hookAddr` via `take`, effectively increasing the hook's internal claim balance.
+    ///         same amount to `hookAddr` via `take`, effectively increasing the spotHook's internal claim balance.
     /// @dev    Encoding must match the data packed in `_creditInternalBalance` – `(Currency,uint256,address)`.
     function unlockCallback(bytes calldata data) external override returns (bytes memory) {
         require(msg.sender == address(pm), "only manager"); // safety – callback can only originate from PoolManager
@@ -322,7 +322,7 @@ contract InternalReinvestTest is ForkSetup, IUnlockCallback {
         // 1. Transfer `units` of `cur` from this contract to the PoolManager (internal credit to this contract)
         CurrencySettlerExtension.settleCurrency(pm, cur, units);
 
-        // 2. Move that freshly credited internal balance to the hook's claim account
+        // 2. Move that freshly credited internal balance to the spotHook's claim account
         pm.take(cur, hookAddr, units);
 
         // Return empty bytes – PoolManager does not rely on the return payload for this simple op

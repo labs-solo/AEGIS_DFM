@@ -1,3 +1,3 @@
 #!/bin/bash
 pnpm install
-forge test 
+forge test
