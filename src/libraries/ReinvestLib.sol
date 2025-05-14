@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
+// TODO: the logic if correct can be used by the FRLM
+
 /*───────────────────────────────────────────────────────────────────────────
  *                            Core & Periphery
  *──────────────────────────────────────────────────────────────────────────*/

@@ -3,28 +3,87 @@ pragma solidity ^0.8.27;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {IFullRangePositions} from "./IFullRangePositions.sol";
-import {FullRangePositions} from "../token/FullRangePositions.sol";
-import {ExtendedPositionManager} from "../ExtendedPositionManager.sol";
+import {Currency} from "v4-core/src/types/Currency.sol";
 
 /**
- * @notice Interface for FullRangeLiquidityManager (Phase 1: POL-Only)
+ * @title IFullRangeLiquidityManager
+ * @notice Interface for the FullRangeLiquidityManager contract that handles Spot hook fees
+ * @dev Manages fee collection, accounting, reinvestment, and liquidity contributions
  */
 interface IFullRangeLiquidityManager {
-    /// @notice the PoolManager this contract is bound to
-    function manager() external view returns (IPoolManager);
+    /**
+     * @notice Emitted when fees are notified to the manager
+     * @param poolId The ID of the pool where the fees were collected
+     * @param fee0 The amount of token0 fees
+     * @param fee1 The amount of token1 fees
+     */
+    event FeeNotified(PoolId indexed poolId, uint256 fee0, uint256 fee1);
 
-    /// @notice address of the hook that is currently authorised
-    function authorizedHookAddress() external view returns (address);
+    /**
+     * @notice Emitted when fees are reinvested into the pool
+     * @param poolId The ID of the pool
+     * @param amount0 The amount of token0 reinvested
+     * @param amount1 The amount of token1 reinvested
+     * @param liquidity The liquidity added to the pool
+     */
+    event FeesReinvested(PoolId indexed poolId, uint256 amount0, uint256 amount1, uint128 liquidity);
 
-    /// @notice ERC-6909 share token contract that tracks pool-wide positions
-    function positions() external view returns (IFullRangePositions);
+    /**
+     * @notice Emitted when a reinvestment is skipped
+     * @param poolId The ID of the pool
+     * @param reasonCode The reasonCode for skipping
+     */
+    event ReinvestmentSkipped(PoolId indexed poolId, uint256 reasonCode);
 
-    /* ───────── GOVERNANCE-ONLY API ───────── */
+    /**
+     * @notice Emitted when a user deposits liquidity
+     * @param poolId The ID of the pool
+     * @param user The address of the depositor
+     * @param amount0 The amount of token0 deposited
+     * @param amount1 The amount of token1 deposited
+     * @param shares The amount of shares minted
+     */
+    event Deposit(PoolId indexed poolId, address indexed user, uint256 amount0, uint256 amount1, uint256 shares);
 
+    /**
+     * @notice Emitted when a user withdraws liquidity
+     * @param poolId The ID of the pool
+     * @param user The address of the withdrawer
+     * @param amount0 The amount of token0 withdrawn
+     * @param amount1 The amount of token1 withdrawn
+     * @param shares The amount of shares burned
+     */
+    event Withdraw(PoolId indexed poolId, address indexed user, uint256 amount0, uint256 amount1, uint256 shares);
+
+    /**
+     * @notice Notifies the LiquidityManager of collected fees
+     * @param key The pool key
+     * @param fee0 The amount of token0 fees
+     * @param fee1 The amount of token1 fees
+     */
+    function notifyFee(PoolKey calldata key, uint256 fee0, uint256 fee1) external;
+
+    /**
+     * @notice Manually triggers reinvestment for a pool
+     * @param key The pool key for the pool
+     * @return success Whether the reinvestment was successful
+     */
+    function reinvest(PoolKey calldata key) external returns (bool success);
+
+    /**
+     * @notice Allows users to deposit tokens to add liquidity to the full range position
+     * @param key The pool key for the pool
+     * @param amount0Desired The desired amount of token0 to deposit
+     * @param amount1Desired The desired amount of token1 to deposit
+     * @param amount0Min The minimum amount of token0 that must be used
+     * @param amount1Min The minimum amount of token1 that must be used
+     * @param recipient The address to receive share tokens
+     * @return shares The amount of share tokens minted
+     * @return amount0 The amount of token0 actually deposited
+     * @return amount1 The amount of token1 actually deposited
+     */
     function deposit(
-        PoolId poolId,
+        PoolKey calldata key,
         uint256 amount0Desired,
         uint256 amount1Desired,
         uint256 amount0Min,
@@ -32,56 +91,57 @@ interface IFullRangeLiquidityManager {
         address recipient
     ) external payable returns (uint256 shares, uint256 amount0, uint256 amount1);
 
-    function withdraw(PoolId poolId, uint256 sharesToBurn, uint256 amount0Min, uint256 amount1Min, address recipient)
-        external
-        returns (uint256 amount0, uint256 amount1);
-
-    /* ───────── HOOK-ONLY API ───────── */
-
-    function storePoolKey(PoolId poolId, PoolKey calldata key) external;
-
-    function reinvest(PoolId poolId, uint256 use0, uint256 use1, uint128 liq)
-        external
-        payable
-        returns (uint128 sharesMinted);
-
-    /* ───────── MUTABLE STATE CONFIG ───────── */
-
-    function setAuthorizedHookAddress(address hookAddress) external;
-
-    /* ───────── VIEWS ───────── */
-
-    function poolKeys(PoolId poolId) external view returns (PoolKey memory);
-
-    function getPoolReserves(PoolId poolId) external view returns (uint256 reserve0, uint256 reserve1);
-
-    function positionTotalShares(PoolId poolId) external view returns (uint128);
-
-    /* ------------------------------------------------------------------ */
-    /*  Helpers still used by tests & Spot (read-only, safe to keep)       */
-    /* ------------------------------------------------------------------ */
+    /**
+     * @notice Allows users to withdraw liquidity by burning share tokens
+     * @param key The pool key for the pool
+     * @param sharesToBurn The amount of share tokens to burn
+     * @param amount0Min The minimum amount of token0 to receive
+     * @param amount1Min The minimum amount of token1 to receive
+     * @param recipient The address to receive the tokens
+     * @return amount0 The amount of token0 received
+     * @return amount1 The amount of token1 received
+     */
+    function withdraw(
+        PoolKey calldata key,
+        uint256 sharesToBurn,
+        uint256 amount0Min,
+        uint256 amount1Min,
+        address recipient
+    ) external returns (uint256 amount0, uint256 amount1);
 
     /**
-     * @notice Return an account's share balance for a pool.
-     * @dev Keeps the `initialized` boolean to avoid breaking existing test
-     *      expectations.
+     * @notice Emergency withdrawal of tokens in case of issues
+     * @param token The token to withdraw
+     * @param to The recipient address
+     * @param amount The amount to withdraw
+     * @dev Only callable by the contract owner
      */
-    function getAccountPosition(PoolId poolId, address account)
-        external
-        view
-        returns (bool initialized, uint256 shares);
+    function emergencyWithdraw(Currency token, address to, uint256 amount) external;
 
-    /// @notice Returns the total number of ERC-6909 shares minted for the
-    /// pool-wide position.
-    function getShares(PoolId poolId) external view returns (uint256 shares);
+    // TODO: add natspec comments and any other functions
 
-    /// @notice Returns the ERC-721 tokenId of the full-range position for the pool.
-    /// @dev Added to expose NFT id for off-chain analytics.
-    function positionTokenId(PoolId poolId) external view returns (uint256 tokenId);
+    function authorizedHookAddress() external view returns (address);
 
-    /// @notice Returns the ExtendedPositionManager contract used by this manager.
-    function posManager() external view returns (ExtendedPositionManager);
+    /**
+     * @notice Gets the pending fees for a pool
+     * @param poolId The ID of the pool
+     * @return amount0 Pending amount of token0
+     * @return amount1 Pending amount of token1
+     */
+    function getPendingFees(PoolId poolId) external view returns (uint256 amount0, uint256 amount1);
 
-    // Removed old positions() returning address
-    // Removed positionLiquidity(bytes32 poolId)
+    /**
+     * @notice Gets the next reinvestment timestamp for a pool
+     * @param poolId The ID of the pool
+     * @return timestamp The timestamp when the next reinvestment is allowed
+     */
+    function getNextReinvestmentTime(PoolId poolId) external view returns (uint256 timestamp);
+
+    /**
+     * @notice Gets the reserves of a pool
+     * @param poolId The ID of the pool
+     * @return reserve0 The reserve of token0
+     * @return reserve1 The reserve of token1
+     */
+    function getPoolReserves(PoolId poolId) external view returns (uint256 reserve0, uint256 reserve1);
 }

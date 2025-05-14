@@ -6,6 +6,7 @@ import "forge-std/console.sol";
 
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {Spot} from "../src/Spot.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
@@ -16,7 +17,6 @@ import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
-import {ExtendedPositionManager} from "../src/ExtendedPositionManager.sol";
 
 /**
  * Script to directly deploy the hook with an explicit constructor and salt.
@@ -120,9 +120,9 @@ contract DirectDeploy is Script {
             console.log("Deploying LiquidityManager...");
             liquidityManager = new FullRangeLiquidityManager(
                 IPoolManager(UNICHAIN_POOL_MANAGER),
-                ExtendedPositionManager(payable(address(0))),
-                IPoolPolicy(address(0)),
-                deployer
+                IPositionManager(payable(address(0))), // TODO: specify actual PositionManager
+                deployer,
+                address(0) // TODO: the Spot contract address
             );
             console.log("LiquidityManager deployed at: %s", address(liquidityManager));
         }
@@ -143,8 +143,8 @@ contract DirectDeploy is Script {
         console.log("Deploying hook directly with CREATE2...");
         Spot hook = new Spot{salt: salt}(
             IPoolManager(UNICHAIN_POOL_MANAGER),
-            policyManager,
             liquidityManager,
+            policyManager,
             truncGeoOracle,
             IDynamicFeeManager(address(0)), // Will be set later
             deployer
@@ -169,10 +169,6 @@ contract DirectDeploy is Script {
             address(hook) // authorizedHook
         );
         console.log("DynamicFeeManager deployed: %s", address(dynamicFeeManager));
-
-        // Authorize hook in LiquidityManager
-        liquidityManager.setAuthorizedHookAddress(address(hook));
-        console.log("Hook authorized in LiquidityManager");
 
         vm.stopBroadcast();
 

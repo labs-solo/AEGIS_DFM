@@ -12,6 +12,12 @@ import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 
+// TODO: make state variables all private and expose wrapper functions that accept a PoolId and if a configuration exists for a PoolId then return that
+// else return the default/global configuration??
+// TODO: remove all dead/unused configuration variables.
+// TODO: advancedFee per pool and if != 0 use it instead of dynamicFee
+// TODO: make everything per pool with GLOBAL CONSTANTS
+
 /**
  * @title PoolPolicyManager
  * @notice Consolidated policy manager implementing the IPoolPolicy interface
@@ -21,12 +27,12 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // === Fee Policy State Variables ===
 
     // Maximum step for base fee updates (10% per step)
-    uint32 internal constant MAX_STEP_PPM = 100_000;
+    uint32 internal constant MAX_STEP_PPM = 100_000; // TODO: make global variable updateable
 
     // Fee allocation configuration
-    uint24 private constant _DEFAULT_BASE_FEE = 5_000; // 0.5 %
-    uint32 private constant _SURGE_DECAY_SECS = 3_600; // surge fade
-    uint32 private constant _DAILY_BUDGET_PPM = 5_000; // example
+    uint24 private constant _DEFAULT_BASE_FEE = 5_000; // 0.5 % // TODO: remove
+    uint32 private constant _SURGE_DECAY_SECS = 3_600; // surge fade // TODO: rename DEFAULT_{}
+    uint32 private constant _DAILY_BUDGET_PPM = 5_000; // example // TODO: remove!!!
     uint32 private constant _CAP_BUDGET_DECAY_WINDOW = 15_552_000; // 180 d
 
     uint24 public polSharePpm;
@@ -134,7 +140,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     ///         to subsidise before the base‑fee is nudged upwards (ppm/event).
     ///         Naming it *target* instead of *max* clarifies that falling below
     ///         the level decreases the fee.
-    uint32 public capBudgetDailyPpm; // default budget (ppm-seconds per day)
+    uint32 public capBudgetDailyPpm; // default budget (ppm-seconds per day) - TODO: make global per pool?
     uint32 public decayWindowSeconds; // default decay window
     mapping(PoolId => uint32) public freqScalingPpm; // test helper
 
@@ -259,6 +265,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         emit PolicySet(poolId, policyType, implementation, msg.sender);
     }
 
+    // TODO: remove
     /**
      * @inheritdoc IPoolPolicy
      */
@@ -804,7 +811,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     function getDailyBudgetPpm(PoolId /* pid */ ) external view virtual override returns (uint32) {
-        return capBudgetDailyPpm;
+        return capBudgetDailyPpm; // TODO: use it here?
     }
 
     function getCapBudgetDecayWindow(PoolId /* pid */ ) external view virtual override returns (uint32) {

@@ -7,6 +7,7 @@ import "forge-std/Script.sol";
 // Uniswap V4 Core
 import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
@@ -26,7 +27,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 
 // Test Tokens
-import {MockERC20} from "../src/token/MockERC20.sol";
+import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
 // New imports
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
@@ -34,7 +35,6 @@ import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {HookMiner as HMiner} from "v4-periphery/src/utils/HookMiner.sol";
 import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
-import {ExtendedPositionManager} from "../src/ExtendedPositionManager.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -143,9 +143,9 @@ contract DeployLocalUniswapV4 is Script {
         // Deploy Liquidity Manager
         liquidityManager = new FullRangeLiquidityManager(
             IPoolManager(address(poolManager)),
-            ExtendedPositionManager(payable(address(0))), // placeholder, to be wired later (cast via payable to satisfy compiler)
-            IPoolPolicy(address(0)),
-            governance
+            IPositionManager(address(0)), // placeholder, to be wired later (cast via payable to satisfy compiler)
+            governance,
+            address(0) // TODO: the Spot hook contract address
         );
         console.log("LiquidityManager deployed at:", address(liquidityManager));
 
@@ -165,7 +165,6 @@ contract DeployLocalUniswapV4 is Script {
 
         // Step 4: Configure deployed contracts
         console.log("Configuring contracts...");
-        liquidityManager.setAuthorizedHookAddress(address(fullRange));
 
         // Initialize Pool (requires hook address in key now)
         key.hooks = IHooks(address(fullRange)); // Update key with actual hook address
@@ -253,8 +252,8 @@ contract DeployLocalUniswapV4 is Script {
         // Deploy Spot
         Spot hook = new Spot{salt: salt}(
             poolManager,
-            IPoolPolicy(address(policyManager)),
             liquidityManager,
+            IPoolPolicy(address(policyManager)),
             TruncGeoOracleMulti(address(0)), // Will be set later via setOracleAddress
             IDynamicFeeManager(address(0)), // Will be set later via setDynamicFeeManager
             _governance // governance injected here

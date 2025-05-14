@@ -115,8 +115,8 @@ contract FixUnichainHook is Script {
         vm.startBroadcast();
         Spot testSpot = new Spot{salt: oldSalt}(
             IPoolManager(UNICHAIN_POOL_MANAGER),
-            IPoolPolicy(POLICY_MANAGER),
             IFullRangeLiquidityManager(LIQUIDITY_MANAGER),
+            IPoolPolicy(POLICY_MANAGER),
             TruncGeoOracleMulti(address(0)), // Will be set later
             IDynamicFeeManager(address(0)), // Will be set later
             msg.sender

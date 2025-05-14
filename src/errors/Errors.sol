@@ -3,6 +3,8 @@ pragma solidity ^0.8.27;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 
+// TODO: cleanup unused errors
+
 /**
  * @title Errors
  * @notice Collection of all custom errors used in the protocol
@@ -25,6 +27,7 @@ library Errors {
     error ZeroDestination();
 
     // --- Validation & Input ---
+    error PoolPositionManagerMismatch();
     error ValidationDeadlinePassed(uint32 deadline, uint32 blockTime);
     error ValidationZeroAddress(string target);
     error ValidationInvalidInput(string reason);

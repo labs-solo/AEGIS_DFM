@@ -6,6 +6,7 @@ import "forge-std/console2.sol";
 
 // Uniswap V4 Core
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
@@ -22,7 +23,6 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
 import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
-import {ExtendedPositionManager} from "../src/ExtendedPositionManager.sol";
 
 // Unused imports removed: Spot, FullRangeDynamicFeeManager, DefaultPoolCreationPolicy, HookMiner, Hooks, IERC20
 
@@ -107,7 +107,10 @@ contract DeployUnichainV4 is Script {
 
         // Deploy LiquidityManager
         liquidityManager = new FullRangeLiquidityManager(
-            poolManager, ExtendedPositionManager(payable(address(0))), IPoolPolicy(address(0)), deployerAddress
+            poolManager,
+            IPositionManager(payable(address(0))),
+            deployerAddress,
+            address(0) // TODO: Spot contract address
         );
 
         // --- Deploy Test Routers ---

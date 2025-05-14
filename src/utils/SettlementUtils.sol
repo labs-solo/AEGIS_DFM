@@ -170,11 +170,12 @@ library SettlementUtils {
         uint256 feeAmount1,
         FullRangeLiquidityManager liquidityManager
     ) internal view returns (uint256 sharesFromFees) {
-        uint128 totalLiquidity = liquidityManager.positionTotalShares(poolId);
-        if (totalLiquidity == 0) return 0;
+        // TODO: consider removing all unnecessary code
+        // uint128 totalLiquidity = liquidityManager.positionTotalShares(poolId);
+        // if (totalLiquidity == 0) return 0;
 
-        // use OpenZeppelin Math.sqrt for geometric mean
-        sharesFromFees = Math.sqrt(feeAmount0 * feeAmount1);
+        // // use OpenZeppelin Math.sqrt for geometric mean
+        // sharesFromFees = Math.sqrt(feeAmount0 * feeAmount1);
 
         return sharesFromFees;
     }
@@ -190,7 +191,9 @@ library SettlementUtils {
         view
         returns (uint256)
     {
-        uint256 totalShares = liquidityManager.positionTotalShares(poolId);
+        // TODO: consider removing all unnecessary code
+        // uint256 totalShares = liquidityManager.positionTotalShares(poolId);
+        uint256 totalShares = 0;
         if (totalShares == 0) revert Errors.ZeroLiquidity();
         return totalShares;
     }
