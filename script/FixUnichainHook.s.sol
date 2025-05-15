@@ -7,7 +7,8 @@ import {console} from "forge-std/console.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {Spot} from "../src/Spot.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
+import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
@@ -40,9 +41,8 @@ contract FixUnichainHook is Script {
         // Prepare constructor arguments for Spot
         bytes memory constructorArgs = abi.encode(
             IPoolManager(UNICHAIN_POOL_MANAGER),
-            IPoolPolicy(POLICY_MANAGER),
-            IFullRangeLiquidityManager(LIQUIDITY_MANAGER),
-            msg.sender
+            PoolPolicyManager(POLICY_MANAGER),
+            IFullRangeLiquidityManager(LIQUIDITY_MANAGER)
         );
 
         // Previously attempted salt
@@ -116,10 +116,9 @@ contract FixUnichainHook is Script {
         Spot testSpot = new Spot{salt: oldSalt}(
             IPoolManager(UNICHAIN_POOL_MANAGER),
             IFullRangeLiquidityManager(LIQUIDITY_MANAGER),
-            IPoolPolicy(POLICY_MANAGER),
+            PoolPolicyManager(POLICY_MANAGER),
             TruncGeoOracleMulti(address(0)), // Will be set later
-            IDynamicFeeManager(address(0)), // Will be set later
-            msg.sender
+            IDynamicFeeManager(address(0)) // Will be set later
         );
         vm.stopBroadcast();
 
@@ -139,7 +138,7 @@ contract FixUnichainHook is Script {
         console.log("    // Prepare constructor arguments for Spot");
         console.log("    bytes memory constructorArgs = abi.encode(");
         console.log("        poolManager,");
-        console.log("        IPoolPolicy(address(policyManager)),");
+        console.log("        IPoolPolicyManager(address(policyManager)),");
         console.log("        liquidityManager,");
         console.log("        msg.sender                           // 4th ctor arg");
         console.log("    );");
@@ -157,7 +156,7 @@ contract FixUnichainHook is Script {
         console.log("    // Deploy Spot with the salt");
         console.log("    Spot spot = new Spot{salt: salt}(");
         console.log("        poolManager,");
-        console.log("        IPoolPolicy(address(policyManager)),");
+        console.log("        IPoolPolicyManager(address(policyManager)),");
         console.log("        liquidityManager,");
         console.log("        msg.sender                           // 4th ctor arg");
         console.log("    );");

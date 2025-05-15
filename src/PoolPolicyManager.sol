@@ -4,7 +4,7 @@ pragma solidity 0.8.27;
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
-import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 import {Errors} from "./errors/Errors.sol";
 import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
@@ -20,10 +20,10 @@ import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 
 /**
  * @title PoolPolicyManager
- * @notice Consolidated policy manager implementing the IPoolPolicy interface
+ * @notice Consolidated policy manager implementing the IPoolPolicyManager interface
  * @dev Handles all policy functionality from the original separate policy managers
  */
-contract PoolPolicyManager is IPoolPolicy, Owned {
+contract PoolPolicyManager is IPoolPolicyManager, Owned {
     // === Fee Policy State Variables ===
 
     // Maximum step for base fee updates (10% per step)
@@ -246,7 +246,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // === Policy Management Functions ===
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function getPolicy(PoolId poolId, PolicyType policyType) external view returns (address) {
         return _policies[poolId][policyType];
@@ -267,14 +267,14 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
 
     // TODO: remove
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function getSoloGovernance() external view returns (address) {
         return owner;
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function initializePolicies(PoolId poolId, address governance, address[] calldata implementations) external {
         // Ensure caller has proper permissions
@@ -298,7 +298,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function handlePoolInitialization(
         PoolId poolId,
@@ -319,7 +319,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // === Fee Policy Functions ===
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function getFeeAllocations(PoolId poolId) external view returns (uint256, uint256, uint256) {
         // Check if pool has a specific POL share
@@ -335,7 +335,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function getMinimumPOLTarget(PoolId poolId, uint256 totalLiquidity, uint256 dynamicFeePpm)
         external
@@ -352,14 +352,14 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function getMinimumTradingFee() external view returns (uint256) {
         return minimumTradingFeePpm;
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function getFeeClaimThreshold() external view returns (uint256) {
         return feeClaimThresholdPpm;
@@ -376,14 +376,14 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function getDefaultDynamicFee() external view override returns (uint256) {
         return defaultDynamicFeePpm;
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function setFeeConfig(
         uint256 _polSharePpm,
@@ -404,7 +404,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function setPoolPOLMultiplier(PoolId poolId, uint32 multiplier) external onlyOwner {
         poolPolMultipliers[poolId] = multiplier;
@@ -413,7 +413,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function setDefaultPOLMultiplier(uint32 multiplier) external onlyOwner {
         defaultPolMultiplier = multiplier;
@@ -478,7 +478,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // === Tick Scaling Policy Functions ===
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function getTickScalingFactor() external view returns (int24) {
         return tickScalingFactor;
@@ -497,7 +497,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function updateSupportedTickSpacing(uint24 tickSpacing, bool isSupported) external onlyOwner {
         supportedTickSpacings[tickSpacing] = isSupported;
@@ -508,7 +508,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function batchUpdateAllowedTickSpacings(uint24[] calldata tickSpacings, bool[] calldata allowed)
         external
@@ -529,7 +529,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function isTickSpacingSupported(uint24 tickSpacing) external view returns (bool) {
         return supportedTickSpacings[tickSpacing];
@@ -538,7 +538,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // === VTier Policy Functions ===
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function isValidVtier(uint24 fee, int24 tickSpacing) external view returns (bool) {
         // First check if the tick spacing is supported
@@ -564,7 +564,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     // === Phase 4 Implementation ===
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      * @dev Returns the globally configured protocol interest fee percentage.
      *      PoolId parameter is included for interface consistency and future flexibility.
      */
@@ -575,7 +575,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function getFeeCollector() external view override returns (address) {
         return feeCollector;
@@ -683,27 +683,27 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         );
     }
 
-    // --- Add implementations for missing IPoolPolicy functions ---
+    // --- Add implementations for missing IPoolPolicyManager functions ---
 
-    /// @inheritdoc IPoolPolicy
+    /// @inheritdoc IPoolPolicyManager
     function getFreqScaling(PoolId pid) external view returns (uint256) {
         uint256 v = poolFreqScaling[pid];
         return v != 0 ? v : defaultFreqScaling;
     }
 
-    /// @inheritdoc IPoolPolicy
+    /// @inheritdoc IPoolPolicyManager
     function getMinBaseFee(PoolId pid) external view override returns (uint256) {
         uint256 v = poolMinBaseFeePpm[pid];
         return v != 0 ? v : minBaseFeePpm;
     }
 
-    /// @inheritdoc IPoolPolicy
+    /// @inheritdoc IPoolPolicyManager
     function getMaxBaseFee(PoolId pid) external view override returns (uint256) {
         uint256 v = poolMaxBaseFeePpm[pid];
         return v != 0 ? v : maxBaseFeePpm;
     }
 
-    /// @inheritdoc IPoolPolicy
+    /// @inheritdoc IPoolPolicyManager
     function getSurgeDecayPeriodSeconds(PoolId pid) external view returns (uint256) {
         uint256 v = poolSurgeDecayPeriodSeconds[pid];
         return v != 0 ? v : defaultSurgeDecayPeriodSeconds;
@@ -767,7 +767,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
         emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.REINVESTOR_AUTH, reinvestor, msg.sender);
     }
 
-    /*─── IPoolPolicy - step-engine getters ───*/
+    /*─── IPoolPolicyManager - step-engine getters ───*/
     function getBaseFeeStepPpm(PoolId pid) public view override returns (uint32) {
         uint32 val = _baseFeeStepPpm[pid];
         return val == 0 ? _DEF_BASE_FEE_STEP_PPM : val;
@@ -819,7 +819,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     }
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      * @dev All currencies are considered supported by default in this implementation.
      */
     function isSupportedCurrency(Currency /* currency */ ) external pure override returns (bool) {
@@ -843,7 +843,7 @@ contract PoolPolicyManager is IPoolPolicy, Owned {
     event DailyBudgetSet(uint32 newBudget);
 
     /**
-     * @inheritdoc IPoolPolicy
+     * @inheritdoc IPoolPolicyManager
      */
     function getDefaultMaxTicksPerBlock(PoolId) external view override returns (uint24) {
         return defaultMaxTicksPerBlock;

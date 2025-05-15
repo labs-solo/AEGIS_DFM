@@ -6,11 +6,11 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 
 /**
- * @title IPoolPolicy
+ * @title IPoolPolicyManager
  * @notice Consolidated interface for all policy types in the Spot system
  * @dev Combines fee, tick scaling, and v-tier policies into a single interface
  */
-interface IPoolPolicy {
+interface IPoolPolicyManager {
     /**
      * @notice Policy types supported by the system
      */

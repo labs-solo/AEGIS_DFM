@@ -5,6 +5,8 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 
+// TODO: make interface complete
+
 /**
  * @title ISpot
  * @notice Minimal interface for the Spot hook contract
@@ -34,7 +36,7 @@ interface ISpot is IHooks {
     event PolicyInitializationFailed(PoolId indexed poolId, string reason);
 
     /**
-     * @notice Emitted when a fee is collected by the hook
+     * @notice Emitted when a fee is collected by the hook when reinvestment is NOT paused
      * @param id The pool ID
      * @param sender The address that triggered the fee collection
      * @param feeAmount0 The amount of token0 collected as fee
@@ -42,17 +44,14 @@ interface ISpot is IHooks {
      */
     event HookFee(PoolId indexed id, address indexed sender, uint128 feeAmount0, uint128 feeAmount1);
 
-    /**
-     * @notice Emitted when a pool's emergency state is changed
-     * @param poolId The ID of the pool
-     * @param isEmergency Whether the pool is in emergency state
-     */
-    event PoolEmergencyStateChanged(PoolId indexed poolId, bool isEmergency);
+    event HookFeeReinvested(PoolId indexed id, address indexed sender, uint128 feeAmount0, uint128 feeAmount1);
+
+    event ReinvestmentPausedChanged(bool paused);
 
     /**
-     * @notice Sets the emergency state for a pool
-     * @param poolId The ID of the pool
-     * @param isEmergency Whether to set the pool to emergency state
+     * @notice Pauses or unpauses reinvestment of hook fees
+     * @dev Can only be called by the policy manager owner
+     * @param paused True to pause reinvestment, false to enable it
      */
-    function setPoolEmergencyState(PoolId poolId, bool isEmergency) external;
+    function setReinvestmentPaused(bool paused) external;
 }

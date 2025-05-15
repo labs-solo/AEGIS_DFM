@@ -12,14 +12,6 @@ import {Currency} from "v4-core/src/types/Currency.sol";
  */
 interface IFullRangeLiquidityManager {
     /**
-     * @notice Emitted when fees are notified to the manager
-     * @param poolId The ID of the pool where the fees were collected
-     * @param fee0 The amount of token0 fees
-     * @param fee1 The amount of token1 fees
-     */
-    event FeeNotified(PoolId indexed poolId, uint256 fee0, uint256 fee1);
-
-    /**
      * @notice Emitted when fees are reinvested into the pool
      * @param poolId The ID of the pool
      * @param amount0 The amount of token0 reinvested
@@ -27,13 +19,6 @@ interface IFullRangeLiquidityManager {
      * @param liquidity The liquidity added to the pool
      */
     event FeesReinvested(PoolId indexed poolId, uint256 amount0, uint256 amount1, uint128 liquidity);
-
-    /**
-     * @notice Emitted when a reinvestment is skipped
-     * @param poolId The ID of the pool
-     * @param reasonCode The reasonCode for skipping
-     */
-    event ReinvestmentSkipped(PoolId indexed poolId, uint256 reasonCode);
 
     /**
      * @notice Emitted when a user deposits liquidity
@@ -114,9 +99,31 @@ interface IFullRangeLiquidityManager {
      * @param token The token to withdraw
      * @param to The recipient address
      * @param amount The amount to withdraw
-     * @dev Only callable by the contract owner
+     * @dev Only callable by the policy manager owner
      */
     function emergencyWithdraw(Currency token, address to, uint256 amount) external;
+
+    /**
+     * @notice Withdraws protocol-owned liquidity from a pool's NFT position
+     * @dev Only callable by policy manager owner
+     * @dev Decreases liquidity on the NFT position based on protocol-owned ERC6909 shares
+     * @dev Transfers the resulting tokens to the specified recipient
+     * @param key The pool key for the position
+     * @param sharesToBurn The amount of protocol owned ERC6909Claims shares to burn
+     * which corresponds 1:1 with the amount of liquidity to decrease on the NFT
+     * @param amount0Min The minimum amount of token0 that must be received
+     * @param amount1Min The minimum amount of token1 that must be received
+     * @param recipient The address to receive the withdrawn tokens
+     * @return amount0 The amount of token0 received
+     * @return amount1 The amount of token1 received
+     */
+    function withdrawProtocolLiquidity(
+        PoolKey calldata key,
+        uint256 sharesToBurn,
+        uint256 amount0Min,
+        uint256 amount1Min,
+        address recipient
+    ) external returns (uint256 amount0, uint256 amount1);
 
     // TODO: add natspec comments and any other functions
 
@@ -138,10 +145,39 @@ interface IFullRangeLiquidityManager {
     function getNextReinvestmentTime(PoolId poolId) external view returns (uint256 timestamp);
 
     /**
-     * @notice Gets the reserves of a pool
+     * @notice Gets the token amounts for a specified pool's NFT position
      * @param poolId The ID of the pool
-     * @return reserve0 The reserve of token0
-     * @return reserve1 The reserve of token1
+     * @return positionId The full range NFT position ID for the pool
+     * @return liquidity The total liquidity in the position; also equal to the FRLM ERC6909Claims total supply
+     * @return amount0 The amount of token0 in the position
+     * @return amount1 The amount of token1 in the position
      */
-    function getPoolReserves(PoolId poolId) external view returns (uint256 reserve0, uint256 reserve1);
+    function getPositionInfo(PoolId poolId)
+        external
+        view
+        returns (uint256 positionId, uint128 liquidity, uint256 amount0, uint256 amount1);
+
+    /**
+     * @notice Gets the amount of liquidity a specified number of shares represents
+     * @param poolId The ID of the pool
+     * @param shares The number of ERC6909 shares
+     * @return amount0 The estimated amount of token0
+     * @return amount1 The estimated amount of token1
+     */
+    function getLiquidityForShares(PoolId poolId, uint256 shares)
+        external
+        view
+        returns (uint256 amount0, uint256 amount1);
+
+    /**
+     * @notice Gets the protocol-owned shares and corresponding liquidity/amounts
+     * @param poolId The ID of the pool
+     * @return shares The number of shares owned by the protocol; which is also equal to the liquidity owned on the NFT
+     * @return amount0 The estimated amount of token0
+     * @return amount1 The estimated amount of token1
+     */
+    function getProtocolOwnedLiquidity(PoolId poolId)
+        external
+        view
+        returns (uint256 shares, uint256 amount0, uint256 amount1);
 }

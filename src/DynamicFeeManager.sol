@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.27;
 
-import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
@@ -138,7 +138,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     uint256 internal constant BASE_FEE_FACTOR_PPM = 100;
 
     /* ─── config / state ─────────────────────────────────────── */
-    IPoolPolicy public immutable policyManager;
+    IPoolPolicyManager public immutable policyManager;
     /// @notice address allowed to call `notifyOracleUpdate`; mutable so tests can wire cyclic deps
     address public authorizedHook;
 
@@ -155,7 +155,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     }
 
     /* ─── constructor / init ─────────────────────────────────── */
-    constructor(address _owner, IPoolPolicy _policyManager, address _oracleAddress, address _authorizedHook)
+    constructor(address _owner, IPoolPolicyManager _policyManager, address _oracleAddress, address _authorizedHook)
         Owned(_owner)
     {
         if (address(_policyManager) == address(0)) revert ZeroPolicyManager();
@@ -297,7 +297,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     /* ---------- Back-compat alias (optional – can be deleted later) ---- */
     /// @dev Temporary shim so older tests that call `.policy()` still compile.
     /// @inheritdoc IDynamicFeeManager
-    function policy() external view override returns (IPoolPolicy) {
+    function policy() external view override returns (IPoolPolicyManager) {
         return policyManager;
     }
 

@@ -8,7 +8,7 @@ import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {Spot} from "../src/Spot.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
@@ -121,7 +121,7 @@ contract DirectDeploy is Script {
             liquidityManager = new FullRangeLiquidityManager(
                 IPoolManager(UNICHAIN_POOL_MANAGER),
                 IPositionManager(payable(address(0))), // TODO: specify actual PositionManager
-                deployer,
+                policyManager,
                 address(0) // TODO: the Spot contract address
             );
             console.log("LiquidityManager deployed at: %s", address(liquidityManager));
@@ -146,8 +146,7 @@ contract DirectDeploy is Script {
             liquidityManager,
             policyManager,
             truncGeoOracle,
-            IDynamicFeeManager(address(0)), // Will be set later
-            deployer
+            IDynamicFeeManager(address(0)) // Will be set later
         );
         console.log("Hook deployed at: %s", address(hook));
 
@@ -164,7 +163,7 @@ contract DirectDeploy is Script {
         console.log("Initializing dynamic fee manager...");
         dynamicFeeManager = new DynamicFeeManager(
             deployer,
-            IPoolPolicy(address(policyManager)), // policy
+            IPoolPolicyManager(address(policyManager)), // policy
             address(truncGeoOracle), // oracle
             address(hook) // authorizedHook
         );

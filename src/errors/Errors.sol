@@ -27,6 +27,7 @@ library Errors {
     error ZeroDestination();
 
     // --- Validation & Input ---
+    error InvalidHookAuthorization(address expected, address actual);
     error PoolPositionManagerMismatch();
     error ValidationDeadlinePassed(uint32 deadline, uint32 blockTime);
     error ValidationZeroAddress(string target);
@@ -229,4 +230,8 @@ library Errors {
     error NotLiquidatable(uint256 currentRatio, uint256 threshold);
     error LiquidationTooSmall(uint256 requestedAmount, uint256 minimumAmount);
     error InvalidLiquidationParams();
+
+    // --- Invariants ---
+
+    error InvalidSwapDelta();
 }

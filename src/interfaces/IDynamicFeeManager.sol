@@ -2,7 +2,7 @@
 pragma solidity ^0.8.27;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {IPoolPolicy} from "./IPoolPolicy.sol";
+import {IPoolPolicyManager} from "./IPoolPolicyManager.sol";
 
 /**
  * @title IDynamicFeeManager
@@ -59,7 +59,7 @@ interface IDynamicFeeManager {
     function isCAPEventActive(PoolId poolId) external view returns (bool);
 
     /// @notice Pool-level policy contract that drives fee parameters
-    function policy() external view returns (IPoolPolicy);
+    function policy() external view returns (IPoolPolicyManager);
 
     /// @notice The hook that is authorized to call this contract
     function authorizedHook() external view returns (address);

@@ -20,7 +20,7 @@ import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 // import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
@@ -144,7 +144,7 @@ contract DeployLocalUniswapV4 is Script {
         liquidityManager = new FullRangeLiquidityManager(
             IPoolManager(address(poolManager)),
             IPositionManager(address(0)), // placeholder, to be wired later (cast via payable to satisfy compiler)
-            governance,
+            policyManager,
             address(0) // TODO: the Spot hook contract address
         );
         console.log("LiquidityManager deployed at:", address(liquidityManager));
@@ -253,10 +253,9 @@ contract DeployLocalUniswapV4 is Script {
         Spot hook = new Spot{salt: salt}(
             poolManager,
             liquidityManager,
-            IPoolPolicy(address(policyManager)),
+            PoolPolicyManager(address(policyManager)),
             TruncGeoOracleMulti(address(0)), // Will be set later via setOracleAddress
-            IDynamicFeeManager(address(0)), // Will be set later via setDynamicFeeManager
-            _governance // governance injected here
+            IDynamicFeeManager(address(0)) // Will be set later via setDynamicFeeManager
         );
 
         // Verify the deployed address matches the calculated address

@@ -21,7 +21,7 @@ import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
 import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
 
 // Unused imports removed: Spot, FullRangeDynamicFeeManager, DefaultPoolCreationPolicy, HookMiner, Hooks, IERC20
@@ -109,7 +109,7 @@ contract DeployUnichainV4 is Script {
         liquidityManager = new FullRangeLiquidityManager(
             poolManager,
             IPositionManager(payable(address(0))),
-            deployerAddress,
+            policyManager,
             address(0) // TODO: Spot contract address
         );
 

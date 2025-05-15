@@ -10,7 +10,7 @@ import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {Spot} from "../src/Spot.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 
@@ -107,7 +107,7 @@ contract C2DValidation is Script {
         // Prepare constructor arguments for Spot
         bytes memory constructorArgs = abi.encode(
             IPoolManager(UNICHAIN_POOL_MANAGER),
-            IPoolPolicy(POLICY_MANAGER),
+            IPoolPolicyManager(POLICY_MANAGER),
             IFullRangeLiquidityManager(LIQUIDITY_MANAGER)
         );
 

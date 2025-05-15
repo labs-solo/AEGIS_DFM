@@ -1,59 +1,56 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
-/* ───────────────────────────────────────────────────────────
-    *                     Core & Periphery
-    * ─────────────────────────────────────────────────────────── */
+// - - - Solmate Deps - - -
+
+import {ERC20} from "solmate/src/tokens/ERC20.sol";
+
+// - - - V4 Core Deps - - -
+
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
-import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
-import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {CurrencyDelta} from "v4-core/src/libraries/CurrencyDelta.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {CustomRevert} from "v4-core/src/libraries/CustomRevert.sol";
+import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {BalanceDelta, BalanceDeltaLibrary} from "v4-core/src/types/BalanceDelta.sol";
-import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeSwapDelta.sol";
-import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {BeforeSwapDelta, BeforeSwapDeltaLibrary, toBeforeSwapDelta} from "v4-core/src/types/BeforeSwapDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
-import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+
+// - - - V4 Periphery Deps - - -
 
 import {BaseHook} from "v4-periphery/src/utils/BaseHook.sol";
 import {Locker} from "v4-periphery/src/libraries/Locker.sol";
-
-/* ───────────────────────────────────────────────────────────
-    *                          Project
-    * ─────────────────────────────────────────────────────────── */
-import {ISpot} from "./interfaces/ISpot.sol";
-
-import {IFullRangeLiquidityManager} from "./interfaces/IFullRangeLiquidityManager.sol";
-import {FullRangeLiquidityManager} from "./FullRangeLiquidityManager.sol";
-
-import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
-import {ITruncGeoOracleMulti} from "./interfaces/ITruncGeoOracleMulti.sol";
-import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
-import {DynamicFeeManager} from "./DynamicFeeManager.sol";
-import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
-import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
-import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
-import {Errors} from "./errors/Errors.sol";
-
-/* ───────────────────────────────────────────────────────────
-    *                    Solmate / OpenZeppelin
-    * ─────────────────────────────────────────────────────────── */
-import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {Owned} from "solmate/src/auth/Owned.sol";
-import {CustomRevert} from "v4-core/src/libraries/CustomRevert.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 
-// TODO: add reinvestment pause variable + setter function
-// TODO: remove Owned & make admin Policy.owner
-// TODO: Spot deposit and withdraw proxies to FRLM
+// - - - Project Libraries - - -
 
-/* ───────────────────────────────────────────────────────────
-    *                       Contract: Spot
-    * ─────────────────────────────────────────────────────────── */
-contract Spot is BaseHook, ISpot, Owned {
+import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
+import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
+
+// - - - Project Interfaces - - -
+
+import {ISpot} from "./interfaces/ISpot.sol";
+import {IFullRangeLiquidityManager} from "./interfaces/IFullRangeLiquidityManager.sol";
+import {ITruncGeoOracleMulti} from "./interfaces/ITruncGeoOracleMulti.sol";
+import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
+import {Errors} from "./errors/Errors.sol";
+
+// - - - Project Contracts - - -
+
+import {DynamicFeeManager} from "./DynamicFeeManager.sol";
+import {FullRangeLiquidityManager} from "./FullRangeLiquidityManager.sol";
+import {PoolPolicyManager} from "./PoolPolicyManager.sol";
+import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
+
+// TODO(low priority): Spot deposit and withdraw proxies to FRLM
+
+contract Spot is BaseHook, ISpot {
     using PoolIdLibrary for PoolKey;
     using PoolIdLibrary for PoolId;
     using CurrencyLibrary for Currency;
@@ -61,48 +58,45 @@ contract Spot is BaseHook, ISpot, Owned {
     using BalanceDeltaLibrary for BalanceDelta;
     using CustomRevert for bytes4;
 
-    /* ───────────── Custom errors for gas optimization ───────────── */
-    error ReentrancyLocked();
-    error ZeroAddress();
-
-    /* ───────────────────────── State ───────────────────────── */
-    IPoolPolicy public immutable policyManager;
-    TruncGeoOracleMulti public immutable truncGeoOracle;
-    IDynamicFeeManager public immutable dynamicFeeManager;
-    IFullRangeLiquidityManager public immutable liquidityManager;
-
-    // TODO: is this needed? What to do in a state of emergency?
-    mapping(PoolId => bool) public stateOfEmergency;
+    // - - - Constants - - -
 
     // Gas-stipend for dynamic-fee-manager callback
     uint256 private constant GAS_STIPEND = 100_000;
 
-    /* ──────────────────────── Constructor ───────────────────── */
+    // - - - State - - -
+
+    PoolPolicyManager public immutable policyManager;
+    TruncGeoOracleMulti public immutable truncGeoOracle;
+    IDynamicFeeManager public immutable dynamicFeeManager;
+    IFullRangeLiquidityManager public immutable liquidityManager;
+
+    bool public reinvestmentPaused;
+
+    // - - - Constructor - - -
+
     constructor(
         IPoolManager _manager,
         IFullRangeLiquidityManager _liquidityManager,
-        IPoolPolicy _policyManager,
+        PoolPolicyManager _policyManager,
         TruncGeoOracleMulti _oracle,
-        IDynamicFeeManager _dynamicFeeManager,
-        address _initialOwner
-    ) BaseHook(_manager) Owned(_initialOwner) {
-        if (address(_manager) == address(0)) revert ZeroAddress();
-        if (address(_liquidityManager) == address(0)) revert ZeroAddress();
-        if (address(_policyManager) == address(0)) revert ZeroAddress();
-        if (address(_oracle) == address(0)) revert ZeroAddress();
-        if (address(_dynamicFeeManager) == address(0)) revert ZeroAddress();
+        IDynamicFeeManager _dynamicFeeManager
+    ) BaseHook(_manager) {
+        if (address(_manager) == address(0)) revert Errors.ZeroAddress();
+        if (address(_liquidityManager) == address(0)) revert Errors.ZeroAddress();
+        if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
+        if (address(_oracle) == address(0)) revert Errors.ZeroAddress();
+        if (address(_dynamicFeeManager) == address(0)) revert Errors.ZeroAddress();
+
+        if (_liquidityManager.authorizedHookAddress() != address(this)) {
+            revert Errors.InvalidHookAuthorization(_liquidityManager.authorizedHookAddress(), address(this));
+        }
 
         policyManager = _policyManager;
         truncGeoOracle = _oracle;
         dynamicFeeManager = _dynamicFeeManager;
-
-        // TODO: validate _liquidityManager hook is address(this)
-
-        // Deploy the paired FeeManager
         liquidityManager = _liquidityManager;
     }
 
-    /* ───────────────────── Hook Permissions ─────────────────── */
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: false,
@@ -115,94 +109,90 @@ contract Spot is BaseHook, ISpot, Owned {
             afterSwap: true,
             beforeDonate: false,
             afterDonate: false,
-            beforeSwapReturnDelta: false,
+            beforeSwapReturnDelta: true,
             afterSwapReturnDelta: true,
             afterAddLiquidityReturnDelta: false,
             afterRemoveLiquidityReturnDelta: false
         });
     }
 
-    /* ─────────────────── Hook: beforeSwap ───────────────────── */
+    function _isPolicyOwner() internal view returns (bool) {
+        return msg.sender == policyManager.owner();
+    }
 
-    // TODO: add only position manager checks to hook callbacks
+    modifier onlyPolicyOwner() {
+        if (!_isPolicyOwner()) revert Errors.UnauthorizedCaller(msg.sender);
+        _;
+    }
 
+    /// @inheritdoc ISpot
+    function setReinvestmentPaused(bool paused) external onlyPolicyOwner {
+        reinvestmentPaused = paused;
+        emit ReinvestmentPausedChanged(paused);
+    }
+
+    // - - - Hook Callback Implementations - - -
+
+    /// @notice called in BaseHook.beforeSwap
     function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
         internal
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        if (address(dynamicFeeManager) == address(0)) {
-            revert Errors.NotInitialized("DynamicFeeManager");
-        }
-
         // Get dynamic fee from fee manager
         (uint256 baseRaw, uint256 surgeRaw) = dynamicFeeManager.getFeeState(key.toId());
         uint24 base = uint24(baseRaw);
         uint24 surge = uint24(surgeRaw);
-        uint24 fee = base + surge; // ppm (1e-6)
+        uint24 dynamicFee = base + surge; // ppm (1e-6)
 
         // Calculate protocol fee based on policy
         PoolId poolId = key.toId();
         (uint256 protocolFeePPM,,) = policyManager.getFeeAllocations(key.toId()); // ppm
-        if (protocolFeePPM == 0) {
-            // No protocol fee configured, just return the swap fee
-            return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, fee);
-        }
 
-        // Get absolute amount and determine fee currency
-        uint256 absAmount;
-        Currency feeCurrency;
+        // Handle exactIn case in beforeSwap
+        if (params.amountSpecified > 0 && protocolFeePPM > 0) {
+            // exactIn case - we can charge the fee here
+            uint256 absAmount = uint256(params.amountSpecified);
+            Currency feeCurrency = params.zeroForOne ? key.currency0 : key.currency1;
 
-        if (params.amountSpecified >= 0) {
-            // exactIn case
-            absAmount = uint256(params.amountSpecified);
-            feeCurrency = params.zeroForOne ? key.currency0 : key.currency1;
-        } else {
-            // exactOut case
-            absAmount = uint256(-params.amountSpecified);
-            feeCurrency = params.zeroForOne ? key.currency1 : key.currency0;
-        }
+            // Calculate hook fee amount
+            uint256 swapFeeAmount = FullMath.mulDiv(absAmount, dynamicFee, 1e6);
+            uint256 hookFeeAmount = FullMath.mulDiv(swapFeeAmount, protocolFeePPM, 1e6);
 
-        // Calculate hook fee amount
-        uint256 swapFeeAmount = FullMath.mulDiv(absAmount, fee, 1e6);
-        uint256 hookFeeAmount = FullMath.mulDiv(swapFeeAmount, protocolFeePPM, 1e6);
+            if (hookFeeAmount > 0) {
+                // Mint fee to FRLM
+                poolManager.mint(address(liquidityManager), feeCurrency.toId(), hookFeeAmount);
 
-        // Mint fee to FeeManager
-        if (hookFeeAmount > 0) {
-            poolManager.mint(address(liquidityManager), feeCurrency.toId(), hookFeeAmount);
+                // Calculate amounts for fee notification
+                uint256 fee0 = params.zeroForOne ? hookFeeAmount : 0;
+                uint256 fee1 = params.zeroForOne ? 0 : hookFeeAmount;
 
-            // Calculate amounts for fee notification
-            uint256 fee0 = 0;
-            uint256 fee1 = 0;
+                if (reinvestmentPaused) {
+                    emit HookFee(poolId, sender, uint128(fee0), uint128(fee1));
+                } else {
+                    emit HookFeeReinvested(poolId, sender, uint128(fee0), uint128(fee1));
+                }
+                liquidityManager.notifyFee(key, fee0, fee1);
 
-            if (feeCurrency == key.currency0) {
-                fee0 = hookFeeAmount;
-            } else {
-                fee1 = hookFeeAmount;
+                // Create BeforeSwapDelta to account for the tokens we took
+                // We're taking tokens from the input, so return positive delta
+                int128 deltaSpecified = int128(int256(hookFeeAmount));
+                return (BaseHook.beforeSwap.selector, toBeforeSwapDelta(deltaSpecified, 0), dynamicFee);
             }
-
-            // Emit event with uint128 values for backward compatibility
-            emit HookFee(poolId, sender, uint128(fee0), uint128(fee1));
-
-            // TODO: have notifyFee return whether reinvest occurred or not
-            // If it occurred then emit HookFeeReinvested else emit HookFee; same behaviour in afterSwap
-            // Notify FullRangeLiquidityManager with the updated interface
-            liquidityManager.notifyFee(key, fee0, fee1);
         }
 
         // Store pre-swap tick for oracle update in afterSwap
-        (, int24 curTick,,) = StateLibrary.getSlot0(poolManager, key.toId());
+        (, int24 preSwapTick,,) = StateLibrary.getSlot0(poolManager, key.toId());
         assembly {
-            tstore(poolId, curTick) // EIP-1153 – transient storage
+            tstore(poolId, dynamicFee)
+            tstore(add(poolId, 1), preSwapTick) // use next slot for pre-swap tick
         }
 
-        // TODO: investigate manager.updateDynamicLPFee vs return value
-
-        // TODO: fix return delta to account for hook fee
-        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, fee);
+        // If we didn't charge a fee, return zero delta
+        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, dynamicFee);
     }
 
-    /* ─────────────────── Hook: afterSwap ────────────────────── */
+    /// @notice called in BaseHook.afterSwap
     function _afterSwap(
         address sender,
         PoolKey calldata key,
@@ -210,31 +200,75 @@ contract Spot is BaseHook, ISpot, Owned {
         BalanceDelta delta,
         bytes calldata hookData
     ) internal override returns (bytes4, int128) {
+        PoolId poolId = key.toId();
 
-        // TODO: investigate if we can charge on the input token in afterSwap
-        // TODO: ideal implementation should always charge on the input token:
-        // To enable this the hook fee should be charged in beforeSwap on exactIn
-        // And charged in afterSwap on exactOut
+        // Handle exactOut case in afterSwap (params.amountSpecified < 0)
+        if (params.amountSpecified < 0) {
+            // Get protocol fee percentage
+            (uint256 protocolFeePPM,,) = policyManager.getFeeAllocations(poolId);
 
-        // TODO: always do reinvest in afterSwap and notifyFee if exactOut(otherwise do notifyFee if exactIn)
+            if (protocolFeePPM > 0) {
+                // For exactOut, the input token is the unspecified token
+                bool zeroIsInput = !params.zeroForOne;
+                Currency feeCurrency = zeroIsInput ? key.currency0 : key.currency1;
+
+                // Get the actual input amount (should be positive) from the delta
+                int128 inputAmount = zeroIsInput ? delta.amount0() : delta.amount1();
+                if (inputAmount <= 0) revert Errors.InvalidSwapDelta(); // NOTE: invariant check
+
+                uint24 dynamicFee;
+                assembly {
+                    dynamicFee := tload(poolId)
+                }
+
+                // Calculate hook fee
+                uint256 absInputAmount = uint256(uint128(inputAmount));
+                uint256 swapFeeAmount = FullMath.mulDiv(absInputAmount, dynamicFee, 1e6);
+                uint256 hookFeeAmount = FullMath.mulDiv(swapFeeAmount, protocolFeePPM, 1e6);
+
+                if (hookFeeAmount > 0) {
+                    // Mint fee credit to FRLM
+                    poolManager.mint(address(liquidityManager), feeCurrency.toId(), hookFeeAmount);
+
+                    // Calculate fee amounts for notification
+                    uint256 fee0 = zeroIsInput ? hookFeeAmount : 0;
+                    uint256 fee1 = zeroIsInput ? 0 : hookFeeAmount;
+
+                    // Emit appropriate event
+                    if (reinvestmentPaused) {
+                        emit HookFee(poolId, sender, uint128(fee0), uint128(fee1));
+                    } else {
+                        emit HookFeeReinvested(poolId, sender, uint128(fee0), uint128(fee1));
+                    }
+                    liquidityManager.notifyFee(key, fee0, fee1);
+
+                    // Return the fee amount we took
+                    return (BaseHook.afterSwap.selector, int128(int256(hookFeeAmount)));
+                }
+            }
+        }
 
         // Get pre-swap tick from transient storage
-        bytes32 pid = PoolId.unwrap(key.toId());
-        int24 preTick;
+        int24 preSwapTick;
         assembly {
-            preTick := tload(pid)
+            preSwapTick := tload(add(poolId, 1))
         }
 
         // Push observation to oracle & check cap
-        bool capped = truncGeoOracle.pushObservationAndCheckCap(key.toId(), preTick);
+        bool capped = truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick);
 
         // Notify Dynamic Fee Manager about the oracle update
-        dynamicFeeManager.notifyOracleUpdate{gas: GAS_STIPEND}(key.toId(), capped);
+        dynamicFeeManager.notifyOracleUpdate{gas: GAS_STIPEND}(poolId, capped);
+
+        // Try to reinvest if not paused
+        if (!reinvestmentPaused) {
+            liquidityManager.reinvest(key);
+        }
 
         return (BaseHook.afterSwap.selector, 0);
     }
 
-    /* ───────────────── afterInitialize hook ───────────────── */
+    /// @notice called in BaseHook.afterInitialize
     function _afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
         internal
         override
@@ -245,7 +279,7 @@ contract Spot is BaseHook, ISpot, Owned {
 
         // Initialize oracle if possible
         if (address(truncGeoOracle) != address(0) && address(key.hooks) == address(this)) {
-            // TODO: why so many try catches? Don't we expect these calls to necessarily succeed
+            // TODO(low priority): why so many try catches? Don't we expect these calls to necessarily succeed
             try truncGeoOracle.enableOracleForPool(key) {
                 emit OracleInitialized(poolId, tick, TickMoveGuard.HARD_ABS_CAP);
             } catch (bytes memory reason) {
@@ -267,14 +301,5 @@ contract Spot is BaseHook, ISpot, Owned {
         }
 
         return BaseHook.afterInitialize.selector;
-    }
-
-    // TODO: remove
-    function setPoolEmergencyState(PoolId poolId, bool isEmergency) external override onlyOwner {
-        bool isCurrentlyInStateOfEmergency = stateOfEmergency[poolId];
-        if (isCurrentlyInStateOfEmergency != isEmergency) {
-            stateOfEmergency[poolId] = isEmergency;
-            emit PoolEmergencyStateChanged(poolId, isEmergency);
-        }
     }
 }

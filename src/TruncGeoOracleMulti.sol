@@ -7,7 +7,7 @@ import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {IPoolPolicy} from "./interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {Errors} from "./errors/Errors.sol";
@@ -61,7 +61,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
     /* ─────────────────── IMMUTABLE STATE ────────────────────── */
     IPoolManager public immutable poolManager;
-    IPoolPolicy public immutable policy;
+    IPoolPolicyManager public immutable policy;
     // Hook address (mutable – allows test harness to wire cyclic deps).
     address public hook;
     address public immutable owner; // Governance address that can refresh policy cache
@@ -125,7 +125,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /// @param _hook Hook address (mutable – allows test harness to wire cyclic deps)
     /// @param _owner Governor address that can refresh the cached policy
     /// -----------------------------------------------------------------------
-    constructor(IPoolManager _poolManager, IPoolPolicy _policyContract, address _hook, address _owner) {
+    constructor(IPoolManager _poolManager, IPoolPolicyManager _policyContract, address _hook, address _owner) {
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_policyContract) == address(0)) revert Errors.ZeroAddress();
         if (_owner == address(0)) revert Errors.ZeroAddress();
