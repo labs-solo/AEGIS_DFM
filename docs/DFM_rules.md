@@ -1,4 +1,4 @@
-## A Overall‑codebase rules
+## A Process and Quality Guidelines
 
 1. Red‑bar first: add a failing test that reproduces the bug before any patch; commit it to lock the regression.
 2. Batch unrelated fixes (Batch 1, Batch 2, …); never mix concerns in one PR.
@@ -21,7 +21,7 @@
 
 ⸻
 
-## B Tests / CI rules
+## B Testing and CI Headlines
 
 19. Heavy fork fixtures are isolated from pure‑unit tests.
 20. Pool‑manager address in all fixtures is deterministic; prevents `keccak` variance in revert selectors.
