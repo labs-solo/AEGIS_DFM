@@ -704,6 +704,8 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /* === Owner functions === */
     function setMaxBaseFee(PoolId pid, uint256 f) external onlyOwner {
         require(f > 0, ">0");
+        uint256 minFee = getMinBaseFee(pid);
+        require(f >= minFee, "max fee < min fee");
         poolMaxBaseFeePpm[pid] = uint24(f);
         emit PolicySet(pid, PolicyType.FEE, address(0), msg.sender);
     }
