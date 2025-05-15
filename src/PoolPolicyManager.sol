@@ -129,10 +129,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     event AuthorizedReinvestorSet(address indexed reinvestor, bool isAuthorized);
     event DynamicFeeChanged(uint32 newFee);
 
-    // New state for surge fee policy
-    mapping(bytes32 => uint32) private _maxStepPpm;
-    uint32 private _globalMaxStepPpm;
-
     /// @notice **Target** number of cap‑events per day the protocol is willing
     ///         to subsidise before the base‑fee is nudged upwards (ppm/event).
     ///         Naming it *target* instead of *max* clarifies that falling below
