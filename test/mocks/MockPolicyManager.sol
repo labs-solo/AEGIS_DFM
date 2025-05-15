@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.27;
 
-import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../../src/interfaces/IPoolPolicyManager.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
@@ -12,7 +12,7 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 /*  VERY-LIGHT policy stub – **does not** inherit the full interface       */
 /*  (only selectors the oracle touches are implemented).                   */
 /* ----------------------------------------------------------------------- */
-contract MockPolicyManager is IPoolPolicy {
+contract MockPolicyManager is IPoolPolicyManager {
     // ───────────────────────── Tunable constants ─────────────────────────
     uint24 internal constant _DEFAULT_MAX_TICKS = 50; // ← initial cap in ticks
     uint32 internal constant _DAILY_BUDGET_PPM = 100_000; // 10 % of the day may be capped
@@ -76,7 +76,7 @@ contract MockPolicyManager is IPoolPolicy {
         return true; // Assume valid for tests
     }
 
-    // --- Stubs for missing IPoolPolicy functions ---
+    // --- Stubs for missing IPoolPolicyManager functions ---
     function getSoloGovernance() external pure override returns (address) {
         return address(0);
     }
@@ -120,10 +120,6 @@ contract MockPolicyManager is IPoolPolicy {
     function setPoolSpecificPOLSharingEnabled(bool) external override {}
 
     function getPoolPOLShare(PoolId) external pure override returns (uint256) {
-        return 0;
-    }
-
-    function getTickScalingFactor() external pure override returns (int24) {
         return 0;
     }
 

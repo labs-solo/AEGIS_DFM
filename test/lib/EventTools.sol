@@ -4,7 +4,7 @@ pragma solidity ^0.8.27;
 import "forge-std/Test.sol";
 import {Vm} from "forge-std/Vm.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
 import {Errors} from "src/errors/Errors.sol";
 
 library EventTools {
@@ -15,7 +15,7 @@ library EventTools {
     uint256 public constant MAX_PPM = 1_000_000;
 
     event PolicySet(
-        PoolId indexed poolId, IPoolPolicy.PolicyType indexed policyType, address implementation, address indexed setter
+        PoolId indexed poolId, IPoolPolicyManager.PolicyType indexed policyType, address implementation, address indexed setter
     );
 
     /**
@@ -25,7 +25,7 @@ library EventTools {
      * @param impl The implementation address
      * @param setter The address setting the policy
      */
-    function expectPolicySet(Test, /* t */ PoolId pid, IPoolPolicy.PolicyType ptype, address impl, address setter)
+    function expectPolicySet(Test, /* t */ PoolId pid, IPoolPolicyManager.PolicyType ptype, address impl, address setter)
         internal
     {
         vm.expectEmit(true, true, true, true);
@@ -44,7 +44,7 @@ library EventTools {
         Test, /* t */
         bool willEmit,
         PoolId pid,
-        IPoolPolicy.PolicyType ptype,
+        IPoolPolicyManager.PolicyType ptype,
         address impl,
         address setter
     ) internal {

@@ -4,7 +4,7 @@ pragma solidity ^0.8.27;
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
@@ -15,7 +15,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Errors} from "src/errors/Errors.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {ExtendedPositionManager} from "src/ExtendedPositionManager.sol";
+
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {PoolTokenIdUtils} from "src/utils/PoolTokenIdUtils.sol";
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
@@ -197,8 +197,8 @@ contract PoolManagerStub {
 //  (no overrides needed – mocks already absorb all external calls)
 // ─────────────────────────────────────────────────────────────
 contract FRLMHarness is FullRangeLiquidityManager {
-    constructor(IPoolManager _pm, ExtendedPositionManager _posm, address _owner)
-        FullRangeLiquidityManager(_pm, ExtendedPositionManager(_posm), IPoolPolicy(address(0)), _owner)
+    constructor(IPoolManager _pm, IPoolManager _posm, address _owner)
+        FullRangeLiquidityManager(_pm, IPoolManager(_posm), IPoolPolicyManager(address(0)), _owner)
     {}
 
     // Expose internal helpers for direct unit testing
@@ -267,7 +267,7 @@ contract FullRangeLiquidityManagerUnitTest is Test {
         posm = new PositionManagerStub();
 
         // deploy FRLM (owner = gov)
-        frlm = new FRLMHarness(IPoolManager(address(pm)), ExtendedPositionManager(payable(address(posm))), gov);
+        frlm = new FRLMHarness(IPoolManager(address(pm)), IPoolManager(payable(address(posm))), gov);
 
         // make two ERC-20 tokens
         t0 = new MockERC20("Token0", "T0");

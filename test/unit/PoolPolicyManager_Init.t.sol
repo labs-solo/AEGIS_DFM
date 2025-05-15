@@ -4,7 +4,7 @@ pragma solidity ^0.8.27;
 import "forge-std/Test.sol";
 import {PoolPolicyManager} from "src/PoolPolicyManager.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol"; // Import if using PolicyType enum
+import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol"; // Import if using PolicyType enum
 
 contract PoolPolicyManagerInitTest is Test {
     PoolPolicyManager ppm;

@@ -48,9 +48,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     // === Tick Scaling Policy State Variables ===
 
-    // Tick scaling factor for calculating max tick movement
-    int24 public tickScalingFactor;
-
     // Supported tick spacings
     mapping(uint24 => bool) public supportedTickSpacings;
 
@@ -226,9 +223,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
             _feeClaimThresholdPpm: 10_000, // 1 % claim threshold
             _defaultPolMultiplier: 10 // 10× POL target
         });
-
-        // 2️⃣  Tick-scaling (max tick move) – initialise to 1
-        _setTickScalingFactor(1);
 
         // 3️⃣  Oracle / base-fee feedback defaults
         defaultFreqScaling = 1e18; // 1 ×
@@ -476,25 +470,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     // === Tick Scaling Policy Functions ===
-
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
-    function getTickScalingFactor() external view returns (int24) {
-        return tickScalingFactor;
-    }
-
-    /**
-     * @notice Sets the tick scaling factor
-     * @param newFactor The new tick scaling factor
-     */
-    function setTickScalingFactor(int24 newFactor) external onlyOwner {
-        if (newFactor <= 0) revert Errors.ParameterOutOfRange(uint256(uint24(newFactor)), 1, type(uint24).max);
-        tickScalingFactor = newFactor;
-        emit PolicySet(
-            PoolId.wrap(bytes32(0)), PolicyType.VTIER, address(uint160(uint256(uint24(newFactor)))), msg.sender
-        );
-    }
 
     /**
      * @inheritdoc IPoolPolicyManager
@@ -872,11 +847,5 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         );
     }
 
-    /// @notice Sets the tick scaling factor.
-    function _setTickScalingFactor(int24 factor) internal {
-        require(factor > 0, "factor must be positive"); // Prevent division by zero
-        if (tickScalingFactor == factor) return;
-        tickScalingFactor = factor;
-        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.VTIER, address(uint160(uint256(uint24(factor)))), msg.sender);
-    }
+
 }

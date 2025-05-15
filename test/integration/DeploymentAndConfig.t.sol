@@ -26,7 +26,6 @@ contract DeploymentAndConfigTest is LocalSetup {
     // These should ideally be defined in LocalSetup.sol or loaded from deployment artifacts
     uint24 internal constant EXPECTED_POL_SHARE_PPM = 100_000; // Updated: 10%
     uint24 internal constant EXPECTED_MIN_FEE_PPM = 100; // Updated: 0.01%
-    int24 internal constant EXPECTED_TICK_SCALING = 1; // Match the implementation
     // uint24 internal constant EXPECTED_MAX_BASE_FEE_PPM = 50_000; // Example: 5%
     uint128 internal constant EXPECTED_DEFAULT_DYNAMIC_FEE = 3000; // Updated: 0.3%
     // int24 internal constant EXPECTED_MAX_TICK_CHANGE = 100; // Example
@@ -72,7 +71,7 @@ contract DeploymentAndConfigTest is LocalSetup {
         assertEq(policyManager.getSoloGovernance(), deployerEOA, "PolicyManager governance mismatch");
         // Assuming the oracle is linked via a specific mechanism or policy slot
         // Example: Check if Oracle is set as a policy implementation
-        // address oraclePolicy = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.ORACLE);
+        // address oraclePolicy = policyManager.getPolicy(poolId, IPoolPolicyManager.PolicyType.ORACLE);
         // assertEq(oraclePolicy, address(oracle), "Oracle linkage in PolicyManager mismatch");
     }
 
@@ -129,7 +128,6 @@ contract DeploymentAndConfigTest is LocalSetup {
         policyManager.getFeeAllocations(poolId);
         // assertEq(polShare, 100000, "Default POL share mismatch"); // Example assertion removed as polShare is not captured
         assertEq(policyManager.getMinimumTradingFee(), EXPECTED_MIN_FEE_PPM, "Min Trading Fee mismatch");
-        assertEq(policyManager.getTickScalingFactor(), EXPECTED_TICK_SCALING, "Tick Scaling mismatch");
         // assertEq(policyManager.getMaxBaseFeePpm(poolId), EXPECTED_MAX_BASE_FEE_PPM, "Max Base Fee mismatch"); // Function not found
         assertEq(policyManager.getDefaultDynamicFee(), EXPECTED_DEFAULT_DYNAMIC_FEE, "Default Dynamic Fee mismatch");
         // assertEq(policyManager.getMaxTickChange(poolId), EXPECTED_MAX_TICK_CHANGE, "Max Tick Change mismatch"); // Function not found

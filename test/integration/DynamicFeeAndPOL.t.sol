@@ -21,7 +21,7 @@ import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
 import {IFullRangeLiquidityManager} from "../../src/interfaces/IFullRangeLiquidityManager.sol";
-import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../../src/interfaces/IPoolPolicyManager.sol";
 import {FullRangeLiquidityManager} from "../../src/FullRangeLiquidityManager.sol";
 import {IDynamicFeeManager} from "../../src/interfaces/IDynamicFeeManager.sol";
 import {DynamicFeeManager} from "../../src/DynamicFeeManager.sol";
@@ -59,7 +59,6 @@ contract DynamicFeeAndPOLTest is LocalSetup {
     uint256 public defaultBaseFee;
     uint256 public polSharePpm;
     uint256 public surgeFeeDecayPeriod;
-    int24 public tickScalingFactor;
 
     // Test swap amounts
     uint256 public constant SMALL_SWAP_AMOUNT_WETH = 0.1 ether;
@@ -80,7 +79,6 @@ contract DynamicFeeAndPOLTest is LocalSetup {
         // Store key parameters
         (defaultBaseFee,) = dfm.getFeeState(poolId); // Get initial base fee
         polSharePpm = policyManager.getPoolPOLShare(poolId);
-        tickScalingFactor = policyManager.getTickScalingFactor();
         surgeFeeDecayPeriod = uint32(policyManager.getSurgeDecayPeriodSeconds(poolId));
 
         _setupApprovals();

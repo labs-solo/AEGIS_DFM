@@ -9,7 +9,7 @@ pragma solidity ^0.8.27;
 import "forge-std/Test.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {DynamicFeeManager, _P} from "src/DynamicFeeManager.sol";
-import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
 
 /* ─────────────────────────── Mocks ────────────────────────── */
 /// @dev Minimal oracle exposing only the call used by DFM
@@ -87,7 +87,7 @@ contract DynamicFeeManagerUnitTest is Test {
         policy.setParams(3600, 2_000_000, 15_552_000);
 
         // Deploy SUT – sender (address(this)) becomes owner
-        dfm = new DynamicFeeManager(address(this), IPoolPolicy(address(policy)), address(oracle), HOOK);
+        dfm = new DynamicFeeManager(address(this), IPoolPolicyManager(address(policy)), address(oracle), HOOK);
 
         // oracle baseline: 50 ticks → base = 5_000 ppm
         oracle.setMaxTicks(PID_BYTES, 50);
@@ -128,17 +128,17 @@ contract DynamicFeeManagerUnitTest is Test {
     /* ───────────────── constructor reverts ──────────────── */
     function testConstructorRevertsOnZeroPolicy() public {
         vm.expectRevert(DynamicFeeManager.ZeroPolicyManager.selector);
-        new DynamicFeeManager(address(this), IPoolPolicy(address(0)), address(oracle), HOOK);
+        new DynamicFeeManager(address(this), IPoolPolicyManager(address(0)), address(oracle), HOOK);
     }
 
     function testConstructorRevertsOnZeroOracle() public {
         vm.expectRevert(DynamicFeeManager.ZeroOracleAddress.selector);
-        new DynamicFeeManager(address(this), IPoolPolicy(address(policy)), address(0), HOOK);
+        new DynamicFeeManager(address(this), IPoolPolicyManager(address(policy)), address(0), HOOK);
     }
 
     function testConstructorRevertsOnZeroHook() public {
         vm.expectRevert(DynamicFeeManager.ZeroHookAddress.selector);
-        new DynamicFeeManager(address(this), IPoolPolicy(address(policy)), address(oracle), address(0));
+        new DynamicFeeManager(address(this), IPoolPolicyManager(address(policy)), address(oracle), address(0));
     }
 
     /* ─────────────────── initialize() ───────────────────── */

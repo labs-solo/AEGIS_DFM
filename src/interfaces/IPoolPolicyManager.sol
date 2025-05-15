@@ -164,12 +164,6 @@ interface IPoolPolicyManager {
     function getPoolPOLShare(PoolId poolId) external view returns (uint256);
 
     /**
-     * @notice Returns the tick scaling factor used to convert dynamic fee to max tick change
-     * @return Tick scaling factor (default 1000)
-     */
-    function getTickScalingFactor() external view returns (int24);
-
-    /**
      * @notice Updates a supported tick spacing
      * @param tickSpacing The tick spacing value to update
      * @param isSupported Whether the tick spacing should be supported

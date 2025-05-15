@@ -24,7 +24,7 @@ import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol"; // Added for getSlot0
 
 // Project Interfaces & Implementations
-import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
 import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol"; // Use Interface
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {Spot} from "src/Spot.sol";
@@ -42,7 +42,7 @@ import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
 
-import {ExtendedPositionManager} from "src/ExtendedPositionManager.sol";
+
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
 import {IPositionDescriptor} from "@uniswap/v4-periphery/src/interfaces/IPositionDescriptor.sol";
 
@@ -67,7 +67,7 @@ contract ForkSetup is Test {
 
     // --- Deployed/Referenced Contract Instances --- (Interfaces preferred)
     IPoolManager public immutable poolManager;
-    /// @dev keep the concrete type; it still implements IPoolPolicy
+    /// @dev keep the concrete type; it still implements IPoolPolicyManager
     PoolPolicyManager public policyManager;
     IFullRangeLiquidityManager public liquidityManager;
     ITruncGeoOracleMulti public oracle;
@@ -207,7 +207,7 @@ contract ForkSetup is Test {
 
         // Deploy LiquidityManager (standard new)
         emit log_string("Deploying Extended PositionManager...");
-        ExtendedPositionManager posm = new ExtendedPositionManager(
+        IPoolManager posm = new IPoolManager(
             poolManager,
             IAllowanceTransfer(PERMIT2_ADDRESS),
             uint256(300_000),
