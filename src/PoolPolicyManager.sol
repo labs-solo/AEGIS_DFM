@@ -317,7 +317,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
          *      supplying their own address as the `hook` parameter.
          * ------------------------------------------------------------------*/
 
-        if (poolId != PoolIdLibrary.toId(key)) revert Errors.InvalidPoolKey();
+        if (PoolId.unwrap(poolId) != PoolId.unwrap(PoolIdLibrary.toId(key))) revert Errors.InvalidPoolKey();
 
         address expectedHook = address(key.hooks);
         if (msg.sender != owner && msg.sender != expectedHook) revert Errors.Unauthorized();
@@ -704,7 +704,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /* === Owner functions === */
     function setMaxBaseFee(PoolId pid, uint256 f) external onlyOwner {
         require(f > 0, ">0");
-        uint256 minFee = getMinBaseFee(pid);
+        uint256 minFee = this.getMinBaseFee(pid);
         require(f >= minFee, "max fee < min fee");
         poolMaxBaseFeePpm[pid] = uint24(f);
         emit PolicySet(pid, PolicyType.FEE, address(0), msg.sender);
@@ -731,7 +731,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     function setMinBaseFee(PoolId pid, uint256 f) external onlyOwner {
         require(f > 0, ">0");
-        uint256 maxFee = getMaxBaseFee(pid);
+        uint256 maxFee = this.getMaxBaseFee(pid);
         require(f <= maxFee, "min fee > max fee");
         poolMinBaseFeePpm[pid] = uint24(f);
         emit PolicySet(pid, PolicyType.FEE, address(0), msg.sender);
