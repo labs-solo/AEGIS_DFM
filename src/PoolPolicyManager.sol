@@ -184,6 +184,13 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     ) Owned(_governance) {
         require(_governance != address(0), "ZeroAddress");
 
+        // Sanity check: ensure the deployment is immediately usable by requiring
+        // at least one supported tick spacing. Without this, no pools could be
+        // initialised until governance (owner) adds a tick spacing via
+        // `updateSupportedTickSpacing`, leaving the contract in a non-operational
+        // state right after deployment.
+        require(_supportedTickSpacings.length > 0, "TickSpacings: none");
+
         /* ── copy constructor params into the *current* field names ── */
         defaultDynamicFeePpm = _defaultDynamicFee;
         minimumTradingFeePpm = _minTradingFee;
