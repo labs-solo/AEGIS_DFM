@@ -7,6 +7,7 @@ import "forge-std/console2.sol";
 // Uniswap V4 Core
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
@@ -108,7 +109,7 @@ contract DeployUnichainV4 is Script {
         // Deploy LiquidityManager
         liquidityManager = new FullRangeLiquidityManager(
             poolManager,
-            IPositionManager(payable(address(0))),
+            PositionManager(payable(address(0))),
             policyManager,
             address(0) // TODO: Spot contract address
         );

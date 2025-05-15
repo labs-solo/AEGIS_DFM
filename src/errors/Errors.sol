@@ -114,6 +114,7 @@ library Errors {
     error PoolKeyAlreadyStored(bytes32 poolId);
 
     // --- Liquidity & Shares ---
+    error PositionNotFound(PoolId poolId);
     error InsufficientAmount(uint256 requested, uint256 available);
     error InsufficientLiquidity(uint256 requested, uint256 available);
     error InsufficientShares(uint256 requested, uint256 available);
@@ -185,6 +186,8 @@ library Errors {
     error TransferFailed();
     error TransferFromFailed();
     error InsufficientReserves();
+    error TooLittleAmount0(uint256 min, uint256 actual);
+    error TooLittleAmount1(uint256 min, uint256 actual);
 
     // --- Oracle ---
     error OracleOperationFailed(string operation, string reason);
@@ -234,4 +237,5 @@ library Errors {
     // --- Invariants ---
 
     error InvalidSwapDelta();
+    error ETHRefundFailed();
 }

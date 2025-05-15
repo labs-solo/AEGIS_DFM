@@ -7,6 +7,7 @@ import "forge-std/console.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 import {Spot} from "../src/Spot.sol";
 import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
@@ -120,7 +121,7 @@ contract DirectDeploy is Script {
             console.log("Deploying LiquidityManager...");
             liquidityManager = new FullRangeLiquidityManager(
                 IPoolManager(UNICHAIN_POOL_MANAGER),
-                IPositionManager(payable(address(0))), // TODO: specify actual PositionManager
+                PositionManager(payable(address(0))), // TODO: specify actual PositionManager
                 policyManager,
                 address(0) // TODO: the Spot contract address
             );

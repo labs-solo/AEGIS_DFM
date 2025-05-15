@@ -39,8 +39,8 @@ fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access
 solc_version = "0.8.27"
 evm_version = "cancun"
 viaIR = true # TODO: make false; would require refactoring to avoid stack too deep
-optimizer = false # TODO: create a profile with optimizer off for quick compilation when testing
-optimizer_runs = 1 # 10000
+optimizer = true # TODO: create a profile with optimizer off for quick compilation when testing
+optimizer_runs = 1 # TODO: use 10000
 dotenv = true  # Enable .env file loading
 exclude_paths = [
   "test/old-tests",            # legacy tests already excluded

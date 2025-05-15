@@ -8,6 +8,7 @@ import "forge-std/Script.sol";
 import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
@@ -143,7 +144,7 @@ contract DeployLocalUniswapV4 is Script {
         // Deploy Liquidity Manager
         liquidityManager = new FullRangeLiquidityManager(
             IPoolManager(address(poolManager)),
-            IPositionManager(address(0)), // placeholder, to be wired later (cast via payable to satisfy compiler)
+            PositionManager(payable(address(0))), // placeholder, to be wired later (cast via payable to satisfy compiler)
             policyManager,
             address(0) // TODO: the Spot hook contract address
         );

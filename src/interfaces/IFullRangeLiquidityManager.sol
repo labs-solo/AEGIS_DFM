@@ -18,7 +18,7 @@ interface IFullRangeLiquidityManager {
      * @param amount1 The amount of token1 reinvested
      * @param liquidity The liquidity added to the pool
      */
-    event FeesReinvested(PoolId indexed poolId, uint256 amount0, uint256 amount1, uint128 liquidity);
+    event FeesReinvested(PoolId indexed poolId, uint256 amount0, uint256 amount1, uint256 liquidity);
 
     /**
      * @notice Emitted when a user deposits liquidity
@@ -34,11 +34,26 @@ interface IFullRangeLiquidityManager {
      * @notice Emitted when a user withdraws liquidity
      * @param poolId The ID of the pool
      * @param user The address of the withdrawer
+     * @param recipient The address of the recipient
      * @param amount0 The amount of token0 withdrawn
      * @param amount1 The amount of token1 withdrawn
      * @param shares The amount of shares burned
      */
-    event Withdraw(PoolId indexed poolId, address indexed user, uint256 amount0, uint256 amount1, uint256 shares);
+    event Withdraw(
+        PoolId indexed poolId, address indexed user, address recipient, uint256 amount0, uint256 amount1, uint256 shares
+    );
+
+    /**
+     * @notice Emitted when protocol-owned liquidity is withdrawn
+     * @param poolId The ID of the pool
+     * @param recipient The address that received the withdrawn tokens
+     * @param shares The amount of protocol-owned shares that were burned
+     * @param amount0 The amount of token0 withdrawn
+     * @param amount1 The amount of token1 withdrawn
+     */
+    event WithdrawProtocolLiquidity(
+        PoolId indexed poolId, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1
+    );
 
     /**
      * @notice Notifies the LiquidityManager of collected fees
