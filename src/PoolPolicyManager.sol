@@ -273,10 +273,9 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /**
      * @inheritdoc IPoolPolicyManager
      */
-    function initializePolicies(PoolId poolId, address governance, address[] calldata implementations) external {
-        // Ensure caller has proper permissions
-        if (msg.sender != owner && msg.sender != governance) revert Errors.Unauthorized();
-
+    function initializePolicies(PoolId poolId,
+                                address /* governance */,
+                                address[] calldata implementations) external onlyOwner {
         // Validate implementations array length
         if (implementations.length != 4) revert Errors.InvalidPolicyImplementationsLength(implementations.length);
 
@@ -299,18 +298,33 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
      */
     function handlePoolInitialization(
         PoolId poolId,
-        PoolKey calldata, /*key*/
+        PoolKey calldata key,
         uint160, /*sqrtPriceX96*/
         int24 tick,
-        address hook
+        address /* hook */
     ) external {
-        // Ensure caller has proper permissions (Owner or the Hook itself)
-        if (msg.sender != owner && msg.sender != hook) revert Errors.Unauthorized();
+        /* --------------------------------------------------------------------
+         *  Access control
+         *  1.  Ensure the supplied `key` actually corresponds to `poolId` so a
+         *      caller cannot forge a random key/hook combination for an
+         *      existing pool.
+         *  2.  Allow the call only from:
+         *        – the contract owner (governance), or
+         *        – the hook address embedded in the `PoolKey` (the legitimate
+         *          pool-specific hook that Uniswap V4 stores inside the pool
+         *          ID hash).
+         *      An arbitrary caller can no longer gain access by simply
+         *      supplying their own address as the `hook` parameter.
+         * ------------------------------------------------------------------*/
+
+        if (poolId != PoolIdLibrary.toId(key)) revert Errors.InvalidPoolKey();
+
+        address expectedHook = address(key.hooks);
+        if (msg.sender != owner && msg.sender != expectedHook) revert Errors.Unauthorized();
 
         // --- ORACLE LOGIC REMOVED ---
 
-        // Emit the original event for observability
-        emit PoolInitialized(poolId, hook, tick);
+        emit PoolInitialized(poolId, expectedHook, tick);
     }
 
     // === Fee Policy Functions ===
