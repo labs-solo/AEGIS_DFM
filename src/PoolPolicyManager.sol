@@ -575,7 +575,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /**
      * @notice Sets the global protocol interest fee percentage.
-     * @param _newPercentage The new percentage scaled by PRECISION (e.g., 0.1e18 for 10%)
+     * @param _newPercentage The new percentage scaled by PPM_SCALE (e.g., 100_000 for 10%)
      */
     function setProtocolFeePercentage(uint256 _newPercentage) external onlyOwner {
         _setProtocolFeePercentage(_newPercentage);
