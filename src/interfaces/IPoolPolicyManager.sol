@@ -40,22 +40,6 @@ interface IPoolPolicyManager {
     function initializePolicies(PoolId poolId, address governance, address[] calldata implementations) external;
 
     /**
-     * @notice Handles pool initialization
-     * @param poolId The ID of the pool
-     * @param key The pool key
-     * @param sqrtPriceX96 The initial sqrt price
-     * @param tick The initial tick
-     * @param hook The hook address
-     */
-    function handlePoolInitialization(
-        PoolId poolId,
-        PoolKey calldata key,
-        uint160 sqrtPriceX96,
-        int24 tick,
-        address hook
-    ) external;
-
-    /**
      * @notice Returns the policy implementation for a specific policy type
      * @param poolId The ID of the pool
      * @param policyType The type of policy to retrieve

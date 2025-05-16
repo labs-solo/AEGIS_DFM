@@ -8,7 +8,6 @@ import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 import {Errors} from "./errors/Errors.sol";
 import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
-import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 
@@ -273,9 +272,10 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /**
      * @inheritdoc IPoolPolicyManager
      */
-    function initializePolicies(PoolId poolId,
-                                address /* governance */,
-                                address[] calldata implementations) external onlyOwner {
+    function initializePolicies(PoolId poolId, address, /* governance */ address[] calldata implementations)
+        external
+        onlyOwner
+    {
         // Validate implementations array length
         if (implementations.length != 4) revert Errors.InvalidPolicyImplementationsLength(implementations.length);
 
@@ -291,40 +291,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
                 ++i;
             }
         }
-    }
-
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
-    function handlePoolInitialization(
-        PoolId poolId,
-        PoolKey calldata key,
-        uint160, /*sqrtPriceX96*/
-        int24 tick,
-        address /* hook */
-    ) external {
-        /* --------------------------------------------------------------------
-         *  Access control
-         *  1.  Ensure the supplied `key` actually corresponds to `poolId` so a
-         *      caller cannot forge a random key/hook combination for an
-         *      existing pool.
-         *  2.  Allow the call only from:
-         *        – the contract owner (governance), or
-         *        – the hook address embedded in the `PoolKey` (the legitimate
-         *          pool-specific hook that Uniswap V4 stores inside the pool
-         *          ID hash).
-         *      An arbitrary caller can no longer gain access by simply
-         *      supplying their own address as the `hook` parameter.
-         * ------------------------------------------------------------------*/
-
-        if (PoolId.unwrap(poolId) != PoolId.unwrap(PoolIdLibrary.toId(key))) revert Errors.InvalidPoolKey();
-
-        address expectedHook = address(key.hooks);
-        if (msg.sender != owner && msg.sender != expectedHook) revert Errors.Unauthorized();
-
-        // --- ORACLE LOGIC REMOVED ---
-
-        emit PoolInitialized(poolId, expectedHook, tick);
     }
 
     // === Fee Policy Functions ===
@@ -867,6 +833,4 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
             PoolId.wrap(bytes32(0)), PolicyType.VTIER, address(uint160(uint256(isSupported ? 1 : 0))), msg.sender
         );
     }
-
-
 }

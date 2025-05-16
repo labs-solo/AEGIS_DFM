@@ -34,11 +34,9 @@ import {IFullRangeLiquidityManager} from "./interfaces/IFullRangeLiquidityManage
 
 import {PoolPolicyManager} from "./PoolPolicyManager.sol";
 
-/**
- * @title FullRangeLiquidityManager
- * @notice Manages hook fees and liquidity for Spot pools
- * @dev Handles fee collection, reinvestment, and allows users to contribute liquidity
- */
+/// @title FullRangeLiquidityManager
+/// @notice Manages hook fees and liquidity for Spot pools
+/// @dev Handles fee collection, reinvestment, and allows users to contribute liquidity
 contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims {
     using PoolIdLibrary for PoolKey;
     using PoolIdLibrary for PoolId;
@@ -79,13 +77,11 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     /// @notice NFT token IDs for full range positions
     mapping(PoolId => uint256) public positionIds;
 
-    /**
-     * @notice Constructs the FullRangeLiquidityManager
-     * @param _poolManager The Uniswap V4 PoolManager
-     * @param _positionManager The Uniswap V4 PositionManager
-     * @param _policyManager The policy manager contract
-     * @param _authorizedHookAddress The hook address that can notify fees
-     */
+    /// @notice Constructs the FullRangeLiquidityManager
+    /// @param _poolManager The Uniswap V4 PoolManager
+    /// @param _positionManager The Uniswap V4 PositionManager
+    /// @param _policyManager The policy manager contract
+    /// @param _authorizedHookAddress The hook address that can notify fees
     constructor(
         IPoolManager _poolManager,
         PositionManager _positionManager,
@@ -105,19 +101,20 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         authorizedHookAddress = _authorizedHookAddress;
     }
 
-    /**
-     * @notice Modifier to check if the caller is the policy manager owner
-     */
     modifier onlyPolicyOwner() {
         if (msg.sender != policyManager.owner()) revert Errors.UnauthorizedCaller(msg.sender);
         _;
     }
 
-    /**
-     * @notice Modifier to ensure only the Spot hook can call
-     */
     modifier onlyAuthorizedHook() {
         if (msg.sender != authorizedHookAddress) revert Errors.UnauthorizedCaller(msg.sender);
+        _;
+    }
+
+    modifier onlyAuthorizedCaller() {
+        if (msg.sender != policyManager.owner() && msg.sender != authorizedHookAddress) {
+            revert Errors.UnauthorizedCaller(msg.sender);
+        }
         _;
     }
 
@@ -298,7 +295,13 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 amount0Min,
         uint256 amount1Min,
         address recipient
-    ) external payable override onlyPolicyOwner returns (uint256 liquidityAdded, uint256 amount0, uint256 amount1) {
+    )
+        external
+        payable
+        override
+        onlyAuthorizedCaller
+        returns (uint256 liquidityAdded, uint256 amount0, uint256 amount1, uint256 unusedAmount0, uint256 unusedAmount1)
+    {
         PoolId poolId = key.toId();
         // Handle transfers - this will ensure FRLM has tokens to spend
         _handleTokenTransfers(key.currency0, key.currency1, amount0Desired, amount1Desired);
@@ -310,8 +313,20 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         (liquidityAdded, amount0, amount1) =
             _addLiquidityToPosition(key, amount0Desired, amount1Desired, amount0Min, amount1Min);
 
-        // shares correspond 1:1 with liquidity
+        // Calculate unused amounts
+        unusedAmount0 = amount0Desired - amount0;
+        unusedAmount1 = amount1Desired - amount1;
 
+        // Refund any unused ERC20 tokens to the caller
+        if (unusedAmount0 > 0 && !key.currency0.isAddressZero()) {
+            IERC20Minimal(Currency.unwrap(key.currency0)).transfer(msg.sender, unusedAmount0);
+        }
+
+        if (unusedAmount1 > 0 && !key.currency1.isAddressZero()) {
+            IERC20Minimal(Currency.unwrap(key.currency1)).transfer(msg.sender, unusedAmount1);
+        }
+
+        // shares correspond 1:1 with liquidity
         // Mint ERC6909 shares to recipient
         _mint(recipient, uint256(PoolId.unwrap(poolId)), liquidityAdded);
 
@@ -321,13 +336,14 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         if (key.currency1.isAddressZero()) ethNeeded += amount1;
 
         if (msg.value > ethNeeded) {
+            // Send ETH refund to the caller, not the recipient
             (bool success,) = payable(msg.sender).call{value: msg.value - ethNeeded}("");
             if (!success) revert Errors.ETHRefundFailed();
         }
 
         emit Deposit(poolId, recipient, liquidityAdded, amount0, amount1);
 
-        return (liquidityAdded, amount0, amount1);
+        return (liquidityAdded, amount0, amount1, unusedAmount0, unusedAmount1);
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
@@ -337,7 +353,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 amount0Min,
         uint256 amount1Min,
         address recipient
-    ) external override onlyPolicyOwner returns (uint256 amount0, uint256 amount1) {
+    ) external override onlyAuthorizedCaller returns (uint256 amount0, uint256 amount1) {
         // Use the shared withdrawal logic with the caller as the shares owner
         (amount0, amount1) = _withdrawLiquidity(key, sharesToBurn, amount0Min, amount1Min, msg.sender, recipient);
 
@@ -567,17 +583,15 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         return (liquidityAdded, amount0, amount1);
     }
 
-    /**
-     * @notice Internal function to handle withdrawal of liquidity
-     * @param key The pool key
-     * @param sharesToBurn Number of shares to burn
-     * @param amount0Min Minimum amount of token0 to receive
-     * @param amount1Min Minimum amount of token1 to receive
-     * @param sharesOwner Address that owns the shares to be burned
-     * @param recipient Address to receive the withdrawn tokens
-     * @return amount0 Amount of token0 withdrawn
-     * @return amount1 Amount of token1 withdrawn
-     */
+    /// @notice Internal function to handle withdrawal of liquidity
+    /// @param key The pool key
+    /// @param sharesToBurn Number of shares to burn
+    /// @param amount0Min Minimum amount of token0 to receive
+    /// @param amount1Min Minimum amount of token1 to receive
+    /// @param sharesOwner Address that owns the shares to be burned
+    /// @param recipient Address to receive the withdrawn tokens
+    /// @return amount0 Amount of token0 withdrawn
+    /// @return amount1 Amount of token1 withdrawn
     function _withdrawLiquidity(
         PoolKey calldata key,
         uint256 sharesToBurn,
