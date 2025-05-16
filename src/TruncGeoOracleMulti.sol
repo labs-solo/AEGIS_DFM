@@ -74,10 +74,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     mapping(bytes32 => uint48) private lastFreqTs; // last decay update
 
     /* ────────────────────── LATEST TICK CACHE ─────────────────────── */
-    /// @dev Per-pool cache of the most recent tick.  Replaces the former
-    ///      `prevTick` field that sat inside every observation slot and
-    ///      restores the oracle ring-buffer to a single storage word.
-    mapping(bytes32 => int24) private _lastTick; // newest observed tick per pool
+    // (latest-tick cache removed – callers can query pool slot0 directly)
 
     struct ObservationState {
         uint16 index;
@@ -221,7 +218,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         TruncatedOracle.Observation[PAGE_SIZE] storage first = _pages[id][0];
         first.initialize(uint32(block.timestamp), initialTick);
         states[id] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 1});
-        _lastTick[id] = initialTick; // seed latest-tick cache
 
         // Clamp defaultCap inside the validated range
         if (defaultCap < pc.minCap) defaultCap = pc.minCap;
@@ -298,8 +294,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         // in-place observation rather than creating a brand new slot – this
         // mirrors the behaviour of Uniswap-V3ʼs oracle and preserves gas.
         if (!wroteNewSlot) {
-            // Same-second update: overwrite cached tick only (saves gas).
-            _lastTick[id] = currentTick;
+            // Same-second update path – no additional storage writes now that
+            // the latest-tick cache has been removed.
         }
 
         if (wroteNewSlot) {
@@ -332,8 +328,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
                 state.cardinalityNext = state.cardinality + 1;
             }
 
-            // Cache the freshly written tick.
-            _lastTick[id] = currentTick;
+            // latest-tick cache removed – nothing to update here.
         }
 
         // Update auto-tune frequency counter if capped
@@ -376,11 +371,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /// @notice Return the most recent observation stored for `pid`.
     /// @dev    - Gas optimisation -
     ///         We *do not* copy the whole `Observation` struct to memory.
-    ///         Instead we keep a **storage** reference and read just the two
-    ///         fields we need, saving ~120 gas per call.
-    ///         The tick itself is now fetched from the dedicated `_lastTick`
-    ///         mapping instead of the observation slot, so the observation
-    ///         struct stays a single 256-bit word.
+    ///         Instead we keep a **storage** reference and read only the
+    ///         timestamp field, then fetch the live tick directly from
+    ///         the pool's `slot0`, avoiding any extra per-observation state.
     function getLatestObservation(PoolId pid) external view returns (int24 tick, uint32 blockTimestamp) {
         bytes32 id = PoolId.unwrap(pid);
         if (states[id].cardinality == 0) {
@@ -390,7 +383,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         ObservationState storage state = states[id];
         // ---- inline fast-path (no struct copy) ----------------------------
         TruncatedOracle.Observation storage o = _leaf(id, state.index)[state.index % PAGE_SIZE];
-        return (_lastTick[id], o.blockTimestamp);
+        (, int24 liveTick,,) = StateLibrary.getSlot0(poolManager, pid); // fetch current tick
+        return (liveTick, o.blockTimestamp);
     }
 
     /**
