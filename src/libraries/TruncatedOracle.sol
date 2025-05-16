@@ -26,12 +26,11 @@ library TruncatedOracle {
     event TickCapped(int24 newTick);
 
     /// @dev **Packed** Observation – 256-bit exact fit
-    ///      32 + 24 + 48 + 144 + 8 = 256
+    ///      32 + 56 + 160 + 8 = 256
     struct Observation {
         uint32 blockTimestamp; //  32 bits
-        int24 prevTick; //  24 bits ( 56)
-        int56 tickCumulative; //  56 bits (112)
-        uint160 secondsPerLiquidityCumulativeX128; // 160 bits (272)
+        int56 tickCumulative; //  56 bits ( 88)
+        uint160 secondsPerLiquidityCumulativeX128; // 160 bits (248)
         bool initialized; //   8 bits (256)
     }
 
@@ -57,11 +56,10 @@ library TruncatedOracle {
 
             // --------------------------------------------------------------------
             //  ⛽  Fast-return: if called within the *same* block we can skip all
-            //      cumulative maths and just update `prevTick`.  Saves ~240 gas
-            //      on ~30 % of write-paths (observations flushed twice per block).
+            //      cumulative maths. Saves ~240 gas on ~30 % of write-paths
+            //      (observations flushed twice per block).
             // --------------------------------------------------------------------
             if (delta == 0) {
-                last.prevTick = tick;
                 return last;
             }
 
@@ -70,7 +68,6 @@ library TruncatedOracle {
 
             return Observation({
                 blockTimestamp: blockTimestamp,
-                prevTick: tick,
                 tickCumulative: _safeCastTickCumulative(int256(last.tickCumulative) + _mulTickDelta(tick, delta)),
                 secondsPerLiquidityCumulativeX128: last.secondsPerLiquidityCumulativeX128
                     + ((uint160(delta) << 128) / (liquidity > 0 ? liquidity : 1)),
@@ -91,11 +88,11 @@ library TruncatedOracle {
     {
         self[0] = Observation({
             blockTimestamp: time,
-            prevTick: tick,
             tickCumulative: 0,
             secondsPerLiquidityCumulativeX128: 0,
             initialized: true
         });
+        tick; // silence unused variable warning
         return (1, 1);
     }
 
@@ -145,7 +142,6 @@ library TruncatedOracle {
             // Skip secondary capping – already handled upstream to save gas.
 
             o.blockTimestamp = blockTimestamp;
-            o.prevTick = tick;
             o.tickCumulative = _safeCastTickCumulative(int256(last.tickCumulative) + _mulTickDelta(tick, delta));
             o.secondsPerLiquidityCumulativeX128 = last.secondsPerLiquidityCumulativeX128
                 + uint160((uint256(delta) << 128) / (liquidity == 0 ? 1 : liquidity));
