@@ -141,22 +141,13 @@ contract Spot is BaseHook, ISpot {
         uint256 amount1Min,
         address recipient
     ) external payable override onlyPolicyOwner returns (uint256 shares, uint256 amount0, uint256 amount1) {
-        // Handle token transfers from user to Spot
-        _transferTokensFromUser(key.currency0, key.currency1, amount0Desired, amount1Desired);
-
-        // Ensure FRLM has sufficient approvals for the exact amounts needed
-        _ensureLiquidityManagerApprovals(key.currency0, key.currency1, amount0Desired, amount1Desired);
-
+        // Pass msg.sender as the payer to avoid token transfers through Spot
         uint256 unusedAmount0;
         uint256 unusedAmount1;
 
-        // Forward call to FullRangeLiquidityManager
         (shares, amount0, amount1, unusedAmount0, unusedAmount1) = liquidityManager.deposit{value: msg.value}(
-            key, amount0Desired, amount1Desired, amount0Min, amount1Min, recipient
+            key, amount0Desired, amount1Desired, amount0Min, amount1Min, recipient, msg.sender
         );
-
-        // Refund any unused ERC20 tokens to the original sender
-        _refundUnusedTokens(key.currency0, key.currency1, msg.sender, unusedAmount0, unusedAmount1);
 
         return (shares, amount0, amount1);
     }
@@ -169,8 +160,8 @@ contract Spot is BaseHook, ISpot {
         uint256 amount1Min,
         address recipient
     ) external override onlyPolicyOwner returns (uint256 amount0, uint256 amount1) {
-        // Simply forward the call to the liquidityManager
-        return liquidityManager.withdraw(key, sharesToBurn, amount0Min, amount1Min, recipient);
+        // Forward the call with msg.sender as the sharesOwner
+        return liquidityManager.withdraw(key, sharesToBurn, amount0Min, amount1Min, recipient, msg.sender);
     }
 
     // - - - Hook Callback Implementations - - -
@@ -344,103 +335,5 @@ contract Spot is BaseHook, ISpot {
         }
 
         return BaseHook.afterInitialize.selector;
-    }
-
-    // - - - Proxy Internal Helpers - - -
-
-    /**
-     * @dev Transfers tokens from the user to this contract
-     * @param currency0 The first token
-     * @param currency1 The second token
-     * @param amount0 The amount of the first token
-     * @param amount1 The amount of the second token
-     */
-    function _transferTokensFromUser(Currency currency0, Currency currency1, uint256 amount0, uint256 amount1)
-        private
-    {
-        // Handle native ETH if applicable
-        if (currency0.isAddressZero()) {
-            if (msg.value < amount0) revert Errors.InsufficientETH(amount0, msg.value);
-        } else {
-            IERC20Minimal(Currency.unwrap(currency0)).transferFrom(msg.sender, address(this), amount0);
-        }
-
-        if (currency1.isAddressZero()) {
-            if (msg.value < amount1) revert Errors.InsufficientETH(amount1, msg.value);
-        } else if (!currency0.isAddressZero() || !(currency0 == currency1)) {
-            // Only transfer token1 if it's not the same native ETH as token0
-            IERC20Minimal(Currency.unwrap(currency1)).transferFrom(msg.sender, address(this), amount1);
-        }
-    }
-
-    /// @dev Ensures that the liquidity manager has adequate token approvals
-    /// @param currency0 The first token
-    /// @param currency1 The second token
-    /// @param amount0 The amount of the first token needed
-    /// @param amount1 The amount of the second token needed
-    function _ensureLiquidityManagerApprovals(Currency currency0, Currency currency1, uint256 amount0, uint256 amount1)
-        private
-    {
-        // Approve token0 if it's not ETH
-        if (!currency0.isAddressZero()) {
-            address token0 = Currency.unwrap(currency0);
-            IERC20Minimal token = IERC20Minimal(token0);
-
-            // Check current allowance
-            uint256 currentAllowance = token.allowance(address(this), address(liquidityManager));
-
-            // If current allowance is less than needed, approve the maximum possible
-            if (currentAllowance < amount0) {
-                // First set approval to 0 to handle tokens that require it for safety
-                if (currentAllowance > 0) {
-                    token.approve(address(liquidityManager), 0);
-                }
-                token.approve(address(liquidityManager), type(uint256).max);
-            }
-        }
-
-        // Approve token1 if it's not ETH and not the same as token0
-        if (!currency1.isAddressZero() && !(currency0 == currency1)) {
-            address token1 = Currency.unwrap(currency1);
-            IERC20Minimal token = IERC20Minimal(token1);
-
-            // Check current allowance
-            uint256 currentAllowance = token.allowance(address(this), address(liquidityManager));
-
-            // If current allowance is less than needed, approve the maximum possible
-            if (currentAllowance < amount1) {
-                // First set approval to 0 to handle tokens that require it for safety
-                if (currentAllowance > 0) {
-                    token.approve(address(liquidityManager), 0);
-                }
-                token.approve(address(liquidityManager), type(uint256).max);
-            }
-        }
-    }
-
-    /// @dev Refunds unused tokens back to the user
-    /// @param currency0 The first token
-    /// @param currency1 The second token
-    /// @param to The address to refund tokens to
-    /// @param unusedAmount0 The unused amount of the first token
-    /// @param unusedAmount1 The unused amount of the second token
-    function _refundUnusedTokens(
-        Currency currency0,
-        Currency currency1,
-        address to,
-        uint256 unusedAmount0,
-        uint256 unusedAmount1
-    ) private {
-        // The FRLM should have already refunded these tokens to us,
-        // so we just need to forward them to the user
-
-        // Only need to handle non-ETH tokens, as ETH is refunded directly by FRLM
-        if (unusedAmount0 > 0 && !currency0.isAddressZero()) {
-            IERC20Minimal(Currency.unwrap(currency0)).transfer(to, unusedAmount0);
-        }
-
-        if (unusedAmount1 > 0 && !currency1.isAddressZero() && !(currency0 == currency1)) {
-            IERC20Minimal(Currency.unwrap(currency1)).transfer(to, unusedAmount1);
-        }
     }
 }

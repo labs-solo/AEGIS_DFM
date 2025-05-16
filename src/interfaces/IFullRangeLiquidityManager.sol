@@ -66,7 +66,8 @@ interface IFullRangeLiquidityManager {
     /// @param amount0Min The minimum amount of token0 that must be used to prevent slippage
     /// @param amount1Min The minimum amount of token1 that must be used to prevent slippage
     /// @param recipient The address to receive share tokens
-    /// @return shares The amount of share tokens minted, corresponding 1:1 with liquidity
+    /// @param payer The address of the payer whose allowance the FRLM will try spend
+    /// @return liquidityAdded The amount of share tokens minted, corresponding 1:1 with liquidity
     /// @return amount0 The amount of token0 actually deposited
     /// @return amount1 The amount of token1 actually deposited
     /// @return unusedAmount0 The amount of token0 not used in the deposit
@@ -77,11 +78,12 @@ interface IFullRangeLiquidityManager {
         uint256 amount1Desired,
         uint256 amount0Min,
         uint256 amount1Min,
-        address recipient
+        address recipient,
+        address payer
     )
         external
         payable
-        returns (uint256 shares, uint256 amount0, uint256 amount1, uint256 unusedAmount0, uint256 unusedAmount1);
+        returns (uint256 liquidityAdded, uint256 amount0, uint256 amount1, uint256 unusedAmount0, uint256 unusedAmount1);
 
     /// @notice Allows users to withdraw liquidity by burning share tokens
     /// @dev Burns ERC6909 shares and returns the proportional amount of underlying assets
@@ -90,6 +92,7 @@ interface IFullRangeLiquidityManager {
     /// @param amount0Min The minimum amount of token0 to receive to prevent slippage
     /// @param amount1Min The minimum amount of token1 to receive to prevent slippage
     /// @param recipient The address to receive the withdrawn tokens
+    /// @param sharesOwner The address to owner whose shares will be burned
     /// @return amount0 The amount of token0 received
     /// @return amount1 The amount of token1 received
     function withdraw(
@@ -97,7 +100,8 @@ interface IFullRangeLiquidityManager {
         uint256 sharesToBurn,
         uint256 amount0Min,
         uint256 amount1Min,
-        address recipient
+        address recipient,
+        address sharesOwner
     ) external returns (uint256 amount0, uint256 amount1);
 
     /// @notice Emergency withdrawal function for handling unexpected scenarios

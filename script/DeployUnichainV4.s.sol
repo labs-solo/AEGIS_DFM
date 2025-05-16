@@ -84,10 +84,7 @@ contract DeployUnichainV4 is Script {
         supportedTickSpacings_[2] = 200;
         policyManager = new PoolPolicyManager(
             deployerAddress, // owner
-            EXPECTED_DEFAULT_DYNAMIC_FEE, // defaultDynamicFee. Removed uint32 cast
-            supportedTickSpacings_, // supportedTickSpacings
             0,
-            msg.sender,
             EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
             EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
         );

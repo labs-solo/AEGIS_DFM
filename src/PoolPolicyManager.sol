@@ -103,21 +103,12 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @notice Constructor initializes the policy manager with default values
     /// @param _governance The owner of the contract
-    /// @param _defaultDynamicFee Initial fee configuration
-    /// @param _supportedTickSpacings Array of initially supported tick spacings (unused)
     /// @param _dailyBudget Initial daily budget
-    /// @param _feeCollector Initial fee collector address (unused)
     /// @param _minTradingFee Minimum trading fee
     /// @param _maxTradingFee Maximum trading fee
-    constructor(
-        address _governance,
-        uint24 _defaultDynamicFee,
-        uint24[] memory _supportedTickSpacings,
-        uint256 _dailyBudget,
-        address _feeCollector,
-        uint24 _minTradingFee,
-        uint24 _maxTradingFee
-    ) Owned(_governance) {
+    constructor(address _governance, uint256 _dailyBudget, uint24 _minTradingFee, uint24 _maxTradingFee)
+        Owned(_governance)
+    {
         if (_governance == address(0)) revert Errors.ZeroAddress();
 
         // Initialize immutables
@@ -240,7 +231,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @inheritdoc IPoolPolicyManager
     function clearManualFee(PoolId poolId) external override onlyOwner {
         if (_hasPoolManualFee[poolId]) {
-            uint24 oldFee = _poolManualFee[poolId];
             _poolManualFee[poolId] = 0;
             _hasPoolManualFee[poolId] = false;
 
@@ -301,6 +291,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @inheritdoc IPoolPolicyManager
     function getDailyBudgetPpm(PoolId poolId) external view override returns (uint32) {
+        // TODO: consider making this per pool
         return _capBudgetDailyPpm;
     }
 
