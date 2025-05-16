@@ -13,7 +13,7 @@ import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {MathUtils} from "../libraries/MathUtils.sol";
 import {Errors} from "../errors/Errors.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {IPoolPolicy} from "../interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../interfaces/IPoolPolicyManager.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 
 library FullRangeUtils {
@@ -71,22 +71,22 @@ library FullRangeUtils {
 
     /**
      * @notice Assembles an array of policy implementation addresses for all policy types of a given pool.
-     * @dev Fetches each policy via the IPoolPolicy interface. Used during pool initialization to initialize all policies.
-     * @param policyManager The IPoolPolicy contract providing access to policy addresses.
+     * @dev Fetches each policy via the IPoolPolicyManager interface. Used during pool initialization to initialize all policies.
+     * @param policyManager The IPoolPolicyManager contract providing access to policy addresses.
      * @param poolId The unique PoolId of the pool.
      * @return implementations An address[6] array containing the implementation contract for each policy type.
      */
-    function getPoolPolicyImplementations(IPoolPolicy policyManager, PoolId poolId)
+    function getPoolPolicyImplementations(IPoolPolicyManager policyManager, PoolId poolId)
         internal
         view
         returns (address[] memory implementations)
     {
         implementations = new address[](6);
-        implementations[0] = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.FEE);
-        implementations[1] = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.VTIER);
-        implementations[2] = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.FEE);
-        implementations[3] = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.TICK_SCALING);
-        implementations[4] = policyManager.getPolicy(poolId, IPoolPolicy.PolicyType.REINVESTMENT);
+        implementations[0] = policyManager.getPolicy(poolId, IPoolPolicyManager.PolicyType.FEE);
+        implementations[1] = policyManager.getPolicy(poolId, IPoolPolicyManager.PolicyType.VTIER);
+        implementations[2] = policyManager.getPolicy(poolId, IPoolPolicyManager.PolicyType.FEE);
+        implementations[3] = policyManager.getPolicy(poolId, IPoolPolicyManager.PolicyType.TICK_SCALING);
+        implementations[4] = policyManager.getPolicy(poolId, IPoolPolicyManager.PolicyType.REINVESTMENT);
         implementations[5] = address(0);
         return implementations;
     }

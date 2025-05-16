@@ -4,7 +4,7 @@ pragma solidity ^0.8.27;
 import "forge-std/Test.sol";
 import "../lib/EventTools.sol";
 
-import {PoolPolicyManager, IPoolPolicy} from "src/PoolPolicyManager.sol";
+import {PoolPolicyManager, IPoolPolicyManager} from "src/PoolPolicyManager.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Errors} from "src/errors/Errors.sol"; // for precise revert selectors
 
@@ -17,9 +17,9 @@ contract PoolPolicyManager_Tick is Test {
     address constant OWNER = address(0xBEEF);
     address constant ALICE = address(0xA11CE); // non-owner
 
-    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     /*─────────────────── set-up ───────────────────*/
     function setUp() public {
@@ -40,8 +40,8 @@ contract PoolPolicyManager_Tick is Test {
 
     /*────────────────── Constructor defaults ──────────────────*/
     function testConstructorSeedsSupportedTickSpacings() public view {
-        assertTrue (ppm.isTickSpacingSupported(1));
-        assertTrue (ppm.isTickSpacingSupported(10));
+        assertTrue(ppm.isTickSpacingSupported(1));
+        assertTrue(ppm.isTickSpacingSupported(10));
         assertFalse(ppm.isTickSpacingSupported(60));
     }
 
@@ -56,7 +56,7 @@ contract PoolPolicyManager_Tick is Test {
 
         // Check PolicySet event
         EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.VTIER, address(1), OWNER
+            this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.VTIER, address(1), OWNER
         );
 
         vm.prank(OWNER);
@@ -91,14 +91,14 @@ contract PoolPolicyManager_Tick is Test {
         emit TickSpacingSupportChanged(60, true);
 
         EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.VTIER, address(1), OWNER
+            this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.VTIER, address(1), OWNER
         );
 
         EventTools.expectEmitIf(this, willEmit10, false, false, false, true);
         emit TickSpacingSupportChanged(10, false);
 
         EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.VTIER, address(0), OWNER
+            this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.VTIER, address(0), OWNER
         );
 
         vm.prank(OWNER);
@@ -119,39 +119,6 @@ contract PoolPolicyManager_Tick is Test {
         vm.prank(OWNER);
         vm.expectRevert(Errors.ArrayLengthMismatch.selector);
         ppm.batchUpdateAllowedTickSpacings(arr, flg);
-    }
-
-    /*─────────────────── Tick-scaling factor ───────────────────*/
-    function testOwnerCanSetTickScalingFactor() public {
-        // Check if current value matches desired value
-        int24 prevFactor = ppm.getTickScalingFactor();
-        assertNotEq(prevFactor, 3);
-
-        vm.expectEmit(true, true, true, true);
-        // The function setTickScalingFactor incorrectly emits VTIER(2) instead of TICK_SCALING(1)
-        // Adjusting expectation to match the actual emitted event for now.
-        emit PoolPolicyManager.PolicySet(
-            PoolId.wrap(bytes32(0)),
-            IPoolPolicy.PolicyType.VTIER, // Expecting VTIER(2) based on trace
-            address(uint160(uint256(int256(3)))),
-            OWNER
-        );
-
-        vm.prank(OWNER);
-        ppm.setTickScalingFactor(3);
-        assertEq(ppm.getTickScalingFactor(), 3);
-    }
-
-    function testSetTickScalingFactorZeroReverts() public {
-        vm.prank(OWNER);
-        vm.expectRevert(abi.encodeWithSelector(Errors.ParameterOutOfRange.selector, 0, 1, type(uint24).max));
-        ppm.setTickScalingFactor(0);
-    }
-
-    function testNonOwnerSetTickScalingFactorReverts() public {
-        vm.prank(ALICE);
-        vm.expectRevert("UNAUTHORIZED");
-        ppm.setTickScalingFactor(5);
     }
 
     /*───────────────────── isValidVtier table tests ───────────────────*/

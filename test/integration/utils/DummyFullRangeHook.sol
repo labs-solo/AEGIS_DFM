@@ -18,8 +18,8 @@ contract DummyFullRangeHook {
 
     /// @notice One-time setter used only in tests to wire the oracle.
     function setOracle(address _oracle) external {
-        require(msg.sender == owner,         "DummyHook: not-owner");
-        require(oracle == address(0),        "DummyHook: oracle-set");
+        require(msg.sender == owner, "DummyHook: not-owner");
+        require(oracle == address(0), "DummyHook: oracle-set");
         oracle = _oracle;
     }
 
@@ -27,7 +27,7 @@ contract DummyFullRangeHook {
     /// @dev `capped` is intentionally ignored; removing its identifier + making the
     ///      function `pure` eliminates both warnings (5667 & 2018) without changing
     ///      behaviour or byte-code size.
-    function notifyOracle(bool /* capped */) external pure {
+    function notifyOracle(bool /* capped */ ) external pure {
         // no-op
     }
 }

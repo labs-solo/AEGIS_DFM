@@ -6,26 +6,26 @@ pragma solidity ^0.8.27;
 └───────────────────────────────────────────────────────────────────────────*/
 import "forge-std/Test.sol";
 
-import {PoolId, PoolIdLibrary}   from "v4-core/src/types/PoolId.sol";
-import {PoolKey}                 from "v4-core/src/types/PoolKey.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
-import {BalanceDelta}            from "v4-core/src/types/BalanceDelta.sol";
-import {ModifyLiquidityParams}   from "v4-core/src/types/PoolOperation.sol";
-import {SwapParams}              from "v4-core/src/types/PoolOperation.sol";
-import {IPoolManager}            from "v4-core/src/interfaces/IPoolManager.sol";
-import {Hooks}                   from "v4-core/src/libraries/Hooks.sol";
-import {IHooks}                  from "v4-core/src/interfaces/IHooks.sol";
-import {HookMiner}               from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
+import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
+import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
+import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 
-import {Spot}                    from "../../src/Spot.sol";
-import {ISpot, DepositParams}    from "../../src/interfaces/ISpot.sol";
-import {Errors}                  from "../../src/errors/Errors.sol";
-import {IPoolPolicy}             from "../../src/interfaces/IPoolPolicy.sol";
+import {Spot} from "../../src/Spot.sol";
+import {ISpot, DepositParams} from "../../src/interfaces/ISpot.sol";
+import {Errors} from "../../src/errors/Errors.sol";
+import {IPoolPolicyManager} from "../../src/interfaces/IPoolPolicyManager.sol";
 import {IFullRangeLiquidityManager} from "../../src/interfaces/IFullRangeLiquidityManager.sol";
-import {TruncGeoOracleMulti}     from "../../src/TruncGeoOracleMulti.sol";
-import {IDynamicFeeManager}      from "../../src/interfaces/IDynamicFeeManager.sol";
+import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol";
+import {IDynamicFeeManager} from "../../src/interfaces/IDynamicFeeManager.sol";
 
-import {LM}                      from "../helpers/LM.sol";
+import {LM} from "../helpers/LM.sol";
 
 /*───────────────────────────────────────────────────────────────────────────
 │                              Tiny-Mocks                                   │
@@ -52,17 +52,29 @@ contract PM {
 
     /* Generic fallback — return "true" (32-byte 1) for all other calls   */
     fallback() external payable {
-        assembly { mstore(0, 1) return(0, 0x20) }
+        assembly {
+            mstore(0, 1)
+            return(0, 0x20)
+        }
     }
 
     receive() external payable {}
 }
 
 contract OracleStub {
-    function pushObservationAndCheckCap(PoolId, int24) external pure returns (bool) { return false; }
+    function pushObservationAndCheckCap(PoolId, int24) external pure returns (bool) {
+        return false;
+    }
+
     function enableOracleForPool(PoolKey calldata) external {}
-    function isOracleEnabled(PoolId) external pure returns (bool) { return false; }
-    function getLatestObservation(PoolId) external pure returns (int24, uint32) { return (0,0); }
+
+    function isOracleEnabled(PoolId) external pure returns (bool) {
+        return false;
+    }
+
+    function getLatestObservation(PoolId) external pure returns (int24, uint32) {
+        return (0, 0);
+    }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -73,21 +85,24 @@ contract PolicyStub {
     address public immutable governor;
     address public feeCollector = address(0xFEE5);
 
-    constructor(address _gov) { governor = _gov; }
-
-    /* -------- IPoolPolicy bits the hook touches ------------------------ */
-    function getSoloGovernance() external view returns (address) { return governor; }
-    function getFeeCollector() external view returns (address) { return feeCollector; }
-    function getFeeAllocations(PoolId) external pure returns (uint256,uint256,uint256) {
-        return (0,0,0);
+    constructor(address _gov) {
+        governor = _gov;
     }
-    function handlePoolInitialization(
-        PoolId, PoolKey calldata, uint160, int24, address
-    ) external {}
+
+    /* -------- IPoolPolicyManager bits the hook touches ------------------------ */
+
+    function getFeeAllocations(PoolId) external pure returns (uint256, uint256, uint256) {
+        return (0, 0, 0);
+    }
+
+    function handlePoolInitialization(PoolId, PoolKey calldata, uint160, int24, address) external {}
 }
 
 contract DFStub {
-    function getFeeState(PoolId) external pure returns (uint256, uint256) { return (0,0); }
+    function getFeeState(PoolId) external pure returns (uint256, uint256) {
+        return (0, 0);
+    }
+
     function notifyOracleUpdate(PoolId, bool) external {}
     function initialize(PoolId, int24) external {}
 }
@@ -134,22 +149,22 @@ contract SpotUnitTest is Test {
     receive() external payable {}
 
     /* test constants */
-    bytes32  constant PID_BYTES = bytes32(uint256(1));
-    PoolId   constant PID       = PoolId.wrap(PID_BYTES);
-    address  constant CURRENCY  = address(0xA11CE);
-    uint24   constant TICK_SP   = 60;
+    bytes32 constant PID_BYTES = bytes32(uint256(1));
+    PoolId constant PID = PoolId.wrap(PID_BYTES);
+    address constant CURRENCY = address(0xA11CE);
+    uint24 constant TICK_SP = 60;
 
     /* system under test */
-    Spot  spot;
-    PM    pm;
-    LM    lm;
+    Spot spot;
+    PM pm;
+    LM lm;
     OracleStub oracle;
     PolicyStub policy;
     DFStub dfm;
 
     function setUp() public {
-        pm     = new PM();
-        lm     = new LM();
+        pm = new PM();
+        lm = new LM();
         /* The LM mock tries to reimburse the caller with 1 wei inside
            `deposit()`.  Without an ETH balance that call under-flows and
            the whole deposit reverts.  Give it some spare change up-front. */
@@ -157,28 +172,28 @@ contract SpotUnitTest is Test {
 
         oracle = new OracleStub();
         policy = new PolicyStub(address(this));
-        dfm    = new DFStub();
+        dfm = new DFStub();
 
         /* --------------------------------------------------------------
          * 1. figure out the required flag-bitmap from Spot's permissions
          * 2. use HookMiner to find a CREATE2-salt that yields an address
          *    with those flags embedded (✓ BaseHook constructor check)
          * ----------------------------------------------------------- */
-        /** we only need 4 flags – keep the bitmap minimal */
+        /**
+         * we only need 4 flags – keep the bitmap minimal
+         */
         uint160 flags = uint160(
-            Hooks.AFTER_INITIALIZE_FLAG
-          | Hooks.BEFORE_SWAP_FLAG
-          | Hooks.AFTER_SWAP_FLAG
-          | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
+            Hooks.AFTER_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG
+                | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG
         );
 
         (address expectedAddr, bytes32 salt) = HookMiner.find(
-            address(this),                       // deployer
+            address(this), // deployer
             flags,
             type(Spot).creationCode,
             abi.encode(
                 IPoolManager(address(pm)),
-                IPoolPolicy(address(policy)),
+                IPoolPolicyManager(address(policy)),
                 IFullRangeLiquidityManager(address(lm)),
                 TruncGeoOracleMulti(address(oracle)),
                 IDynamicFeeManager(address(dfm)),
@@ -189,7 +204,7 @@ contract SpotUnitTest is Test {
         /* deploy Spot at the pre-computed address */
         spot = new Spot{salt: salt}(
             IPoolManager(address(pm)),
-            IPoolPolicy(address(policy)),
+            IPoolPolicyManager(address(policy)),
             IFullRangeLiquidityManager(address(lm)),
             TruncGeoOracleMulti(address(oracle)),
             IDynamicFeeManager(address(dfm)),
@@ -219,7 +234,7 @@ contract SpotUnitTest is Test {
         vm.expectRevert();
         new Spot(
             IPoolManager(address(0)),
-            IPoolPolicy(address(policy)),
+            IPoolPolicyManager(address(policy)),
             IFullRangeLiquidityManager(address(lm)),
             TruncGeoOracleMulti(address(oracle)),
             IDynamicFeeManager(address(dfm)),
@@ -262,12 +277,12 @@ contract SpotUnitTest is Test {
 
     /*───────────────── reinvest global pause ──────────────────*/
     function testPauseToggle() public {
-        vm.expectEmit(false,false,false,true);
+        vm.expectEmit(false, false, false, true);
         emit Spot.ReinvestmentPauseToggled(true);
         spot.setReinvestmentPaused(true);
         assertTrue(spot.reinvestmentPaused());
 
-        vm.expectEmit(false,false,false,true);
+        vm.expectEmit(false, false, false, true);
         emit Spot.ReinvestmentPauseToggled(false);
         spot.setReinvestmentPaused(false);
         assertFalse(spot.reinvestmentPaused());
@@ -276,14 +291,14 @@ contract SpotUnitTest is Test {
     /*───────────── governance-only setter check ───────────────*/
     function testOnlyGovernance() public {
         vm.prank(address(0xdEaD));
-        vm.expectRevert();  // any revert – exact selector is implementation-detail
+        vm.expectRevert(); // any revert – exact selector is implementation-detail
         spot.setReinvestmentPaused(true);
     }
 
     /*────────────────── reinvestCfg storage ───────────────────*/
     function testSetReinvestConfigStores() public {
         spot.setPoolEmergencyState(PID, false); // caller = governance → OK now
-        spot.setReinvestConfig(PID, 1,2,3);
+        spot.setReinvestConfig(PID, 1, 2, 3);
 
         (
             , /* initialized */
@@ -292,12 +307,12 @@ contract SpotUnitTest is Test {
             , /* PoolKey */
             uint256 min0,
             uint256 min1,
-            uint64  last,
-            uint64  cd
+            uint64 last,
+            uint64 cd
         ) = spot.pools(PID_BYTES);
         assertEq(min0, 1);
         assertEq(min1, 2);
-        assertEq(cd  , 3);
+        assertEq(cd, 3);
         assertEq(last, 0);
     }
 

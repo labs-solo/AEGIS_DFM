@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 // minimal subset used by tests
-pragma solidity ^0.8.27;
+pragma solidity >=0.5.0;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 
@@ -62,10 +62,7 @@ interface ITruncGeoOracleMulti {
     function observe(bytes calldata key, uint32[] calldata secondsAgos)
         external
         view
-        returns (
-            int56[]  memory tickCumulatives,
-            uint160[] memory secondsPerLiquidityCumulativeX128s
-        );
+        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s);
 
     /**
      * @notice Increases the cardinality of the oracle observation array

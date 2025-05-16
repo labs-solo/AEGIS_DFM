@@ -7,6 +7,8 @@ import "forge-std/Script.sol";
 // Uniswap V4 Core
 import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
@@ -19,22 +21,21 @@ import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 // import {DefaultPoolCreationPolicy} from "../src/DefaultPoolCreationPolicy.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 
 // Test Tokens
-import {MockERC20} from "../src/token/MockERC20.sol";
+import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 
 // New imports
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {HookMiner as HMiner} from "v4-periphery/src/utils/HookMiner.sol";
-import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
-import {ExtendedPositionManager} from "../src/ExtendedPositionManager.sol";
+import {DummyFullRangeHook} from "../test/integration/utils/DummyFullRangeHook.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -46,9 +47,9 @@ import {ExtendedPositionManager} from "../src/ExtendedPositionManager.sol";
  * 4. Test utility routers for liquidity and swaps
  */
 contract DeployLocalUniswapV4 is Script {
-    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     // ADD using directive HERE
     using PoolIdLibrary for PoolId;
@@ -115,12 +116,9 @@ contract DeployLocalUniswapV4 is Script {
         supportedTickSpacings[2] = 200;
         policyManager = new PoolPolicyManager(
             msg.sender,
-            EXPECTED_DEFAULT_DYNAMIC_FEE,
-            supportedTickSpacings,
             0,
-            msg.sender,
-            EXPECTED_MIN_DYNAMIC_FEE,     // NEW: min base fee
-            EXPECTED_MAX_DYNAMIC_FEE      // NEW: max base fee
+            EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
+            EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
         );
         console.log("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
@@ -141,13 +139,12 @@ contract DeployLocalUniswapV4 is Script {
         console.log("Deploying FullRange components...");
 
         // Deploy Liquidity Manager
-        liquidityManager =
-            new FullRangeLiquidityManager(
-                IPoolManager(address(poolManager)),
-                ExtendedPositionManager(payable(address(0))), // placeholder, to be wired later (cast via payable to satisfy compiler)
-                IPoolPolicy(address(0)),
-                governance
-            );
+        liquidityManager = new FullRangeLiquidityManager(
+            IPoolManager(address(poolManager)),
+            PositionManager(payable(address(0))), // placeholder, to be wired later (cast via payable to satisfy compiler)
+            policyManager,
+            address(0) // TODO: the Spot hook contract address
+        );
         console.log("LiquidityManager deployed at:", address(liquidityManager));
 
         // Deploy Spot hook (which is MarginHarness in this script)
@@ -166,7 +163,6 @@ contract DeployLocalUniswapV4 is Script {
 
         // Step 4: Configure deployed contracts
         console.log("Configuring contracts...");
-        liquidityManager.setAuthorizedHookAddress(address(fullRange));
 
         // Initialize Pool (requires hook address in key now)
         key.hooks = IHooks(address(fullRange)); // Update key with actual hook address
@@ -196,12 +192,7 @@ contract DeployLocalUniswapV4 is Script {
     }
 
     // Update _deployFullRange to accept and use PoolId and governance
-    function _deployFullRange(
-        address _deployer,
-        PoolId /* _poolId */,
-        PoolKey memory /* _key */,
-        address _governance
-    )
+    function _deployFullRange(address _deployer, PoolId, /* _poolId */ PoolKey memory, /* _key */ address _governance)
         internal
         returns (Spot)
     {
@@ -259,11 +250,10 @@ contract DeployLocalUniswapV4 is Script {
         // Deploy Spot
         Spot hook = new Spot{salt: salt}(
             poolManager,
-            IPoolPolicy(address(policyManager)),
             liquidityManager,
+            PoolPolicyManager(address(policyManager)),
             TruncGeoOracleMulti(address(0)), // Will be set later via setOracleAddress
-            IDynamicFeeManager(address(0)), // Will be set later via setDynamicFeeManager
-            _governance // governance injected here
+            IDynamicFeeManager(address(0)) // Will be set later via setDynamicFeeManager
         );
 
         // Verify the deployed address matches the calculated address
@@ -273,11 +263,7 @@ contract DeployLocalUniswapV4 is Script {
         return hook;
     }
 
-    function _onPoolCreated(
-        IPoolManager /* manager */,
-        uint160      /* sqrtPriceX96 */,
-        int24        /* tick */
-    ) internal pure {
+    function _onPoolCreated(IPoolManager, /* manager */ uint160, /* sqrtPriceX96 */ int24 /* tick */ ) internal pure {
         // logging stripped; nothing else to do
     }
 }

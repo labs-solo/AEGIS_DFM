@@ -7,7 +7,7 @@ import "forge-std/console.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {Spot} from "../src/Spot.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 
@@ -35,7 +35,7 @@ contract FixUnichain is Script {
         // Prepare constructor arguments for Spot
         bytes memory constructorArgs = abi.encode(
             IPoolManager(UNICHAIN_POOL_MANAGER),
-            IPoolPolicy(policyManager),
+            IPoolPolicyManager(policyManager),
             IFullRangeLiquidityManager(liquidityManager)
         );
 

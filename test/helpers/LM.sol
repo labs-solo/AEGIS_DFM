@@ -9,12 +9,11 @@ contract LM {
     uint256 public deposits;
     uint256 public withdrawals;
 
-    function deposit(
-        PoolId,
-        uint256, uint256,
-        uint256, uint256,
-        address receiver
-    ) external payable returns (uint256 s, uint256 a0, uint256 a1) {
+    function deposit(PoolId, uint256, uint256, uint256, uint256, address receiver)
+        external
+        payable
+        returns (uint256 s, uint256 a0, uint256 a1)
+    {
         deposits++;
         /* ----------------------------------------------------------------
          * Forward the 1 wei "rebate" to **the recipient passed by Spot**,
@@ -37,18 +36,23 @@ contract LM {
         return (100, 1 ether, 1 ether);
     }
 
-    function withdraw(
-        PoolId,
-        uint256, uint256, uint256,
-        address
-    ) external returns (uint256 a0, uint256 a1) {
+    function withdraw(PoolId, uint256, uint256, uint256, address) external returns (uint256 a0, uint256 a1) {
         withdrawals++;
         return (1 ether, 1 ether);
     }
 
     /* stubs needed by Spot */
-    function reinvest(PoolId, uint256, uint256, uint128) external returns (uint128) { return 1; }
-    function getPoolReserves(PoolId) external pure returns (uint256, uint256) { return (0,0); }
-    function positionTotalShares(PoolId) external pure returns (uint128) { return 1e18; }
+    function reinvest(PoolId, uint256, uint256, uint128) external returns (uint128) {
+        return 1;
+    }
+
+    function getPoolReserves(PoolId) external pure returns (uint256, uint256) {
+        return (0, 0);
+    }
+
+    function positionTotalShares(PoolId) external pure returns (uint128) {
+        return 1e18;
+    }
+
     function storePoolKey(PoolId, PoolKey calldata) external {}
 }

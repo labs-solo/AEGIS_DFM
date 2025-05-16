@@ -1,8 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.27;
 
-import {TickMoveGuard} from "./TickMoveGuard.sol";
-import {SafeCast}     from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title TruncatedOracle
 /// @notice Provides price oracle data with protection against price manipulation
@@ -13,7 +12,7 @@ library TruncatedOracle {
     /* -------------------------------------------------------------------------- */
     /// @dev Safety-fuse: prevent pathological gas usage in `grow()`
     uint16 internal constant MAX_CARDINALITY_ALLOWED = 8_192;
-    uint16 internal constant GROW_STEP_LIMIT         = 256;   // per-call growth guard
+    uint16 internal constant GROW_STEP_LIMIT = 256; // per-call growth guard
 
     /// @notice Thrown when trying to interact with an Oracle of a non-initialized pool
     error OracleCardinalityCannotBeZero();
@@ -72,9 +71,7 @@ library TruncatedOracle {
             return Observation({
                 blockTimestamp: blockTimestamp,
                 prevTick: tick,
-                tickCumulative: _safeCastTickCumulative(
-                    int256(last.tickCumulative) + _mulTickDelta(tick, delta)
-                ),
+                tickCumulative: _safeCastTickCumulative(int256(last.tickCumulative) + _mulTickDelta(tick, delta)),
                 secondsPerLiquidityCumulativeX128: last.secondsPerLiquidityCumulativeX128
                     + ((uint160(delta) << 128) / (liquidity > 0 ? liquidity : 1)),
                 initialized: true
@@ -149,9 +146,7 @@ library TruncatedOracle {
 
             o.blockTimestamp = blockTimestamp;
             o.prevTick = tick;
-            o.tickCumulative = _safeCastTickCumulative(
-                int256(last.tickCumulative) + _mulTickDelta(tick, delta)
-            );
+            o.tickCumulative = _safeCastTickCumulative(int256(last.tickCumulative) + _mulTickDelta(tick, delta));
             o.secondsPerLiquidityCumulativeX128 = last.secondsPerLiquidityCumulativeX128
                 + uint160((uint256(delta) << 128) / (liquidity == 0 ? 1 : liquidity));
             o.initialized = true;
@@ -169,11 +164,7 @@ library TruncatedOracle {
     /// @param current The current next cardinality of the oracle array
     /// @param next The proposed next cardinality which will be populated in the oracle array
     /// @return next The next cardinality which will be populated in the oracle array
-    function grow(
-        Observation[512] storage self,
-        uint16 current,
-        uint16 next
-    ) internal returns (uint16) {
+    function grow(Observation[512] storage self, uint16 current, uint16 next) internal returns (uint16) {
         unchecked {
             if (current == 0) revert OracleCardinalityCannotBeZero();
             // Guard against out-of-gas loops
@@ -221,13 +212,11 @@ library TruncatedOracle {
     /// @param cardinality The number of populated elements in the oracle array
     /// @return beforeOrAt The observation which occurred at, or before, the given timestamp
     /// @return atOrAfter The observation which occurred at, or after, the given timestamp
-    function binarySearch(
-        Observation[512] storage self,
-        uint32 time,
-        uint32 target,
-        uint16 index,
-        uint16 cardinality
-    ) internal view returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
+    function binarySearch(Observation[512] storage self, uint32 time, uint32 target, uint16 index, uint16 cardinality)
+        internal
+        view
+        returns (Observation memory beforeOrAt, Observation memory atOrAfter)
+    {
         uint256 l = (index + 1) % cardinality; // oldest observation
         uint256 r = l + cardinality - 1; // newest observation
         uint256 i;
@@ -411,10 +400,11 @@ library TruncatedOracle {
 
             return (
                 _safeCastTickCumulative(
-                    int256(beforeOrAt.tickCumulative) + (
-                        (int256(atOrAfter.tickCumulative) - int256(beforeOrAt.tickCumulative))
-                            * int256(uint256(targetDelta)) / int256(uint256(observationTimeDelta))
-                    )
+                    int256(beforeOrAt.tickCumulative)
+                        + (
+                            (int256(atOrAfter.tickCumulative) - int256(beforeOrAt.tickCumulative))
+                                * int256(uint256(targetDelta)) / int256(uint256(observationTimeDelta))
+                        )
                 ),
                 beforeOrAt.secondsPerLiquidityCumulativeX128
                     + uint160(

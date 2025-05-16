@@ -6,8 +6,10 @@ import "forge-std/console.sol";
 
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 import {Spot} from "../src/Spot.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
 import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityManager.sol";
 import {PoolPolicyManager} from "../src/PoolPolicyManager.sol";
 import {FullRangeLiquidityManager} from "../src/FullRangeLiquidityManager.sol";
@@ -15,8 +17,7 @@ import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
-import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
-import {ExtendedPositionManager} from "../src/ExtendedPositionManager.sol";
+import {DummyFullRangeHook} from "../test/integration/utils/DummyFullRangeHook.sol";
 
 /**
  * Script to directly deploy the hook with an explicit constructor and salt.
@@ -29,9 +30,9 @@ contract DirectDeploy is Script {
 
     // Constants
     uint256 constant LIQUIDITY_ACCUMULATOR_REACTIVATION_DELAY = 3600; // 1 hour in seconds
-    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     // Pre-deployed contract addresses from previous steps
     TruncGeoOracleMulti public truncGeoOracle;
@@ -106,25 +107,21 @@ contract DirectDeploy is Script {
 
             policyManager = new PoolPolicyManager(
                 msg.sender,
-                EXPECTED_DEFAULT_DYNAMIC_FEE,
-                supportedTickSpacings,
                 0,
-                msg.sender,
-                EXPECTED_MIN_DYNAMIC_FEE,     // NEW: min base fee
-                EXPECTED_MAX_DYNAMIC_FEE      // NEW: max base fee
+                EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
+                EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
             );
             console.log("PolicyManager deployed at: %s", address(policyManager));
         }
 
         if (address(liquidityManager) == address(0)) {
             console.log("Deploying LiquidityManager...");
-            liquidityManager =
-                new FullRangeLiquidityManager(
-                    IPoolManager(UNICHAIN_POOL_MANAGER),
-                    ExtendedPositionManager(payable(address(0))),
-                    IPoolPolicy(address(0)),
-                    deployer
-                );
+            liquidityManager = new FullRangeLiquidityManager(
+                IPoolManager(UNICHAIN_POOL_MANAGER),
+                PositionManager(payable(address(0))), // TODO: specify actual PositionManager
+                policyManager,
+                address(0) // TODO: the Spot contract address
+            );
             console.log("LiquidityManager deployed at: %s", address(liquidityManager));
         }
 
@@ -144,11 +141,10 @@ contract DirectDeploy is Script {
         console.log("Deploying hook directly with CREATE2...");
         Spot hook = new Spot{salt: salt}(
             IPoolManager(UNICHAIN_POOL_MANAGER),
-            policyManager,
             liquidityManager,
+            policyManager,
             truncGeoOracle,
-            IDynamicFeeManager(address(0)), // Will be set later
-            deployer
+            IDynamicFeeManager(address(0)) // Will be set later
         );
         console.log("Hook deployed at: %s", address(hook));
 
@@ -165,15 +161,11 @@ contract DirectDeploy is Script {
         console.log("Initializing dynamic fee manager...");
         dynamicFeeManager = new DynamicFeeManager(
             deployer,
-            IPoolPolicy(address(policyManager)), // policy
+            IPoolPolicyManager(address(policyManager)), // policy
             address(truncGeoOracle), // oracle
             address(hook) // authorizedHook
         );
         console.log("DynamicFeeManager deployed: %s", address(dynamicFeeManager));
-
-        // Authorize hook in LiquidityManager
-        liquidityManager.setAuthorizedHookAddress(address(hook));
-        console.log("Hook authorized in LiquidityManager");
 
         vm.stopBroadcast();
 

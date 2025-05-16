@@ -4,7 +4,7 @@ pragma solidity ^0.8.27;
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
 import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
@@ -15,7 +15,7 @@ import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {Errors} from "src/errors/Errors.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
-import {ExtendedPositionManager} from "src/ExtendedPositionManager.sol";
+
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {PoolTokenIdUtils} from "src/utils/PoolTokenIdUtils.sol";
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
@@ -73,7 +73,10 @@ contract Permit2Stub is IAllowanceTransfer {
 // ─────────────────────────────────────────────────────────────
 contract MockERC20 is ERC20 {
     constructor(string memory name_, string memory sym_) ERC20(name_, sym_, 18) {}
-    function mint(address to, uint256 amount) external { _mint(to, amount); }
+
+    function mint(address to, uint256 amount) external {
+        _mint(to, amount);
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -84,9 +87,13 @@ contract PositionManagerStub {
     Permit2Stub internal _permit2;
     uint256 internal _nextId = 1;
 
-    constructor() { _permit2 = new Permit2Stub(); }
+    constructor() {
+        _permit2 = new Permit2Stub();
+    }
 
-    function permit2() external view returns (IAllowanceTransfer) { return _permit2; }
+    function permit2() external view returns (IAllowanceTransfer) {
+        return _permit2;
+    }
 
     // called via FRLM._getOrCreatePosition
     function modifyLiquidities(bytes calldata, uint256) external payable {
@@ -100,7 +107,9 @@ contract PositionManagerStub {
     // used by withdraw()
     function decreaseLiquidity(uint256, uint128, uint128, uint128, bytes calldata) external {}
 
-    function nextTokenId() external view returns (uint256) { return _nextId; }
+    function nextTokenId() external view returns (uint256) {
+        return _nextId;
+    }
 
     // emergencyPullNFT
     function safeTransferFrom(address, address, uint256) external {}
@@ -114,7 +123,13 @@ contract PositionManagerStub {
 //  relies on (slot0 + position liquidity)
 // ─────────────────────────────────────────────────────────────
 contract PoolManagerStub {
-    struct Slot0 { uint160 sqrtPriceX96; int24 tick; uint8 psf; uint8 pwf; }
+    struct Slot0 {
+        uint160 sqrtPriceX96;
+        int24 tick;
+        uint8 psf;
+        uint8 pwf;
+    }
+
     mapping(bytes32 => Slot0) public slots; // storageSlot → slot0
     mapping(bytes32 => mapping(bytes32 => uint128)) public positionLiq; // poolId → posKey → liq
 
@@ -139,10 +154,10 @@ contract PoolManagerStub {
         // | [184..207] protocolFee  |
         // | [208..231] lpFee        |
         return bytes32(
-            uint256(s.sqrtPriceX96)                               |               // lower 160 bits
-            (uint256(uint24(uint256(int256(s.tick)))) << 160)    |               // next 24 bits
-            (uint256(s.psf)                       << 184)        |               // protocol fee
-            (uint256(s.pwf)                       << 208)                        // lp fee
+            uint256(s.sqrtPriceX96) // lower 160 bits
+                | (uint256(uint24(uint256(int256(s.tick)))) << 160) // next 24 bits
+                | (uint256(s.psf) << 184) // protocol fee
+                | (uint256(s.pwf) << 208) // lp fee
         );
     }
 
@@ -153,12 +168,13 @@ contract PoolManagerStub {
         bytes32 slotKey = keccak256(abi.encode(PoolId.unwrap(pid), POOLS_SLOT));
         slots[slotKey] = Slot0(price, 0, 0, 0);
     }
+
     function setPositionLiquidity(PoolId pid, bytes32 posKey, uint128 liq) external {
         positionLiq[PoolId.unwrap(pid)][posKey] = liq;
     }
 
     // --- StateLibrary entry points ---
-    function getSlot0(PoolId pid) external view returns (uint160,uint24,uint8,uint8) {
+    function getSlot0(PoolId pid) external view returns (uint160, uint24, uint8, uint8) {
         bytes32 POOLS_SLOT = bytes32(uint256(6));
         bytes32 slotKey = keccak256(abi.encode(PoolId.unwrap(pid), POOLS_SLOT));
         Slot0 memory s = slots[slotKey];
@@ -167,6 +183,7 @@ contract PoolManagerStub {
         uint24 tick = uint24(uint256(int256(s.tick)));
         return (s.sqrtPriceX96, tick, s.psf, s.pwf);
     }
+
     function getPositionLiquidity(PoolId pid, bytes32 posKey) external view returns (uint128) {
         return positionLiq[PoolId.unwrap(pid)][posKey];
     }
@@ -180,8 +197,8 @@ contract PoolManagerStub {
 //  (no overrides needed – mocks already absorb all external calls)
 // ─────────────────────────────────────────────────────────────
 contract FRLMHarness is FullRangeLiquidityManager {
-    constructor(IPoolManager _pm, ExtendedPositionManager _posm, address _owner)
-        FullRangeLiquidityManager(_pm, ExtendedPositionManager(_posm), IPoolPolicy(address(0)), _owner)
+    constructor(IPoolManager _pm, IPoolManager _posm, address _owner)
+        FullRangeLiquidityManager(_pm, IPoolManager(_posm), IPoolPolicyManager(address(0)), _owner)
     {}
 
     // Expose internal helpers for direct unit testing
@@ -199,25 +216,21 @@ contract FRLMHarness is FullRangeLiquidityManager {
         return tmp;
     }
 
-    function exposedHandleFirstDeposit(
-        uint160 sqrtP,
-        int24 spacing,
-        uint256 amt0Des,
-        uint256 amt1Des
-    ) external pure returns (DepositCalculationResult memory r) {
+    function exposedHandleFirstDeposit(uint160 sqrtP, int24 spacing, uint256 amt0Des, uint256 amt1Des)
+        external
+        pure
+        returns (DepositCalculationResult memory r)
+    {
         DepositCalculationResult memory tmp;
         _handleFirstDepositInternal(sqrtP, spacing, amt0Des, amt1Des, tmp);
         return tmp;
     }
 
-    function exposedCalcWithdraw(
-        uint128 liq,
-        uint256 burn,
-        uint256 r0,
-        uint256 r1,
-        uint128 locked,
-        uint128 total
-    ) external pure returns (uint256 a0, uint256 a1, uint128 l) {
+    function exposedCalcWithdraw(uint128 liq, uint256 burn, uint256 r0, uint256 r1, uint128 locked, uint128 total)
+        external
+        pure
+        returns (uint256 a0, uint256 a1, uint128 l)
+    {
         return _calculateWithdrawAmounts(liq, burn, r0, r1, locked, total);
     }
 }
@@ -232,7 +245,7 @@ contract FullRangeLiquidityManagerUnitTest is Test {
     // mocks + system under test
     PoolManagerStub internal pm;
     PositionManagerStub internal posm;
-    FRLMHarness       internal frlm;
+    FRLMHarness internal frlm;
 
     // tokens
     MockERC20 internal t0;
@@ -240,7 +253,7 @@ contract FullRangeLiquidityManagerUnitTest is Test {
 
     // pool meta
     PoolKey internal key;
-    PoolId  internal pid;
+    PoolId internal pid;
 
     address internal gov; // owner / governance
     address internal user;
@@ -250,15 +263,11 @@ contract FullRangeLiquidityManagerUnitTest is Test {
         user = vm.addr(42);
 
         // deploy mocks
-        pm   = new PoolManagerStub();
+        pm = new PoolManagerStub();
         posm = new PositionManagerStub();
 
         // deploy FRLM (owner = gov)
-        frlm = new FRLMHarness(
-            IPoolManager(address(pm)),
-            ExtendedPositionManager(payable(address(posm))),
-            gov
-        );
+        frlm = new FRLMHarness(IPoolManager(address(pm)), IPoolManager(payable(address(posm))), gov);
 
         // make two ERC-20 tokens
         t0 = new MockERC20("Token0", "T0");
@@ -300,14 +309,9 @@ contract FullRangeLiquidityManagerUnitTest is Test {
     // ─── Internal math: first deposit path ─────────────────
     function testHandleFirstDepositCalculations() external {
         uint160 sqrtP = 79228162514264337593543950336; // 1:1
-        uint256 amt   = 10 ether;
+        uint256 amt = 10 ether;
 
-        FRLMHarness.DepositCalculationResult memory r = frlm.exposedHandleFirstDeposit(
-            sqrtP,
-            10,
-            amt,
-            amt
-        );
+        FRLMHarness.DepositCalculationResult memory r = frlm.exposedHandleFirstDeposit(sqrtP, 10, amt, amt);
 
         assertGt(r.v4LiquidityForCallback, 0, "liq zero");
         assertEq(r.actual0, amt, "actual0 trimmed");
@@ -324,18 +328,11 @@ contract FullRangeLiquidityManagerUnitTest is Test {
         uint128 totalShares = 1_000_000; // pretend pool already has shares
         uint256 reserve0 = 5 ether;
         uint256 reserve1 = 5 ether;
-        uint256 want0    = 1 ether;
-        uint256 want1    = 1 ether;
+        uint256 want0 = 1 ether;
+        uint256 want1 = 1 ether;
 
-        FRLMHarness.DepositCalculationResult memory r = frlm.exposedCalculateDepositShares(
-            totalShares,
-            sqrtP,
-            10,
-            want0,
-            want1,
-            reserve0,
-            reserve1
-        );
+        FRLMHarness.DepositCalculationResult memory r =
+            frlm.exposedCalculateDepositShares(totalShares, sqrtP, 10, want0, want1, reserve0, reserve1);
 
         assertGt(r.sharesToAdd, 0, "no shares minted");
         assertEq(r.lockedAmount, 0, "should not lock on subsequent deposits");
@@ -347,20 +344,13 @@ contract FullRangeLiquidityManagerUnitTest is Test {
     // ─── Withdraw math ─────────────────────────────────────
     function testWithdrawMath() external {
         uint128 totalLiq = 1_000_000;
-        uint256 burn     = 10_000;
-        uint256 res0     = 5 ether;
-        uint256 res1     = 5 ether;
-        uint128 locked   = 1_000;
-        uint128 total    = 100_000 + locked;
+        uint256 burn = 10_000;
+        uint256 res0 = 5 ether;
+        uint256 res1 = 5 ether;
+        uint128 locked = 1_000;
+        uint128 total = 100_000 + locked;
 
-        (uint256 a0, uint256 a1, uint128 liq) = frlm.exposedCalcWithdraw(
-            totalLiq,
-            burn,
-            res0,
-            res1,
-            locked,
-            total
-        );
+        (uint256 a0, uint256 a1, uint128 liq) = frlm.exposedCalcWithdraw(totalLiq, burn, res0, res1, locked, total);
 
         assertGt(a0, 0, "amount0 zero");
         assertGt(a1, 0, "amount1 zero");

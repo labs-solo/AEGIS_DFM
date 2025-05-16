@@ -18,7 +18,9 @@
     "test": "./scripts/test.sh",
     "format": "forge fmt",
     "clean": "forge clean",
-    "postinstall": "patch-package && ./scripts/fix_solmate_imports.sh"
+    "t:i": "forge test --match-path test/integration/**/*.t.sol",
+    "t:u": "forge test --match-path test/unit/**/*.t.sol",
+    "t:iu": "pnpm t:i && pnpm t:u"
   },
   "devDependencies": {
     "@openzeppelin/contracts": "5.3.0",

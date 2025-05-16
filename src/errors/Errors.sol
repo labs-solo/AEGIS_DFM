@@ -1,7 +1,9 @@
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.27;
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.8.0;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
+
+// TODO: cleanup unused errors
 
 /**
  * @title Errors
@@ -25,6 +27,8 @@ library Errors {
     error ZeroDestination();
 
     // --- Validation & Input ---
+    error InvalidHookAuthorization(address expected, address actual);
+    error PoolPositionManagerMismatch();
     error ValidationDeadlinePassed(uint32 deadline, uint32 blockTime);
     error ValidationZeroAddress(string target);
     error ValidationInvalidInput(string reason);
@@ -81,6 +85,7 @@ library Errors {
     error CalculationError(string reason);
     error MathOverflow();
     error MathUnderflow();
+    error InsufficientInitialLiquidity();
 
     // --- System & State ---
     error HookDispatchFailed(bytes4 selector);
@@ -110,6 +115,7 @@ library Errors {
     error PoolKeyAlreadyStored(bytes32 poolId);
 
     // --- Liquidity & Shares ---
+    error PositionNotFound(PoolId poolId);
     error InsufficientAmount(uint256 requested, uint256 available);
     error InsufficientLiquidity(uint256 requested, uint256 available);
     error InsufficientShares(uint256 requested, uint256 available);
@@ -181,6 +187,8 @@ library Errors {
     error TransferFailed();
     error TransferFromFailed();
     error InsufficientReserves();
+    error TooLittleAmount0(uint256 min, uint256 actual);
+    error TooLittleAmount1(uint256 min, uint256 actual);
 
     // --- Oracle ---
     error OracleOperationFailed(string operation, string reason);
@@ -226,4 +234,10 @@ library Errors {
     error NotLiquidatable(uint256 currentRatio, uint256 threshold);
     error LiquidationTooSmall(uint256 requestedAmount, uint256 minimumAmount);
     error InvalidLiquidationParams();
+
+    // --- Invariants ---
+
+    error InvalidSwapDelta();
+    error ETHRefundFailed();
+    error InvariantETHTransferFailed();
 }

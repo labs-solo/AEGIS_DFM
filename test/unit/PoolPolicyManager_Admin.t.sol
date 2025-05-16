@@ -4,15 +4,15 @@ pragma solidity ^0.8.27;
 import "forge-std/Test.sol";
 import "../lib/EventTools.sol";
 
-import {PoolPolicyManager, IPoolPolicy} from "src/PoolPolicyManager.sol";
+import {PoolPolicyManager, IPoolPolicyManager} from "src/PoolPolicyManager.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Errors} from "src/errors/Errors.sol";
 import {PrecisionConstants} from "src/libraries/PrecisionConstants.sol";
 
 contract PoolPolicyManager_Admin_Test is Test {
-    uint24 constant EXPECTED_MIN_DYNAMIC_FEE     =  100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE     = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE =  5000; // 0.5 %
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     using EventTools for Test;
 
@@ -54,7 +54,7 @@ contract PoolPolicyManager_Admin_Test is Test {
 
         // Also expect the PolicySet event
         EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.INTEREST_FEE, address(0), OWNER
+            this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.INTEREST_FEE, address(0), OWNER
         );
 
         vm.prank(OWNER);
@@ -94,7 +94,7 @@ contract PoolPolicyManager_Admin_Test is Test {
 
         // Also expect the PolicySet event
         EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.INTEREST_FEE, NEW_FEE_CO, OWNER
+            this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.INTEREST_FEE, NEW_FEE_CO, OWNER
         );
 
         vm.prank(OWNER);
@@ -115,48 +115,16 @@ contract PoolPolicyManager_Admin_Test is Test {
         ppm.setFeeCollector(NEW_FEE_CO);
     }
 
-    /*────────────────── setAuthorizedReinvestor ───────────────*/
-    function testOwnerAuthorisesReinvestor() public {
-        // Check if reinvestor is already authorized
-        bool isAlreadyAuthorized = ppm.authorizedReinvestors(RVSTR);
-        bool willEmit = !isAlreadyAuthorized;
-
-        EventTools.expectEmitIf(this, willEmit, true, true, true, false);
-        emit AuthorizedReinvestorSet(RVSTR, true);
-
-        // Also expect the PolicySet event
-        EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.REINVESTOR_AUTH, RVSTR, OWNER
-        );
-
-        vm.prank(OWNER);
-        ppm.setAuthorizedReinvestor(RVSTR, true);
-
-        assertTrue(ppm.authorizedReinvestors(RVSTR));
-    }
-
-    function testReinvestorZeroAddressReverts() public {
-        vm.prank(OWNER);
-        vm.expectRevert(Errors.ZeroAddress.selector);
-        ppm.setAuthorizedReinvestor(address(0), true);
-    }
-
-    function testReinvestorSetterNonOwnerReverts() public {
-        vm.prank(ALICE);
-        vm.expectRevert("UNAUTHORIZED");
-        ppm.setAuthorizedReinvestor(RVSTR, true);
-    }
-
     /*────────────────── initializePolicies access ─────────────*/
     function testInitializePoliciesByOwner() public {
         PoolId pool = pid(1);
         address[] memory impls = _implArray();
 
         // Expect multiple PolicySet events
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicy.PolicyType(0), impls[0], OWNER);
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicy.PolicyType(1), impls[1], OWNER);
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicy.PolicyType(2), impls[2], OWNER);
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicy.PolicyType(3), impls[3], OWNER);
+        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicyManager.PolicyType(0), impls[0], OWNER);
+        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicyManager.PolicyType(1), impls[1], OWNER);
+        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicyManager.PolicyType(2), impls[2], OWNER);
+        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicyManager.PolicyType(3), impls[3], OWNER);
 
         vm.prank(OWNER);
         ppm.initializePolicies(pool, GOVERNANCE, impls);
@@ -167,10 +135,10 @@ contract PoolPolicyManager_Admin_Test is Test {
         address[] memory impls = _implArray();
 
         // Expect multiple PolicySet events
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicy.PolicyType(0), impls[0], GOVERNANCE);
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicy.PolicyType(1), impls[1], GOVERNANCE);
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicy.PolicyType(2), impls[2], GOVERNANCE);
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicy.PolicyType(3), impls[3], GOVERNANCE);
+        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicyManager.PolicyType(0), impls[0], GOVERNANCE);
+        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicyManager.PolicyType(1), impls[1], GOVERNANCE);
+        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicyManager.PolicyType(2), impls[2], GOVERNANCE);
+        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicyManager.PolicyType(3), impls[3], GOVERNANCE);
 
         vm.prank(GOVERNANCE);
         ppm.initializePolicies(pool, GOVERNANCE, impls);

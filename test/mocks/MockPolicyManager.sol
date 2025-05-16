@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.27;
 
-import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../../src/interfaces/IPoolPolicyManager.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
@@ -12,17 +12,17 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 /*  VERY-LIGHT policy stub – **does not** inherit the full interface       */
 /*  (only selectors the oracle touches are implemented).                   */
 /* ----------------------------------------------------------------------- */
-contract MockPolicyManager is IPoolPolicy {
+contract MockPolicyManager is IPoolPolicyManager {
     // ───────────────────────── Tunable constants ─────────────────────────
-    uint24  internal constant _DEFAULT_MAX_TICKS   = 50;          // ← initial cap in ticks
-    uint32  internal constant _DAILY_BUDGET_PPM    = 100_000;     // 10 % of the day may be capped
-    uint32  internal constant _DECAY_WINDOW_SEC    = 43_200;      // 12-hour half-life
-    uint32  internal constant _UPDATE_INTERVAL_SEC = 86_400;      // 24 h
-    uint32  internal constant _STEP_PPM            = 20_000;      // 2 % change per step
+    uint24 internal constant _DEFAULT_MAX_TICKS = 50; // ← initial cap in ticks
+    uint32 internal constant _DAILY_BUDGET_PPM = 100_000; // 10 % of the day may be capped
+    uint32 internal constant _DECAY_WINDOW_SEC = 43_200; // 12-hour half-life
+    uint32 internal constant _UPDATE_INTERVAL_SEC = 86_400; // 24 h
+    uint32 internal constant _STEP_PPM = 20_000; // 2 % change per step
 
     // fee values are expressed in *hundredths of a tick* inside TruncGeoOracleMulti
     // so dividing by 100 should yield the target cap in ticks.
-    uint256 internal constant _MIN_BASE_FEE = 1_000;  // → 10 ticks
+    uint256 internal constant _MIN_BASE_FEE = 1_000; // → 10 ticks
     uint256 internal constant _MAX_BASE_FEE = 10_000; // → 100 ticks
 
     uint32 public dailyPpm;
@@ -39,15 +39,16 @@ contract MockPolicyManager is IPoolPolicy {
 
     /* configurable per-pool parameters - all have sensible non-zero defaults */
     struct Params {
-        uint256 minBaseFee;   // wei
-        uint256 maxBaseFee;   // wei
-        uint256 freqScaling;  // 1e18 = no-scale
-        uint32  stepPpm;
-        uint32  budgetPpm;
-        uint32  decayWindow;
-        uint32  updateInterval;
-        uint24  defaultMaxTicks;
+        uint256 minBaseFee; // wei
+        uint256 maxBaseFee; // wei
+        uint256 freqScaling; // 1e18 = no-scale
+        uint32 stepPpm;
+        uint32 budgetPpm;
+        uint32 decayWindow;
+        uint32 updateInterval;
+        uint24 defaultMaxTicks;
     }
+
     mapping(PoolId => Params) internal _p;
 
     constructor() {
@@ -59,7 +60,10 @@ contract MockPolicyManager is IPoolPolicy {
     }
 
     // --- Functions already implemented (or deprecated) ---
-    function getMaxStepPpm(PoolId) external pure override returns (uint32) { return _STEP_PPM; }
+    function getMaxStepPpm(PoolId) external pure override returns (uint32) {
+        return _STEP_PPM;
+    }
+
     function isTickSpacingSupported(uint24 tickSpacing) external view override returns (bool) {
         return _tickSupported[tickSpacing];
     }
@@ -68,15 +72,22 @@ contract MockPolicyManager is IPoolPolicy {
         return _currencySupported[Currency.unwrap(currency)];
     }
 
-    function isValidVtier(uint24 /* _fee */, int24 /* _spacing */) external pure override returns (bool) {
+    function isValidVtier(uint24, /* _fee */ int24 /* _spacing */ ) external pure override returns (bool) {
         return true; // Assume valid for tests
     }
 
-    // --- Stubs for missing IPoolPolicy functions ---
-    function getSoloGovernance() external pure override returns (address) { return address(0); }
+    // --- Stubs for missing IPoolPolicyManager functions ---
+    function getSoloGovernance() external pure override returns (address) {
+        return address(0);
+    }
+
     function initializePolicies(PoolId, address, address[] calldata) external override {}
     function handlePoolInitialization(PoolId, PoolKey calldata, uint160, int24, address) external override {}
-    function getPolicy(PoolId, PolicyType) external pure override returns (address implementation) { return address(0); }
+
+    function getPolicy(PoolId, PolicyType) external pure override returns (address implementation) {
+        return address(0);
+    }
+
     function getFeeAllocations(PoolId)
         external
         pure
@@ -85,26 +96,55 @@ contract MockPolicyManager is IPoolPolicy {
     {
         return (0, 0, 0);
     }
-    function getMinimumPOLTarget(PoolId, uint256, uint256) external pure override returns (uint256) { return 0; }
-    function getMinimumTradingFee() external pure override returns (uint256) { return 0; }
-    function getFeeClaimThreshold() external pure override returns (uint256) { return 0; }
-    function getPoolPOLMultiplier(PoolId) external pure override returns (uint256) { return 0; }
+
+    function getMinimumPOLTarget(PoolId, uint256, uint256) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getMinimumTradingFee() external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getFeeClaimThreshold() external pure override returns (uint256) {
+        return 0;
+    }
+
     function setFeeConfig(uint256, uint256, uint256, uint256, uint256, uint256) external override {}
     function setPoolPOLMultiplier(PoolId, uint32) external override {}
     function setDefaultPOLMultiplier(uint32) external override {}
     function setPoolPOLShare(PoolId, uint256) external override {}
     function setPoolSpecificPOLSharingEnabled(bool) external override {}
-    function getPoolPOLShare(PoolId) external pure override returns (uint256) { return 0; }
-    function getTickScalingFactor() external pure override returns (int24) { return 0; }
+
+    function getPoolPOLShare(PoolId) external pure override returns (uint256) {
+        return 0;
+    }
+
     function updateSupportedTickSpacing(uint24, bool) external override {}
     function batchUpdateAllowedTickSpacings(uint24[] calldata, bool[] calldata) external override {}
-    function getProtocolFeePercentage(PoolId) external pure override returns (uint256 feePercentage) { return 0; }
-    function getFeeCollector() external pure override returns (address) { return address(0); }
-    function getSurgeDecayPeriodSeconds(PoolId) external pure override returns (uint256) { return 0; }
-    function getTargetCapsPerDay(PoolId) external pure override returns (uint32) { return 0; }
-    function getSurgeFeeMultiplierPpm(PoolId) external pure override returns (uint24) { return 0; }
-    function getSurgeDecaySeconds(PoolId) external pure override returns (uint32) { return 0; }
-    function getBudgetAndWindow(PoolId) external pure override returns (uint32 budgetPerDay, uint32 decayPeriod) { return (0,0); }
+
+    function getProtocolFeePercentage(PoolId) external pure override returns (uint256 feePercentage) {
+        return 0;
+    }
+
+    function getFeeCollector() external pure override returns (address) {
+        return address(0);
+    }
+
+    function getSurgeDecayPeriodSeconds(PoolId) external pure override returns (uint256) {
+        return 0;
+    }
+
+    function getSurgeFeeMultiplierPpm(PoolId) external pure override returns (uint24) {
+        return 0;
+    }
+
+    function getSurgeDecaySeconds(PoolId) external pure override returns (uint32) {
+        return 0;
+    }
+
+    function getBudgetAndWindow(PoolId) external pure override returns (uint32 budgetPerDay, uint32 decayPeriod) {
+        return (0, 0);
+    }
 
     // --- New functions ---
     function setFreqScaling(PoolId pid, uint32 scaling) external /*override*/ {
@@ -131,8 +171,13 @@ contract MockPolicyManager is IPoolPolicy {
         _p[pid] = p;
     }
 
-    function setMinBaseFee(PoolId id, uint256 fee) external { _p[id].minBaseFee = fee; }
-    function setMaxBaseFee(PoolId id, uint256 fee) external { _p[id].maxBaseFee = fee; }
+    function setMinBaseFee(PoolId id, uint256 fee) external {
+        _p[id].minBaseFee = fee;
+    }
+
+    function setMaxBaseFee(PoolId id, uint256 fee) external {
+        _p[id].maxBaseFee = fee;
+    }
 
     /* ----------- getters used by the oracle ----------- */
     function getMinBaseFee(PoolId id) external view override returns (uint256) {

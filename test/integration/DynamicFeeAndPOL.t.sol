@@ -3,7 +3,7 @@ pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
 import {console2} from "forge-std/console2.sol";
-import "./ForkSetup.t.sol";
+import "./LocalSetup.t.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
@@ -21,7 +21,7 @@ import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
 import {IFullRangeLiquidityManager} from "../../src/interfaces/IFullRangeLiquidityManager.sol";
-import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../../src/interfaces/IPoolPolicyManager.sol";
 import {FullRangeLiquidityManager} from "../../src/FullRangeLiquidityManager.sol";
 import {IDynamicFeeManager} from "../../src/interfaces/IDynamicFeeManager.sol";
 import {DynamicFeeManager} from "../../src/DynamicFeeManager.sol";
@@ -44,7 +44,7 @@ import {INITIAL_LP_USDC, INITIAL_LP_WETH} from "../utils/TestConstants.sol";
  * @dev This test suite builds upon the static deployment and configuration tests in
  *      DeploymentAndConfig.t.sol by focusing on the behavioral aspects of the system.
  */
-contract DynamicFeeAndPOLTest is ForkSetup {
+contract DynamicFeeAndPOLTest is LocalSetup {
     using PoolIdLibrary for PoolKey;
     using SafeTransferLib for ERC20;
     using BalanceDeltaLibrary for BalanceDelta;
@@ -59,14 +59,13 @@ contract DynamicFeeAndPOLTest is ForkSetup {
     uint256 public defaultBaseFee;
     uint256 public polSharePpm;
     uint256 public surgeFeeDecayPeriod;
-    int24 public tickScalingFactor;
 
     // Test swap amounts
     uint256 public constant SMALL_SWAP_AMOUNT_WETH = 0.1 ether;
     uint256 public constant SMALL_SWAP_AMOUNT_USDC = 300 * 10 ** 6;
 
     function setUp() public override {
-        super.setUp(); // Deploy contracts via ForkSetup
+        super.setUp(); // Deploy contracts via LocalSetup
 
         // Cast deployed manager to the new interface
         dfm = IDynamicFeeManager(address(dynamicFeeManager));
@@ -80,7 +79,6 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // Store key parameters
         (defaultBaseFee,) = dfm.getFeeState(poolId); // Get initial base fee
         polSharePpm = policyManager.getPoolPOLShare(poolId);
-        tickScalingFactor = policyManager.getTickScalingFactor();
         surgeFeeDecayPeriod = uint32(policyManager.getSurgeDecayPeriodSeconds(poolId));
 
         _setupApprovals();
@@ -101,11 +99,11 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         //
         // ── HOOK / ORACLE WIRING ────────────────────────────
         //
-        // Wiring is now handled correctly in ForkSetup.setUp()
+        // Wiring is now handled correctly in LocalSetup.setUp()
         // The lines below redeploying the oracle were incorrect and are removed.
 
-        // Ensure pool is enabled in the oracle deployed by ForkSetup
-        // This might already be handled if the hook deployed by ForkSetup calls enableOracleForPool
+        // Ensure pool is enabled in the oracle deployed by LocalSetup
+        // This might already be handled if the hook deployed by LocalSetup calls enableOracleForPool
         // or if the pool initialization logic triggers it.
         // Adding a check or explicit call if needed:
         address oracleAddr = address(oracle);
@@ -185,7 +183,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         vm.startPrank(sender);
         amountOutMinimum; // silence warning
         address token0 = Currency.unwrap(poolKey.currency0);
-        bool wethIsToken0 = token0 == WETH_ADDRESS;
+        bool wethIsToken0 = token0 == address(_WETH9);
         uint160 sqrtPriceLimitX96;
         (uint160 currentSqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
 
@@ -220,13 +218,13 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
     function test_B1_Swap_AppliesDefaultFee() public {
         address token0 = Currency.unwrap(poolKey.currency0);
-        bool wethIsToken0 = token0 == WETH_ADDRESS;
+        bool wethIsToken0 = token0 == address(_WETH9);
         // uint256 wethBalanceBefore = weth.balanceOf(user1); <-- Removed
         // balances captured only for manual debugging – remove to silence 2072
         // We no longer store pre-swap balances – not needed by assertions.
 
         // Capture slot0 before the swap (needed for direction assertions)
-        (uint160 _sqrtBefore, int24 _tickBefore, ,) = StateLibrary.getSlot0(poolManager, poolId);
+        (uint160 _sqrtBefore, int24 _tickBefore,,) = StateLibrary.getSlot0(poolManager, poolId);
 
         // --- snapshot fee-collector balances before swap ---
         address feeCollector = policyManager.getFeeCollector();
@@ -242,8 +240,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         _swapWETHToUSDC(user1, swapAmount, 0); // This now includes the hook notification
 
         // Get new price after first swap
-        (uint160 sqrtPriceX96After, int24 tickAfter,,) =
-            StateLibrary.getSlot0(poolManager, poolId);
+        (uint160 sqrtPriceX96After, int24 tickAfter,,) = StateLibrary.getSlot0(poolManager, poolId);
         // uint256 wethBalanceAfter = weth.balanceOf(user1); <-- Removed
         // uint256 usdcBalanceAfter = usdc.balanceOf(user1); <-- Removed
         // Post-swap balances also unused – omit to silence 2072.
@@ -255,10 +252,10 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         // Price direction checks remain the same
         if (wethIsToken0) {
             assertTrue(sqrtPriceX96After < _sqrtBefore, "Price direction mismatch 0->1");
-            assertTrue(tickAfter < _tickBefore,     "Tick direction mismatch 0->1");
+            assertTrue(tickAfter < _tickBefore, "Tick direction mismatch 0->1");
         } else {
             assertTrue(sqrtPriceX96After > _sqrtBefore, "Price direction mismatch 1->0");
-            assertTrue(tickAfter > _tickBefore,     "Tick direction mismatch 1->0");
+            assertTrue(tickAfter > _tickBefore, "Tick direction mismatch 1->0");
         }
 
         // Fee shouldn't have changed significantly from one small swap if interval > 0
@@ -308,11 +305,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         vm.startPrank(user1);
         swapRouter.swap(
             poolKey,
-            SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: largeSwapAmount,
-                sqrtPriceLimitX96: limitSqrtP
-            }),
+            SwapParams({zeroForOne: zeroForOne, amountSpecified: largeSwapAmount, sqrtPriceLimitX96: limitSqrtP}),
             PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}),
             ZERO_BYTES
         );
@@ -332,11 +325,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
         vm.startPrank(user1);
         swapRouter.swap(
             poolKey,
-            SwapParams({
-                zeroForOne: zeroForOne,
-                amountSpecified: largeSwapAmount,
-                sqrtPriceLimitX96: newPriceLimit
-            }),
+            SwapParams({zeroForOne: zeroForOne, amountSpecified: largeSwapAmount, sqrtPriceLimitX96: newPriceLimit}),
             PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}),
             ZERO_BYTES
         );
@@ -344,8 +333,7 @@ contract DynamicFeeAndPOLTest is ForkSetup {
 
         // Now the maxTicksPerBlock should have been able to change
         uint256 newMaxTicks = oracle.getMaxTicksPerBlock(PoolId.unwrap(poolId));
-        (uint256 _baseAfterSecond, uint256 _surgeAfterSecond) =
-            dfm.getFeeState(poolId);
+        (uint256 _baseAfterSecond, uint256 _surgeAfterSecond) = dfm.getFeeState(poolId);
 
         // Check that maxTicks has changed, but within step limit
         uint32 stepPpm = policyManager.getBaseFeeStepPpm(poolId);

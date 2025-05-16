@@ -1,8 +1,8 @@
-// SPDX-License-Identifier:	BUSL-1.1
-pragma solidity ^0.8.27;
+// SPDX-License-Identifier:	MIT
+pragma solidity >=0.5.0;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {IPoolPolicy} from "./IPoolPolicy.sol";
+import {IPoolPolicyManager} from "./IPoolPolicyManager.sol";
 
 /**
  * @title IDynamicFeeManager
@@ -25,11 +25,7 @@ interface IDynamicFeeManager {
      * @param timestamp    Emission block timestamp
      */
     event FeeStateChanged(
-        PoolId indexed poolId,
-        uint256 baseFeePpm,
-        uint256 surgeFeePpm,
-        bool inCapEvent,
-        uint32 timestamp
+        PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent, uint32 timestamp
     );
 
     /* ─────── Mutators (called by hook / factory) ──────────────────────── */
@@ -63,7 +59,7 @@ interface IDynamicFeeManager {
     function isCAPEventActive(PoolId poolId) external view returns (bool);
 
     /// @notice Pool-level policy contract that drives fee parameters
-    function policy() external view returns (IPoolPolicy);
+    function policy() external view returns (IPoolPolicyManager);
 
     /// @notice The hook that is authorized to call this contract
     function authorizedHook() external view returns (address);
