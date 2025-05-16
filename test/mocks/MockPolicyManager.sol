@@ -109,10 +109,6 @@ contract MockPolicyManager is IPoolPolicyManager {
         return 0;
     }
 
-    function getPoolPOLMultiplier(PoolId) external pure override returns (uint256) {
-        return 0;
-    }
-
     function setFeeConfig(uint256, uint256, uint256, uint256, uint256, uint256) external override {}
     function setPoolPOLMultiplier(PoolId, uint32) external override {}
     function setDefaultPOLMultiplier(uint32) external override {}
@@ -135,10 +131,6 @@ contract MockPolicyManager is IPoolPolicyManager {
     }
 
     function getSurgeDecayPeriodSeconds(PoolId) external pure override returns (uint256) {
-        return 0;
-    }
-
-    function getTargetCapsPerDay(PoolId) external pure override returns (uint32) {
         return 0;
     }
 

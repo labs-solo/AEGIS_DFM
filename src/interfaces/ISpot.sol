@@ -1,5 +1,5 @@
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.5.0;
 
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
@@ -46,8 +46,9 @@ interface ISpot is IHooks {
     event ReinvestmentPausedChanged(bool paused);
 
     /// @notice Proxy function to deposit liquidity into the FullRangeLiquidityManager through Spot
-    /// @dev NOT RECOMMENDED: Users should interact with FRLM directly when possible to avoid
-    /// additional token transfers and approvals. This function exists for specific integration needs.
+    /// @dev This function optimizes gas by having the FRLM pull tokens directly from the caller
+    ///      rather than transferring tokens through the Spot contract. The caller needs to approve
+    ///      token spending directly to the FRLM contract, not to Spot.
     /// @param key The pool key for the pool
     /// @param amount0Desired The desired amount of token0 to deposit
     /// @param amount1Desired The desired amount of token1 to deposit
@@ -67,13 +68,14 @@ interface ISpot is IHooks {
     ) external payable returns (uint256 shares, uint256 amount0, uint256 amount1);
 
     /// @notice Proxy function to withdraw liquidity from the FullRangeLiquidityManager through Spot
-    /// @dev NOT RECOMMENDED: Users should interact with FRLM directly when possible to avoid
-    /// additional token transfers and approvals. This function exists for specific integration needs.
+    /// @dev This function optimizes gas by having the FRLM burn shares directly from the caller
+    ///      rather than transferring them through the Spot contract. The caller must have the
+    ///      required share tokens in their balance.
     /// @param key The pool key for the pool
     /// @param sharesToBurn The amount of share tokens to burn
     /// @param amount0Min The minimum amount of token0 to receive
     /// @param amount1Min The minimum amount of token1 to receive
-    /// @param recipient The address to receive the tokens
+    /// @param recipient The address to receive the withdrawn tokens
     /// @return amount0 The amount of token0 received
     /// @return amount1 The amount of token1 received
     function withdrawFromFRLM(

@@ -115,38 +115,6 @@ contract PoolPolicyManager_Admin_Test is Test {
         ppm.setFeeCollector(NEW_FEE_CO);
     }
 
-    /*────────────────── setAuthorizedReinvestor ───────────────*/
-    function testOwnerAuthorisesReinvestor() public {
-        // Check if reinvestor is already authorized
-        bool isAlreadyAuthorized = ppm.authorizedReinvestors(RVSTR);
-        bool willEmit = !isAlreadyAuthorized;
-
-        EventTools.expectEmitIf(this, willEmit, true, true, true, false);
-        emit AuthorizedReinvestorSet(RVSTR, true);
-
-        // Also expect the PolicySet event
-        EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.REINVESTOR_AUTH, RVSTR, OWNER
-        );
-
-        vm.prank(OWNER);
-        ppm.setAuthorizedReinvestor(RVSTR, true);
-
-        assertTrue(ppm.authorizedReinvestors(RVSTR));
-    }
-
-    function testReinvestorZeroAddressReverts() public {
-        vm.prank(OWNER);
-        vm.expectRevert(Errors.ZeroAddress.selector);
-        ppm.setAuthorizedReinvestor(address(0), true);
-    }
-
-    function testReinvestorSetterNonOwnerReverts() public {
-        vm.prank(ALICE);
-        vm.expectRevert("UNAUTHORIZED");
-        ppm.setAuthorizedReinvestor(RVSTR, true);
-    }
-
     /*────────────────── initializePolicies access ─────────────*/
     function testInitializePoliciesByOwner() public {
         PoolId pool = pid(1);

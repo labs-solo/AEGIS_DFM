@@ -107,10 +107,7 @@ contract DirectDeploy is Script {
 
             policyManager = new PoolPolicyManager(
                 msg.sender,
-                EXPECTED_DEFAULT_DYNAMIC_FEE,
-                supportedTickSpacings,
                 0,
-                msg.sender,
                 EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
                 EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
             );
