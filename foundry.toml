@@ -31,7 +31,7 @@ remappings = [
   "permit2/=node_modules/permit2/"
 ]
 src = "src"
-test = "tests" # TODO: temp, will use ./test
+test = "tests"
 out = "out"
 libs = ["lib"]
 ffi = true

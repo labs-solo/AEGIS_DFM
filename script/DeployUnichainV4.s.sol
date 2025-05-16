@@ -23,7 +23,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
-import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
+import {DummyFullRangeHook} from "../test/integration/utils/DummyFullRangeHook.sol";
 
 // Unused imports removed: Spot, FullRangeDynamicFeeManager, DefaultPoolCreationPolicy, HookMiner, Hooks, IERC20
 
@@ -84,10 +84,7 @@ contract DeployUnichainV4 is Script {
         supportedTickSpacings_[2] = 200;
         policyManager = new PoolPolicyManager(
             deployerAddress, // owner
-            EXPECTED_DEFAULT_DYNAMIC_FEE, // defaultDynamicFee. Removed uint32 cast
-            supportedTickSpacings_, // supportedTickSpacings
             0,
-            msg.sender,
             EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
             EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
         );

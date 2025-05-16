@@ -17,7 +17,7 @@ import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
-import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
+import {DummyFullRangeHook} from "../test/integration/utils/DummyFullRangeHook.sol";
 
 /**
  * Script to directly deploy the hook with an explicit constructor and salt.
@@ -107,10 +107,7 @@ contract DirectDeploy is Script {
 
             policyManager = new PoolPolicyManager(
                 msg.sender,
-                EXPECTED_DEFAULT_DYNAMIC_FEE,
-                supportedTickSpacings,
                 0,
-                msg.sender,
                 EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
                 EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
             );

@@ -4,7 +4,7 @@ pragma solidity ^0.8.27;
 import {Test} from "forge-std/Test.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {IPoolPolicy} from "../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
 import {DynamicFeeManager} from "../src/DynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "../src/TruncGeoOracleMulti.sol";
 import {MockPoolManager} from "mocks/MockPoolManager.sol";
@@ -19,10 +19,10 @@ import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 ///      If the signature there changes, update this copy too.
 event AlreadyInitialized(PoolId indexed id);
 
-/// Minimal stub – we do not inherit IPoolPolicy; we only supply the
+/// Minimal stub – we do not inherit IPoolPolicyManager; we only supply the
 /// function(s) touched by the unit-test at runtime.
 /// @dev WARNING: This stub only implements getDefaultDynamicFee(). If future DynamicFeeManager
-/// versions start using other IPoolPolicy methods, tests will revert. Add the needed methods then.
+/// versions start using other IPoolPolicyManager methods, tests will revert. Add the needed methods then.
 contract StubPolicy {
     function getDefaultDynamicFee() external pure returns (uint256) {
         return 3_000; // 0.30 % – well below 2**96-1
@@ -51,10 +51,10 @@ contract DynamicFeeManagerTest is Test {
         // zero-address placeholder is fine and avoids referencing an
         // undeclared identifier.
         // IPoolManager _dummyPM = IPoolManager(address(1));
-        // IPoolPolicy  _policy  = IPoolPolicy(address(0));
+        // IPoolPolicyManager  _policy  = IPoolPolicyManager(address(0));
 
         // Stand-in objects – we never touch them again, so avoid "unused" warnings
-        IPoolPolicy _policy = IPoolPolicy(address(0));
+        IPoolPolicyManager _policy = IPoolPolicyManager(address(0));
 
         // (The dummy PoolManager literal below was producing 6133. Remove it.)
 
@@ -89,7 +89,7 @@ contract DynamicFeeManagerTest is Test {
         // fullRange.setOracle(address(oracle));
 
         // Deploy DFM
-        // ctor is (IPoolPolicy policyMgr, address oracle, address hook)
+        // ctor is (IPoolPolicyManager policyMgr, address oracle, address hook)
         dfm = new DynamicFeeManager(address(this), policyManager, address(oracle), address(fullRange)); // Use address(this) as owner, deployed oracle and hook
 
         // ... (rest of setup like poolKey, poolId, enableOracle)

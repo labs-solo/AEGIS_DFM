@@ -17,7 +17,7 @@ import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityMana
 import {SignedMath} from "@openzeppelin/contracts/utils/math/SignedMath.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
-import {ExtendedPositionManager} from "src/ExtendedPositionManager.sol";
+
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {PositionInfo} from "v4-periphery/src/libraries/PositionInfoLibrary.sol";
@@ -41,7 +41,7 @@ contract LiquidityComparisonTest is LocalSetup {
     IFullRangeLiquidityManager internal frlm_;
     IERC20Minimal internal token0; // USDC in this test-pool
     IERC20Minimal internal token1; // WETH in this test-pool
-    ExtendedPositionManager internal posManager;
+    IPoolManager internal posManager;
 
     function setUp() public override {
         super.setUp();
@@ -98,7 +98,7 @@ contract LiquidityComparisonTest is LocalSetup {
         );
 
         // ───────────────────────────────────────────────────────────
-        // ① Direct *NFT-based* full-range mint via ExtendedPositionManager
+        // ① Direct *NFT-based* full-range mint via IPoolManager
         // ───────────────────────────────────────────────────────────
         //  Allow Permit2 (used internally by PositionManager) to pull our tokens
         address permit2 = address(posManager.permit2());

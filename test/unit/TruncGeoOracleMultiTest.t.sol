@@ -15,7 +15,7 @@ import {TickMoveGuard} from "../../src/libraries/TickMoveGuard.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
-import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../../src/interfaces/IPoolPolicyManager.sol";
 import {Errors} from "../../src/errors/Errors.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
@@ -105,7 +105,7 @@ contract TruncGeoOracleMultiTest is Test {
         // ── deploy oracle pointing to *this* hook ----------------------------------
         oracle = new TruncGeoOracleMulti(
             IPoolManager(address(poolManager)),
-            IPoolPolicy(address(policy)),
+            IPoolPolicyManager(address(policy)),
             address(hook),
             address(this) // Test contract as owner
         );

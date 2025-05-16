@@ -4,7 +4,7 @@ pragma solidity ^0.8.27;
 import "forge-std/Test.sol";
 import "../lib/EventTools.sol";
 
-import {PoolPolicyManager, IPoolPolicy} from "src/PoolPolicyManager.sol";
+import {PoolPolicyManager, IPoolPolicyManager} from "src/PoolPolicyManager.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {Errors} from "src/errors/Errors.sol"; // for precise revert selectors
 
@@ -63,7 +63,7 @@ contract PoolPolicyManager_Fee is Test {
         EventTools.expectEmitIf(this, willEmit, false, false, false, true);
         emit FeeConfigChanged(120_000, 0, 880_000, 200, 10_000, 11);
 
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.FEE, address(0), OWNER);
+        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.FEE, address(0), OWNER);
 
         vm.prank(OWNER);
         ppm.setFeeConfig(120_000, 0, 880_000, 200, 10_000, 11);
@@ -100,7 +100,7 @@ contract PoolPolicyManager_Fee is Test {
         emit FeeConfigChanged(150_000, 50_000, 800_000, 200, 5_000, 12);
 
         // Check PolicySet event
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.FEE, address(0), OWNER);
+        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.FEE, address(0), OWNER);
 
         ppm.setFeeConfig(
             150_000, // 15 % POL
@@ -154,7 +154,7 @@ contract PoolPolicyManager_Fee is Test {
         EventTools.expectEmitIf(this, willEmitEnabled, false, false, false, true);
         emit PoolSpecificPOLSharingEnabled(true);
 
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.FEE, address(1), OWNER); // address(1) for true
+        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.FEE, address(1), OWNER); // address(1) for true
 
         vm.prank(OWNER);
         ppm.setPoolSpecificPOLSharingEnabled(true);
@@ -167,7 +167,7 @@ contract PoolPolicyManager_Fee is Test {
         EventTools.expectEmitIf(this, willEmitShare, false, false, false, true);
         emit PoolPOLShareChanged(pool, 123_456);
 
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicy.PolicyType.FEE, address(uint160(123_456)), OWNER);
+        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicyManager.PolicyType.FEE, address(uint160(123_456)), OWNER);
 
         vm.prank(OWNER);
         ppm.setPoolPOLShare(pool, 123_456);
@@ -180,7 +180,7 @@ contract PoolPolicyManager_Fee is Test {
         EventTools.expectEmitIf(this, true, false, false, false, true);
         emit PoolSpecificPOLSharingEnabled(false);
 
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.FEE, address(0), OWNER); // address(0) for false
+        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.FEE, address(0), OWNER); // address(0) for false
 
         vm.prank(OWNER);
         ppm.setPoolSpecificPOLSharingEnabled(false);
@@ -199,25 +199,6 @@ contract PoolPolicyManager_Fee is Test {
         assertEq(ppm.getMinimumPOLTarget(pid(7), liq, fee), want);
     }
 
-    function testPerPoolMultiplierOverride() public {
-        PoolId pool = pid(7);
-
-        // Always assume we need to emit since we're setting a specific value
-        bool willEmit = true;
-
-        // Expect PoolPOLMultiplierChanged and PolicySet events
-        EventTools.expectEmitIf(this, willEmit, false, false, false, true);
-        emit PoolPOLMultiplierChanged(pool, 5);
-
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicy.PolicyType.FEE, address(uint160(5)), OWNER);
-
-        vm.prank(OWNER);
-        ppm.setPoolPOLMultiplier(pool, 5); // halve it
-
-        uint256 want = 1e18 * 3_000 * 5 / 1e12;
-        assertEq(ppm.getMinimumPOLTarget(pool, 1e18, 3_000), want);
-    }
-
     function testGlobalMultiplierChange() public {
         // Check if current multiplier matches desired value
         uint256 prevMultiplier = ppm.defaultPolMultiplier();
@@ -228,7 +209,7 @@ contract PoolPolicyManager_Fee is Test {
         emit DefaultPOLMultiplierChanged(15);
 
         EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.FEE, address(uint160(15)), OWNER
+            this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.FEE, address(uint160(15)), OWNER
         );
 
         vm.prank(OWNER);
@@ -250,7 +231,7 @@ contract PoolPolicyManager_Fee is Test {
         // Expect FeeConfigChanged and PolicySet
         // Note: Fuzzing makes exact value checks hard for FeeConfigChanged
         // We can check the PolicySet event reliably though
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicy.PolicyType.FEE, address(0), OWNER);
+        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.FEE, address(0), OWNER);
 
         vm.prank(OWNER);
         ppm.setFeeConfig(pol, fr, lp, 100, 10_000, 10);

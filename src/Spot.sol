@@ -21,6 +21,7 @@ import {BeforeSwapDelta, BeforeSwapDeltaLibrary, toBeforeSwapDelta} from "v4-cor
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {ModifyLiquidityParams} from "v4-core/src/types/PoolOperation.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 
 // - - - V4 Periphery Deps - - -
 
@@ -30,7 +31,6 @@ import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol
 
 // - - - Project Libraries - - -
 
-import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
 
 // - - - Project Interfaces - - -
@@ -48,8 +48,6 @@ import {FullRangeLiquidityManager} from "./FullRangeLiquidityManager.sol";
 import {PoolPolicyManager} from "./PoolPolicyManager.sol";
 import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
 
-// TODO(low priority): Spot deposit and withdraw proxies to FRLM
-
 contract Spot is BaseHook, ISpot {
     using PoolIdLibrary for PoolKey;
     using PoolIdLibrary for PoolId;
@@ -65,12 +63,12 @@ contract Spot is BaseHook, ISpot {
 
     // - - - State - - -
 
-    PoolPolicyManager public immutable policyManager;
-    TruncGeoOracleMulti public immutable truncGeoOracle;
-    IDynamicFeeManager public immutable dynamicFeeManager;
-    IFullRangeLiquidityManager public immutable liquidityManager;
+    PoolPolicyManager public immutable override policyManager;
+    TruncGeoOracleMulti public immutable override truncGeoOracle;
+    IDynamicFeeManager public immutable override dynamicFeeManager;
+    IFullRangeLiquidityManager public immutable override liquidityManager;
 
-    bool public reinvestmentPaused;
+    bool public override reinvestmentPaused;
 
     // - - - Constructor - - -
 
@@ -131,6 +129,41 @@ contract Spot is BaseHook, ISpot {
         emit ReinvestmentPausedChanged(paused);
     }
 
+    // Add this field to track if we've approved FRLM for each token
+    mapping(address => bool) private _tokenApprovedToFRLM;
+
+    /// @inheritdoc ISpot
+    function depositToFRLM(
+        PoolKey calldata key,
+        uint256 amount0Desired,
+        uint256 amount1Desired,
+        uint256 amount0Min,
+        uint256 amount1Min,
+        address recipient
+    ) external payable override onlyPolicyOwner returns (uint256 shares, uint256 amount0, uint256 amount1) {
+        // Pass msg.sender as the payer to avoid token transfers through Spot
+        uint256 unusedAmount0;
+        uint256 unusedAmount1;
+
+        (shares, amount0, amount1, unusedAmount0, unusedAmount1) = liquidityManager.deposit{value: msg.value}(
+            key, amount0Desired, amount1Desired, amount0Min, amount1Min, recipient, msg.sender
+        );
+
+        return (shares, amount0, amount1);
+    }
+
+    /// @inheritdoc ISpot
+    function withdrawFromFRLM(
+        PoolKey calldata key,
+        uint256 sharesToBurn,
+        uint256 amount0Min,
+        uint256 amount1Min,
+        address recipient
+    ) external override onlyPolicyOwner returns (uint256 amount0, uint256 amount1) {
+        // Forward the call with msg.sender as the sharesOwner
+        return liquidityManager.withdraw(key, sharesToBurn, amount0Min, amount1Min, recipient, msg.sender);
+    }
+
     // - - - Hook Callback Implementations - - -
 
     /// @notice called in BaseHook.beforeSwap
@@ -139,15 +172,25 @@ contract Spot is BaseHook, ISpot {
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        // Get dynamic fee from fee manager
-        (uint256 baseRaw, uint256 surgeRaw) = dynamicFeeManager.getFeeState(key.toId());
-        uint24 base = uint24(baseRaw);
-        uint24 surge = uint24(surgeRaw);
-        uint24 dynamicFee = base + surge; // ppm (1e-6)
+        // First check if a manual fee is set for this pool
+        PoolId poolId = key.toId();
+        (uint24 manualFee, bool hasManualFee) = policyManager.getManualFee(poolId);
+
+        uint24 dynamicFee;
+
+        if (hasManualFee) {
+            // Use the manual fee if set
+            dynamicFee = manualFee;
+        } else {
+            // Otherwise get dynamic fee from fee manager
+            (uint256 baseRaw, uint256 surgeRaw) = dynamicFeeManager.getFeeState(poolId);
+            uint24 base = uint24(baseRaw);
+            uint24 surge = uint24(surgeRaw);
+            dynamicFee = base + surge; // ppm (1e-6)
+        }
 
         // Calculate protocol fee based on policy
-        PoolId poolId = key.toId();
-        (uint256 protocolFeePPM,,) = policyManager.getFeeAllocations(key.toId()); // ppm
+        (uint256 protocolFeePPM,,) = policyManager.getFeeAllocations(poolId);
 
         // Handle exactIn case in beforeSwap
         if (params.amountSpecified > 0 && protocolFeePPM > 0) {
@@ -182,7 +225,7 @@ contract Spot is BaseHook, ISpot {
         }
 
         // Store pre-swap tick for oracle update in afterSwap
-        (, int24 preSwapTick,,) = StateLibrary.getSlot0(poolManager, key.toId());
+        (, int24 preSwapTick,,) = StateLibrary.getSlot0(poolManager, poolId);
         assembly {
             tstore(poolId, dynamicFee)
             tstore(add(poolId, 1), preSwapTick) // use next slot for pre-swap tick
@@ -216,6 +259,7 @@ contract Spot is BaseHook, ISpot {
                 int128 inputAmount = zeroIsInput ? delta.amount0() : delta.amount1();
                 if (inputAmount <= 0) revert Errors.InvalidSwapDelta(); // NOTE: invariant check
 
+                // Get the dynamic fee(could be actual base+surge or manual)
                 uint24 dynamicFee;
                 assembly {
                     dynamicFee := tload(poolId)
@@ -248,6 +292,8 @@ contract Spot is BaseHook, ISpot {
             }
         }
 
+        // NOTE: we do oracle updates this regardless of manual fee setting
+
         // Get pre-swap tick from transient storage
         int24 preSwapTick;
         assembly {
@@ -279,20 +325,8 @@ contract Spot is BaseHook, ISpot {
 
         // Initialize oracle if possible
         if (address(truncGeoOracle) != address(0) && address(key.hooks) == address(this)) {
-            // TODO(low priority): why so many try catches? Don't we expect these calls to necessarily succeed
-            try truncGeoOracle.enableOracleForPool(key) {
-                emit OracleInitialized(poolId, tick, TickMoveGuard.HARD_ABS_CAP);
-            } catch (bytes memory reason) {
-                emit OracleInitializationFailed(poolId, reason);
-            }
-        }
-
-        // Initialize policy manager
-        if (address(policyManager) != address(0)) {
-            try policyManager.handlePoolInitialization(poolId, key, sqrtPriceX96, tick, address(this)) {}
-            catch (bytes memory reason) {
-                emit PolicyInitializationFailed(poolId, string(reason));
-            }
+            truncGeoOracle.enableOracleForPool(key);
+            emit OracleInitialized(poolId, tick, TickMoveGuard.HARD_ABS_CAP);
         }
 
         // Initialize dynamic fee manager

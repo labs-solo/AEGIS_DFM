@@ -34,11 +34,9 @@ import {IFullRangeLiquidityManager} from "./interfaces/IFullRangeLiquidityManage
 
 import {PoolPolicyManager} from "./PoolPolicyManager.sol";
 
-/**
- * @title FullRangeLiquidityManager
- * @notice Manages hook fees and liquidity for Spot pools
- * @dev Handles fee collection, reinvestment, and allows users to contribute liquidity
- */
+/// @title FullRangeLiquidityManager
+/// @notice Manages hook fees and liquidity for Spot pools
+/// @dev Handles fee collection, reinvestment, and allows users to contribute liquidity
 contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims {
     using PoolIdLibrary for PoolKey;
     using PoolIdLibrary for PoolId;
@@ -79,13 +77,11 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     /// @notice NFT token IDs for full range positions
     mapping(PoolId => uint256) public positionIds;
 
-    /**
-     * @notice Constructs the FullRangeLiquidityManager
-     * @param _poolManager The Uniswap V4 PoolManager
-     * @param _positionManager The Uniswap V4 PositionManager
-     * @param _policyManager The policy manager contract
-     * @param _authorizedHookAddress The hook address that can notify fees
-     */
+    /// @notice Constructs the FullRangeLiquidityManager
+    /// @param _poolManager The Uniswap V4 PoolManager
+    /// @param _positionManager The Uniswap V4 PositionManager
+    /// @param _policyManager The policy manager contract
+    /// @param _authorizedHookAddress The hook address that can notify fees
     constructor(
         IPoolManager _poolManager,
         PositionManager _positionManager,
@@ -105,18 +101,12 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         authorizedHookAddress = _authorizedHookAddress;
     }
 
-    /**
-     * @notice Modifier to check if the caller is the policy manager owner
-     */
     modifier onlyPolicyOwner() {
         if (msg.sender != policyManager.owner()) revert Errors.UnauthorizedCaller(msg.sender);
         _;
     }
 
-    /**
-     * @notice Modifier to ensure only the Spot hook can call
-     */
-    modifier onlyAuthorizedHook() {
+    modifier onlySpot() {
         if (msg.sender != authorizedHookAddress) revert Errors.UnauthorizedCaller(msg.sender);
         _;
     }
@@ -128,7 +118,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
-    function notifyFee(PoolKey calldata poolKey, uint256 fee0, uint256 fee1) external override onlyAuthorizedHook {
+    function notifyFee(PoolKey calldata poolKey, uint256 fee0, uint256 fee1) external override onlySpot {
         PoolId poolId = poolKey.toId();
         // Update pending fees
         if (fee0 > 0) {
@@ -163,7 +153,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         poolManager.take(key.currency1, address(this), amount1);
 
         // Approve tokens for position operations
-        _approveTokensForPosition(key.currency0, key.currency1, amount0, amount1);
+        _approveTokensForPosition(key.currency0, key.currency1);
 
         // Add liquidity to position
         (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) =
@@ -297,37 +287,57 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 amount1Desired,
         uint256 amount0Min,
         uint256 amount1Min,
-        address recipient
-    ) external payable override onlyPolicyOwner returns (uint256 liquidityAdded, uint256 amount0, uint256 amount1) {
+        address recipient,
+        address payer
+    )
+        external
+        payable
+        override
+        onlySpot
+        returns (uint256 liquidityAdded, uint256 amount0, uint256 amount1, uint256 unusedAmount0, uint256 unusedAmount1)
+    {
         PoolId poolId = key.toId();
-        // Handle transfers - this will ensure FRLM has tokens to spend
-        _handleTokenTransfers(key.currency0, key.currency1, amount0Desired, amount1Desired);
+        // Pull tokens directly from the payer
+        _handleTokenTransfersFromPayer(key.currency0, key.currency1, amount0Desired, amount1Desired, payer);
 
         // Approve tokens for position operations
-        _approveTokensForPosition(key.currency0, key.currency1, amount0Desired, amount1Desired);
+        _approveTokensForPosition(key.currency0, key.currency1);
 
         // Add liquidity to position
         (liquidityAdded, amount0, amount1) =
             _addLiquidityToPosition(key, amount0Desired, amount1Desired, amount0Min, amount1Min);
 
-        // shares correspond 1:1 with liquidity
+        // Calculate unused amounts
+        unusedAmount0 = amount0Desired - amount0;
+        unusedAmount1 = amount1Desired - amount1;
 
+        // Refund any unused ERC20 tokens to the payer, not the caller
+        if (unusedAmount0 > 0 && !key.currency0.isAddressZero()) {
+            IERC20Minimal(Currency.unwrap(key.currency0)).transfer(payer, unusedAmount0);
+        }
+
+        if (unusedAmount1 > 0 && !key.currency1.isAddressZero()) {
+            IERC20Minimal(Currency.unwrap(key.currency1)).transfer(payer, unusedAmount1);
+        }
+
+        // shares correspond 1:1 with liquidity
         // Mint ERC6909 shares to recipient
         _mint(recipient, uint256(PoolId.unwrap(poolId)), liquidityAdded);
 
-        // Refund any excess ETH after all operations are complete
+        // Refund any excess ETH to the payer
         uint256 ethNeeded = 0;
         if (key.currency0.isAddressZero()) ethNeeded += amount0;
         if (key.currency1.isAddressZero()) ethNeeded += amount1;
 
         if (msg.value > ethNeeded) {
-            (bool success,) = payable(msg.sender).call{value: msg.value - ethNeeded}("");
+            // Send ETH refund to the payer, not the caller
+            (bool success,) = payable(payer).call{value: msg.value - ethNeeded}("");
             if (!success) revert Errors.ETHRefundFailed();
         }
 
         emit Deposit(poolId, recipient, liquidityAdded, amount0, amount1);
 
-        return (liquidityAdded, amount0, amount1);
+        return (liquidityAdded, amount0, amount1, unusedAmount0, unusedAmount1);
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
@@ -336,12 +346,13 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 sharesToBurn,
         uint256 amount0Min,
         uint256 amount1Min,
-        address recipient
-    ) external override onlyPolicyOwner returns (uint256 amount0, uint256 amount1) {
-        // Use the shared withdrawal logic with the caller as the shares owner
-        (amount0, amount1) = _withdrawLiquidity(key, sharesToBurn, amount0Min, amount1Min, msg.sender, recipient);
+        address recipient,
+        address sharesOwner
+    ) external override onlySpot returns (uint256 amount0, uint256 amount1) {
+        // Use the shared withdrawal logic with the specified sharesOwner
+        (amount0, amount1) = _withdrawLiquidity(key, sharesToBurn, amount0Min, amount1Min, sharesOwner, recipient);
 
-        emit Withdraw(key.toId(), msg.sender, recipient, amount0, amount1, sharesToBurn);
+        emit Withdraw(key.toId(), sharesOwner, recipient, amount0, amount1, sharesToBurn);
 
         return (amount0, amount1);
     }
@@ -403,11 +414,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         return amountSwept;
     }
 
-    // - - - Internal Helpers - - -
-
-    function _approveTokensForPosition(Currency currency0, Currency currency1, uint256 amount0, uint256 amount1)
-        internal
-    {
+    function _approveTokensForPosition(Currency currency0, Currency currency1) internal {
         // Approve tokens to Permit2 with infinite allowance
         _approveToPermit2(currency0);
         _approveToPermit2(currency1);
@@ -440,8 +447,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             uint48 farFuture = type(uint48).max;
 
             // Check current allowance in the Permit2 contract
-            (uint160 currentAmount, uint48 expiration,) =
-                permit2.allowance(address(this), token, address(positionManager));
+            (uint160 currentAmount,,) = permit2.allowance(address(this), token, address(positionManager));
 
             // Only update if not already maximum
             if (currentAmount < maxAmount) {
@@ -613,17 +619,15 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         return (liquidityAdded, amount0, amount1);
     }
 
-    /**
-     * @notice Internal function to handle withdrawal of liquidity
-     * @param key The pool key
-     * @param sharesToBurn Number of shares to burn
-     * @param amount0Min Minimum amount of token0 to receive
-     * @param amount1Min Minimum amount of token1 to receive
-     * @param sharesOwner Address that owns the shares to be burned
-     * @param recipient Address to receive the withdrawn tokens
-     * @return amount0 Amount of token0 withdrawn
-     * @return amount1 Amount of token1 withdrawn
-     */
+    /// @notice Internal function to handle withdrawal of liquidity
+    /// @param key The pool key
+    /// @param sharesToBurn Number of shares to burn
+    /// @param amount0Min Minimum amount of token0 to receive
+    /// @param amount1Min Minimum amount of token1 to receive
+    /// @param sharesOwner Address that owns the shares to be burned
+    /// @param recipient Address to receive the withdrawn tokens
+    /// @return amount0 Amount of token0 withdrawn
+    /// @return amount1 Amount of token1 withdrawn
     function _withdrawLiquidity(
         PoolKey calldata key,
         uint256 sharesToBurn,
@@ -700,19 +704,25 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         return (amount0, amount1);
     }
 
-    function _handleTokenTransfers(Currency currency0, Currency currency1, uint256 amount0, uint256 amount1) internal {
+    function _handleTokenTransfersFromPayer(
+        Currency currency0,
+        Currency currency1,
+        uint256 amount0,
+        uint256 amount1,
+        address payer
+    ) internal {
         // Handle native ETH if applicable
         if (currency0.isAddressZero()) {
             if (msg.value < amount0) revert Errors.InsufficientETH(amount0, msg.value);
         } else {
-            IERC20Minimal(Currency.unwrap(currency0)).transferFrom(msg.sender, address(this), amount0);
+            IERC20Minimal(Currency.unwrap(currency0)).transferFrom(payer, address(this), amount0);
         }
 
         if (currency1.isAddressZero()) {
             if (msg.value < amount1) revert Errors.InsufficientETH(amount1, msg.value);
         } else if (!currency0.isAddressZero() || !(currency0 == currency1)) {
             // Only transfer token1 if it's not the same native ETH as token0
-            IERC20Minimal(Currency.unwrap(currency1)).transferFrom(msg.sender, address(this), amount1);
+            IERC20Minimal(Currency.unwrap(currency1)).transferFrom(payer, address(this), amount1);
         }
     }
 }

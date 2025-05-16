@@ -20,7 +20,7 @@ import {HookMiner} from "@uniswap/v4-periphery/src/utils/HookMiner.sol";
 import {Spot} from "../../src/Spot.sol";
 import {ISpot, DepositParams} from "../../src/interfaces/ISpot.sol";
 import {Errors} from "../../src/errors/Errors.sol";
-import {IPoolPolicy} from "../../src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "../../src/interfaces/IPoolPolicyManager.sol";
 import {IFullRangeLiquidityManager} from "../../src/interfaces/IFullRangeLiquidityManager.sol";
 import {TruncGeoOracleMulti} from "../../src/TruncGeoOracleMulti.sol";
 import {IDynamicFeeManager} from "../../src/interfaces/IDynamicFeeManager.sol";
@@ -89,14 +89,7 @@ contract PolicyStub {
         governor = _gov;
     }
 
-    /* -------- IPoolPolicy bits the hook touches ------------------------ */
-    function getSoloGovernance() external view returns (address) {
-        return governor;
-    }
-
-    function getFeeCollector() external view returns (address) {
-        return feeCollector;
-    }
+    /* -------- IPoolPolicyManager bits the hook touches ------------------------ */
 
     function getFeeAllocations(PoolId) external pure returns (uint256, uint256, uint256) {
         return (0, 0, 0);
@@ -200,7 +193,7 @@ contract SpotUnitTest is Test {
             type(Spot).creationCode,
             abi.encode(
                 IPoolManager(address(pm)),
-                IPoolPolicy(address(policy)),
+                IPoolPolicyManager(address(policy)),
                 IFullRangeLiquidityManager(address(lm)),
                 TruncGeoOracleMulti(address(oracle)),
                 IDynamicFeeManager(address(dfm)),
@@ -211,7 +204,7 @@ contract SpotUnitTest is Test {
         /* deploy Spot at the pre-computed address */
         spot = new Spot{salt: salt}(
             IPoolManager(address(pm)),
-            IPoolPolicy(address(policy)),
+            IPoolPolicyManager(address(policy)),
             IFullRangeLiquidityManager(address(lm)),
             TruncGeoOracleMulti(address(oracle)),
             IDynamicFeeManager(address(dfm)),
@@ -241,7 +234,7 @@ contract SpotUnitTest is Test {
         vm.expectRevert();
         new Spot(
             IPoolManager(address(0)),
-            IPoolPolicy(address(policy)),
+            IPoolPolicyManager(address(policy)),
             IFullRangeLiquidityManager(address(lm)),
             TruncGeoOracleMulti(address(oracle)),
             IDynamicFeeManager(address(dfm)),

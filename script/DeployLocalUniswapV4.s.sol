@@ -35,7 +35,7 @@ import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityM
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {HookMiner as HMiner} from "v4-periphery/src/utils/HookMiner.sol";
-import {DummyFullRangeHook} from "utils/DummyFullRangeHook.sol";
+import {DummyFullRangeHook} from "../test/integration/utils/DummyFullRangeHook.sol";
 
 /**
  * @title DeployLocalUniswapV4
@@ -116,10 +116,7 @@ contract DeployLocalUniswapV4 is Script {
         supportedTickSpacings[2] = 200;
         policyManager = new PoolPolicyManager(
             msg.sender,
-            EXPECTED_DEFAULT_DYNAMIC_FEE,
-            supportedTickSpacings,
             0,
-            msg.sender,
             EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
             EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
         );

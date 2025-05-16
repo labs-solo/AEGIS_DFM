@@ -16,7 +16,7 @@ import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
 // Changed to absolute src imports
 import {Spot} from "src/Spot.sol";
 import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
-import {IPoolPolicy} from "src/interfaces/IPoolPolicy.sol";
+import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
 import {ISpot, DepositParams as ISpotDepositParams} from "src/interfaces/ISpot.sol";
 // NOTE: SharedDeployLib is *not* used directly here, but keeping the structure consistent.
 // If it *were* imported, the path would be updated below.
@@ -59,7 +59,7 @@ contract InternalReinvestTest is LocalSetup, IUnlockCallback {
     Spot internal spotHook;
     IFullRangeLiquidityManager internal lm;
     IPoolManager internal pm; // Renamed from poolManager for consistency with snippet
-    IPoolPolicy internal policyMgr;
+    IPoolPolicyManager internal policyMgr;
 
     Currency internal c0;
     Currency internal c1;
