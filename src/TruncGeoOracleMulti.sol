@@ -73,6 +73,12 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     mapping(bytes32 => uint64) private capFreq; // ***saturating*** counter
     mapping(bytes32 => uint48) private lastFreqTs; // last decay update
 
+    /* ────────────────────── LATEST TICK CACHE ─────────────────────── */
+    /// @dev Per-pool cache of the most recent tick.  Replaces the former
+    ///      `prevTick` field that sat inside every observation slot and
+    ///      restores the oracle ring-buffer to a single storage word.
+    mapping(bytes32 => int24) private _lastTick; // newest observed tick per pool
+
     struct ObservationState {
         uint16 index;
         /**
@@ -215,6 +221,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         TruncatedOracle.Observation[PAGE_SIZE] storage first = _pages[id][0];
         first.initialize(uint32(block.timestamp), initialTick);
         states[id] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 1});
+        _lastTick[id] = initialTick; // seed latest-tick cache
 
         // Clamp defaultCap inside the validated range
         if (defaultCap < pc.minCap) defaultCap = pc.minCap;
@@ -291,7 +298,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         // in-place observation rather than creating a brand new slot – this
         // mirrors the behaviour of Uniswap-V3ʼs oracle and preserves gas.
         if (!wroteNewSlot) {
-            obs[localIdx].prevTick = currentTick;
+            // Same-second update: overwrite cached tick only (saves gas).
+            _lastTick[id] = currentTick;
         }
 
         if (wroteNewSlot) {
@@ -323,6 +331,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
             ) {
                 state.cardinalityNext = state.cardinality + 1;
             }
+
+            // Cache the freshly written tick.
+            _lastTick[id] = currentTick;
         }
 
         // Update auto-tune frequency counter if capped
@@ -367,8 +378,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     ///         We *do not* copy the whole `Observation` struct to memory.
     ///         Instead we keep a **storage** reference and read just the two
     ///         fields we need, saving ~120 gas per call.
-    ///         **⚠️  IMPORTANT:** the field order (`prevTick`, `blockTimestamp`)
-    ///         must stay in-sync with `TruncatedOracle.Observation` layout.
+    ///         The tick itself is now fetched from the dedicated `_lastTick`
+    ///         mapping instead of the observation slot, so the observation
+    ///         struct stays a single 256-bit word.
     function getLatestObservation(PoolId pid) external view returns (int24 tick, uint32 blockTimestamp) {
         bytes32 id = PoolId.unwrap(pid);
         if (states[id].cardinality == 0) {
@@ -378,7 +390,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         ObservationState storage state = states[id];
         // ---- inline fast-path (no struct copy) ----------------------------
         TruncatedOracle.Observation storage o = _leaf(id, state.index)[state.index % PAGE_SIZE];
-        return (o.prevTick, o.blockTimestamp);
+        return (_lastTick[id], o.blockTimestamp);
     }
 
     /**
