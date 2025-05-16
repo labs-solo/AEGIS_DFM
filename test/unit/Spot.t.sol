@@ -90,13 +90,6 @@ contract PolicyStub {
     }
 
     /* -------- IPoolPolicyManager bits the hook touches ------------------------ */
-    function getSoloGovernance() external view returns (address) {
-        return governor;
-    }
-
-    function getFeeCollector() external view returns (address) {
-        return feeCollector;
-    }
 
     function getFeeAllocations(PoolId) external pure returns (uint256, uint256, uint256) {
         return (0, 0, 0);

@@ -199,25 +199,6 @@ contract PoolPolicyManager_Fee is Test {
         assertEq(ppm.getMinimumPOLTarget(pid(7), liq, fee), want);
     }
 
-    function testPerPoolMultiplierOverride() public {
-        PoolId pool = pid(7);
-
-        // Always assume we need to emit since we're setting a specific value
-        bool willEmit = true;
-
-        // Expect PoolPOLMultiplierChanged and PolicySet events
-        EventTools.expectEmitIf(this, willEmit, false, false, false, true);
-        emit PoolPOLMultiplierChanged(pool, 5);
-
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicyManager.PolicyType.FEE, address(uint160(5)), OWNER);
-
-        vm.prank(OWNER);
-        ppm.setPoolPOLMultiplier(pool, 5); // halve it
-
-        uint256 want = 1e18 * 3_000 * 5 / 1e12;
-        assertEq(ppm.getMinimumPOLTarget(pool, 1e18, 3_000), want);
-    }
-
     function testGlobalMultiplierChange() public {
         // Check if current multiplier matches desired value
         uint256 prevMultiplier = ppm.defaultPolMultiplier();

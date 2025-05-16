@@ -1,51 +1,101 @@
-// SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
+// SPDX-License-Identifier: MIT
+pragma solidity >=0.5.0;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {Currency} from "v4-core/src/types/Currency.sol";
 
-/**
- * @title IPoolPolicyManager
- * @notice Consolidated interface for all policy types in the Spot system
- * @dev Combines fee, tick scaling, and v-tier policies into a single interface
- */
+/// @title IPoolPolicyManager
+/// @notice Consolidated interface for all policy types in the Spot system
+/// @dev Combines fee, tick scaling, v-tier, and various other policies into a single interface
 interface IPoolPolicyManager {
-    /**
-     * @notice Policy types supported by the system
-     */
+    /// @notice Policy types supported by the system
     enum PolicyType {
         FEE, // Manages fee calculation and distribution
         TICK_SCALING, // Controls tick movement restrictions
         VTIER, // Validates fee tier and tick spacing combinations
         REINVESTMENT, // Manages fee reinvestment strategies
-        ORACLE, // Added: Manages oracle behavior and thresholds
-        INTEREST_FEE, // Added: Manages protocol interest fee settings
-        REINVESTOR_AUTH // Added: Manages authorized reinvestor addresses
+        ORACLE, // Manages oracle behavior and thresholds
+        INTEREST_FEE, // Manages protocol interest fee settings
+        REINVESTOR_AUTH // Manages authorized reinvestor addresses
 
     }
 
-    /**
-     * @notice Returns the governance address of the Solo system
-     * @return The governance address that controls the system
-     */
-    function getSoloGovernance() external view returns (address);
+    // === Events ===
+
+    /// @notice Emitted when fee configuration is changed
+    /// @param polSharePpm Protocol-owned liquidity share in PPM
+    /// @param fullRangeSharePpm Full range incentive share in PPM
+    /// @param lpSharePpm LP share in PPM
+    /// @param minimumTradingFeePpm Minimum trading fee in PPM
+    event FeeConfigChanged(
+        uint256 polSharePpm, uint256 fullRangeSharePpm, uint256 lpSharePpm, uint256 minimumTradingFeePpm
+    );
+
+    /// @notice Emitted when a policy is set for a pool
+    /// @param poolId The ID of the pool
+    /// @param policyType The type of policy being set
+    /// @param implementation The address of the implementation (or address-encoded parameter)
+    /// @param setter The address that set the policy
+    event PolicySet(
+        PoolId indexed poolId, PolicyType indexed policyType, address implementation, address indexed setter
+    );
 
     /**
-     * @notice Initializes all policies for a pool
+     * @notice Emitted when a pool is initialized
      * @param poolId The ID of the pool
-     * @param governance The governance address
-     * @param implementations Array of policy implementations
+     * @param hook The hook address
+     * @param initialTick The initial tick
      */
-    function initializePolicies(PoolId poolId, address governance, address[] calldata implementations) external;
+    event PoolInitialized(PoolId indexed poolId, address hook, int24 initialTick);
 
     /**
-     * @notice Returns the policy implementation for a specific policy type
+     * @notice Emitted when a pool's POL share is changed
      * @param poolId The ID of the pool
-     * @param policyType The type of policy to retrieve
-     * @return implementation The policy implementation address
+     * @param polSharePpm The new POL share in PPM
      */
-    function getPolicy(PoolId poolId, PolicyType policyType) external view returns (address implementation);
+    event PoolPOLShareChanged(PoolId indexed poolId, uint256 polSharePpm);
+
+    /**
+     * @notice Emitted when pool-specific POL sharing is enabled or disabled
+     * @param enabled Whether pool-specific POL sharing is enabled
+     */
+    event PoolSpecificPOLSharingEnabled(bool enabled);
+
+    /**
+     * @notice Emitted when the POL share is set
+     * @param oldShare The old POL share
+     * @param newShare The new POL share
+     */
+    event POLShareSet(uint256 oldShare, uint256 newShare);
+
+    /**
+     * @notice Emitted when the full range share is set
+     * @param oldShare The old full range share
+     * @param newShare The new full range share
+     */
+    event FullRangeShareSet(uint256 oldShare, uint256 newShare);
+
+    /**
+     * @notice Emitted when the daily budget is set
+     * @param newBudget The new daily budget
+     */
+    event DailyBudgetSet(uint32 newBudget);
+
+    /**
+     * @notice Emitted when base fee parameters are set
+     * @param poolId The ID of the pool
+     * @param stepPpm The step size in PPM
+     * @param updateIntervalSecs The update interval in seconds
+     */
+    event BaseFeeParamsSet(PoolId indexed poolId, uint32 stepPpm, uint32 updateIntervalSecs);
+
+    /**
+     * @notice Emitted when a manual fee is set for a pool
+     * @param poolId The ID of the pool
+     * @param manualFee The manual fee in PPM
+     */
+    event ManualFeeSet(PoolId indexed poolId, uint24 manualFee);
+
+    // === Fee Configuration Functions ===
 
     /**
      * @notice Returns fee allocation percentages in PPM
@@ -60,41 +110,10 @@ interface IPoolPolicyManager {
         returns (uint256 polShare, uint256 fullRangeShare, uint256 lpShare);
 
     /**
-     * @notice Calculates the minimum POL target based on dynamic fee and total liquidity
-     * @param poolId The ID of the pool
-     * @param totalLiquidity Current total pool liquidity
-     * @param dynamicFeePpm Current dynamic fee in PPM
-     * @return Minimum required protocol-owned liquidity amount
-     */
-    function getMinimumPOLTarget(PoolId poolId, uint256 totalLiquidity, uint256 dynamicFeePpm)
-        external
-        view
-        returns (uint256);
-
-    /**
      * @notice Returns the minimum trading fee allowed (in PPM)
      * @return Minimum fee in PPM
      */
     function getMinimumTradingFee() external view returns (uint256);
-
-    /**
-     * @notice Returns the threshold for claiming fees during swaps
-     * @return Threshold as percentage of total liquidity
-     */
-    function getFeeClaimThreshold() external view returns (uint256);
-
-    /**
-     * @notice Gets the POL multiplier for a specific pool
-     * @param poolId The ID of the pool
-     * @return The pool-specific POL multiplier, or the default if not set
-     */
-    function getPoolPOLMultiplier(PoolId poolId) external view returns (uint256);
-
-    /**
-     * @notice Returns the default dynamic fee in PPM to use when initializing new pools
-     * @return Default dynamic fee in PPM (e.g., 3000 for 0.3%)
-     */
-    function getDefaultDynamicFee() external view returns (uint256);
 
     /**
      * @notice Set all fee configuration parameters at once
@@ -103,29 +122,14 @@ interface IPoolPolicyManager {
      * @param lpSharePpm LP share in PPM
      * @param minimumTradingFeePpm Minimum trading fee in PPM
      * @param feeClaimThresholdPpm Fee claim threshold in PPM
-     * @param defaultPolMultiplier Default POL target multiplier
      */
     function setFeeConfig(
         uint256 polSharePpm,
         uint256 fullRangeSharePpm,
         uint256 lpSharePpm,
         uint256 minimumTradingFeePpm,
-        uint256 feeClaimThresholdPpm,
-        uint256 defaultPolMultiplier
+        uint256 feeClaimThresholdPpm
     ) external;
-
-    /**
-     * @notice Sets the POL multiplier for a specific pool
-     * @param poolId The ID of the pool
-     * @param multiplier The new multiplier value
-     */
-    function setPoolPOLMultiplier(PoolId poolId, uint32 multiplier) external;
-
-    /**
-     * @notice Sets the default POL multiplier for new pools
-     * @param multiplier The new default multiplier value
-     */
-    function setDefaultPOLMultiplier(uint32 multiplier) external;
 
     /**
      * @notice Sets the POL share percentage for a specific pool
@@ -147,133 +151,191 @@ interface IPoolPolicyManager {
      */
     function getPoolPOLShare(PoolId poolId) external view returns (uint256);
 
+    // === Manual Fee Functions ===
+
     /**
-     * @notice Updates a supported tick spacing
-     * @param tickSpacing The tick spacing value to update
-     * @param isSupported Whether the tick spacing should be supported
+     * @notice Gets the manual fee for a pool, if set
+     * @param poolId The pool ID to get the manual fee for
+     * @return manualFee The manual fee in PPM, 0 if not set
+     * @return isSet Whether a manual fee is set for this pool
      */
-    function updateSupportedTickSpacing(uint24 tickSpacing, bool isSupported) external;
+    function getManualFee(PoolId poolId) external view returns (uint24 manualFee, bool isSet);
 
     /**
-     * @notice Batch updates supported tick spacings
-     * @param tickSpacings Array of tick spacing values to update
-     * @param allowed Array of boolean values indicating if the corresponding tick spacing is supported
+     * @notice Sets a manual fee for a pool, overriding the dynamic fee calculation
+     * @param poolId The pool ID
+     * @param manualFee The manual fee in PPM
      */
-    function batchUpdateAllowedTickSpacings(uint24[] calldata tickSpacings, bool[] calldata allowed) external;
+    function setManualFee(PoolId poolId, uint24 manualFee) external;
 
     /**
-     * @notice Checks if a tick spacing is supported
-     * @param tickSpacing The tick spacing to check
-     * @return True if the tick spacing is supported
+     * @notice Clears a manual fee for a pool, reverting to dynamic fee calculation
+     * @param poolId The pool ID
      */
-    function isTickSpacingSupported(uint24 tickSpacing) external view returns (bool);
+    function clearManualFee(PoolId poolId) external;
+
+    // === Dynamic Fee Configuration Functions ===
 
     /**
-     * @notice Determines if the fee and tickSpacing combination is valid
-     * @param fee The fee tier (e.g., dynamic fee flag 0x800000)
-     * @param tickSpacing The tick spacing for the pool
-     * @return Boolean indicating if the vtier is valid
-     */
-    function isValidVtier(uint24 fee, int24 tickSpacing) external view returns (bool);
-
-    /**
-     * @notice Returns the protocol fee percentage for interest earned on borrowed funds.
-     * @param poolId The ID of the pool (allows for future pool-specific overrides).
-     * @return feePercentage Protocol fee percentage (scaled by PRECISION, e.g., 0.1e18 for 10%).
-     */
-    function getProtocolFeePercentage(PoolId poolId) external view returns (uint256 feePercentage);
-
-    /**
-     * @notice Returns the designated fee collector address (optional, might not be needed if fees go to POL).
-     * @return The address authorized to potentially collect protocol fees (or address(0) if unused).
-     */
-    function getFeeCollector() external view returns (address);
-
-    // ----------------------------------------------------------------
-    // Dynamic Fee Feedback Policy Getters
-    // ----------------------------------------------------------------
-
-    /**
-     * @notice Returns the policy‐defined surge decay period (in seconds) for the given pool.
+     * @notice Returns the surge decay period in seconds for the given pool
+     * @param poolId The pool ID
+     * @return Surge decay period in seconds
      */
     function getSurgeDecayPeriodSeconds(PoolId poolId) external view returns (uint256);
 
     /**
-     * @notice Returns the target number of CAP events per day (equilibrium) for the given pool.
+     * @notice Returns the daily budget for CAP events in PPM for the given pool
+     * @param poolId The pool ID
+     * @return Daily budget in PPM
      */
-    function getTargetCapsPerDay(PoolId poolId) external view returns (uint32);
+    function getDailyBudgetPpm(PoolId poolId) external view returns (uint32);
 
     /**
-     * @notice Returns the daily budget for CAP events (in parts per million) for the given pool.
+     * @notice Returns the budget decay window in seconds for the given pool
+     * @param poolId The pool ID
+     * @return Budget decay window in seconds
      */
-    function getDailyBudgetPpm(PoolId pid) external view returns (uint32);
+    function getCapBudgetDecayWindow(PoolId poolId) external view returns (uint32);
 
     /**
-     * @notice Returns the budget decay window (in seconds) for the given pool.
+     * @notice Returns the scaling factor used for CAP frequency calculations
+     * @param poolId The pool ID
+     * @return Frequency scaling factor
      */
-    function getCapBudgetDecayWindow(PoolId pid) external view returns (uint32);
+    function getFreqScaling(PoolId poolId) external view returns (uint256);
 
     /**
-     * @notice Returns the scaling factor used for CAP frequency math for the given pool.
+     * @notice Returns the minimum base fee in PPM for the given pool
+     * @param poolId The pool ID
+     * @return Minimum base fee in PPM
      */
-    function getFreqScaling(PoolId pid) external view returns (uint256);
+    function getMinBaseFee(PoolId poolId) external view returns (uint256);
 
     /**
-     * @notice Returns the minimum base fee (in PPM) for the given pool.
+     * @notice Returns the maximum base fee in PPM for the given pool
+     * @param poolId The pool ID
+     * @return Maximum base fee in PPM
      */
-    function getMinBaseFee(PoolId pid) external view returns (uint256);
+    function getMaxBaseFee(PoolId poolId) external view returns (uint256);
 
     /**
-     * @notice Returns the maximum base fee (in PPM) for the given pool.
+     * @notice Returns the surge fee multiplier in PPM for the given pool
+     * @param poolId The pool ID
+     * @return Surge fee multiplier in PPM
      */
-    function getMaxBaseFee(PoolId pid) external view returns (uint256);
+    function getSurgeFeeMultiplierPpm(PoolId poolId) external view returns (uint24);
 
     /**
-     * @notice DEPRECATED - Returns 0. Kept for backward compatibility.
-     * @param poolId Pool ID to query.
-     * @return Base fee update interval in seconds.
+     * @notice Returns the surge decay seconds for the given pool
+     * @param poolId The pool ID
+     * @return Surge decay in seconds
+     */
+    function getSurgeDecaySeconds(PoolId poolId) external view returns (uint32);
+
+    /**
+     * @notice Returns the default maximum ticks per block for a pool
+     * @param poolId The pool ID
+     * @return Default maximum ticks per block
+     */
+    function getDefaultMaxTicksPerBlock(PoolId poolId) external view returns (uint24);
+
+    /**
+     * @notice Helper to get both budget and window values in a single call
+     * @param poolId The pool ID
+     * @return budgetPerDay Daily budget in PPM
+     * @return decayWindow Decay window in seconds
+     */
+    function getBudgetAndWindow(PoolId poolId) external view returns (uint32 budgetPerDay, uint32 decayWindow);
+
+    /**
+     * @notice Returns the base fee step size in PPM for the given pool
+     * @param poolId The pool ID
+     * @return Base fee step size in PPM
+     */
+    function getBaseFeeStepPpm(PoolId poolId) external view returns (uint32);
+
+    /**
+     * @notice Returns the base fee update interval in seconds for the given pool
+     * @param poolId The pool ID
+     * @return Base fee update interval in seconds
      */
     function getBaseFeeUpdateIntervalSeconds(PoolId poolId) external view returns (uint32);
 
     /**
-     * @notice DEPRECATED - Returns 0. Kept for backward compatibility.
-     * @param poolId Pool ID to query.
-     * @return Maximum step size in PPM.
+     * @notice Legacy alias for getBaseFeeStepPpm
+     * @param poolId The pool ID
+     * @return Maximum step size in PPM
      */
     function getMaxStepPpm(PoolId poolId) external view returns (uint32);
 
-    /**
-     * @notice DEPRECATED - Returns 0. Kept for backward compatibility.
-     * @param poolId Pool ID to query.
-     * @return Base fee step size in PPM.
-     */
-    function getBaseFeeStepPpm(PoolId poolId) external view returns (uint32);
-
-    /*──────── NEW knobs ─────────────────────────────────────────────*/
-    /// surge = base * surgeFeeMultiplierPpm / 1e6  (e.g. 1_000_000 ppm = 100 %)
-    function getSurgeFeeMultiplierPpm(PoolId poolId) external view returns (uint24);
-
-    /// linear fade‑out period for surge fee
-    function getSurgeDecaySeconds(PoolId poolId) external view returns (uint32);
-
-    /// @notice Checks if a currency is supported for adding to a concentrated LP position
-    /// @param currency The currency to check
-    /// @return True if the currency can be added to a concentrated LP position, false otherwise
-    function isSupportedCurrency(Currency currency) external view returns (bool);
+    // === Dynamic Fee Setter Functions ===
 
     /**
-     * @notice Helper to get both budget and window values in a single call, saving gas
-     * @param id The PoolId to query
-     * @return budgetPerDay Daily budget in PPM
-     * @return decayWindow Decay window in seconds
+     * @notice Sets the target caps per day for a pool
+     * @param poolId The pool ID
+     * @param targetCapsPerDay The target caps per day
      */
-    function getBudgetAndWindow(PoolId id) external view returns (uint32 budgetPerDay, uint32 decayWindow);
+    function setTargetCapsPerDay(PoolId poolId, uint256 targetCapsPerDay) external;
 
-    /*──────── NEW: default starting cap ─────────*/
-    /// @notice Initial `maxTicksPerBlock` the oracle should use for a pool.
-    function getDefaultMaxTicksPerBlock(PoolId id) external view returns (uint24);
+    /**
+     * @notice Sets the cap budget decay window for a pool
+     * @param poolId The pool ID
+     * @param decayWindow The decay window in seconds
+     */
+    function setCapBudgetDecayWindow(PoolId poolId, uint256 decayWindow) external;
 
-    /* ────── test / governance helpers REMOVED FROM INTERFACE ────── */
-    // function setFreqScaling(PoolId pid, uint32 scalingPpm) external;
-    function setBaseFeeParams(PoolId pid, uint32 stepPpm, uint32 updateIntervalSecs) external;
+    /**
+     * @notice Sets the frequency scaling factor for a pool
+     * @param poolId The pool ID
+     * @param freqScaling The frequency scaling factor
+     */
+    function setFreqScaling(PoolId poolId, uint256 freqScaling) external;
+
+    /**
+     * @notice Sets the minimum base fee for a pool
+     * @param poolId The pool ID
+     * @param minBaseFee The minimum base fee in PPM
+     */
+    function setMinBaseFee(PoolId poolId, uint256 minBaseFee) external;
+
+    /**
+     * @notice Sets the maximum base fee for a pool
+     * @param poolId The pool ID
+     * @param maxBaseFee The maximum base fee in PPM
+     */
+    function setMaxBaseFee(PoolId poolId, uint256 maxBaseFee) external;
+
+    /**
+     * @notice Sets the surge decay period in seconds for a pool
+     * @param poolId The pool ID
+     * @param surgeDecaySeconds The surge decay period in seconds
+     */
+    function setSurgeDecayPeriodSeconds(PoolId poolId, uint256 surgeDecaySeconds) external;
+
+    /**
+     * @notice Sets the surge fee multiplier for a pool
+     * @param poolId The pool ID
+     * @param multiplier The surge fee multiplier in PPM
+     */
+    function setSurgeFeeMultiplierPpm(PoolId poolId, uint24 multiplier) external;
+
+    /**
+     * @notice Sets base fee parameters for a pool
+     * @param poolId The pool ID
+     * @param stepPpm The step size in PPM
+     * @param updateIntervalSecs The update interval in seconds
+     */
+    function setBaseFeeParams(PoolId poolId, uint32 stepPpm, uint32 updateIntervalSecs) external;
+
+    /**
+     * @notice Sets the daily budget in PPM
+     * @param ppm The daily budget in PPM
+     */
+    function setDailyBudgetPpm(uint32 ppm) external;
+
+    /**
+     * @notice Sets the decay window in seconds
+     * @param secs The decay window in seconds
+     */
+    function setDecayWindow(uint32 secs) external;
 }

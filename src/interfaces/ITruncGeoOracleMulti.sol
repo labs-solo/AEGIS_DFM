@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: BUSL-1.1
+// SPDX-License-Identifier: MIT
 // minimal subset used by tests
-pragma solidity ^0.8.27;
+pragma solidity >=0.5.0;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 

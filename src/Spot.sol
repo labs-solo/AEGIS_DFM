@@ -140,7 +140,7 @@ contract Spot is BaseHook, ISpot {
         uint256 amount0Min,
         uint256 amount1Min,
         address recipient
-    ) external payable override returns (uint256 shares, uint256 amount0, uint256 amount1) {
+    ) external payable override onlyPolicyOwner returns (uint256 shares, uint256 amount0, uint256 amount1) {
         // Handle token transfers from user to Spot
         _transferTokensFromUser(key.currency0, key.currency1, amount0Desired, amount1Desired);
 
@@ -168,7 +168,7 @@ contract Spot is BaseHook, ISpot {
         uint256 amount0Min,
         uint256 amount1Min,
         address recipient
-    ) external override returns (uint256 amount0, uint256 amount1) {
+    ) external override onlyPolicyOwner returns (uint256 amount0, uint256 amount1) {
         // Simply forward the call to the liquidityManager
         return liquidityManager.withdraw(key, sharesToBurn, amount0Min, amount1Min, recipient);
     }
@@ -181,15 +181,25 @@ contract Spot is BaseHook, ISpot {
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        // Get dynamic fee from fee manager
-        (uint256 baseRaw, uint256 surgeRaw) = dynamicFeeManager.getFeeState(key.toId());
-        uint24 base = uint24(baseRaw);
-        uint24 surge = uint24(surgeRaw);
-        uint24 dynamicFee = base + surge; // ppm (1e-6)
+        // First check if a manual fee is set for this pool
+        PoolId poolId = key.toId();
+        (uint24 manualFee, bool hasManualFee) = policyManager.getManualFee(poolId);
+
+        uint24 dynamicFee;
+
+        if (hasManualFee) {
+            // Use the manual fee if set
+            dynamicFee = manualFee;
+        } else {
+            // Otherwise get dynamic fee from fee manager
+            (uint256 baseRaw, uint256 surgeRaw) = dynamicFeeManager.getFeeState(poolId);
+            uint24 base = uint24(baseRaw);
+            uint24 surge = uint24(surgeRaw);
+            dynamicFee = base + surge; // ppm (1e-6)
+        }
 
         // Calculate protocol fee based on policy
-        PoolId poolId = key.toId();
-        (uint256 protocolFeePPM,,) = policyManager.getFeeAllocations(key.toId()); // ppm
+        (uint256 protocolFeePPM,,) = policyManager.getFeeAllocations(poolId);
 
         // Handle exactIn case in beforeSwap
         if (params.amountSpecified > 0 && protocolFeePPM > 0) {
@@ -224,7 +234,7 @@ contract Spot is BaseHook, ISpot {
         }
 
         // Store pre-swap tick for oracle update in afterSwap
-        (, int24 preSwapTick,,) = StateLibrary.getSlot0(poolManager, key.toId());
+        (, int24 preSwapTick,,) = StateLibrary.getSlot0(poolManager, poolId);
         assembly {
             tstore(poolId, dynamicFee)
             tstore(add(poolId, 1), preSwapTick) // use next slot for pre-swap tick
@@ -258,6 +268,7 @@ contract Spot is BaseHook, ISpot {
                 int128 inputAmount = zeroIsInput ? delta.amount0() : delta.amount1();
                 if (inputAmount <= 0) revert Errors.InvalidSwapDelta(); // NOTE: invariant check
 
+                // Get the dynamic fee(could be actual base+surge or manual)
                 uint24 dynamicFee;
                 assembly {
                     dynamicFee := tload(poolId)
@@ -289,6 +300,8 @@ contract Spot is BaseHook, ISpot {
                 }
             }
         }
+
+        // NOTE: we do oracle updates this regardless of manual fee setting
 
         // Get pre-swap tick from transient storage
         int24 preSwapTick;
