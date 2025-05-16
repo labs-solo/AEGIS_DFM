@@ -16,11 +16,9 @@ import {Errors} from "./errors/Errors.sol";
 import {PolicyManagerErrors} from "./errors/PolicyManagerErrors.sol";
 import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
 
-/**
- * @title PoolPolicyManager
- * @notice Consolidated policy manager implementing the IPoolPolicyManager interface
- * @dev Handles all policy functionality for pool configuration and fee management
- */
+/// @title PoolPolicyManager
+/// @notice Consolidated policy manager implementing the IPoolPolicyManager interface
+/// @dev Handles all policy functionality for pool configuration and fee management
 contract PoolPolicyManager is IPoolPolicyManager, Owned {
     // === Constants ===
 
@@ -103,16 +101,14 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @notice Immutable max base fee
     uint24 public immutable maxBaseFeePpm;
 
-    /**
-     * @notice Constructor initializes the policy manager with default values
-     * @param _governance The owner of the contract
-     * @param _defaultDynamicFee Initial fee configuration
-     * @param _supportedTickSpacings Array of initially supported tick spacings (unused)
-     * @param _dailyBudget Initial daily budget
-     * @param _feeCollector Initial fee collector address (unused)
-     * @param _minTradingFee Minimum trading fee
-     * @param _maxTradingFee Maximum trading fee
-     */
+    /// @notice Constructor initializes the policy manager with default values
+    /// @param _governance The owner of the contract
+    /// @param _defaultDynamicFee Initial fee configuration
+    /// @param _supportedTickSpacings Array of initially supported tick spacings (unused)
+    /// @param _dailyBudget Initial daily budget
+    /// @param _feeCollector Initial fee collector address (unused)
+    /// @param _minTradingFee Minimum trading fee
+    /// @param _maxTradingFee Maximum trading fee
     constructor(
         address _governance,
         uint24 _defaultDynamicFee,
@@ -156,9 +152,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     // === Fee Allocation Functions ===
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getFeeAllocations(PoolId poolId) external view override returns (uint256, uint256, uint256) {
         // Check if pool has a specific POL share
         uint256 poolSpecificPolShare = _poolPolSharePpm[poolId];
@@ -172,16 +166,12 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         return (_defaultFeeConfig.polSharePpm, _defaultFeeConfig.fullRangeSharePpm, _defaultFeeConfig.lpSharePpm);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getMinimumTradingFee() external view override returns (uint256) {
         return _defaultFeeConfig.minimumTradingFeePpm;
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setFeeConfig(
         uint256 _polSharePpm,
         uint256 _fullRangeSharePpm,
@@ -192,9 +182,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         _setFeeConfig(_polSharePpm, _fullRangeSharePpm, _lpSharePpm, _minimumTradingFeePpm, _feeClaimThresholdPpm);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setPoolPOLShare(PoolId poolId, uint256 newPolSharePpm) external override onlyOwner {
         // Validate POL share is within valid range (0-100%)
         if (newPolSharePpm > 1000000) revert Errors.ParameterOutOfRange(newPolSharePpm, 0, 1000000);
@@ -207,9 +195,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit PolicySet(poolId, PolicyType.FEE, address(uint160(newPolSharePpm)), msg.sender);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setPoolSpecificPOLSharingEnabled(bool enabled) external override onlyOwner {
         _allowPoolSpecificPolShare = enabled;
 
@@ -217,9 +203,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.FEE, address(uint160(enabled ? 1 : 0)), msg.sender);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getPoolPOLShare(PoolId poolId) external view override returns (uint256) {
         uint256 poolSpecificPolShare = _poolPolSharePpm[poolId];
 
@@ -234,16 +218,12 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     // === Manual Fee Override Functions ===
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getManualFee(PoolId poolId) external view override returns (uint24 manualFee, bool isSet) {
         return (_poolManualFee[poolId], _hasPoolManualFee[poolId]);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setManualFee(PoolId poolId, uint24 manualFee) external override onlyOwner {
         // Validate fee is within range
         if (manualFee < minBaseFeePpm || manualFee > maxBaseFeePpm) {
@@ -257,9 +237,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit PolicySet(poolId, PolicyType.FEE, address(uint160(manualFee)), msg.sender);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function clearManualFee(PoolId poolId) external override onlyOwner {
         if (_hasPoolManualFee[poolId]) {
             uint24 oldFee = _poolManualFee[poolId];
@@ -273,9 +251,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     // === Dynamic Fee Configuration Getters ===
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getFreqScaling(PoolId poolId) external view override returns (uint256) {
         if (_poolDynamicFeeConfig[poolId].freqScaling != 0) {
             return _poolDynamicFeeConfig[poolId].freqScaling;
@@ -283,9 +259,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         return _defaultDynamicFeeConfig.freqScaling;
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getMinBaseFee(PoolId poolId) external view override returns (uint256) {
         if (_poolDynamicFeeConfig[poolId].minBaseFeePpm != 0) {
             return _poolDynamicFeeConfig[poolId].minBaseFeePpm;
@@ -293,9 +267,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         return minBaseFeePpm;
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getMaxBaseFee(PoolId poolId) external view override returns (uint256) {
         if (_poolDynamicFeeConfig[poolId].maxBaseFeePpm != 0) {
             return _poolDynamicFeeConfig[poolId].maxBaseFeePpm;
@@ -303,9 +275,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         return maxBaseFeePpm;
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getSurgeDecayPeriodSeconds(PoolId poolId) external view override returns (uint256) {
         if (_poolDynamicFeeConfig[poolId].surgeDecayPeriodSeconds != 0) {
             return _poolDynamicFeeConfig[poolId].surgeDecayPeriodSeconds;
@@ -313,9 +283,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         return _defaultDynamicFeeConfig.surgeDecayPeriodSeconds;
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getSurgeFeeMultiplierPpm(PoolId poolId) external view override returns (uint24) {
         if (_poolDynamicFeeConfig[poolId].surgeFeeMultiplierPpm != 0) {
             return _poolDynamicFeeConfig[poolId].surgeFeeMultiplierPpm;
@@ -323,9 +291,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         return _defaultDynamicFeeConfig.surgeFeeMultiplierPpm;
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getSurgeDecaySeconds(PoolId poolId) external view override returns (uint32) {
         if (_poolDynamicFeeConfig[poolId].surgeDecayPeriodSeconds != 0) {
             return _poolDynamicFeeConfig[poolId].surgeDecayPeriodSeconds;
@@ -333,16 +299,12 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         return _defaultDynamicFeeConfig.surgeDecayPeriodSeconds;
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getDailyBudgetPpm(PoolId poolId) external view override returns (uint32) {
         return _capBudgetDailyPpm;
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getCapBudgetDecayWindow(PoolId poolId) external view override returns (uint32) {
         if (_poolDynamicFeeConfig[poolId].capBudgetDecayWindow != 0) {
             return _poolDynamicFeeConfig[poolId].capBudgetDecayWindow;
@@ -350,16 +312,12 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         return _capBudgetDecayWindow;
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getDefaultMaxTicksPerBlock(PoolId) external view override returns (uint24) {
         return _defaultMaxTicksPerBlock;
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getBudgetAndWindow(PoolId poolId)
         external
         view
@@ -373,24 +331,18 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         return (budgetPerDay, decayWindow);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getBaseFeeStepPpm(PoolId poolId) public view override returns (uint32) {
         uint32 val = _poolBaseFeeParams[poolId].stepPpm;
         return val == 0 ? DEFAULT_BASE_FEE_STEP_PPM : val;
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getMaxStepPpm(PoolId poolId) external view override returns (uint32) {
         return getBaseFeeStepPpm(poolId);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function getBaseFeeUpdateIntervalSeconds(PoolId poolId) public view override returns (uint32) {
         uint32 val = _poolBaseFeeParams[poolId].updateIntervalSecs;
         return val == 0 ? DEFAULT_BASE_FEE_UPDATE_INTERVAL_SECS : val;
@@ -398,9 +350,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     // === Dynamic Fee Configuration Setters ===
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setMaxBaseFee(PoolId poolId, uint256 f) external override onlyOwner {
         if (f == 0) revert Errors.ParameterOutOfRange(f, 1, type(uint24).max);
 
@@ -411,9 +361,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setTargetCapsPerDay(PoolId poolId, uint256 v) external override onlyOwner {
         if (v == 0 || v > type(uint32).max) revert Errors.ParameterOutOfRange(v, 1, type(uint32).max);
 
@@ -421,9 +369,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setCapBudgetDecayWindow(PoolId poolId, uint256 w) external override onlyOwner {
         if (w == 0 || w > type(uint32).max) revert Errors.ParameterOutOfRange(w, 1, type(uint32).max);
 
@@ -431,9 +377,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setFreqScaling(PoolId poolId, uint256 s) external override onlyOwner {
         if (s == 0) revert Errors.ParameterOutOfRange(s, 1, type(uint256).max);
 
@@ -441,9 +385,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setMinBaseFee(PoolId poolId, uint256 f) external override onlyOwner {
         if (f == 0) revert Errors.ParameterOutOfRange(f, 1, type(uint24).max);
 
@@ -454,9 +396,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setSurgeDecayPeriodSeconds(PoolId poolId, uint256 s) external override onlyOwner {
         if (s < 60) revert Errors.ParameterOutOfRange(s, 60, 1 days);
         if (s > 1 days) revert Errors.ParameterOutOfRange(s, 60, 1 days);
@@ -465,9 +405,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit PolicySet(poolId, PolicyType.FEE, address(uint160(s)), msg.sender);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setSurgeFeeMultiplierPpm(PoolId poolId, uint24 multiplier) external override onlyOwner {
         if (multiplier == 0) revert Errors.ParameterOutOfRange(multiplier, 1, 3_000_000);
         if (multiplier > 3_000_000) revert Errors.ParameterOutOfRange(multiplier, 1, 3_000_000);
@@ -476,9 +414,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit PolicySet(poolId, PolicyType.FEE, address(uint160(multiplier)), msg.sender);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setBaseFeeParams(PoolId poolId, uint32 stepPpm, uint32 updateIntervalSecs) external override onlyOwner {
         if (stepPpm > MAX_STEP_PPM) revert Errors.ParameterOutOfRange(stepPpm, 0, MAX_STEP_PPM);
 
@@ -488,31 +424,25 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setDailyBudgetPpm(uint32 ppm) external override onlyOwner {
         _capBudgetDailyPpm = ppm;
         emit DailyBudgetSet(ppm);
     }
 
-    /**
-     * @inheritdoc IPoolPolicyManager
-     */
+    /// @inheritdoc IPoolPolicyManager
     function setDecayWindow(uint32 secs) external override onlyOwner {
         _capBudgetDecayWindow = secs;
     }
 
     // === Internal Helper Functions ===
 
-    /**
-     * @dev Internal function to set fee configuration
-     * @param _polSharePpm Protocol-owned liquidity share in PPM
-     * @param _fullRangeSharePpm Full range incentive share in PPM
-     * @param _lpSharePpm LP share in PPM
-     * @param _minimumTradingFeePpm Minimum trading fee in PPM
-     * @param _feeClaimThresholdPpm Fee claim threshold in PPM
-     */
+    /// @dev Internal function to set fee configuration
+    /// @param _polSharePpm Protocol-owned liquidity share in PPM
+    /// @param _fullRangeSharePpm Full range incentive share in PPM
+    /// @param _lpSharePpm LP share in PPM
+    /// @param _minimumTradingFeePpm Minimum trading fee in PPM
+    /// @param _feeClaimThresholdPpm Fee claim threshold in PPM
     function _setFeeConfig(
         uint256 _polSharePpm,
         uint256 _fullRangeSharePpm,
