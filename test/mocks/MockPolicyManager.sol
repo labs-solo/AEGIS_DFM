@@ -68,8 +68,9 @@ contract MockPolicyManager is IPoolPolicyManager {
         return _tickSupported[tickSpacing];
     }
 
+    /// @dev Always returns true as we defer to Uniswap V4's own currency validation
     function isSupportedCurrency(Currency currency) external view override returns (bool) {
-        return _currencySupported[Currency.unwrap(currency)];
+        return true;
     }
 
     function isValidVtier(uint24, /* _fee */ int24 /* _spacing */ ) external pure override returns (bool) {

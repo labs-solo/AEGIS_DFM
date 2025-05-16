@@ -203,9 +203,10 @@ interface IPoolPolicyManager {
     /// @return Base fee update interval in seconds
     function getBaseFeeUpdateIntervalSeconds(PoolId poolId) external view returns (uint32);
 
-    /// @notice Legacy alias for getBaseFeeStepPpm
+    /// @notice Get the maximum step size for base fee updates
+    /// @dev Deprecated: Use getBaseFeeStepPpm instead
     /// @param poolId The pool ID
-    /// @return Maximum step size in PPM
+    /// @return The maximum step size in PPM
     function getMaxStepPpm(PoolId poolId) external view returns (uint32);
 
     /// === Dynamic Fee Setter Functions ===
@@ -258,4 +259,10 @@ interface IPoolPolicyManager {
     /// @notice Sets the decay window in seconds
     /// @param secs The decay window in seconds
     function setDecayWindow(uint32 secs) external;
+
+    /// @notice Check if a currency is supported for pool creation
+    /// @dev Always returns true as we defer to Uniswap V4's own currency validation
+    /// @param currency The currency to check
+    /// @return true as all currencies supported by Uniswap V4 are valid
+    function isSupportedCurrency(Currency currency) external view returns (bool);
 }

@@ -40,15 +40,15 @@ contract PoolPolicyManager_Tick is Test {
 
     /*────────────────── Constructor defaults ──────────────────*/
     function testConstructorSeedsSupportedTickSpacings() public view {
-        assertTrue(ppm.isTickSpacingSupported(1));
-        assertTrue(ppm.isTickSpacingSupported(10));
-        assertFalse(ppm.isTickSpacingSupported(60));
+        assertTrue(ppm.supportedTickSpacings(1));
+        assertTrue(ppm.supportedTickSpacings(10));
+        assertFalse(ppm.supportedTickSpacings(60));
     }
 
     /*──────────────────── updateSupportedTickSpacing ───────────────────*/
     function testOwnerCanToggleTickSpacing() public {
         // Check if tick spacing 60 is already supported (shouldn't be)
-        bool prevSupported = ppm.isTickSpacingSupported(60);
+        bool prevSupported = ppm.supportedTickSpacings(60);
         bool willEmit = !prevSupported; // Only emit if changing from unsupported to supported
 
         EventTools.expectEmitIf(this, willEmit, false, false, false, true);
@@ -62,7 +62,7 @@ contract PoolPolicyManager_Tick is Test {
         vm.prank(OWNER);
         ppm.updateSupportedTickSpacing(60, true);
 
-        assertTrue(ppm.isTickSpacingSupported(60));
+        assertTrue(ppm.supportedTickSpacings(60));
     }
 
     function testNonOwnerCannotToggleTickSpacing() public {
@@ -81,8 +81,8 @@ contract PoolPolicyManager_Tick is Test {
         flags[1] = false; // disable existing
 
         // Check if current states match desired states (to know if events should emit)
-        bool is60Supported = ppm.isTickSpacingSupported(60);
-        bool is10Supported = ppm.isTickSpacingSupported(10);
+        bool is60Supported = ppm.supportedTickSpacings(60);
+        bool is10Supported = ppm.supportedTickSpacings(10);
         bool willEmit60 = (is60Supported != true);
         bool willEmit10 = (is10Supported != false);
 
@@ -104,8 +104,8 @@ contract PoolPolicyManager_Tick is Test {
         vm.prank(OWNER);
         ppm.batchUpdateAllowedTickSpacings(arr, flags);
 
-        assertTrue(ppm.isTickSpacingSupported(60));
-        assertFalse(ppm.isTickSpacingSupported(10));
+        assertTrue(ppm.supportedTickSpacings(60));
+        assertFalse(ppm.supportedTickSpacings(10));
     }
 
     function testBatchUpdateLengthMismatchReverts() public {

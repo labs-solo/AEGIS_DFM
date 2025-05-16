@@ -106,7 +106,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @param _defaultDynamicFee Initial fee configuration
     /// @param _supportedTickSpacings Array of initially supported tick spacings (unused)
     /// @param _dailyBudget Initial daily budget
-    /// @param _feeCollector Initial fee collector address (unused)
+    /// @param _feeCollector Address that receives withdrawn POL, MUST be non-zero
     /// @param _minTradingFee Minimum trading fee
     /// @param _maxTradingFee Maximum trading fee
     constructor(
