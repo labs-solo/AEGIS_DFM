@@ -111,11 +111,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         _;
     }
 
-    modifier onlyAuthorizedCaller() {
-        if (msg.sender != policyManager.owner() && msg.sender != authorizedHookAddress) {
-            revert Errors.UnauthorizedCaller(msg.sender);
-        }
-        _;
+    receive() external payable {
+        // Accept ETH transfers silently
+        // This is needed when redeeming native ETH through poolManager.take()
+        // or when receiving ETH from PositionManager operations
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
@@ -149,12 +148,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             return false;
         }
 
-        // Store old values and clear pending fees first (to prevent reentrancy)
-        uint256 oldAmount0 = pendingFees[poolId].amount0;
-        uint256 oldAmount1 = pendingFees[poolId].amount1;
-        pendingFees[poolId].amount0 = 0;
-        pendingFees[poolId].amount1 = 0;
-
         // Redeem tokens from PoolManager
         poolManager.take(key.currency0, address(this), amount0);
         poolManager.take(key.currency1, address(this), amount1);
@@ -167,8 +160,8 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             _addLiquidityToPosition(key, amount0, amount1, MIN_REINVEST_AMOUNT, MIN_REINVEST_AMOUNT);
 
         // Restore any unused amounts to pendingFees
-        pendingFees[poolId].amount0 = oldAmount0 - amount0Used;
-        pendingFees[poolId].amount1 = oldAmount1 - amount1Used;
+        pendingFees[poolId].amount0 = pendingFees[poolId].amount0 - amount0Used;
+        pendingFees[poolId].amount1 = pendingFees[poolId].amount1 - amount1Used;
 
         // Mint ERC6909 shares to this contract (protocol-owned)
         _mint(address(this), uint256(PoolId.unwrap(poolId)), liquidityAdded);
@@ -392,6 +385,35 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         return (amount0, amount1);
     }
 
+    /// @inheritdoc IFullRangeLiquidityManager
+    function sweepToken(address token, address recipient, uint256 amount)
+        external
+        onlyPolicyOwner
+        returns (uint256 amountSwept)
+    {
+        // Validate recipient
+        if (recipient == address(0)) revert Errors.ZeroAddress();
+
+        // Handle native ETH
+        if (token == address(0)) {
+            uint256 balance = address(this).balance;
+            amountSwept = amount == 0 || amount > balance ? balance : amount;
+
+            if (amountSwept > 0) {
+                (bool success,) = payable(recipient).call{value: amountSwept}("");
+                if (!success) revert Errors.InvariantETHTransferFailed();
+            }
+        } else {
+            uint256 balance = IERC20Minimal(token).balanceOf(address(this));
+            amountSwept = amount == 0 || amount > balance ? balance : amount;
+
+            if (amountSwept > 0) {
+                IERC20Minimal(token).transfer(recipient, amountSwept);
+            }
+        }
+        return amountSwept;
+    }
+
     function _approveTokensForPosition(Currency currency0, Currency currency1) internal {
         // Approve tokens to Permit2 with infinite allowance
         _approveToPermit2(currency0);
@@ -477,6 +499,11 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             )
         );
 
+        // Ensure minimum liquidity
+        if (liquidity <= MIN_LOCKED_LIQUIDITY) {
+            revert Errors.InsufficientInitialLiquidity();
+        }
+
         // Define actions and parameters
         bytes memory actions = abi.encodePacked(Actions.MINT_POSITION, Actions.SETTLE_PAIR);
 
@@ -497,8 +524,13 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // Parameters for SETTLE_PAIR
         params[1] = abi.encode(key.currency0, key.currency1);
 
-        // Execute the mint operation
-        positionManager.modifyLiquidities(
+        // Calculate native ETH value to forward
+        uint256 ethValue = 0;
+        if (key.currency0.isAddressZero()) ethValue = amount0Desired;
+        if (key.currency1.isAddressZero()) ethValue = amount1Desired;
+
+        // Execute the mint operation - forward ETH if needed
+        positionManager.modifyLiquidities{value: ethValue}(
             abi.encode(actions, params),
             block.timestamp + 60 // 60 second deadline
         );
@@ -563,8 +595,13 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // Parameters for SETTLE_PAIR
         params[1] = abi.encode(key.currency0, key.currency1);
 
-        // Execute the increase operation
-        positionManager.modifyLiquidities(
+        // Calculate native ETH value to forward
+        uint256 ethValue = 0;
+        if (key.currency0.isAddressZero()) ethValue = amount0Desired;
+        if (key.currency1.isAddressZero()) ethValue = amount1Desired;
+
+        // Execute the increase operation - forward ETH if needed
+        positionManager.modifyLiquidities{value: ethValue}(
             abi.encode(actions, params),
             block.timestamp + 60 // 60 second deadline
         );

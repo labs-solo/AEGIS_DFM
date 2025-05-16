@@ -129,6 +129,14 @@ interface IFullRangeLiquidityManager {
         address recipient
     ) external returns (uint256 amount0, uint256 amount1);
 
+    /// @notice Allows the policy owner to withdraw any tokens accidentally sent to this contract
+    /// @dev Excludes ERC6909 tokens minted by this contract that represent protocol-owned liquidity
+    /// @param token The address of the token to sweep (address(0) for native ETH)
+    /// @param recipient The address to receive the tokens
+    /// @param amount The amount of tokens to sweep (0 for the entire balance)
+    /// @return amountSwept The actual amount swept
+    function sweepToken(address token, address recipient, uint256 amount) external returns (uint256 amountSwept);
+
     /// @notice Returns the authorized hook address that can notify fees
     function authorizedHookAddress() external view returns (address);
 

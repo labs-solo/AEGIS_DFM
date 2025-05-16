@@ -85,6 +85,7 @@ library Errors {
     error CalculationError(string reason);
     error MathOverflow();
     error MathUnderflow();
+    error InsufficientInitialLiquidity();
 
     // --- System & State ---
     error HookDispatchFailed(bytes4 selector);
@@ -238,4 +239,5 @@ library Errors {
 
     error InvalidSwapDelta();
     error ETHRefundFailed();
+    error InvariantETHTransferFailed();
 }
