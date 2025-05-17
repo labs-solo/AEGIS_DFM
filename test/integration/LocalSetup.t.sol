@@ -187,16 +187,9 @@ contract LocalSetup is Test, PosmTestSetup {
 
         // Deploy PolicyManager (standard new)
         emit log_string("Deploying PolicyManager...");
-        uint24[] memory supportedTickSpacings = new uint24[](3);
-        supportedTickSpacings[0] = 10;
-        supportedTickSpacings[1] = 60;
-        supportedTickSpacings[2] = 200;
         PoolPolicyManager policyManagerImpl = new PoolPolicyManager(
             deployerEOA,
-            EXPECTED_DEFAULT_DYNAMIC_FEE,
-            supportedTickSpacings,
-            EXPECTED_DAILY_BUDGET, // dailyBudget
-            deployerEOA, // feeCollector
+            EXPECTED_DAILY_BUDGET,
             EXPECTED_MIN_DYNAMIC_FEE,
             EXPECTED_MAX_DYNAMIC_FEE
         );
@@ -205,7 +198,7 @@ contract LocalSetup is Test, PosmTestSetup {
 
         // Deploy LiquidityManager (standard new)
         emit log_string("Deploying Extended PositionManager...");
-        IPoolManager posm = new IPoolManager(
+        PositionManager posm = new PositionManager(
             poolManager, IAllowanceTransfer(PERMIT2_ADDRESS), uint256(300_000), IPositionDescriptor(address(0)), _WETH9
         );
 
@@ -230,8 +223,6 @@ contract LocalSetup is Test, PosmTestSetup {
 
         // --- Configure Contracts ---
         emit log_string("Configuring contracts...");
-        FullRangeLiquidityManager(payable(address(liquidityManager))).setAuthorizedHookAddress(actualHookAddress);
-        emit log_string("LiquidityManager configured.");
 
         // --- Set PoolKey & PoolId ---
         address token0;
@@ -300,7 +291,8 @@ contract LocalSetup is Test, PosmTestSetup {
         _fundTestAccounts();
 
         // regression-guard: hook MUST be deployed and initialised
-        assertTrue(fullRange.isPoolInitialized(poolKey.toId()), "Spot not initialised");
+        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolKey.toId());
+        assertTrue(sqrtPriceX96 != 0, "Pool not initialized");
 
         emit log_string("--- LocalSetup Complete ---");
     }
@@ -496,9 +488,8 @@ contract LocalSetup is Test, PosmTestSetup {
         IERC20Minimal(t0).approve(lmAddress, type(uint256).max);
         IERC20Minimal(t1).approve(lmAddress, type(uint256).max);
 
-        // Cast lmAddress to the concrete type for the call
-        (shares, used0, used1) =
-            FullRangeLiquidityManager(payable(lmAddress)).deposit(_poolId, amt0, amt1, min0, min1, recipient);
+        // Use the Spot proxy to deposit – FRLM.deposit is restricted to the hook
+        (shares, used0, used1) = fullRange.depositToFRLM(k, amt0, amt1, min0, min1, recipient);
         vm.stopPrank();
 
         return (shares, used0, used1);
@@ -507,7 +498,7 @@ contract LocalSetup is Test, PosmTestSetup {
     /// @notice Helper function to withdraw liquidity through governance
     /// @dev Pranks as deployerEOA to call withdraw on LM.
     function _withdrawLiquidityAsGovernance(
-        PoolId _poolId,
+        PoolKey memory _poolKey,
         uint256 sharesToBurn,
         uint256 min0,
         uint256 min1,
@@ -516,7 +507,7 @@ contract LocalSetup is Test, PosmTestSetup {
         vm.startPrank(deployerEOA); // deployerEOA is governance
         // Cast lmAddress to the concrete type for the call
         (amt0, amt1) = FullRangeLiquidityManager(payable(address(liquidityManager))).withdraw(
-            _poolId, sharesToBurn, min0, min1, recipient
+            _poolKey, sharesToBurn, min0, min1, recipient, msg.sender
         );
         vm.stopPrank();
         return (amt0, amt1);

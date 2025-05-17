@@ -64,69 +64,77 @@ contract MockPolicyManager is IPoolPolicyManager {
         return _STEP_PPM;
     }
 
-    function isTickSpacingSupported(uint24 tickSpacing) external view override returns (bool) {
+    // NOTE: no longer part of the IPoolPolicyManager interface – keep for test convenience (no override)
+    function isTickSpacingSupported(uint24 tickSpacing) external view returns (bool) {
         return _tickSupported[tickSpacing];
     }
 
-    function isSupportedCurrency(Currency currency) external view override returns (bool) {
+    // NOTE: helper retained only for tests – not part of prod interface
+    function isSupportedCurrency(Currency currency) external view returns (bool) {
         return _currencySupported[Currency.unwrap(currency)];
     }
 
-    function isValidVtier(uint24, /* _fee */ int24 /* _spacing */ ) external pure override returns (bool) {
+    function isValidVtier(uint24, /* _fee */ int24 /* _spacing */ ) external pure returns (bool) {
         return true; // Assume valid for tests
     }
 
     // --- Stubs for missing IPoolPolicyManager functions ---
-    function getSoloGovernance() external pure override returns (address) {
+    // Minimal governance stub – not in prod interface
+    function getSoloGovernance() external pure returns (address) {
         return address(0);
     }
 
-    function initializePolicies(PoolId, address, address[] calldata) external override {}
-    function handlePoolInitialization(PoolId, PoolKey calldata, uint160, int24, address) external override {}
+    // Deprecated interface methods retained for legacy tests (no override)
+    function initializePolicies(PoolId, address, address[] calldata) external {}
+    function handlePoolInitialization(PoolId, PoolKey calldata, uint160, int24, address) external {}
 
-    function getPolicy(PoolId, PolicyType) external pure override returns (address implementation) {
+    function getPolicy(PoolId, PolicyType) external pure returns (address implementation) {
         return address(0);
     }
 
     function getFeeAllocations(PoolId)
         external
         pure
-        override
         returns (uint256 polShare, uint256 fullRangeShare, uint256 lpShare)
     {
         return (0, 0, 0);
     }
 
-    function getMinimumPOLTarget(PoolId, uint256, uint256) external pure override returns (uint256) {
+    function getMinimumPOLTarget(PoolId, uint256, uint256) external pure returns (uint256) {
         return 0;
     }
 
-    function getMinimumTradingFee() external pure override returns (uint256) {
+    function getMinimumTradingFee() external view override returns (uint256) {
         return 0;
     }
 
-    function getFeeClaimThreshold() external pure override returns (uint256) {
+    // Not in current interface
+    function getFeeClaimThreshold() external pure returns (uint256) {
         return 0;
     }
 
-    function setFeeConfig(uint256, uint256, uint256, uint256, uint256, uint256) external override {}
-    function setPoolPOLMultiplier(PoolId, uint32) external override {}
-    function setDefaultPOLMultiplier(uint32) external override {}
-    function setPoolPOLShare(PoolId, uint256) external override {}
-    function setPoolSpecificPOLSharingEnabled(bool) external override {}
+    // Updated signature (5 params)
+    function setFeeConfig(uint256, uint256, uint256, uint256, uint256) external override {}
 
-    function getPoolPOLShare(PoolId) external pure override returns (uint256) {
+    // Removed from interface – keep as no-ops without override
+    function setPoolPOLMultiplier(PoolId, uint32) external {}
+    function setDefaultPOLMultiplier(uint32) external {}
+
+    function setPoolPOLShare(PoolId, uint256) external {}
+    function setPoolSpecificPOLSharingEnabled(bool) external {}
+
+    function getPoolPOLShare(PoolId) external pure returns (uint256) {
         return 0;
     }
 
-    function updateSupportedTickSpacing(uint24, bool) external override {}
-    function batchUpdateAllowedTickSpacings(uint24[] calldata, bool[] calldata) external override {}
+    function updateSupportedTickSpacing(uint24, bool) external {}
+    function batchUpdateAllowedTickSpacings(uint24[] calldata, bool[] calldata) external {}
 
-    function getProtocolFeePercentage(PoolId) external pure override returns (uint256 feePercentage) {
+    function getProtocolFeePercentage(PoolId) external pure returns (uint256 feePercentage) {
         return 0;
     }
 
-    function getFeeCollector() external pure override returns (address) {
+    function getFeeCollector() external pure returns (address) {
         return address(0);
     }
 
@@ -147,13 +155,28 @@ contract MockPolicyManager is IPoolPolicyManager {
     }
 
     // --- New functions ---
-    function setFreqScaling(PoolId pid, uint32 scaling) external /*override*/ {
-        freqScalingPpm[pid] = scaling;
+    // Updated to match interface (uint256 arg) + override
+    function setFreqScaling(PoolId pid, uint256 scaling) external override {
+        freqScalingPpm[pid] = uint32(scaling);
     }
 
-    function setBaseFeeParams(PoolId pid, uint32 stepPpm, uint32 updateIntervalSecs) external override {}
+    // Stubbed functions required by interface
+    function setTargetCapsPerDay(PoolId, uint256) external override {}
+    function setCapBudgetDecayWindow(PoolId, uint256) external override {}
+    function setDailyBudgetPpm(uint32) external override {}
+    function setDecayWindow(uint32) external override {}
 
-    function getDefaultDynamicFee() external pure override returns (uint256) {
+    function setBaseFeeParams(PoolId, uint32, uint32) external override {}
+
+    function setManualFee(PoolId, uint24) external override {}
+    function clearManualFee(PoolId) external override {}
+
+    function getManualFee(PoolId) external pure override returns (uint24 manualFee, bool isSet) {
+        return (0, false);
+    }
+
+    // Not part of the interface anymore – keep for tests without override
+    function getDefaultDynamicFee() external pure returns (uint256) {
         return _MAX_BASE_FEE;
     }
 
@@ -212,4 +235,8 @@ contract MockPolicyManager is IPoolPolicyManager {
     function getFreqScaling(PoolId id) external view override returns (uint256) {
         return _p[id].freqScaling != 0 ? _p[id].freqScaling : 1e18; // 1.0 in 18-dec FP
     }
+
+    // Add missing interface implementations
+    function setSurgeDecayPeriodSeconds(PoolId, uint256) external override {}
+    function setSurgeFeeMultiplierPpm(PoolId, uint24) external override {}
 }

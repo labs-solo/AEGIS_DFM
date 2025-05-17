@@ -14,9 +14,9 @@ contract PoolPolicyManager_Fee is Test {
 
     PoolPolicyManager ppm;
 
-    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
-    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
+    uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 200; // Updated to match production
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 60000; // Updated to match production
+    uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 6000; // Updated to match production
 
     /* ------------------------------------------------------------ */
     /*                           Actors                             */
@@ -35,10 +35,7 @@ contract PoolPolicyManager_Fee is Test {
 
         ppm = new PoolPolicyManager(
             OWNER, // governance / owner
-            EXPECTED_DEFAULT_DYNAMIC_FEE,
-            supportedTickSpacings,
-            1_000_000,
-            address(this),
+            2_000_000, // Updated dailyBudget to match production
             EXPECTED_MIN_DYNAMIC_FEE,
             EXPECTED_MAX_DYNAMIC_FEE
         );
@@ -51,22 +48,20 @@ contract PoolPolicyManager_Fee is Test {
         // Get current values to determine if events should emit
         (uint256 prevPol, uint256 prevFr, uint256 prevLp) = ppm.getFeeAllocations(pid(0));
         uint256 prevMinFee = ppm.getMinimumTradingFee();
-        uint256 prevClaimThreshold = ppm.getFeeClaimThreshold();
-        uint256 prevMultiplier = ppm.defaultPolMultiplier();
 
         bool willEmit = (
-            prevPol != 120_000 || prevFr != 0 || prevLp != 880_000 || prevMinFee != 200 || prevClaimThreshold != 10_000
-                || prevMultiplier != 11
+            prevPol != 120_000 || prevFr != 0 || prevLp != 880_000 || prevMinFee != 200
         );
 
-        // Expect FeeConfigChanged and PolicySet events
-        EventTools.expectEmitIf(this, willEmit, false, false, false, true);
-        emit FeeConfigChanged(120_000, 0, 880_000, 200, 10_000, 11);
+        // Expect FeeConfigChanged event
+        EventTools.expectEmitIf(this, willEmit, true, true, true, true);
+        emit FeeConfigChanged(120_000, 0, 880_000, 200);
 
+        // Expect PolicySet event
         EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.FEE, address(0), OWNER);
 
         vm.prank(OWNER);
-        ppm.setFeeConfig(120_000, 0, 880_000, 200, 10_000, 11);
+        ppm.setFeeConfig(120_000, 0, 880_000, 200, 10_000);
 
         (uint256 pol, uint256 fr, uint256 lp) = ppm.getFeeAllocations(pid(0));
         assertEq(pol, 120_000);
@@ -77,7 +72,7 @@ contract PoolPolicyManager_Fee is Test {
     function testSetFeeConfigByNonOwnerReverts() public {
         vm.prank(ALICE);
         vm.expectRevert("UNAUTHORIZED");
-        ppm.setFeeConfig(120_000, 0, 880_000, 200, 10_000, 11);
+        ppm.setFeeConfig(120_000, 0, 880_000, 200, 10_000);
     }
 
     /* ------------------------------------------------------------ */
@@ -87,29 +82,20 @@ contract PoolPolicyManager_Fee is Test {
         // Get current values to determine if events should emit
         (uint256 prevPol, uint256 prevFr, uint256 prevLp) = ppm.getFeeAllocations(pid(0));
         uint256 prevMinFee = ppm.getMinimumTradingFee();
-        uint256 prevClaimThreshold = ppm.getFeeClaimThreshold();
-        uint256 prevMultiplier = ppm.defaultPolMultiplier();
 
         bool willEmit = (
             prevPol != 150_000 || prevFr != 50_000 || prevLp != 800_000 || prevMinFee != 200
-                || prevClaimThreshold != 5_000 || prevMultiplier != 12
         );
 
-        vm.prank(OWNER);
-        EventTools.expectEmitIf(this, willEmit, false, false, false, true);
-        emit FeeConfigChanged(150_000, 50_000, 800_000, 200, 5_000, 12);
+        // Expect FeeConfigChanged event
+        EventTools.expectEmitIf(this, willEmit, true, true, true, true);
+        emit FeeConfigChanged(150_000, 50_000, 800_000, 200);
 
         // Check PolicySet event
         EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.FEE, address(0), OWNER);
 
-        ppm.setFeeConfig(
-            150_000, // 15 % POL
-            50_000, // 5 % FR
-            800_000, // 80 % LP
-            200, // 0.02 %
-            5_000, // 0.5 %
-            12 // POL multiplier
-        );
+        vm.prank(OWNER);
+        ppm.setFeeConfig(150_000, 50_000, 800_000, 200, 5_000);
     }
 
     /* ------------------------------------------------------------ */
@@ -120,19 +106,19 @@ contract PoolPolicyManager_Fee is Test {
         vm.expectRevert(
             abi.encodeWithSelector(Errors.AllocationSumError.selector, 200_000, 200_000, 700_000, EventTools.MAX_PPM)
         );
-        ppm.setFeeConfig(200_000, 200_000, 700_000, 100, 100, 10); // 1 100 000 total
+        ppm.setFeeConfig(200_000, 200_000, 700_000, 100, 100);
     }
 
     function testMinTradingFeeTooHighReverts() public {
         vm.prank(OWNER);
         vm.expectRevert(abi.encodeWithSelector(Errors.ParameterOutOfRange.selector, 120_000, 0, 100_000));
-        ppm.setFeeConfig(100_000, 0, 900_000, 120_000, 10_000, 10); // 12 %
+        ppm.setFeeConfig(100_000, 0, 900_000, 120_000, 10_000);
     }
 
     function testClaimThresholdTooHighReverts() public {
         vm.prank(OWNER);
         vm.expectRevert(abi.encodeWithSelector(Errors.ParameterOutOfRange.selector, 120_000, 0, 100_000));
-        ppm.setFeeConfig(100_000, 0, 900_000, 100, 120_000, 10); // 12 %
+        ppm.setFeeConfig(100_000, 0, 900_000, 100, 120_000);
     }
 
     /* ------------------------------------------------------------ */
@@ -190,36 +176,6 @@ contract PoolPolicyManager_Fee is Test {
     }
 
     /* ------------------------------------------------------------ */
-    /*          5. Minimum POL target & multiplier hierarchy        */
-    /* ------------------------------------------------------------ */
-    function testDefaultPOLTargetCalc() public view {
-        uint256 liq = 2e18;
-        uint256 fee = 4_000; // 0.40 %
-        uint256 want = liq * fee * 10 / 1e12; // default multiplier 10
-        assertEq(ppm.getMinimumPOLTarget(pid(7), liq, fee), want);
-    }
-
-    function testGlobalMultiplierChange() public {
-        // Check if current multiplier matches desired value
-        uint256 prevMultiplier = ppm.defaultPolMultiplier();
-        bool willEmit = (prevMultiplier != 15);
-
-        // Expect DefaultPOLMultiplierChanged and PolicySet events
-        EventTools.expectEmitIf(this, willEmit, false, false, false, true);
-        emit DefaultPOLMultiplierChanged(15);
-
-        EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.FEE, address(uint160(15)), OWNER
-        );
-
-        vm.prank(OWNER);
-        ppm.setDefaultPOLMultiplier(15);
-
-        uint256 want = 1e18 * 2_000 * 15 / 1e12;
-        assertEq(ppm.getMinimumPOLTarget(pid(99), 1e18, 2_000), want);
-    }
-
-    /* ------------------------------------------------------------ */
     /*                6. Fuzz: allocation-sum invariant             */
     /* ------------------------------------------------------------ */
     function testFeeSumInvariantFuzz(uint256 pol, uint256 fr) public {
@@ -234,7 +190,7 @@ contract PoolPolicyManager_Fee is Test {
         EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.FEE, address(0), OWNER);
 
         vm.prank(OWNER);
-        ppm.setFeeConfig(pol, fr, lp, 100, 10_000, 10);
+        ppm.setFeeConfig(pol, fr, lp, 100, 10_000);
 
         (uint256 a, uint256 b, uint256 c) = ppm.getFeeAllocations(pid(1));
         assertEq(a + b + c, EventTools.MAX_PPM);
@@ -247,9 +203,7 @@ contract PoolPolicyManager_Fee is Test {
         uint256 polSharePpm,
         uint256 fullRangeSharePpm,
         uint256 lpSharePpm,
-        uint256 minimumTradingFeePpm,
-        uint256 feeClaimThresholdPpm,
-        uint256 defaultPolMultiplier
+        uint256 minimumTradingFeePpm
     );
     event PoolPOLMultiplierChanged(PoolId indexed poolId, uint32 multiplier);
     event DefaultPOLMultiplierChanged(uint32 multiplier);

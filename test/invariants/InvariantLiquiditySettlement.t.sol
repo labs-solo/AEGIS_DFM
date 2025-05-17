@@ -67,7 +67,7 @@ contract InvariantLiquiditySettlement is Test {
         // Record logs to capture settlement delta (if Fixture helper needs it)
         // vm.recordLogs();
 
-        lm.deposit(key.toId(), amt0, amt1, 0, 0, user);
+        lm.deposit(key, amt0, amt1, 0, 0, user, user);
 
         // deltas captured but never checked – drop them
 

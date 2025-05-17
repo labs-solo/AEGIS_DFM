@@ -6,7 +6,7 @@ import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 import {CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {Errors} from "../errors/Errors.sol";
+import {Errors} from "src/errors/Errors.sol";
 
 /**
  * @title TransferUtils

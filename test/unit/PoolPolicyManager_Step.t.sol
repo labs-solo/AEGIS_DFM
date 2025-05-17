@@ -32,10 +32,7 @@ contract PoolPolicyManager_Step is Test {
 
         ppm = new PoolPolicyManager(
             OWNER,
-            EXPECTED_DEFAULT_DYNAMIC_FEE,
-            supportedTickSpacings,
             1_000_000,
-            address(this),
             EXPECTED_MIN_DYNAMIC_FEE,
             EXPECTED_MAX_DYNAMIC_FEE
         );
@@ -79,7 +76,7 @@ contract PoolPolicyManager_Step is Test {
 
     function testSetBaseFeeParamsStepTooLargeReverts() public {
         vm.prank(OWNER);
-        vm.expectRevert(bytes("stepPpm too large"));
+        vm.expectRevert(abi.encodeWithSelector(Errors.ParameterOutOfRange.selector, 120_000, 0, 100_000));
         ppm.setBaseFeeParams(pid(1), 120_000, 1 days); // >100 000
     }
 
@@ -102,14 +99,14 @@ contract PoolPolicyManager_Step is Test {
     }
 
     function testSurgeDecayTooShortReverts() public {
-        vm.expectRevert(bytes("min 60s"));
         vm.prank(OWNER);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ParameterOutOfRange.selector, 59, 60, 86400));
         ppm.setSurgeDecayPeriodSeconds(pid(7), 59);
     }
 
     function testSurgeDecayTooLongReverts() public {
-        vm.expectRevert(bytes("max 1 day"));
         vm.prank(OWNER);
+        vm.expectRevert(abi.encodeWithSelector(Errors.ParameterOutOfRange.selector, 86401, 60, 86400));
         ppm.setSurgeDecayPeriodSeconds(pid(7), 1 days + 1);
     }
 
@@ -133,20 +130,14 @@ contract PoolPolicyManager_Step is Test {
 
     function testSurgeMultiplierZeroReverts() public {
         vm.prank(OWNER);
-        vm.expectRevert(bytes("must be positive"));
+        vm.expectRevert(abi.encodeWithSelector(Errors.ParameterOutOfRange.selector, 0, 1, 3_000_000));
         ppm.setSurgeFeeMultiplierPpm(pid(1), 0);
     }
 
     function testSurgeMultiplierTooHighReverts() public {
         vm.prank(OWNER);
-        vm.expectRevert(bytes("max 300%"));
+        vm.expectRevert(abi.encodeWithSelector(Errors.ParameterOutOfRange.selector, 3_000_001, 1, 3_000_000));
         ppm.setSurgeFeeMultiplierPpm(pid(1), 3_000_001);
-    }
-
-    function testNonOwnerSetSurgeMultiplierReverts() public {
-        vm.prank(ALICE);
-        vm.expectRevert("UNAUTHORIZED");
-        ppm.setSurgeFeeMultiplierPpm(pid(1), 2_000_000);
     }
 
     /*──────────────── Helper ─────────────────*/

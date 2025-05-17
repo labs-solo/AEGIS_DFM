@@ -14,9 +14,12 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
+import {FullRangeLiquidityManager} from "src/FullRangeLiquidityManager.sol";
+import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 import {SignedMath} from "@openzeppelin/contracts/utils/math/SignedMath.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
+import {IPositionDescriptor} from "v4-periphery/src/interfaces/IPositionDescriptor.sol";
 
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
@@ -41,7 +44,7 @@ contract LiquidityComparisonTest is LocalSetup {
     IFullRangeLiquidityManager internal frlm_;
     IERC20Minimal internal token0; // USDC in this test-pool
     IERC20Minimal internal token1; // WETH in this test-pool
-    IPoolManager internal posManager;
+    PositionManager internal posm;
 
     function setUp() public override {
         super.setUp();
@@ -51,7 +54,13 @@ contract LiquidityComparisonTest is LocalSetup {
         frlm_ = liquidityManager;
         token0 = usdc;
         token1 = weth;
-        posManager = frlm_.posManager(); // exposed as public immutable
+        posm = new PositionManager(
+            poolManager,
+            IAllowanceTransfer(PERMIT2_ADDRESS),
+            uint256(300_000),
+            IPositionDescriptor(address(0)),
+            _WETH9
+        );
 
         // Fund test account
         vm.startPrank(deployerEOA);
@@ -101,13 +110,13 @@ contract LiquidityComparisonTest is LocalSetup {
         // ① Direct *NFT-based* full-range mint via IPoolManager
         // ───────────────────────────────────────────────────────────
         //  Allow Permit2 (used internally by PositionManager) to pull our tokens
-        address permit2 = address(posManager.permit2());
+        address permit2 = 0x000000000022D473030F116dDEE9F6B43aC78BA3; // Permit2 address
         token0.approve(permit2, amount0);
         token1.approve(permit2, amount1);
 
         // Also grant PositionManager unlimited allowance inside Permit2
-        IAllowanceTransfer(permit2).approve(address(token0), address(posManager), type(uint160).max, type(uint48).max);
-        IAllowanceTransfer(permit2).approve(address(token1), address(posManager), type(uint160).max, type(uint48).max);
+        IAllowanceTransfer(permit2).approve(address(token0), address(posm), type(uint160).max, type(uint48).max);
+        IAllowanceTransfer(permit2).approve(address(token1), address(posm), type(uint160).max, type(uint48).max);
 
         bytes memory actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
 
@@ -129,13 +138,13 @@ contract LiquidityComparisonTest is LocalSetup {
         uint256 bal1Before = ERC20(address(token1)).balanceOf(address(this));
 
         // No ETH needed – both tokens are ERC-20
-        posManager.modifyLiquidities(abi.encode(actions, params), block.timestamp + 300);
+        posm.modifyLiquidities(abi.encode(actions, params), block.timestamp + 300);
 
         // Compute token amounts spent by the direct path
         used0Direct_ = bal0Before - ERC20(address(token0)).balanceOf(address(this));
         used1Direct_ = bal1Before - ERC20(address(token1)).balanceOf(address(this));
 
-        uint256 tokenIdDirect = posManager.nextTokenId() - 1;
+        uint256 tokenIdDirect = posm.nextTokenId() - 1;
 
         // ───────────────────────────────────────────────────────────
         // ② Same deposit through FullRangeLiquidityManager (lpProvider)
@@ -147,7 +156,7 @@ contract LiquidityComparisonTest is LocalSetup {
         uint256 bal1BeforeFrlm = ERC20(address(token1)).balanceOf(deployerEOA);
 
         vm.startPrank(deployerEOA); // deposit must be executed by governance
-        (shares,,) = liquidityManager.deposit(poolKey.toId(), amount0, amount1, 0, 0, lpProvider);
+        (shares,,) = fullRange.depositToFRLM(poolKey, amount0, amount1, 0, 0, lpProvider);
         vm.stopPrank();
 
         // Calculate actual tokens used by FRLM path
@@ -155,16 +164,19 @@ contract LiquidityComparisonTest is LocalSetup {
         uint256 used1Frlm = bal1BeforeFrlm - ERC20(address(token1)).balanceOf(deployerEOA);
 
         // ───────────────────────────────────────────────────────────
-        // ③ Compare NFT liquidities via PositionManager helper
+        // Compare the two positions
         // ───────────────────────────────────────────────────────────
-        uint256 tokenIdFrlm = frlm_.positionTokenId(poolKey.toId());
 
-        (PoolKey memory poolKeyDir, PositionInfo pDir) = posManager.getPoolAndPositionInfo(tokenIdDirect);
-        (PoolKey memory poolKeyFrlm, PositionInfo pFrlm) = posManager.getPoolAndPositionInfo(tokenIdFrlm);
+        // Get the FRLM position ID
+        (uint256 tokenIdFrlm,,, ) = frlm_.getPositionInfo(poolKey.toId());
+
+        // Get position info from both NFTs
+        (PoolKey memory poolKeyDir, PositionInfo pDir) = posm.getPoolAndPositionInfo(tokenIdDirect);
+        (PoolKey memory poolKeyFrlm, PositionInfo pFrlm) = posm.getPoolAndPositionInfo(tokenIdFrlm);
 
         // Get actual liquidity from each position
-        uint128 liqDirect = posManager.getPositionLiquidity(tokenIdDirect);
-        uint128 liqFrlm = posManager.getPositionLiquidity(tokenIdFrlm);
+        uint128 liqDirect = posm.getPositionLiquidity(tokenIdDirect);
+        uint128 liqFrlm = posm.getPositionLiquidity(tokenIdFrlm);
 
         // Both NFTs must hold the *same* v4-liquidity (+/-1 wei tolerance)
         assertApproxEqAbs(liqDirect, liqFrlm, 1, "liquidity mismatch");

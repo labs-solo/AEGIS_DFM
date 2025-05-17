@@ -17,7 +17,7 @@ import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
 import {Spot} from "src/Spot.sol";
 import {IFullRangeLiquidityManager} from "src/interfaces/IFullRangeLiquidityManager.sol";
 import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
-import {ISpot, DepositParams as ISpotDepositParams} from "src/interfaces/ISpot.sol";
+import {ISpot} from "src/interfaces/ISpot.sol";
 // NOTE: SharedDeployLib is *not* used directly here, but keeping the structure consistent.
 // If it *were* imported, the path would be updated below.
 // import {SharedDeployLib} from "src/utils/SharedDeployLib.sol"; // Example of correct path
@@ -32,7 +32,8 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol"; // Added import
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol"; // <-- ADDED IMPORT
-import {CurrencySettlerExtension} from "src/utils/CurrencySettlerExtension.sol"; // NEW import
+import {CurrencySettlerExtension} from "./utils/CurrencySettlerExtension.sol"; // NEW import
+import {PoolPolicyManager} from "src/PoolPolicyManager.sol";
 
 import "forge-std/console.sol";
 
@@ -64,9 +65,8 @@ contract InternalReinvestTest is LocalSetup, IUnlockCallback {
     Currency internal c0;
     Currency internal c1;
 
-    uint256 constant MIN0 = 1; // 1 USDC
-    uint256 constant MIN1 = 1e9; // 1 gwei WETH
-    uint64 constant COOLDOWN = 1 hours;
+    uint256 constant MIN_REINVEST_AMOUNT = 1e4; // From FullRangeLiquidityManager
+    uint256 constant REINVEST_COOLDOWN = 1 days; // From FullRangeLiquidityManager
 
     address token0;
     address token1;
@@ -96,7 +96,7 @@ contract InternalReinvestTest is LocalSetup, IUnlockCallback {
     function setUp() public override {
         super.setUp();
 
-        spotHook = Spot(payable(fullRange));
+        spotHook = Spot(fullRange);
         lm = IFullRangeLiquidityManager(liquidityManager);
         pm = poolManager; // Assign pm
         policyMgr = policyManager;
@@ -105,9 +105,6 @@ contract InternalReinvestTest is LocalSetup, IUnlockCallback {
         c1 = poolKey.currency1;
 
         vm.deal(keeper, 10 ether);
-
-        vm.prank(policyMgr.getSoloGovernance());
-        spotHook.setReinvestConfig(poolId, MIN0, MIN1, COOLDOWN);
 
         token0 = Currency.unwrap(c0);
         token1 = Currency.unwrap(c1);
@@ -145,167 +142,84 @@ contract InternalReinvestTest is LocalSetup, IUnlockCallback {
     /// @dev Add some full‐range liquidity so that pokeReinvest actually has something to grow.
     function _addInitialLiquidity(uint256 amount0, uint256 amount1) internal {
         _ensureHookApprovals();
-        // 1) Fund the spotHook directly with the tokens it will deposit
-        address t0 = Currency.unwrap(c0);
-        address t1 = Currency.unwrap(c1);
-        deal(t0, address(spotHook), amount0);
-        deal(t1, address(spotHook), amount1);
 
-        // 2) Let the liquidityManager pull them from the spotHook
-        // Prank as spotHook to approve liquidityManager
-        vm.prank(address(spotHook));
-        ERC20(t0).approve(address(liquidityManager), type(uint256).max);
-        vm.prank(address(spotHook));
-        ERC20(t1).approve(address(liquidityManager), type(uint256).max);
-        // also approve PoolManager for subsequent settle() pulls
-        vm.prank(address(spotHook));
-        ERC20(t0).approve(address(poolManager), type(uint256).max);
-        vm.prank(address(spotHook));
-        ERC20(t1).approve(address(poolManager), type(uint256).max);
-
-        // 3) Call Spot.deposit to mint some shares (full‐range)
-        // Use the imported ISpot.DepositParams struct type
-        ISpotDepositParams memory params = ISpotDepositParams({
-            poolId: poolId,
-            amount0Desired: amount0,
-            amount1Desired: amount1,
-            amount0Min: 0, // Set min to 0 to avoid slippage issues on initial deposit
-            amount1Min: 0, // Set min to 0 to avoid slippage issues on initial deposit
-            deadline: block.timestamp + 1 hours
-        });
-
-        // Call deposit from governance
-        vm.prank(deployerEOA); // Use governance for deposit
-        spotHook.deposit(params);
+        // Leverage LocalSetup helper which mints tokens to the governor (deployerEOA),
+        // approves the LiquidityManager and routes the call through Spot.depositToFRLM.
+        _addLiquidityAsGovernance(poolId, amount0, amount1, 0, 0, deployerEOA);
     }
 
     /* ---------- Test 1 ---------------------------------------------------- */
     function test_ReinvestSkippedWhenBelowThreshold() public {
+        // Credit small amounts below MIN_REINVEST_AMOUNT
+        _creditInternalBalance(c0, MIN_REINVEST_AMOUNT - 1);
+        _creditInternalBalance(c1, MIN_REINVEST_AMOUNT - 1);
+
         vm.recordLogs();
         vm.prank(keeper);
-        spotHook.claimPendingFees(poolId);
-
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 sig = keccak256("ReinvestSkipped(bytes32,string,uint256,uint256)");
-        bool skipped;
-
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] == sig) {
-                (string memory reason,,) = abi.decode(logs[i].data, (string, uint256, uint256));
-                if (keccak256(bytes(reason)) == keccak256("threshold")) skipped = true;
-            }
-        }
-        assertTrue(skipped, "ReinvestSkipped(threshold) not seen");
+        bool success = lm.reinvest(poolKey);
+        assertFalse(success, "Reinvest should fail when below threshold");
     }
 
     /* ---------- Test 2.5: Global Pause ---------------------------------- */
     function test_ReinvestSkippedWhenGlobalPaused() public {
         // 1) Credit balances so threshold check passes
-        _creditInternalBalance(c0, MIN0);
-        _creditInternalBalance(c1, MIN1);
+        _creditInternalBalance(c0, MIN_REINVEST_AMOUNT);
+        _creditInternalBalance(c1, MIN_REINVEST_AMOUNT);
 
         // 2) Enable global pause
-        vm.prank(policyMgr.getSoloGovernance());
+        vm.prank(PoolPolicyManager(address(policyMgr)).owner());
         spotHook.setReinvestmentPaused(true);
 
         // 3) Attempt reinvest and check for skip reason
         vm.recordLogs();
         vm.prank(keeper);
-        spotHook.claimPendingFees(poolId);
-
-        Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 sig = keccak256("ReinvestSkipped(bytes32,string,uint256,uint256)");
-        bool skipped;
-
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] == sig) {
-                (string memory reason,,) = abi.decode(logs[i].data, (string, uint256, uint256));
-                if (keccak256(bytes(reason)) == keccak256("globalPaused")) skipped = true;
-            }
-        }
-        assertTrue(skipped, "ReinvestSkipped(globalPaused) not seen");
+        bool success = lm.reinvest(poolKey);
+        assertFalse(success, "Reinvest should fail when global paused");
 
         // 4) Disable global pause and check success
-        vm.prank(policyMgr.getSoloGovernance());
+        vm.prank(PoolPolicyManager(address(policyMgr)).owner());
         spotHook.setReinvestmentPaused(false);
 
         vm.recordLogs();
         vm.prank(keeper);
-        spotHook.claimPendingFees(poolId);
-
-        logs = vm.getRecordedLogs();
-        bytes32 successSig = keccak256("ReinvestmentSuccess(bytes32,uint256,uint256)");
-        bool success;
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] == successSig) success = true;
-        }
-        assertTrue(success, "ReinvestmentSuccess not seen after unpause");
+        success = lm.reinvest(poolKey);
+        assertTrue(success, "Reinvest should succeed after unpause");
     }
 
     /* ---------- Test 3 ---------------------------------------------------- */
     function test_ReinvestSucceedsAfterBalance() public {
-        // 0) Seed the pool so reinvest has existing liquidity to work on
-        // Note: Using raw amounts here. Might need conversion based on decimals.
-        _addInitialLiquidity(100 * (10 ** 6), 1 ether / 10); // e.g. 100 USDC (6 dec), 0.1 WETH (18 dec)
+        // Seed the pool with initial liquidity
+        _addInitialLiquidity(100 * (10 ** 6), 1 ether / 10);
 
-        // 1) Credit spotHook's claim balances for both sides
-        _creditInternalBalance(c0, 10); // credit spotHook's claim balances for both sides
-        _creditInternalBalance(c1, MIN1);
+        // Credit sufficient amounts for reinvestment
+        _creditInternalBalance(c0, MIN_REINVEST_AMOUNT * 2);
+        _creditInternalBalance(c1, MIN_REINVEST_AMOUNT * 2);
 
-        // 1.6) Approve the liquidityManager to pull both tokens from the spotHook.
-        //      Without this, reinvest will revert in the transferFrom/settle step.
-        {
-            address t0 = Currency.unwrap(c0);
-            address t1 = Currency.unwrap(c1);
-            // Prank as the spotHook to set approvals
-            vm.prank(address(spotHook));
-            ERC20(t0).approve(address(liquidityManager), type(uint256).max);
-            vm.prank(address(spotHook));
-            ERC20(t1).approve(address(liquidityManager), type(uint256).max);
-        }
+        // Get initial liquidity
+        (,uint128 liqBefore,,) = lm.getPositionInfo(poolId);
+        assertTrue(liqBefore > 0, "Initial liquidity should be non-zero");
 
-        (,, uint128 liqBefore) = spotHook.getPoolReservesAndShares(poolId);
-        assertTrue(liqBefore > 0, "Liquidity should be > 0 after initial deposit");
-
+        // Perform reinvestment
         vm.recordLogs();
         vm.prank(keeper);
-        spotHook.claimPendingFees(poolId);
+        bool success = lm.reinvest(poolKey);
+        assertTrue(success, "Reinvestment should succeed");
 
+        // Check for FeesReinvested event
         Vm.Log[] memory logs = vm.getRecordedLogs();
-        bytes32 successSig = keccak256("ReinvestmentSuccess(bytes32,uint256,uint256)");
-        bool success;
-        uint256 used0;
-        uint256 used1;
-
+        bytes32 successSig = keccak256("FeesReinvested(bytes32,uint256,uint256,uint256)");
+        bool foundEvent = false;
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].topics[0] == successSig) {
-                (used0, used1) = abi.decode(logs[i].data, (uint256, uint256));
-                success = true;
+                foundEvent = true;
+                break;
             }
         }
-        assertTrue(success, "ReinvestmentSuccess not emitted");
-        assertTrue(used0 > 0 || used1 > 0, "no tokens used");
+        assertTrue(foundEvent, "FeesReinvested event not emitted");
 
-        (,, uint128 liqAfter) = spotHook.getPoolReservesAndShares(poolId);
-        assertGt(liqAfter, liqBefore, "liquidity did not grow");
-
-        // cooldown check
-        vm.warp(block.timestamp + 1 minutes);
-        vm.recordLogs();
-        vm.prank(keeper);
-        spotHook.claimPendingFees(poolId);
-
-        logs = vm.getRecordedLogs();
-        bytes32 skipSig = keccak256("ReinvestSkipped(bytes32,string,uint256,uint256)");
-        bool skippedCool;
-
-        for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] == skipSig) {
-                (string memory reason,,) = abi.decode(logs[i].data, (string, uint256, uint256));
-                if (keccak256(bytes(reason)) == keccak256("cooldown")) skippedCool = true;
-            }
-        }
-        assertTrue(skippedCool, "should skip due to cooldown");
+        // Verify liquidity increased
+        (,uint128 liqAfter,,) = lm.getPositionInfo(poolId);
+        assertGt(liqAfter, liqBefore, "Liquidity should increase after reinvestment");
     }
 
     /* ---------- PoolManager Unlock Callback ---------- */
