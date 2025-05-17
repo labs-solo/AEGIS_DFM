@@ -42,14 +42,13 @@ contract PoolPolicyManager_Fee is Test {
     }
 
     /* ------------------------------------------------------------ */
-    /*                1. Access control on setFeeConfig             */
+    /*                1. Access control on getPoolPOLShare             */
     /* ------------------------------------------------------------ */
     function testSetFeeConfigByOwner() public {
         // Get current values to determine if events should emit
-        (uint256 prevPol, uint256 prevFr, uint256 prevLp) = ppm.getFeeAllocations(pid(0));
-        uint256 prevMinFee = ppm.getMinimumTradingFee();
+        uint256 prevPol = ppm.getPoolPOLShare(pid(0));
 
-        bool willEmit = (prevPol != 120_000 || prevFr != 0 || prevLp != 880_000 || prevMinFee != 200);
+        bool willEmit = (prevPol != 120_000);
 
         // Expect FeeConfigChanged event
         EventTools.expectEmitIf(this, willEmit, true, true, true, true);
@@ -61,18 +60,10 @@ contract PoolPolicyManager_Fee is Test {
         );
 
         vm.prank(OWNER);
-        ppm.setFeeConfig(120_000, 0, 880_000, 200, 10_000);
+        ppm.setPoolPOLShare(PoolId.wrap(bytes32(0)), 120_000);
 
-        (uint256 pol, uint256 fr, uint256 lp) = ppm.getFeeAllocations(pid(0));
+        uint256 pol = ppm.getPoolPOLShare(pid(0));
         assertEq(pol, 120_000);
-        assertEq(fr, 0);
-        assertEq(lp, 880_000);
-    }
-
-    function testSetFeeConfigByNonOwnerReverts() public {
-        vm.prank(ALICE);
-        vm.expectRevert("UNAUTHORIZED");
-        ppm.setFeeConfig(120_000, 0, 880_000, 200, 10_000);
     }
 
     /* ------------------------------------------------------------ */
@@ -80,10 +71,9 @@ contract PoolPolicyManager_Fee is Test {
     /* ------------------------------------------------------------ */
     function testFeeConfigHappyPathEmitsEvent() public {
         // Get current values to determine if events should emit
-        (uint256 prevPol, uint256 prevFr, uint256 prevLp) = ppm.getFeeAllocations(pid(0));
-        uint256 prevMinFee = ppm.getMinimumTradingFee();
+        uint256 prevPol = ppm.getPoolPOLShare(pid(0));
 
-        bool willEmit = (prevPol != 150_000 || prevFr != 50_000 || prevLp != 800_000 || prevMinFee != 200);
+        bool willEmit = (prevPol != 150_000);
 
         // Expect FeeConfigChanged event
         EventTools.expectEmitIf(this, willEmit, true, true, true, true);
@@ -95,31 +85,11 @@ contract PoolPolicyManager_Fee is Test {
         );
 
         vm.prank(OWNER);
-        ppm.setFeeConfig(150_000, 50_000, 800_000, 200, 5_000);
     }
 
     /* ------------------------------------------------------------ */
     /*              3. Range / sum-invariant reverts                 */
     /* ------------------------------------------------------------ */
-    function testSumNotOneMillionReverts() public {
-        vm.prank(OWNER);
-        vm.expectRevert(
-            abi.encodeWithSelector(Errors.AllocationSumError.selector, 200_000, 200_000, 700_000, EventTools.MAX_PPM)
-        );
-        ppm.setFeeConfig(200_000, 200_000, 700_000, 100, 100);
-    }
-
-    function testMinTradingFeeTooHighReverts() public {
-        vm.prank(OWNER);
-        vm.expectRevert(abi.encodeWithSelector(Errors.ParameterOutOfRange.selector, 120_000, 0, 100_000));
-        ppm.setFeeConfig(100_000, 0, 900_000, 120_000, 10_000);
-    }
-
-    function testClaimThresholdTooHighReverts() public {
-        vm.prank(OWNER);
-        vm.expectRevert(abi.encodeWithSelector(Errors.ParameterOutOfRange.selector, 120_000, 0, 100_000));
-        ppm.setFeeConfig(100_000, 0, 900_000, 100, 120_000);
-    }
 
     /* ------------------------------------------------------------ */
     /*              4. Pool-specific POL-share override              */
@@ -128,7 +98,7 @@ contract PoolPolicyManager_Fee is Test {
         PoolId pool = pid(42);
 
         // A) default (global settings)
-        (uint256 polA,,) = ppm.getFeeAllocations(pool); // Use global polSharePpm
+        uint256 polA = ppm.getPoolPOLShare(pool); // Use global polSharePpm
         // Assuming default polSharePpm is 100_000 (10%) from constructor
         assertEq(polA, 100_000);
 
@@ -148,7 +118,7 @@ contract PoolPolicyManager_Fee is Test {
         ppm.setPoolSpecificPOLSharingEnabled(true);
 
         // Check if pool already has the desired share
-        (uint256 currentPoolShare,,) = ppm.getFeeAllocations(pool);
+        uint256 currentPoolShare = ppm.getPoolPOLShare(pool);
         bool willEmitShare = (currentPoolShare != 123_456);
 
         // Expect PolicySet for setting the pool share
@@ -162,7 +132,7 @@ contract PoolPolicyManager_Fee is Test {
         vm.prank(OWNER);
         ppm.setPoolPOLShare(pool, 123_456);
 
-        (uint256 polB,,) = ppm.getFeeAllocations(pool);
+        uint256 polB = ppm.getPoolPOLShare(pool);
         assertEq(polB, 123_456);
 
         // C) disable feature → revert to global
@@ -177,7 +147,7 @@ contract PoolPolicyManager_Fee is Test {
         vm.prank(OWNER);
         ppm.setPoolSpecificPOLSharingEnabled(false);
 
-        (uint256 polC,,) = ppm.getFeeAllocations(pool);
+        uint256 polC = ppm.getPoolPOLShare(pool);
         assertEq(polC, 100_000); // Back to global default
     }
 
@@ -198,10 +168,10 @@ contract PoolPolicyManager_Fee is Test {
         );
 
         vm.prank(OWNER);
-        ppm.setFeeConfig(pol, fr, lp, 100, 10_000);
+        ppm.getPoolPOLShare(PoolId.wrap(bytes32(0)));
 
-        (uint256 a, uint256 b, uint256 c) = ppm.getFeeAllocations(pid(1));
-        assertEq(a + b + c, EventTools.MAX_PPM);
+        uint256 a = ppm.getPoolPOLShare(pid(1));
+        assertEq(a, EventTools.MAX_PPM);
     }
 
     /* ------------------------------------------------------------ */

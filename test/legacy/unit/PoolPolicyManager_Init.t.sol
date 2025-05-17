@@ -42,14 +42,8 @@ contract PoolPolicyManagerInitTest is Test {
 
     function testConstructorSetsDefaultFeeAllocations() public view {
         // (POL share, full-range share, LP share)
-        (uint256 pol, uint256 fr, uint256 lp) = ppm.getFeeAllocations(pid(1));
+        uint256 pol = ppm.getPoolPOLShare(pid(1));
         assertEq(pol, 100_000); // 10 %
-        assertEq(fr, 0); // 0  %
-        assertEq(lp, 900_000); // 90 %
-    }
-
-    function testConstructorSetsOtherGlobalDefaults() public view {
-        assertEq(ppm.getMinimumTradingFee(), 100); // 0.01 %
     }
 
     function testGetMinimumPOLTarget_UsesDefaultMultiplier() public view {

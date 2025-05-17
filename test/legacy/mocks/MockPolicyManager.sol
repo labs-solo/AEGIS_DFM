@@ -104,17 +104,10 @@ contract MockPolicyManager is IPoolPolicyManager {
         return 0;
     }
 
-    function getMinimumTradingFee() external view override returns (uint256) {
-        return 0;
-    }
-
     // Not in current interface
     function getFeeClaimThreshold() external pure returns (uint256) {
         return 0;
     }
-
-    // Updated signature (5 params)
-    function setFeeConfig(uint256, uint256, uint256, uint256, uint256) external override {}
 
     // Removed from interface – keep as no-ops without override
     function setPoolPOLMultiplier(PoolId, uint32) external {}

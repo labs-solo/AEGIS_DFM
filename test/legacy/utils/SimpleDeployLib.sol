@@ -138,8 +138,9 @@ library SimpleDeployLib {
         // Exit deployer prank context so LocalSetup (this) becomes msg.sender
         VM.stopPrank();
 
-        // Oracle: store the hook address
-        d.oracle.setHookAddress(hookAddr);
+        // TODO: precompute address
+        // // Oracle: store the hook address
+        // d.oracle.setHookAddress(hookAddr);
 
         // Re-enter deployer context for any remaining deployment steps
         VM.startPrank(governance);

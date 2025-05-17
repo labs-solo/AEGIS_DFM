@@ -63,7 +63,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     IPoolManager public immutable poolManager;
     IPoolPolicyManager public immutable policy;
     // Hook address (mutable – allows test harness to wire cyclic deps).
-    address public hook;
+    address public immutable hook;
     address public immutable owner; // Governance address that can refresh policy cache
 
     /* ───────────────────── MUTABLE STATE ────────────────────── */
@@ -125,7 +125,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /// @notice Deploy the oracle and wire the immutable dependencies.
     /// @param _poolManager Canonical v4 `PoolManager` contract
     /// @param _policyContract Governance-controlled policy contract
-    /// @param _hook Hook address (mutable – allows test harness to wire cyclic deps)
+    /// @param _hook Hook address (immutable)
     /// @param _owner Governor address that can refresh the cached policy
     /// -----------------------------------------------------------------------
     constructor(IPoolManager _poolManager, IPoolPolicyManager _policyContract, address _hook, address _owner) {
@@ -135,7 +135,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
         poolManager = _poolManager;
         policy = _policyContract;
-        hook = _hook; // May be zero for test-only simple deploy
+        hook = _hook;
         owner = _owner;
     }
 
@@ -385,14 +385,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         TruncatedOracle.Observation storage o = _leaf(id, state.index)[state.index % PAGE_SIZE];
         (, int24 liveTick,,) = StateLibrary.getSlot0(poolManager, pid); // fetch current tick
         return (liveTick, o.blockTimestamp);
-    }
-
-    /**
-     * @notice Returns the immutable hook address configured for this oracle.
-     */
-    /// @notice Expose the immutable hook address for off-chain tooling.
-    function getHookAddress() external view returns (address) {
-        return hook;
     }
 
     /// -----------------------------------------------------------------------
@@ -704,13 +696,5 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         );
 
         newNext = state.cardinalityNext;
-    }
-
-    /// @notice One-time setter to wire the hook address in test environments.
-    function setHookAddress(address _hook) external {
-        if (msg.sender != owner) revert OnlyOwner();
-        if (_hook == address(0)) revert Errors.ZeroAddress();
-        if (hook != address(0)) revert Errors.AlreadyInitialized("hook");
-        hook = _hook;
     }
 }

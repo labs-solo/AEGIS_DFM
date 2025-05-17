@@ -192,7 +192,7 @@ contract Spot is BaseHook, ISpot {
         }
 
         // Calculate protocol fee based on policy
-        (uint256 protocolFeePPM,,) = policyManager.getFeeAllocations(poolId);
+        uint256 protocolFeePPM = policyManager.getPoolPOLShare(poolId);
 
         // Handle exactIn case in beforeSwap
         if (params.amountSpecified > 0 && protocolFeePPM > 0) {
@@ -250,7 +250,7 @@ contract Spot is BaseHook, ISpot {
         // Handle exactOut case in afterSwap (params.amountSpecified < 0)
         if (params.amountSpecified < 0) {
             // Get protocol fee percentage
-            (uint256 protocolFeePPM,,) = policyManager.getFeeAllocations(poolId);
+            uint256 protocolFeePPM = policyManager.getPoolPOLShare(poolId);
 
             if (protocolFeePPM > 0) {
                 // For exactOut, the input token is the unspecified token

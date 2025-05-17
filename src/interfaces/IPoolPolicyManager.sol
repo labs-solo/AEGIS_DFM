@@ -23,12 +23,8 @@ interface IPoolPolicyManager {
 
     /// @notice Emitted when fee configuration is changed
     /// @param polSharePpm Protocol-owned liquidity share in PPM
-    /// @param fullRangeSharePpm Full range incentive share in PPM
-    /// @param lpSharePpm LP share in PPM
     /// @param minimumTradingFeePpm Minimum trading fee in PPM
-    event FeeConfigChanged(
-        uint256 polSharePpm, uint256 fullRangeSharePpm, uint256 lpSharePpm, uint256 minimumTradingFeePpm
-    );
+    event FeeConfigChanged(uint256 polSharePpm, uint256 minimumTradingFeePpm);
 
     /// @notice Emitted when a policy is set for a pool
     /// @param poolId The ID of the pool
@@ -80,34 +76,6 @@ interface IPoolPolicyManager {
     event ManualFeeSet(PoolId indexed poolId, uint24 manualFee);
 
     /// === Fee Configuration Functions ===
-
-    /// @notice Returns fee allocation percentages in PPM
-    /// @param poolId The ID of the pool
-    /// @return polShare Protocol-owned liquidity share
-    /// @return fullRangeShare Full range incentive share
-    /// @return lpShare Liquidity provider share
-    function getFeeAllocations(PoolId poolId)
-        external
-        view
-        returns (uint256 polShare, uint256 fullRangeShare, uint256 lpShare);
-
-    /// @notice Returns the minimum trading fee allowed (in PPM)
-    /// @return Minimum fee in PPM
-    function getMinimumTradingFee() external view returns (uint256);
-
-    /// @notice Set all fee configuration parameters at once
-    /// @param polSharePpm Protocol-owned liquidity share in PPM
-    /// @param fullRangeSharePpm Full range incentive share in PPM
-    /// @param lpSharePpm LP share in PPM
-    /// @param minimumTradingFeePpm Minimum trading fee in PPM
-    /// @param feeClaimThresholdPpm Fee claim threshold in PPM
-    function setFeeConfig(
-        uint256 polSharePpm,
-        uint256 fullRangeSharePpm,
-        uint256 lpSharePpm,
-        uint256 minimumTradingFeePpm,
-        uint256 feeClaimThresholdPpm
-    ) external;
 
     /// @notice Sets the POL share percentage for a specific pool
     /// @param poolId The pool ID

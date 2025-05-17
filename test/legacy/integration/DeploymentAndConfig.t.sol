@@ -124,21 +124,4 @@ contract DeploymentAndConfigTest is LocalSetup {
             "Pool tokens do not match WETH/USDC"
         );
     }
-
-    /// @notice Test A8: Verify initial settings in PoolPolicyManager match deployment values.
-    function test_VerifyInitialPolicySettings() public view {
-        // Fee Policy defaults (example checks, adapt as needed)
-        // Call only to ensure it succeeds; values are validated inside the manager.
-        policyManager.getFeeAllocations(poolId);
-        // assertEq(polShare, 100000, "Default POL share mismatch"); // Example assertion removed as polShare is not captured
-        assertEq(policyManager.getMinimumTradingFee(), EXPECTED_MIN_FEE_PPM, "Min Trading Fee mismatch");
-        // assertEq(policyManager.getMaxBaseFeePpm(poolId), EXPECTED_MAX_BASE_FEE_PPM, "Max Base Fee mismatch"); // Function not found
-        // assertEq(policyManager.getDefaultDynamicFee(), EXPECTED_DEFAULT_DYNAMIC_FEE, "Default Dynamic Fee mismatch");
-        // assertEq(policyManager.getMaxTickChange(poolId), EXPECTED_MAX_TICK_CHANGE, "Max Tick Change mismatch"); // Function not found
-        // assertEq(policyManager.getBaseFeeLowerBound(poolId), EXPECTED_BASE_FEE_LOWER_BOUND, "Base Fee Lower Bound mismatch"); // Function not found
-        // assertEq(policyManager.getBaseFeePpmIncreaseOnCap(poolId), EXPECTED_BASE_FEE_INCREASE, "Base Fee Increase mismatch"); // Function not found
-        // assertEq(policyManager.getBaseFeePpmDecrease(poolId), EXPECTED_BASE_FEE_DECREASE, "Base Fee Decrease mismatch"); // Function not found
-        // assertEq(policyManager.getMinReinvestmentInterval(poolId), EXPECTED_MIN_REINVEST_INTERVAL, "Min Reinvestment Interval mismatch"); // Function not found
-        // Add asserts for any other critical parameters set during deployment
-    }
 }

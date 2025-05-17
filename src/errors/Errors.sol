@@ -144,7 +144,7 @@ library Errors {
     error PolicyExpired();
     error PolicyNotActive();
     error PolicyNotImplemented();
-    error AllocationSumError(uint256 polShare, uint256 fullRangeShare, uint256 lpShare, uint256 expected);
+    error AllocationSumError(uint256 polShare, uint256 expected);
 
     // --- Hooks ---
     error HookNotFound();

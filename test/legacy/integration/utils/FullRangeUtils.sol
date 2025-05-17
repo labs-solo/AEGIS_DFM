@@ -83,10 +83,10 @@ library FullRangeUtils {
     {
         implementations = new address[](6);
         // Get fee allocations
-        (uint256 polShare, uint256 fullRangeShare, uint256 lpShare) = policyManager.getFeeAllocations(poolId);
+        uint256 polShare = policyManager.getPoolPOLShare(poolId);
         implementations[0] = address(uint160(polShare));
-        implementations[1] = address(uint160(fullRangeShare));
-        implementations[2] = address(uint160(lpShare));
+        implementations[1] = address(uint160(0)); // fullRangeShare
+        implementations[2] = address(uint160(0)); // lpShare
         // Get tick scaling
         implementations[3] = address(uint160(policyManager.getDefaultMaxTicksPerBlock(poolId)));
         // Get reinvestment
