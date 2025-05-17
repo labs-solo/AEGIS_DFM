@@ -148,7 +148,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             return false;
         }
 
-        // Redeem tokens from PoolManager
+        // Redeem ERC20 tokens from PoolManager
+        // NOTE: We have to first redeem the ERC20 tokens to the FRLM since the Actions.BURN_6909 code has not yet supported
+        // and so the PositionManager does not yet have the ability to settle from PoolManager 6909 allowances that the user
+        // would have granted to the PositionManager
         poolManager.take(key.currency0, address(this), amount0);
         poolManager.take(key.currency1, address(this), amount1);
 

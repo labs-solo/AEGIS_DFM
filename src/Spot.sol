@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
+// TODO: we should implement tests to ensure that reinvestments(in afterSwap) can be done with newly notified fees(earned from the current swap)
+
 // - - - Solmate Deps - - -
 
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
