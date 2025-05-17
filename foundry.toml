@@ -93,3 +93,7 @@ max_inputs = { amount0 = "3402823669209384634633746074317682114550", amount1 = "
 
 [rpc_endpoints]
 unichain_mainnet = "${UNICHAIN_MAINNET_RPC_URL}"
+
+[profile.unichain_mainnet]
+chain_id = 130
+eth_rpc_url = "${UNICHAIN_MAINNET_RPC_URL}"
