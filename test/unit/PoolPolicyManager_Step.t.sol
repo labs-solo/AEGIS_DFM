@@ -32,10 +32,7 @@ contract PoolPolicyManager_Step is Test {
 
         ppm = new PoolPolicyManager(
             OWNER,
-            EXPECTED_DEFAULT_DYNAMIC_FEE,
-            supportedTickSpacings,
             1_000_000,
-            address(this),
             EXPECTED_MIN_DYNAMIC_FEE,
             EXPECTED_MAX_DYNAMIC_FEE
         );

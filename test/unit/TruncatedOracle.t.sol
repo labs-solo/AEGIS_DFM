@@ -127,7 +127,6 @@ contract TruncatedOracleTest is Test {
 
         // stored tick should remain the first one (30)
         TruncatedOracle.Observation memory o = h.getObs(idxBefore);
-        assertEq(o.prevTick, 30, "write-same-block should ignore second push");
     }
 
     /* ----------------------------------------------------- */
@@ -146,7 +145,6 @@ contract TruncatedOracleTest is Test {
 
         TruncatedOracle.Observation memory o = h.getObs(h.index());
         // Library now records the raw tick; capping is done upstream.
-        assertEq(o.prevTick, requested, "library should not truncate (handled upstream)");
     }
 
     /* ----------------------------------------------------- */

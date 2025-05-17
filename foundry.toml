@@ -24,14 +24,14 @@ remappings = [
   "uniswap-hooks/=node_modules/uniswap-hooks/src/",
 
   # Local utils & mocks (ADDED)
-  "utils/=src/utils/",
+  "utils/=test/utils/",
   "mocks/=test/mocks/",
 
   # Uniswap Permit2 library – resolves PositionManager dependency
   "permit2/=node_modules/permit2/"
 ]
 src = "src"
-test = "tests"
+test = "test"
 out = "out"
 libs = ["lib"]
 ffi = true

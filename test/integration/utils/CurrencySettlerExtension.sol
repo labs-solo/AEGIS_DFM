@@ -6,7 +6,7 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {CurrencySettler} from "uniswap-hooks/utils/CurrencySettler.sol";
 import {SafeCast} from "v4-core/src/libraries/SafeCast.sol";
-import {Errors} from "../errors/Errors.sol";
+import {Errors} from "src/errors/Errors.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 
 /**

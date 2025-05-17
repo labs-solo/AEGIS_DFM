@@ -45,6 +45,9 @@ import {PoolDonateTest} from "v4-core/src/test/PoolDonateTest.sol";
 
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
 import {IPositionDescriptor} from "@uniswap/v4-periphery/src/interfaces/IPositionDescriptor.sol";
+import {PositionManager} from "v4-periphery/src/PositionManager.sol";
+
+import {PosmTestSetup} from "v4-periphery/test/shared/PosmTestSetup.sol";
 
 uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
 uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 100000; // 10 %
@@ -189,16 +192,9 @@ contract ForkSetup is Test {
 
         // Deploy PolicyManager (standard new)
         emit log_string("Deploying PolicyManager...");
-        uint24[] memory supportedTickSpacings = new uint24[](3);
-        supportedTickSpacings[0] = 10;
-        supportedTickSpacings[1] = 60;
-        supportedTickSpacings[2] = 200;
         PoolPolicyManager policyManagerImpl = new PoolPolicyManager(
             deployerEOA,
-            EXPECTED_DEFAULT_DYNAMIC_FEE,
-            supportedTickSpacings,
             EXPECTED_DAILY_BUDGET, // dailyBudget
-            deployerEOA, // feeCollector
             EXPECTED_MIN_DYNAMIC_FEE,
             EXPECTED_MAX_DYNAMIC_FEE
         );
@@ -207,7 +203,7 @@ contract ForkSetup is Test {
 
         // Deploy LiquidityManager (standard new)
         emit log_string("Deploying Extended PositionManager...");
-        IPoolManager posm = new IPoolManager(
+        PositionManager posm = new PositionManager(
             poolManager,
             IAllowanceTransfer(PERMIT2_ADDRESS),
             uint256(300_000),
@@ -243,8 +239,6 @@ contract ForkSetup is Test {
 
         // --- Configure Contracts ---
         emit log_string("Configuring contracts...");
-        FullRangeLiquidityManager(payable(address(liquidityManager))).setAuthorizedHookAddress(actualHookAddress);
-        emit log_string("LiquidityManager configured.");
 
         // --- Set PoolKey & PoolId ---
         address token0;
@@ -329,7 +323,8 @@ contract ForkSetup is Test {
         _fundTestAccounts();
 
         // regression-guard: hook MUST be deployed and initialised
-        assertTrue(fullRange.isPoolInitialized(poolKey.toId()), "Spot not initialised");
+        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolKey.toId());
+        assertTrue(sqrtPriceX96 != 0, "Pool not initialized");
 
         emit log_string("--- ForkSetup Complete ---");
     }
@@ -517,29 +512,26 @@ contract ForkSetup is Test {
     /// @notice Helper function to add liquidity through governance
     /// @dev Ensures the governor (deployerEOA) has funds and approves LM.
     function _addLiquidityAsGovernance(
-        PoolId _poolId,
+        PoolKey memory _poolKey,
         uint256 amt0,
         uint256 amt1,
         uint256 min0,
         uint256 min1,
         address recipient
     ) internal returns (uint256 shares, uint256 used0, uint256 used1) {
-        PoolKey memory k = poolKey; // Use the class-level poolKey
-        address t0 = Currency.unwrap(k.currency0);
-        address t1 = Currency.unwrap(k.currency1);
         address lmAddress = address(liquidityManager);
 
         // Fund the governor unconditionally.
-        if (amt0 > 0) deal(t0, deployerEOA, amt0);
-        if (amt1 > 0) deal(t1, deployerEOA, amt1);
+        if (amt0 > 0) deal(Currency.unwrap(_poolKey.currency0), deployerEOA, amt0);
+        if (amt1 > 0) deal(Currency.unwrap(_poolKey.currency1), deployerEOA, amt1);
 
         vm.startPrank(deployerEOA);
-        IERC20Minimal(t0).approve(lmAddress, type(uint256).max);
-        IERC20Minimal(t1).approve(lmAddress, type(uint256).max);
+        IERC20Minimal(Currency.unwrap(_poolKey.currency0)).approve(lmAddress, type(uint256).max);
+        IERC20Minimal(Currency.unwrap(_poolKey.currency1)).approve(lmAddress, type(uint256).max);
 
         // Cast lmAddress to the concrete type for the call
-        (shares, used0, used1) =
-            FullRangeLiquidityManager(payable(lmAddress)).deposit(_poolId, amt0, amt1, min0, min1, recipient);
+        (shares, used0, used1,,) =
+            FullRangeLiquidityManager(payable(lmAddress)).deposit(_poolKey, amt0, amt1, min0, min1, recipient, msg.sender);
         vm.stopPrank();
 
         return (shares, used0, used1);
@@ -548,7 +540,7 @@ contract ForkSetup is Test {
     /// @notice Helper function to withdraw liquidity through governance
     /// @dev Pranks as deployerEOA to call withdraw on LM.
     function _withdrawLiquidityAsGovernance(
-        PoolId _poolId,
+        PoolKey memory _poolKey,
         uint256 sharesToBurn,
         uint256 min0,
         uint256 min1,
@@ -557,7 +549,7 @@ contract ForkSetup is Test {
         vm.startPrank(deployerEOA); // deployerEOA is governance
         // Cast lmAddress to the concrete type for the call
         (amt0, amt1) = FullRangeLiquidityManager(payable(address(liquidityManager))).withdraw(
-            _poolId, sharesToBurn, min0, min1, recipient
+            _poolKey, sharesToBurn, min0, min1, recipient, msg.sender
         );
         vm.stopPrank();
         return (amt0, amt1);

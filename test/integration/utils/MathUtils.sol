@@ -5,9 +5,9 @@ import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {SqrtPriceMath} from "v4-core/src/libraries/SqrtPriceMath.sol";
 import {LiquidityAmounts} from "v4-periphery/src/libraries/LiquidityAmounts.sol";
-import {Errors} from "../errors/Errors.sol";
+import {Errors} from "src/errors/Errors.sol";
 import {FixedPointMathLib} from "solmate/src/utils/FixedPointMathLib.sol";
-import {PrecisionConstants} from "./PrecisionConstants.sol";
+import {PrecisionConstants} from "src/libraries/PrecisionConstants.sol";
 
 /**
  * @title MathUtils

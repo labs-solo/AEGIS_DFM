@@ -10,10 +10,10 @@ pragma solidity 0.8.27;
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 import {ERC20} from "solmate/src/tokens/ERC20.sol";
 import {SafeTransferLib} from "solmate/src/utils/SafeTransferLib.sol";
-import {MathUtils} from "../libraries/MathUtils.sol";
-import {Errors} from "../errors/Errors.sol";
+import {MathUtils} from "./MathUtils.sol";
+import {Errors} from "src/errors/Errors.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
-import {IPoolPolicyManager} from "../interfaces/IPoolPolicyManager.sol";
+import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 
 library FullRangeUtils {
@@ -82,11 +82,15 @@ library FullRangeUtils {
         returns (address[] memory implementations)
     {
         implementations = new address[](6);
-        implementations[0] = policyManager.getPolicy(poolId, IPoolPolicyManager.PolicyType.FEE);
-        implementations[1] = policyManager.getPolicy(poolId, IPoolPolicyManager.PolicyType.VTIER);
-        implementations[2] = policyManager.getPolicy(poolId, IPoolPolicyManager.PolicyType.FEE);
-        implementations[3] = policyManager.getPolicy(poolId, IPoolPolicyManager.PolicyType.TICK_SCALING);
-        implementations[4] = policyManager.getPolicy(poolId, IPoolPolicyManager.PolicyType.REINVESTMENT);
+        // Get fee allocations
+        (uint256 polShare, uint256 fullRangeShare, uint256 lpShare) = policyManager.getFeeAllocations(poolId);
+        implementations[0] = address(uint160(polShare));
+        implementations[1] = address(uint160(fullRangeShare));
+        implementations[2] = address(uint160(lpShare));
+        // Get tick scaling
+        implementations[3] = address(uint160(policyManager.getDefaultMaxTicksPerBlock(poolId)));
+        // Get reinvestment
+        implementations[4] = address(uint160(policyManager.getDailyBudgetPpm(poolId)));
         implementations[5] = address(0);
         return implementations;
     }

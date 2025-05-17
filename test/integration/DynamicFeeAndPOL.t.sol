@@ -227,7 +227,7 @@ contract DynamicFeeAndPOLTest is LocalSetup {
         (uint160 _sqrtBefore, int24 _tickBefore,,) = StateLibrary.getSlot0(poolManager, poolId);
 
         // --- snapshot fee-collector balances before swap ---
-        address feeCollector = policyManager.getFeeCollector();
+        address feeCollector = policyManager.owner();
         uint256 col0Before = usdc.balanceOf(feeCollector);
         uint256 col1Before = weth.balanceOf(feeCollector);
 
@@ -455,8 +455,6 @@ contract DynamicFeeAndPOLTest is LocalSetup {
      * @notice Test setting POL rate to 100% and verifying fees go entirely to protocol
      */
     function test_polRateFullProtocol() public {
-        // ... existing code ...
-
         vm.startPrank(deployerEOA);
 
         // Set POL rate to 100% (all fees go to protocol)
@@ -464,44 +462,50 @@ contract DynamicFeeAndPOLTest is LocalSetup {
 
         vm.stopPrank();
 
-        // Do a swap to test that fees now go to protocol
+        // Do a swap to test that fees now go to protocol and trigger reinvestment
         uint256 swapAmount = 1 ether;
         _swapWETHToUSDC(user1, swapAmount, 0);
-
-        // No need to call _simulateHookNotification - Spot hook handles this now
-
-        // Get fee growth for LP and protocol
-        // ... existing code ...
     }
 
     /**
      * @notice Test that POL ratio updates take effect immediately
      */
     function test_polRateChangeImmediate() public {
-        // ... existing code ...
-
-        // Do a few swaps before changing fee distribution
+        // Do a few swaps to generate fees and trigger reinvestment
         uint256 swapAmount = 1 ether;
         _swapWETHToUSDC(user1, swapAmount, 0);
-
-        // No need to call _simulateHookNotification - Spot hook handles this now
-
-        // ... existing code ...
     }
 
     /**
      * @notice Test that POL ratio of 0 means all fees go to LPs
      */
     function test_polRateZero() public {
-        // ... existing code ...
+        // Do swaps to accumulate fees and trigger reinvestment
+        uint256 swapAmount = 1 ether;
+        _swapWETHToUSDC(user1, swapAmount, 0);
+    }
 
-        // Do swaps to accumulate fees
+    /**
+     * @notice Test reinvestment behavior during swaps
+     */
+    function test_reinvestmentDuringSwaps() public {
+        // Do initial swap to accumulate fees and trigger reinvestment
         uint256 swapAmount = 1 ether;
         _swapWETHToUSDC(user1, swapAmount, 0);
 
-        // No need to call _simulateHookNotification - Spot hook handles this now
+        // Get pool state after first swap
+        (,uint128 liquidityAfterFirstSwap,,) = liquidityManager.getPositionInfo(poolId);
+        assertTrue(liquidityAfterFirstSwap > 0, "No liquidity after first swap");
 
-        // ... existing code ...
+        // Do another swap to trigger more reinvestment
+        _swapWETHToUSDC(user1, swapAmount, 0);
+
+        // Verify liquidity increased from reinvestment
+        (,uint128 liquidityAfterSecondSwap,,) = liquidityManager.getPositionInfo(poolId);
+        assertTrue(
+            liquidityAfterSecondSwap > liquidityAfterFirstSwap,
+            "Liquidity did not increase after second swap"
+        );
     }
 
     /**
