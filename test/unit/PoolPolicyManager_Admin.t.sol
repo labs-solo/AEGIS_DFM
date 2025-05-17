@@ -63,9 +63,9 @@ contract PoolPolicyManager_Admin_Test is Test {
 
     function testProtocolFeeAbove100Reverts() public {
         vm.prank(OWNER);
-        // Updated revert message check and test value to be above MAX_PPM
-        vm.expectRevert(abi.encodeWithSelector(Errors.AllocationSumError.selector, EventTools.MAX_PPM + 1, 0, 1_000_000 - (EventTools.MAX_PPM + 1), 1_000_000));
-        ppm.setFeeConfig(EventTools.MAX_PPM + 1, 0, 1_000_000 - (EventTools.MAX_PPM + 1), EXPECTED_MIN_DYNAMIC_FEE, 10_000); // > 100% PPM
+        // Test with a value above MAX_PPM (1_000_000)
+        vm.expectRevert(abi.encodeWithSelector(Errors.AllocationSumError.selector, 1_100_000, 0, 0, 1_000_000));
+        ppm.setFeeConfig(1_100_000, 0, 0, EXPECTED_MIN_DYNAMIC_FEE, 10_000); // 110% PPM
     }
 
     function testProtocolFeeMax100IsAllowed() public {
