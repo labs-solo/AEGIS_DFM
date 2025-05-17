@@ -144,6 +144,10 @@ contract DynamicFeeManagerUnitTest is Test {
     /* ─────────────────── initialize() ───────────────────── */
     event PoolInitialized(PoolId indexed id);
     event AlreadyInitialized(PoolId indexed id);
+    event CapToggled(PoolId indexed id, bool inCap);
+    event FeeStateChanged(
+        PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent, uint32 timestamp
+    );
 
     function _initAsOwner() internal {
         vm.expectEmit(true, false, false, true);
@@ -197,10 +201,6 @@ contract DynamicFeeManagerUnitTest is Test {
     }
 
     /* ──────────────── Fee-state & CAP flow ──────────────── */
-    event FeeStateChanged(
-        PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent, uint32 timestamp
-    );
-
     function _initAndCap() internal returns (uint256 baseFee) {
         _initAsOwner();
         (baseFee,) = dfm.getFeeState(PID);
@@ -210,8 +210,12 @@ contract DynamicFeeManagerUnitTest is Test {
         console.log("Multiplier:", policy.multiplier());
         console.log("Expected surge:", baseFee * policy.multiplier() / 1e6);
 
+        // Expect CapToggled event first
+        vm.expectEmit(true, false, false, true);
+        emit CapToggled(PID, true);
+
+        // Then expect FeeStateChanged event
         vm.expectEmit(true, true, false, true);
-        // timestamp can be ignored by expectEmit, only check indexed and data fields
         emit FeeStateChanged(PID, baseFee, baseFee * policy.multiplier() / 1e6, true, uint32(block.timestamp));
 
         // Trigger CAP event via hook - ensure we're pranked as HOOK before the call
@@ -241,11 +245,9 @@ contract DynamicFeeManagerUnitTest is Test {
 
         // Warp past full decay
         vm.warp(block.timestamp + policy.decay());
+
         // notify with capped=false to clear flag
         vm.prank(HOOK);
-        vm.expectEmit(true, true, false, true);
-        // clear cap: timestamp will be block.timestamp in the callback
-        emit FeeStateChanged(PID, baseFee, 0, false, uint32(block.timestamp));
         dfm.notifyOracleUpdate(PID, false);
 
         (, uint256 surgeFinal) = dfm.getFeeState(PID);
