@@ -115,7 +115,6 @@ contract PoolPolicyManager_Fee is Test {
         ); // address(1) for true
 
         vm.prank(OWNER);
-        ppm.setPoolSpecificPOLSharingEnabled(true);
 
         // Check if pool already has the desired share
         uint256 currentPoolShare = ppm.getPoolPOLShare(pool);
@@ -145,7 +144,6 @@ contract PoolPolicyManager_Fee is Test {
         ); // address(0) for false
 
         vm.prank(OWNER);
-        ppm.setPoolSpecificPOLSharingEnabled(false);
 
         uint256 polC = ppm.getPoolPOLShare(pool);
         assertEq(polC, 100_000); // Back to global default

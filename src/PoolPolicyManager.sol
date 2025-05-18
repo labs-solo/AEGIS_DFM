@@ -65,10 +65,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     mapping(PoolId => bool) private _hasPoolManualFee;
 
     /// @notice Pool-specific POL share percentages
-    mapping(PoolId => uint256) private _poolPolSharePpm; // how does this compare to FeeConfig.polSharePpm???
-
-    /// @notice Flag to enable/disable pool-specific POL percentages
-    bool private _allowPoolSpecificPolShare;
+    mapping(PoolId => uint256) private _poolPolSharePpm;
 
     /// @notice Pool-specific dynamic fee configurations
     mapping(PoolId => DynamicFeeConfig) private _poolDynamicFeeConfig;
@@ -140,21 +137,8 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function setPoolSpecificPOLSharingEnabled(bool enabled) external override onlyOwner {
-        _allowPoolSpecificPolShare = enabled;
-
-        emit PoolSpecificPOLSharingEnabled(enabled);
-        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.FEE, address(uint160(enabled ? 1 : 0)), msg.sender);
-    }
-
-    /// @inheritdoc IPoolPolicyManager
-    function getPoolPOLShare(PoolId poolId) external view override returns (uint256) {
-        uint256 poolSpecificPolShare = _poolPolSharePpm[poolId];
-
-        // If pool-specific POL share is enabled and set for this pool, use it
-        if (_allowPoolSpecificPolShare && poolSpecificPolShare > 0) {
-            return poolSpecificPolShare;
-        }
+    function getPoolPOLShare(PoolId poolId) external view override returns (uint256 poolSpecificPolShare) {
+        poolSpecificPolShare = _poolPolSharePpm[poolId];
     }
 
     // === Manual Fee Override Functions ===

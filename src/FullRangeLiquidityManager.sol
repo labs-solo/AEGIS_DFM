@@ -49,19 +49,19 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     uint256 public constant REINVEST_COOLDOWN = 1 days;
 
     /// @notice Minimum amount to reinvest to avoid dust
-    uint256 public constant MIN_REINVEST_AMOUNT = 1e4;
+    uint256 private constant MIN_REINVEST_AMOUNT = 1e4;
 
     /// @notice The "constant" Spot hook contract address that can notify fees
     address public immutable override authorizedHookAddress;
 
     /// @notice The Uniswap V4 PoolManager
-    IPoolManager public immutable poolManager;
+    IPoolManager public immutable override poolManager;
 
     /// @notice The Uniswap V4 PositionManager for adding liquidity
-    PositionManager public immutable positionManager;
+    PositionManager public immutable override positionManager;
 
     /// @notice The policy manager contract that determines ownership
-    PoolPolicyManager public immutable policyManager;
+    PoolPolicyManager public immutable override policyManager;
 
     struct PendingFees {
         uint256 amount0;
@@ -69,13 +69,13 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     }
 
     /// @notice Pending fees per pool
-    mapping(PoolId => PendingFees) public pendingFees;
+    mapping(PoolId => PendingFees) private pendingFees;
 
     /// @notice Last reinvestment timestamp per pool
-    mapping(PoolId => uint256) public lastReinvestment;
+    mapping(PoolId => uint256) private lastReinvestment;
 
     /// @notice NFT token IDs for full range positions
-    mapping(PoolId => uint256) public positionIds;
+    mapping(PoolId => uint256) private positionIds;
 
     /// @notice Constructs the FullRangeLiquidityManager
     /// @param _poolManager The Uniswap V4 PoolManager

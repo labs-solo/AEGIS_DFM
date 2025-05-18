@@ -82,10 +82,6 @@ interface IPoolPolicyManager {
     /// @param polSharePpm The POL share in PPM (parts per million)
     function setPoolPOLShare(PoolId poolId, uint256 polSharePpm) external;
 
-    /// @notice Enables or disables the use of pool-specific POL share percentages
-    /// @param enabled Whether to enable pool-specific POL sharing
-    function setPoolSpecificPOLSharingEnabled(bool enabled) external;
-
     /// @notice Gets the POL share percentage for a specific pool
     /// @param poolId The pool ID to get the POL share for
     /// @return The POL share in PPM (parts per million)

@@ -5,6 +5,12 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+
+import {PositionManager} from "v4-periphery/src/PositionManager.sol";
+
+import {PoolPolicyManager} from "../PoolPolicyManager.sol";
+
 /// @title IFullRangeLiquidityManager
 /// @notice Interface for the FullRangeLiquidityManager contract that handles liquidity and fee management
 /// @dev Manages fee collection, accounting, reinvestment, and full-range liquidity positions
@@ -136,6 +142,10 @@ interface IFullRangeLiquidityManager {
     /// @param amount The amount of tokens to sweep (0 for the entire balance)
     /// @return amountSwept The actual amount swept
     function sweepToken(address token, address recipient, uint256 amount) external returns (uint256 amountSwept);
+
+    function poolManager() external view returns (IPoolManager);
+    function positionManager() external view returns (PositionManager);
+    function policyManager() external view returns (PoolPolicyManager);
 
     /// @notice Returns the authorized hook address that can notify fees
     function authorizedHookAddress() external view returns (address);
