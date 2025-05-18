@@ -64,8 +64,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     PoolPolicyManager public immutable override policyManager;
 
     struct PendingFees {
-        uint256 amount0;
-        uint256 amount1;
+        uint256 erc6909_0;
+        uint256 erc6909_1;
+        uint256 erc20_0;
+        uint256 erc20_1;
     }
 
     /// @notice Pending fees per pool
@@ -122,11 +124,11 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         PoolId poolId = poolKey.toId();
         // Update pending fees
         if (fee0 > 0) {
-            pendingFees[poolId].amount0 += fee0;
+            pendingFees[poolId].erc6909_0 += fee0;
         }
 
         if (fee1 > 0) {
-            pendingFees[poolId].amount1 += fee1;
+            pendingFees[poolId].erc6909_1 += fee1;
         }
     }
 
@@ -140,11 +142,19 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         }
 
         // Get pending fees
-        uint256 amount0 = pendingFees[poolId].amount0;
-        uint256 amount1 = pendingFees[poolId].amount1;
+        PendingFees memory _pendingFees = pendingFees[poolId];
+
+        uint256 erc6909_0 = _pendingFees.erc6909_0;
+        uint256 erc6909_1 = _pendingFees.erc6909_1;
+
+        uint256 erc20_0 = _pendingFees.erc20_0;
+        uint256 erc20_1 = _pendingFees.erc20_1;
+
+        uint256 total0 = erc6909_0 + erc20_0;
+        uint256 total1 = erc6909_1 + erc20_1;
 
         // Check minimum thresholds
-        if (amount0 < MIN_REINVEST_AMOUNT || amount1 < MIN_REINVEST_AMOUNT) {
+        if (total0 < MIN_REINVEST_AMOUNT || total1 < MIN_REINVEST_AMOUNT) {
             return false;
         }
 
@@ -152,19 +162,21 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // NOTE: We have to first redeem the ERC20 tokens to the FRLM since the Actions.BURN_6909 code has not yet supported
         // and so the PositionManager does not yet have the ability to settle from PoolManager 6909 allowances that the user
         // would have granted to the PositionManager
-        poolManager.take(key.currency0, address(this), amount0);
-        poolManager.take(key.currency1, address(this), amount1);
+        poolManager.take(key.currency0, address(this), erc6909_0);
+        poolManager.take(key.currency1, address(this), erc6909_1);
 
         // Approve tokens for position operations
         _approveTokensForPosition(key.currency0, key.currency1);
 
         // Add liquidity to position
         (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) =
-            _addLiquidityToPosition(key, amount0, amount1, MIN_REINVEST_AMOUNT, MIN_REINVEST_AMOUNT);
+            _addLiquidityToPosition(key, total0, total1, MIN_REINVEST_AMOUNT, MIN_REINVEST_AMOUNT);
 
         // Restore any unused amounts to pendingFees
-        pendingFees[poolId].amount0 = pendingFees[poolId].amount0 - amount0Used;
-        pendingFees[poolId].amount1 = pendingFees[poolId].amount1 - amount1Used;
+        _pendingFees =
+            PendingFees({erc20_0: total0 - amount0Used, erc20_1: total1 - amount1Used, erc6909_0: 0, erc6909_1: 0});
+
+        pendingFees[poolId] = _pendingFees;
 
         // Mint ERC6909 shares to this contract (protocol-owned)
         _mint(address(this), uint256(PoolId.unwrap(poolId)), liquidityAdded);
@@ -179,7 +191,9 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
 
     /// @inheritdoc IFullRangeLiquidityManager
     function getPendingFees(PoolId poolId) external view override returns (uint256 amount0, uint256 amount1) {
-        (amount0, amount1) = (pendingFees[poolId].amount0, pendingFees[poolId].amount1);
+        PendingFees memory _pendingFees = pendingFees[poolId];
+        (amount0, amount1) =
+            (_pendingFees.erc20_0 + _pendingFees.erc6909_0, _pendingFees.erc20_1 + _pendingFees.erc6909_1);
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
