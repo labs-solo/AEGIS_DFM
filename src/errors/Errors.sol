@@ -25,6 +25,7 @@ library Errors {
     error HookAddressAlreadySet();
     error InvalidHookAddress();
     error ZeroDestination();
+    error NotPoolManager();
 
     // --- Validation & Input ---
     error InvalidHookAuthorization(address expected, address actual);

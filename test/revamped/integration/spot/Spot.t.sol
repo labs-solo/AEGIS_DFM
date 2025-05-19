@@ -33,12 +33,89 @@ import {Base_Test} from "../../Base_Test.sol";
 
 import {Errors} from "src/errors/Errors.sol";
 
+/// @dev General Spot contract tests
 contract SpotTest is Base_Test {
     function setUp() public override {
         Base_Test.setUp();
     }
 
     // - - - parametrized test helpers - - -
+
+    /**
+     * @notice Helper function to test dynamic fee behavior with no hook fee and no auto reinvestment
+     * @param zeroForOne Direction of the swap (true for token0 to token1, false for token1 to token0)
+     * @param exactInput Whether this is an exact input swap (true) or exact output swap (false)
+     * @param amount The input or output amount (depending on exactInput flag)
+     * @param manualFee The manual fee to set in basis points (e.g., 3000 = 0.3%), or 0 for dynamic fee
+     */
+    function _testDynamicFee(bool zeroForOne, bool exactInput, uint256 amount, uint24 manualFee) internal {
+        // Setup fee configuration
+        vm.startPrank(owner);
+        policyManager.setManualFee(poolId, manualFee);
+        policyManager.setPoolPOLShare(poolId, 0);
+        spot.setReinvestmentPaused(true);
+        vm.stopPrank();
+
+        // Get initial state for verification later
+        (uint256 pendingFee0Before, uint256 pendingFee1Before) = liquidityManager.getPendingFees(poolId);
+
+        // Get quote for expected output/input
+        uint256 expectedAmountOutOrIn;
+        if (exactInput) {
+            (expectedAmountOutOrIn,) = quoter.quoteExactInputSingle(
+                IV4Quoter.QuoteExactSingleParams({
+                    poolKey: poolKey,
+                    zeroForOne: zeroForOne,
+                    exactAmount: uint128(amount),
+                    hookData: hex""
+                })
+            );
+        } else {
+            (expectedAmountOutOrIn,) = quoter.quoteExactOutputSingle(
+                IV4Quoter.QuoteExactSingleParams({
+                    poolKey: poolKey,
+                    zeroForOne: zeroForOne,
+                    exactAmount: uint128(amount),
+                    hookData: hex""
+                })
+            );
+        }
+
+        // Create swap parameters
+        int256 swapAmount = exactInput ? -int256(amount) : int256(amount);
+
+        // Execute the swap
+        vm.startPrank(user1);
+        SwapParams memory params = SwapParams({
+            zeroForOne: zeroForOne,
+            amountSpecified: swapAmount,
+            sqrtPriceLimitX96: zeroForOne ? MIN_PRICE_LIMIT : MAX_PRICE_LIMIT
+        });
+
+        BalanceDelta delta =
+            swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
+        vm.stopPrank();
+
+        // Calculate actual amounts from delta
+        uint256 actualInputAmount = uint256(int256(zeroForOne ? -delta.amount0() : -delta.amount1()));
+        uint256 actualOutputAmount = uint256(int256(zeroForOne ? delta.amount1() : delta.amount0()));
+
+        // Verify expected vs actual for input or output based on exactInput flag
+        if (exactInput) {
+            assertEq(actualInputAmount, amount, "Input amount doesn't match specified amount");
+            assertApproxEqRel(actualOutputAmount, expectedAmountOutOrIn, 1e15, "Output amount doesn't match expected");
+        } else {
+            assertEq(actualOutputAmount, amount, "Output amount doesn't match specified amount");
+            assertApproxEqRel(actualInputAmount, expectedAmountOutOrIn, 1e15, "Input amount doesn't match expected");
+        }
+
+        // Verify fee collection behavior
+        (uint256 pendingFee0After, uint256 pendingFee1After) = liquidityManager.getPendingFees(poolId);
+
+        // pending fees should remain 0 since no hook fee was charged
+        assertEq(pendingFee0After, pendingFee0Before);
+        assertEq(pendingFee1After, pendingFee1Before);
+    }
 
     /**
      * @notice Helper function to test hook fee collection across different swap scenarios
@@ -153,6 +230,126 @@ contract SpotTest is Base_Test {
         assertEq(protocolShares, protocolSharesFromBalance, "Inconsistent protocol shares reporting");
     }
 
+    /**
+     * @notice Helper function to test reinvestment functionality under different conditions
+     * @param reinvestmentPaused Whether reinvestment should be paused initially
+     * @param manualFee The fee in basis points (e.g., 3000 = 0.3%)
+     * @param polShare The protocol fee share (e.g., 200000 = 20%)
+     * @param swapAmount The amount to swap to generate fees
+     * @param swapPattern How to distribute swaps (0=balanced, 1=only zeroForOne, 2=only oneForZero)
+     * @param numSwaps Number of swaps to perform
+     * @param advanceTime Time to advance between swaps (to test cooldown)
+     * @param expectSuccess Whether the manual reinvestment should succeed
+     */
+    function _testReinvestment(
+        bool reinvestmentPaused,
+        uint24 manualFee,
+        uint256 polShare,
+        uint256 swapAmount,
+        uint8 swapPattern,
+        uint256 numSwaps,
+        uint256 advanceTime,
+        bool expectSuccess
+    ) internal {
+        // Setup
+        vm.startPrank(owner);
+        policyManager.setManualFee(poolId, manualFee);
+        policyManager.setPoolPOLShare(poolId, polShare);
+        spot.setReinvestmentPaused(reinvestmentPaused);
+        vm.stopPrank();
+
+        // Get initial state
+        (uint256 pendingFee0Initial, uint256 pendingFee1Initial) = liquidityManager.getPendingFees(poolId);
+        (uint256 protocolSharesInitial,,) = liquidityManager.getProtocolOwnedLiquidity(poolId);
+        uint256 nextReinvestTime = liquidityManager.getNextReinvestmentTime(poolId);
+
+        // Execute swaps to generate fees
+        for (uint256 i = 0; i < numSwaps; i++) {
+            vm.startPrank(user1);
+
+            // Determine swap direction based on pattern
+            bool zeroForOne;
+            if (swapPattern == 0) {
+                // Balanced pattern - alternate directions
+                zeroForOne = (i % 2 == 0);
+            } else if (swapPattern == 1) {
+                // Only zeroForOne
+                zeroForOne = true;
+            } else {
+                // Only oneForZero
+                zeroForOne = false;
+            }
+
+            SwapParams memory params = SwapParams({
+                zeroForOne: zeroForOne,
+                amountSpecified: -int256(swapAmount),
+                sqrtPriceLimitX96: zeroForOne ? MIN_PRICE_LIMIT : MAX_PRICE_LIMIT
+            });
+
+            swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
+            vm.stopPrank();
+
+            // Advance time if specified
+            if (advanceTime > 0) {
+                vm.warp(block.timestamp + advanceTime);
+            }
+        }
+
+        // Check intermediate state - fees should have accumulated
+        (uint256 pendingFee0Mid, uint256 pendingFee1Mid) = liquidityManager.getPendingFees(poolId);
+        (uint256 protocolSharesMid,,) = liquidityManager.getProtocolOwnedLiquidity(poolId);
+
+        // Verify fees accumulated properly based on swap pattern
+        if (swapPattern == 0 || swapPattern == 1) {
+            // Should have token0 fees if we did zeroForOne swaps
+            assertGt(pendingFee0Mid, pendingFee0Initial, "Token0 fees should accumulate from zeroForOne swaps");
+        }
+
+        if (swapPattern == 0 || swapPattern == 2) {
+            // Should have token1 fees if we did oneForZero swaps
+            assertGt(pendingFee1Mid, pendingFee1Initial, "Token1 fees should accumulate from oneForZero swaps");
+        }
+
+        // If reinvestment is paused, protocol shares shouldn't increase
+        if (reinvestmentPaused) {
+            assertEq(
+                protocolSharesMid,
+                protocolSharesInitial,
+                "Protocol shares should not increase when reinvestment is paused"
+            );
+        } else {
+            assertGt(
+                protocolSharesMid,
+                protocolSharesInitial,
+                "Protocol shares should increase when reinvestment is NOT paused"
+            );
+        }
+
+        // Try manual reinvestment
+        bool reinvestResult = liquidityManager.reinvest(poolKey);
+
+        // Check if result matches expectation
+        assertEq(reinvestResult, expectSuccess, "Reinvestment result doesn't match expectation");
+
+        // Check final state
+        (uint256 pendingFee0Final, uint256 pendingFee1Final) = liquidityManager.getPendingFees(poolId);
+        (uint256 protocolSharesFinal,,) = liquidityManager.getProtocolOwnedLiquidity(poolId);
+
+        // Final swap to verify behavior post-reinvestment
+        vm.startPrank(user1);
+
+        // For final swap, use zeroForOne to check token0 fee accrual
+        SwapParams memory finalParams =
+            SwapParams({zeroForOne: true, amountSpecified: -int256(swapAmount), sqrtPriceLimitX96: MIN_PRICE_LIMIT});
+
+        swapRouter.swap(poolKey, finalParams, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
+        vm.stopPrank();
+
+        // Check that fees from final swap accumulated properly
+        (uint256 pendingFee0AfterFinal, uint256 pendingFee1AfterFinal) = liquidityManager.getPendingFees(poolId);
+        assertGt(pendingFee0AfterFinal, pendingFee0Final, "Token0 fees should accumulate from final swap");
+    }
+
     /*//////////////////////////////////////////////////////////////
                         HOOK INITIALIZATION TESTS
     //////////////////////////////////////////////////////////////*/
@@ -190,115 +387,40 @@ contract SpotTest is Base_Test {
                         DYNAMIC FEE TESTS
     //////////////////////////////////////////////////////////////*/
 
-    function test_DynamicFee_Manual_NoPolShare_ExactIn() public {
-        // Set a manual fee in the policy manager
-        vm.startPrank(owner);
-        policyManager.setManualFee(poolId, 2000); // 0.2%
-        vm.stopPrank();
-
-        int256 desiredIn = 1 ether;
-        bool zeroForOne = true;
-
-        (uint256 expectedAmountOut,) = quoter.quoteExactInputSingle(
-            IV4Quoter.QuoteExactSingleParams({
-                poolKey: poolKey,
-                zeroForOne: zeroForOne,
-                exactAmount: uint128(int128(desiredIn)),
-                hookData: hex""
-            })
+    function test_DynamicFee_Manual_NoPolShare_ExactIn_0() public {
+        _testDynamicFee(
+            true, // zeroForOne
+            true, // exactInput
+            1 ether, // amount
+            2000 // manualFee (0.2%)
         );
-
-        // Perform a swap to trigger the fee
-        vm.startPrank(user1);
-        SwapParams memory params =
-            SwapParams({zeroForOne: true, amountSpecified: -desiredIn, sqrtPriceLimitX96: MIN_PRICE_LIMIT});
-
-        // Execute the swap
-        BalanceDelta delta =
-            swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
-
-        // Manual fee should override dynamic fee
-        uint256 expectedFee = FullMath.mulDiv(uint256(desiredIn), 2000, 1e6);
-
-        (uint256 pending0, uint256 pending1) = liquidityManager.getPendingFees(poolId);
-
-        assertEq(pending0, 0);
-        assertEq(pending1, 0);
-
-        // Verify fee was applied correctly
-        int256 actualIn = -delta.amount0();
-        assertEq(desiredIn, actualIn);
-
-        int256 actualOut = delta.amount1();
-        assertEq(uint256(actualOut), expectedAmountOut);
-
-        vm.stopPrank();
     }
 
-    function test_DynamicFee_Manual_NoPolShare_ExactOut() public {
-        // Set a manual fee in the policy manager
-        vm.startPrank(owner);
-        policyManager.setManualFee(poolId, 2000); // 0.2%
-        vm.stopPrank();
-
-        uint256 desiredOut = 0.5 ether;
-        bool zeroForOne = true;
-
-        // For exactOutput swaps, we need to get a quote first to know approximately how much we need to input
-        (uint256 expectedAmountIn,) = quoter.quoteExactOutputSingle(
-            IV4Quoter.QuoteExactSingleParams({
-                poolKey: poolKey,
-                zeroForOne: zeroForOne,
-                exactAmount: uint128(desiredOut),
-                hookData: hex""
-            })
+    function test_DynamicFee_Manual_NoPolShare_ExactIn_1() public {
+        _testDynamicFee(
+            false, // zeroForOne
+            true, // exactInput
+            1 ether, // amount
+            2000 // manualFee (0.2%)
         );
+    }
 
-        // Perform an exactOutput swap (positive amountSpecified indicates exactOutput)
-        vm.startPrank(user1);
-        SwapParams memory params = SwapParams({
-            zeroForOne: zeroForOne,
-            amountSpecified: int256(desiredOut), // positive means exactOutput
-            sqrtPriceLimitX96: MIN_PRICE_LIMIT
-        });
+    function test_DynamicFee_Manual_NoPolShare_ExactOut_0() public {
+        _testDynamicFee(
+            true, // zeroForOne
+            false, // exactOutput
+            0.5 ether, // amount
+            2000 // manualFee (0.2%)
+        );
+    }
 
-        // Execute the swap
-        BalanceDelta delta =
-            swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
-
-        // Calculate actual values
-        uint256 actualIn = uint256(int256(-delta.amount0()));
-        uint256 actualOut = uint256(int256(delta.amount1()));
-
-        assertEq(actualOut, desiredOut, "Did not receive desired output amount");
-        assertEq(actualIn, expectedAmountIn, "Input amount did not match expected input");
-
-        // Manual fee should be reflected in the input amount
-        // For exactOutput, the fee is effectively "built-in" to the input amount
-        // So we can't directly check the fee amount, but we can verify the input is reasonable
-
-        // Calculate what the input would be without any fee
-        // This is a simplified calculation and may not match exactly due to slippage
-        uint256 inputWithoutFee = (desiredOut * 1e6) / (1e6 - 3000); // Assuming 0.3% pool fee for simplicity
-
-        // Verify the actual input is greater than the no-fee amount
-        // (since fees increase the required input)
-        assertGt(actualIn, inputWithoutFee, "Input amount doesn't reflect fee application");
-
-        // Verify the swap delta
-        // For an exactOutput zeroForOne swap:
-        // - delta.amount0() will be negative (tokens spent by user)
-        // - delta.amount1() will be positive (tokens received by user)
-        assertEq(int256(actualIn), -delta.amount0(), "Incorrect amount0 delta");
-        assertEq(int256(actualOut), delta.amount1(), "Incorrect amount1 delta");
-
-        // Since we're not collecting protocol fees in this test,
-        // verify no pending fees were accumulated
-        (uint256 pending0, uint256 pending1) = liquidityManager.getPendingFees(poolId);
-        assertEq(pending0, 0, "Unexpected pending fee0");
-        assertEq(pending1, 0, "Unexpected pending fee1");
-
-        vm.stopPrank();
+    function test_DynamicFee_Manual_NoPolShare_ExactOut_1() public {
+        _testDynamicFee(
+            false, // zeroForOne
+            false, // exactOutput
+            0.5 ether, // amount
+            2000 // manualFee (0.2%)
+        );
     }
 
     /*//////////////////////////////////////////////////////////////
@@ -354,151 +476,63 @@ contract SpotTest is Base_Test {
                         REINVESTMENT TESTS
     //////////////////////////////////////////////////////////////*/
 
-    function test_Reinvestment_Paused() public {
-        // Setup protocol fee and initial state
-        vm.startPrank(owner);
-        policyManager.setPoolPOLShare(poolId, 500000); // 50% of swap fee goes to protocol
-        policyManager.setManualFee(poolId, 3000); // 0.3% fee
-        spot.setReinvestmentPaused(true);
-        vm.stopPrank();
-
-        // Get initial pending fees
-        (uint256 pendingFee0Before, uint256 pendingFee1Before) = liquidityManager.getPendingFees(poolId);
-
-        // Execute a swap to generate fees
-        vm.startPrank(user1);
-        SwapParams memory params =
-            SwapParams({zeroForOne: true, amountSpecified: 1 ether, sqrtPriceLimitX96: MIN_PRICE_LIMIT});
-
-        swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
-        vm.stopPrank();
-
-        // Check that fees were collected but not reinvested
-        (uint256 pendingFee0After, uint256 pendingFee1After) = liquidityManager.getPendingFees(poolId);
-        assertGt(pendingFee0After, pendingFee0Before, "No fees collected");
-        assertEq(pendingFee1After, pendingFee1Before, "Fee1 should not change for zeroForOne swap");
-
-        // Manually attempt to reinvest
-        bool reinvestResult = liquidityManager.reinvest(poolKey);
-
-        // Should return true if reinvestment was successful
-        assertTrue(reinvestResult, "Reinvestment failed");
-
-        // Check that pending fees were reset
-        (uint256 pendingFee0Final, uint256 pendingFee1Final) = liquidityManager.getPendingFees(poolId);
-        assertLt(pendingFee0Final, pendingFee0After, "Fees not reinvested");
-    }
-
-    function test_Reinvestment_Automatic() public {
-        // Setup protocol fee and ensure reinvestment is enabled
-        vm.startPrank(owner);
-        policyManager.setPoolPOLShare(poolId, 500000); // 50% of swap fee goes to protocol
-        policyManager.setManualFee(poolId, 3000); // 0.3% fee
-        spot.setReinvestmentPaused(false);
-        vm.stopPrank();
-
-        // Get initial pending fees and protocol-owned liquidity
-        (uint256 pendingFee0Before, uint256 pendingFee1Before) = liquidityManager.getPendingFees(poolId);
-        (uint256 protocolSharesBefore,,) = liquidityManager.getProtocolOwnedLiquidity(poolId);
-
-        // Execute a swap to generate fees
-        vm.startPrank(user1);
-        SwapParams memory params =
-            SwapParams({zeroForOne: true, amountSpecified: 1 ether, sqrtPriceLimitX96: MIN_PRICE_LIMIT});
-
-        swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
-        vm.stopPrank();
-
-        // Check that fees were automatically reinvested
-        (uint256 protocolSharesAfter,,) = liquidityManager.getProtocolOwnedLiquidity(poolId);
-
-        // Either the shares increased or the fee is still pending (due to cooldown)
-        (uint256 pendingFee0After, uint256 pendingFee1After) = liquidityManager.getPendingFees(poolId);
-
-        bool sharesIncreased = protocolSharesAfter > protocolSharesBefore;
-        bool feesAccumulated = pendingFee0After > pendingFee0Before;
-
-        assertTrue(sharesIncreased || feesAccumulated, "Fees neither reinvested nor accumulated");
-    }
-
-    /*//////////////////////////////////////////////////////////////
-                        DEPOSIT/WITHDRAW TESTS
-    //////////////////////////////////////////////////////////////*/
-
-    function test_Deposit_PolicyOwner() public {
-        // Setup
-        vm.startPrank(owner);
-
-        // Mint tokens to owner for deposit
-        MockERC20(Currency.unwrap(currency0)).mint(owner, 10 ether);
-        MockERC20(Currency.unwrap(currency1)).mint(owner, 10 ether);
-
-        // Approve spot contract for token transfers
-        MockERC20(Currency.unwrap(currency0)).approve(address(spot), 10 ether);
-        MockERC20(Currency.unwrap(currency1)).approve(address(spot), 10 ether);
-
-        // Perform deposit
-        (uint256 shares, uint256 amount0, uint256 amount1) = spot.depositToFRLM(
-            poolKey,
-            5 ether, // amount0Desired
-            5 ether, // amount1Desired
-            4.9 ether, // amount0Min
-            4.9 ether, // amount1Min
-            owner // recipient
+    function test_Reinvestment_Paused_Manual_BalancedFees() public {
+        // Test with balanced fees in both tokens
+        _testReinvestment(
+            true, // reinvestmentPaused
+            3000, // manualFee (0.3%)
+            200000, // polShare (20%)
+            5 ether, // swapAmount
+            0, // swapPattern (balanced - alternating directions)
+            4, // numSwaps (even number to ensure equal swaps in both directions)
+            liquidityManager.REINVEST_COOLDOWN() + 1, // advance past cooldown
+            true // expectSuccess (should succeed with balanced fees)
         );
-
-        // Verify shares were issued
-        assertGt(shares, 0, "No shares issued");
-        assertGt(amount0, 0, "No token0 deposited");
-        assertGt(amount1, 0, "No token1 deposited");
-
-        // Verify shares balance
-        uint256 ownerShares = liquidityManager.balanceOf(owner, uint256(PoolId.unwrap(poolId)));
-        assertEq(ownerShares, shares, "Shares not credited to owner");
-
-        vm.stopPrank();
     }
 
-    function test_Withdraw_PolicyOwner() public {
-        // First deposit to create shares
-        test_Deposit_PolicyOwner();
-
-        vm.startPrank(owner);
-
-        // Get initial balance
-        uint256 initialBalance0 = currency0.balanceOf(owner);
-        uint256 initialBalance1 = currency1.balanceOf(owner);
-
-        // Get initial shares
-        uint256 initialShares = liquidityManager.balanceOf(owner, uint256(PoolId.unwrap(poolId)));
-
-        // Withdraw half of the shares
-        uint256 sharesToWithdraw = initialShares / 2;
-
-        (uint256 amount0, uint256 amount1) = spot.withdrawFromFRLM(
-            poolKey,
-            sharesToWithdraw,
-            0, // amount0Min
-            0, // amount1Min
-            owner // recipient
+    function test_Reinvestment_Paused_Manual_OnlyToken0Fees() public {
+        // Test with only token0 fees
+        _testReinvestment(
+            true, // reinvestmentPaused
+            3000, // manualFee (0.3%)
+            200000, // polShare (20%)
+            5 ether, // swapAmount
+            1, // swapPattern (only zeroForOne swaps)
+            3, // numSwaps
+            liquidityManager.REINVEST_COOLDOWN() + 1, // advance past cooldown
+            false // expectSuccess (likely to fail with only token0 fees)
         );
-
-        // Verify tokens received
-        assertGt(amount0, 0, "No token0 received");
-        assertGt(amount1, 0, "No token1 received");
-
-        uint256 finalBalance0 = currency0.balanceOf(owner);
-        uint256 finalBalance1 = currency1.balanceOf(owner);
-
-        assertEq(finalBalance0 - initialBalance0, amount0, "Token0 balance mismatch");
-        assertEq(finalBalance1 - initialBalance1, amount1, "Token1 balance mismatch");
-
-        // Verify shares were burned
-        uint256 finalShares = liquidityManager.balanceOf(owner, uint256(PoolId.unwrap(poolId)));
-        assertEq(finalShares, initialShares - sharesToWithdraw, "Shares not burned correctly");
-
-        vm.stopPrank();
     }
+
+    function test_Reinvestment_Paused_Manual_OnlyToken1Fees() public {
+        // Test with only token1 fees
+        _testReinvestment(
+            true, // reinvestmentPaused
+            3000, // manualFee (0.3%)
+            200000, // polShare (20%)
+            5 ether, // swapAmount
+            2, // swapPattern (only oneForZero swaps)
+            3, // numSwaps
+            liquidityManager.REINVEST_COOLDOWN() + 1, // advance past cooldown
+            false // expectSuccess (likely to fail with only token1 fees)
+        );
+    }
+
+    function test_Reinvestment_NotPaused_AutoReinvest() public {
+        // Test automatic reinvestment with balanced fees
+        _testReinvestment(
+            false, // reinvestmentPaused (automatic reinvestment enabled)
+            3000, // manualFee (0.3%)
+            200000, // polShare (20%)
+            5 ether, // swapAmount
+            0, // swapPattern (balanced)
+            4, // numSwaps
+            liquidityManager.REINVEST_COOLDOWN() + 1, // advance past cooldown
+            true // expectSuccess - since NFT fees accrue to pending fees manual reinvest is still possible
+        );
+    }
+
+    // NOTE: the bulk of the deposit and withdraw tests are in their dedicated test files
 
     function test_Withdraw_Protocol_Liquidity() public {
         // Setup a scenario with protocol-owned liquidity
@@ -581,37 +615,449 @@ contract SpotTest is Base_Test {
         vm.stopPrank();
     }
 
+    /**
+     * @notice Tests emergencyWithdraw for withdrawing ERC6909 token credits from PoolManager
+     */
     function test_EmergencyWithdraw() public {
-        // Setup scenario with tokens in the pool manager
+        // 1. Setup: Enable hook fees to generate ERC6909 balances in PoolManager
         vm.startPrank(owner);
 
-        // Mint tokens directly to the pool manager
-        MockERC20(Currency.unwrap(currency0)).mint(address(manager), 5 ether);
+        // Set a significant fee percentage to generate substantial fees
+        uint24 manualFee = 3000; // 0.3%
+        uint256 polShare = 500000; // 50% protocol share
 
-        // Emergency withdraw
-        liquidityManager.emergencyWithdraw(currency0, owner, 5 ether);
+        policyManager.setManualFee(poolId, manualFee);
+        policyManager.setPoolPOLShare(poolId, polShare);
 
-        // Verify tokens received
-        uint256 ownerBalance = currency0.balanceOf(owner);
-        assertEq(ownerBalance, 5 ether, "Emergency withdraw failed");
+        // Pause reinvestment to accumulate fees without automatic reinvestment
+        spot.setReinvestmentPaused(true);
+        vm.stopPrank();
+
+        // 2. Execute swaps to generate fees
+        uint256 swapAmount = 10 ether;
+
+        // Perform multiple swaps in both directions to collect fees in both tokens
+        vm.startPrank(user1);
+
+        // Swap token0 for token1 (zeroForOne = true)
+        SwapParams memory paramsZeroForOne =
+            SwapParams({zeroForOne: true, amountSpecified: -int256(swapAmount), sqrtPriceLimitX96: MIN_PRICE_LIMIT});
+
+        swapRouter.swap(
+            poolKey, paramsZeroForOne, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), ""
+        );
+
+        // Swap token1 for token0 (zeroForOne = false)
+        SwapParams memory paramsOneForZero =
+            SwapParams({zeroForOne: false, amountSpecified: -int256(swapAmount), sqrtPriceLimitX96: MAX_PRICE_LIMIT});
+
+        swapRouter.swap(
+            poolKey, paramsOneForZero, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), ""
+        );
+
+        vm.stopPrank();
+
+        // 3. Verify fees were collected as ERC6909 tokens
+        (uint256 pendingFee0, uint256 pendingFee1) = liquidityManager.getPendingFees(poolId);
+
+        // Ensure we have collected some fees
+        assertGt(pendingFee0, 0, "No token0 fees collected");
+        assertGt(pendingFee1, 0, "No token1 fees collected");
+
+        // 4. Get initial balances before emergency withdraw
+        uint256 initialBalance0 = currency0.balanceOf(owner);
+        uint256 initialBalance1 = currency1.balanceOf(owner);
+
+        // 5. Test emergencyWithdraw for token0
+        vm.startPrank(owner);
+
+        // Execute emergency withdraw for token0
+        liquidityManager.emergencyWithdraw(currency0, owner, pendingFee0);
+
+        // 6. Verify token0 was correctly withdrawn
+        uint256 afterWithdraw0 = currency0.balanceOf(owner);
+        assertEq(
+            afterWithdraw0 - initialBalance0, pendingFee0, "Emergency withdraw didn't transfer correct amount of token0"
+        );
+
+        // 7. Test emergencyWithdraw for token1
+        liquidityManager.emergencyWithdraw(currency1, owner, pendingFee1);
+
+        // 8. Verify token1 was correctly withdrawn
+        uint256 afterWithdraw1 = currency1.balanceOf(owner);
+        assertEq(
+            afterWithdraw1 - initialBalance1, pendingFee1, "Emergency withdraw didn't transfer correct amount of token1"
+        );
+
+        // 9. Check that pending fees are unchanged despite emergency withdrawal
+        // NOTE: emergency withdrawal of pending fees could possibly break reinvestment if withdrawn fees are attempted to be reinvested
+        (uint256 pendingFeeAfter0, uint256 pendingFeeAfter1) = liquidityManager.getPendingFees(poolId);
+        assertLe(pendingFeeAfter0, pendingFee0, "Token0 fees should remain unchanged after emergency withdraw");
+        assertLe(pendingFeeAfter1, pendingFee1, "Token1 fees should remain unchanged after emergency withdraw");
 
         vm.stopPrank();
     }
 
-    function test_SweepToken() public {
-        // Setup scenario with tokens in the liquidity manager
+    /**
+     * @notice Tests partial emergencyWithdraw of ERC6909 token credits
+     */
+    function test_EmergencyWithdraw_Partial() public {
+        // 1. Setup: Enable hook fees to generate ERC6909 balances
+        vm.startPrank(owner);
+        policyManager.setManualFee(poolId, 3000); // 0.3%
+        policyManager.setPoolPOLShare(poolId, 500000); // 50% protocol share
+        spot.setReinvestmentPaused(true);
+        vm.stopPrank();
+
+        // 2. Execute swap to generate fees
+        vm.startPrank(user1);
+        SwapParams memory params =
+            SwapParams({zeroForOne: true, amountSpecified: -int256(10 ether), sqrtPriceLimitX96: MIN_PRICE_LIMIT});
+
+        swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
+        vm.stopPrank();
+
+        // 3. Verify fees were collected
+        (uint256 pendingFee0, uint256 pendingFee1) = liquidityManager.getPendingFees(poolId);
+        assertGt(pendingFee0, 0, "No token0 fees collected");
+
+        // 4. Withdraw half of the accumulated fees
+        uint256 partialAmount = pendingFee0 / 2;
+
+        vm.startPrank(owner);
+        uint256 initialBalance = currency0.balanceOf(owner);
+
+        liquidityManager.emergencyWithdraw(currency0, owner, partialAmount);
+
+        // 5. Verify partial amount was correctly withdrawn
+        uint256 afterBalance = currency0.balanceOf(owner);
+        assertEq(
+            afterBalance - initialBalance, partialAmount, "Emergency withdraw didn't transfer correct partial amount"
+        );
+
+        // 6. Verify remaining fees
+        (uint256 remainingFee0,) = liquidityManager.getPendingFees(poolId);
+        assertEq(remainingFee0, pendingFee0, "Final pending fee should remain unchanged after partial withdrawal");
+
+        vm.stopPrank();
+    }
+
+    /**
+     * @notice Tests that emergencyWithdraw can only be called by the policy owner
+     */
+    function test_EmergencyWithdraw_OnlyOwner() public {
+        // Generate some fees first
+        vm.startPrank(owner);
+        policyManager.setManualFee(poolId, 3000);
+        policyManager.setPoolPOLShare(poolId, 500000);
+        spot.setReinvestmentPaused(true);
+        vm.stopPrank();
+
+        vm.startPrank(user1);
+        SwapParams memory params =
+            SwapParams({zeroForOne: true, amountSpecified: -int256(10 ether), sqrtPriceLimitX96: MIN_PRICE_LIMIT});
+        swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
+        vm.stopPrank();
+
+        // Verify fees exist
+        (uint256 pendingFee0,) = liquidityManager.getPendingFees(poolId);
+        assertGt(pendingFee0, 0, "No token0 fees collected");
+
+        // Attempt to withdraw as non-owner
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(Errors.UnauthorizedCaller.selector, user1));
+        liquidityManager.emergencyWithdraw(currency0, user1, pendingFee0);
+        vm.stopPrank();
+    }
+
+    /**
+     * @notice Tests emergencyWithdraw with different recipient than owner
+     */
+    function test_EmergencyWithdraw_DifferentRecipient() public {
+        // Generate fees
+        vm.startPrank(owner);
+        policyManager.setManualFee(poolId, 3000);
+        policyManager.setPoolPOLShare(poolId, 500000);
+        spot.setReinvestmentPaused(true);
+        vm.stopPrank();
+
+        vm.startPrank(user1);
+        SwapParams memory params =
+            SwapParams({zeroForOne: true, amountSpecified: -int256(10 ether), sqrtPriceLimitX96: MIN_PRICE_LIMIT});
+        swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
+        vm.stopPrank();
+
+        // Verify fees exist
+        (uint256 pendingFee0,) = liquidityManager.getPendingFees(poolId);
+        assertGt(pendingFee0, 0, "No token0 fees collected");
+
+        // Withdraw to a different recipient than owner
+        vm.startPrank(owner);
+        uint256 initialBalance = currency0.balanceOf(user2);
+
+        liquidityManager.emergencyWithdraw(currency0, user2, pendingFee0);
+
+        // Verify user2 received the tokens
+        uint256 afterBalance = currency0.balanceOf(user2);
+        assertEq(
+            afterBalance - initialBalance,
+            pendingFee0,
+            "Emergency withdraw didn't transfer correct amount to different recipient"
+        );
+
+        vm.stopPrank();
+    }
+
+    /**
+     * @notice Tests emergencyWithdraw for both tokens simultaneously
+     */
+    function test_EmergencyWithdraw_BothTokens() public {
+        // Generate fees in both tokens
+        vm.startPrank(owner);
+        policyManager.setManualFee(poolId, 3000);
+        policyManager.setPoolPOLShare(poolId, 500000);
+        spot.setReinvestmentPaused(true);
+        vm.stopPrank();
+
+        // Swap in both directions
+        vm.startPrank(user1);
+
+        // Swap token0 -> token1
+        SwapParams memory params0 =
+            SwapParams({zeroForOne: true, amountSpecified: -int256(10 ether), sqrtPriceLimitX96: MIN_PRICE_LIMIT});
+        swapRouter.swap(poolKey, params0, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
+
+        // Swap token1 -> token0
+        SwapParams memory params1 =
+            SwapParams({zeroForOne: false, amountSpecified: -int256(10 ether), sqrtPriceLimitX96: MAX_PRICE_LIMIT});
+        swapRouter.swap(poolKey, params1, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
+
+        vm.stopPrank();
+
+        // Verify fees in both tokens
+        (uint256 pendingFee0, uint256 pendingFee1) = liquidityManager.getPendingFees(poolId);
+        assertGt(pendingFee0, 0, "No token0 fees collected");
+        assertGt(pendingFee1, 0, "No token1 fees collected");
+
+        // Withdraw both tokens
+        vm.startPrank(owner);
+        uint256 initialBalance0 = currency0.balanceOf(owner);
+        uint256 initialBalance1 = currency1.balanceOf(owner);
+
+        // Withdraw token0
+        liquidityManager.emergencyWithdraw(currency0, owner, pendingFee0);
+
+        // Withdraw token1
+        liquidityManager.emergencyWithdraw(currency1, owner, pendingFee1);
+
+        // Verify both tokens were received
+        uint256 afterBalance0 = currency0.balanceOf(owner);
+        uint256 afterBalance1 = currency1.balanceOf(owner);
+
+        assertEq(
+            afterBalance0 - initialBalance0, pendingFee0, "Emergency withdraw didn't transfer correct amount of token0"
+        );
+
+        assertEq(
+            afterBalance1 - initialBalance1, pendingFee1, "Emergency withdraw didn't transfer correct amount of token1"
+        );
+
+        vm.stopPrank();
+    }
+
+    /**
+     * @notice Tests the emergency withdrawal of ERC20 tokens from the liquidityManager
+     */
+    function test_EmergencyWithdrawERC20() public {
+        // Setup scenario with tokens in the liquidityManager
         vm.startPrank(owner);
 
-        // Mint tokens directly to the liquidity manager
+        // Amount to test with
+        uint256 testAmount = 5 ether;
+
+        // Get initial token balance of owner
+        uint256 initialBalance = currency0.balanceOf(owner);
+
+        // Mint tokens directly to the liquidityManager
+        MockERC20(Currency.unwrap(currency0)).mint(address(liquidityManager), testAmount);
+
+        // Verify the tokens are now in the liquidityManager
+        assertEq(
+            currency0.balanceOf(address(liquidityManager)),
+            testAmount,
+            "Tokens not correctly minted to liquidityManager"
+        );
+
+        // Request specific amount withdrawal
+        uint256 amountSwept =
+            liquidityManager.emergencyWithdrawNativeOrERC20(Currency.unwrap(currency0), owner, testAmount);
+
+        // Verify correct amount was swept
+        assertEq(amountSwept, testAmount, "Incorrect amount reported as swept");
+
+        // Verify tokens were received by owner
+        uint256 finalBalance = currency0.balanceOf(owner);
+        assertEq(finalBalance - initialBalance, testAmount, "Owner did not receive expected token amount");
+
+        // Verify liquidityManager balance is now zero
+        assertEq(
+            currency0.balanceOf(address(liquidityManager)),
+            0,
+            "LiquidityManager should have zero balance after withdrawal"
+        );
+
+        vm.stopPrank();
+    }
+
+    /**
+     * @notice Tests the emergency withdrawal of full token balance when amount=0
+     */
+    function test_EmergencyWithdrawERC20_FullBalance() public {
+        // Setup scenario with tokens in the liquidityManager
+        vm.startPrank(owner);
+
+        // Amount to test with
+        uint256 testAmount = 5 ether;
+
+        // Get initial token balance of owner
+        uint256 initialBalance = currency0.balanceOf(owner);
+
+        // Mint tokens directly to the liquidityManager
+        MockERC20(Currency.unwrap(currency0)).mint(address(liquidityManager), testAmount);
+
+        // Request full balance withdrawal (passing 0 should withdraw all tokens)
+        uint256 amountSwept = liquidityManager.emergencyWithdrawNativeOrERC20(Currency.unwrap(currency0), owner, 0);
+
+        // Verify correct amount was swept
+        assertEq(amountSwept, testAmount, "Incorrect amount reported as swept");
+
+        // Verify tokens were received by owner
+        uint256 finalBalance = currency0.balanceOf(owner);
+        assertEq(finalBalance - initialBalance, testAmount, "Owner did not receive expected token amount");
+
+        vm.stopPrank();
+    }
+
+    /**
+     * @notice Tests the emergency withdrawal of native ETH from the liquidityManager
+     */
+    function test_EmergencyWithdrawETH() public {
+        // Setup scenario with ETH in the liquidityManager
+        vm.startPrank(owner);
+
+        // Amount to test with
+        uint256 testAmount = 5 ether;
+
+        // Get initial ETH balance of owner
+        uint256 initialBalance = owner.balance;
+
+        // Send ETH directly to the liquidityManager
+        vm.deal(address(liquidityManager), testAmount);
+
+        // Verify the ETH is now in the liquidityManager
+        assertEq(address(liquidityManager).balance, testAmount, "ETH not correctly sent to liquidityManager");
+
+        // Request specific amount withdrawal of native ETH (address(0) means native ETH)
+        uint256 amountSwept = liquidityManager.emergencyWithdrawNativeOrERC20(address(0), owner, testAmount);
+
+        // Verify correct amount was swept
+        assertEq(amountSwept, testAmount, "Incorrect amount reported as swept");
+
+        // Verify ETH was received by owner
+        uint256 finalBalance = owner.balance;
+        assertEq(finalBalance - initialBalance, testAmount, "Owner did not receive expected ETH amount");
+
+        // Verify liquidityManager balance is now zero
+        assertEq(address(liquidityManager).balance, 0, "LiquidityManager should have zero balance after withdrawal");
+
+        vm.stopPrank();
+    }
+
+    /**
+     * @notice Tests the emergency withdrawal of full ETH balance when amount=0
+     */
+    function test_EmergencyWithdrawETH_FullBalance() public {
+        // Setup scenario with ETH in the liquidityManager
+        vm.startPrank(owner);
+
+        // Amount to test with
+        uint256 testAmount = 5 ether;
+
+        // Get initial ETH balance of owner
+        uint256 initialBalance = owner.balance;
+
+        // Send ETH directly to the liquidityManager
+        vm.deal(address(liquidityManager), testAmount);
+
+        // Request full balance withdrawal (passing 0 should withdraw all ETH)
+        uint256 amountSwept = liquidityManager.emergencyWithdrawNativeOrERC20(address(0), owner, 0);
+
+        // Verify correct amount was swept
+        assertEq(amountSwept, testAmount, "Incorrect amount reported as swept");
+
+        // Verify ETH was received by owner
+        uint256 finalBalance = owner.balance;
+        assertEq(finalBalance - initialBalance, testAmount, "Owner did not receive expected ETH amount");
+
+        vm.stopPrank();
+    }
+
+    /**
+     * @notice Tests that emergency withdrawal handles zero balances correctly
+     */
+    function test_EmergencyWithdrawERC20_ZeroBalance() public {
+        vm.startPrank(owner);
+
+        // Attempt to withdraw when there's nothing to withdraw
+        uint256 amountSwept = liquidityManager.emergencyWithdrawNativeOrERC20(Currency.unwrap(currency0), owner, 0);
+
+        // Should report zero swept
+        assertEq(amountSwept, 0, "Should report zero swept when balance is zero");
+
+        vm.stopPrank();
+    }
+
+    /**
+     * @notice Tests that only the policy owner can perform emergency withdrawals
+     */
+    function test_EmergencyWithdrawERC20_OnlyOwner() public {
+        // Setup tokens in the liquidityManager
+        vm.startPrank(owner);
         MockERC20(Currency.unwrap(currency0)).mint(address(liquidityManager), 5 ether);
+        vm.stopPrank();
 
-        // Sweep tokens
-        uint256 swept = liquidityManager.sweepToken(Currency.unwrap(currency0), owner, 5 ether);
+        // Attempt to withdraw as non-owner
+        vm.startPrank(user1);
+        vm.expectRevert(abi.encodeWithSelector(Errors.UnauthorizedCaller.selector, user1));
+        liquidityManager.emergencyWithdrawNativeOrERC20(Currency.unwrap(currency0), user1, 5 ether);
+        vm.stopPrank();
+    }
 
-        // Verify tokens received
-        assertEq(swept, 5 ether, "Incorrect amount swept");
-        uint256 ownerBalance = currency0.balanceOf(owner);
-        assertEq(ownerBalance, 5 ether, "Token sweep failed");
+    /**
+     * @notice Tests that emergency withdrawal works with recipient = owner != msg.sender
+     */
+    function test_EmergencyWithdrawERC20_DifferentRecipient() public {
+        vm.startPrank(owner);
+
+        // Amount to test with
+        uint256 testAmount = 5 ether;
+
+        // Mint tokens directly to the liquidityManager
+        MockERC20(Currency.unwrap(currency0)).mint(address(liquidityManager), testAmount);
+
+        // Get initial token balance of user1
+        uint256 initialBalance = currency0.balanceOf(user1);
+
+        // Request withdrawal to a different recipient
+        uint256 amountSwept =
+            liquidityManager.emergencyWithdrawNativeOrERC20(Currency.unwrap(currency0), user1, testAmount);
+
+        // Verify correct amount was swept
+        assertEq(amountSwept, testAmount, "Incorrect amount reported as swept");
+
+        // Verify tokens were received by the specified recipient
+        uint256 finalBalance = currency0.balanceOf(user1);
+        assertEq(finalBalance - initialBalance, testAmount, "Recipient did not receive expected token amount");
 
         vm.stopPrank();
     }

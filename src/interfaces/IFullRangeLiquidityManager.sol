@@ -6,6 +6,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 
 import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 
@@ -14,7 +15,7 @@ import {PoolPolicyManager} from "../PoolPolicyManager.sol";
 /// @title IFullRangeLiquidityManager
 /// @notice Interface for the FullRangeLiquidityManager contract that handles liquidity and fee management
 /// @dev Manages fee collection, accounting, reinvestment, and full-range liquidity positions
-interface IFullRangeLiquidityManager {
+interface IFullRangeLiquidityManager is IUnlockCallback {
     /// @notice Emitted when fees are reinvested into the pool
     /// @param poolId The ID of the pool
     /// @param amount0 The amount of token0 reinvested
@@ -50,6 +51,11 @@ interface IFullRangeLiquidityManager {
     event WithdrawProtocolLiquidity(
         PoolId indexed poolId, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1
     );
+
+    enum CallbackAction {
+        TAKE_TOKENS,
+        EMERGENCY_WITHDRAW
+    }
 
     /// @notice Notifies the LiquidityManager of collected fees
     /// @dev Called by the authorized hook to record fees collected from swaps
@@ -135,13 +141,16 @@ interface IFullRangeLiquidityManager {
         address recipient
     ) external returns (uint256 amount0, uint256 amount1);
 
-    /// @notice Allows the policy owner to withdraw any tokens accidentally sent to this contract
-    /// @dev Excludes ERC6909 tokens minted by this contract that represent protocol-owned liquidity
+    /// @notice Allows the policy owner to withdraw any ERC20 balances including pending fees
+    /// though use should preferably be limited to withdrawing tokens accidentally sent to this contract
+    /// as withdrawing pending fees will break reinvestments if it tries to reinvest withdrawn amounts
     /// @param token The address of the token to sweep (address(0) for native ETH)
     /// @param recipient The address to receive the tokens
     /// @param amount The amount of tokens to sweep (0 for the entire balance)
     /// @return amountSwept The actual amount swept
-    function sweepToken(address token, address recipient, uint256 amount) external returns (uint256 amountSwept);
+    function emergencyWithdrawNativeOrERC20(address token, address recipient, uint256 amount)
+        external
+        returns (uint256 amountSwept);
 
     function poolManager() external view returns (IPoolManager);
     function positionManager() external view returns (PositionManager);

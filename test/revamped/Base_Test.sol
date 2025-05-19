@@ -53,6 +53,9 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
     using CurrencyLibrary for Currency;
     using StateLibrary for IPoolManager;
 
+    /// @dev Constant for the minimum locked liquidity per position
+    uint256 constant MIN_LOCKED_LIQUIDITY = 1000;
+
     // Test accounts
     address owner = makeAddr("owner");
     address user1 = makeAddr("user1");

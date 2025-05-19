@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
+// TODO: consider replacing emergencyWithdraw and emergencyWithdrawNativeOrERC20 functions with sweep functions
+// that limit sweeping to excess funds(e.g. from accidental transfers), this would require tracking global notified balances to allow sweeping excess
+
+// TODO: remove
+
+import "forge-std/console.sol";
+
 // - - - Permit2 Deps - - -
 
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
@@ -13,7 +20,9 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {TransientStateLibrary} from "v4-core/src/libraries/TransientStateLibrary.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
 import {IERC20Minimal} from "v4-core/src/interfaces/external/IERC20Minimal.sol";
 
 import {ERC6909Claims} from "v4-core/src/ERC6909Claims.sol";
@@ -29,6 +38,7 @@ import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
 
 import {Errors} from "./errors/Errors.sol";
 import {IFullRangeLiquidityManager} from "./interfaces/IFullRangeLiquidityManager.sol";
+import {Math} from "./libraries/Math.sol";
 
 // - - - Project Contracts - - -
 
@@ -113,10 +123,62 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         _;
     }
 
+    modifier onlyPoolManager() {
+        if (msg.sender != address(poolManager)) revert Errors.NotPoolManager();
+        _;
+    }
+
     receive() external payable {
         // Accept ETH transfers silently
         // This is needed when redeeming native ETH through poolManager.take()
         // or when receiving ETH from PositionManager operations
+    }
+
+    /// @inheritdoc IUnlockCallback
+    function unlockCallback(bytes calldata data) external override onlyPoolManager returns (bytes memory) {
+        if (data.length > 0) {
+            // Decode the action type
+            (CallbackAction action) = abi.decode(data[:32], (CallbackAction));
+
+            if (action == CallbackAction.TAKE_TOKENS) {
+                // Decode token currencies and amounts
+                (
+                    , // Skip the action we already decoded
+                    Currency currency0,
+                    Currency currency1,
+                    uint256 amount0,
+                    uint256 amount1
+                ) = abi.decode(data, (CallbackAction, Currency, Currency, uint256, uint256));
+
+                // Take tokens from PoolManager to this contract
+                if (amount0 > 0) {
+                    poolManager.take(currency0, address(this), amount0);
+                    // Burn ERC6909 tokens to balance the delta
+                    poolManager.burn(address(this), currency0.toId(), amount0);
+                }
+
+                if (amount1 > 0) {
+                    poolManager.take(currency1, address(this), amount1);
+                    // Burn ERC6909 tokens to balance the delta
+                    poolManager.burn(address(this), currency1.toId(), amount1);
+                }
+            } else if (action == CallbackAction.EMERGENCY_WITHDRAW) {
+                // Decode emergency withdrawal parameters
+                (
+                    , // Skip the action we already decoded
+                    Currency token,
+                    address to,
+                    uint256 amount
+                ) = abi.decode(data, (CallbackAction, Currency, address, uint256));
+
+                // Take tokens directly to the specified recipient
+                poolManager.take(token, to, amount);
+                // Burn ERC6909 tokens to balance the delta
+                poolManager.burn(address(this), token.toId(), amount);
+            }
+        }
+
+        return "";
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
@@ -162,19 +224,43 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // NOTE: We have to first redeem the ERC20 tokens to the FRLM since the Actions.BURN_6909 code has not yet supported
         // and so the PositionManager does not yet have the ability to settle from PoolManager 6909 allowances that the user
         // would have granted to the PositionManager
-        poolManager.take(key.currency0, address(this), erc6909_0);
-        poolManager.take(key.currency1, address(this), erc6909_1);
+
+        IPoolManager _poolManager = poolManager;
+
+        if (!TransientStateLibrary.isUnlocked(_poolManager)) {
+            bytes memory callbackData =
+                abi.encode(CallbackAction.TAKE_TOKENS, key.currency0, key.currency1, erc6909_0, erc6909_1);
+
+            _poolManager.unlock(callbackData);
+        } else {
+            // NOTE: this pathway is possible when reinvest is called in afterSwap
+            _poolManager.take(key.currency0, address(this), erc6909_0);
+            poolManager.burn(address(this), key.currency0.toId(), erc6909_0);
+
+            _poolManager.take(key.currency1, address(this), erc6909_1);
+            poolManager.burn(address(this), key.currency1.toId(), erc6909_1);
+        }
 
         // Approve tokens for position operations
         _approveTokensForPosition(key.currency0, key.currency1);
+
+        uint256 initialBalance0 = key.currency0.balanceOfSelf();
+        uint256 initialBalance1 = key.currency1.balanceOfSelf();
 
         // Add liquidity to position
         (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) =
             _addLiquidityToPosition(key, total0, total1, MIN_REINVEST_AMOUNT, MIN_REINVEST_AMOUNT);
 
-        // Restore any unused amounts to pendingFees
-        _pendingFees =
-            PendingFees({erc20_0: total0 - amount0Used, erc20_1: total1 - amount1Used, erc6909_0: 0, erc6909_1: 0});
+        uint256 unusedAndFees0 = initialBalance0 - key.currency0.balanceOfSelf();
+        uint256 unusedAndFees1 = initialBalance1 - key.currency1.balanceOfSelf();
+
+        // Restore any unused amounts and accrued NFT fees to pendingFees
+        _pendingFees = PendingFees({
+            erc20_0: total0 - unusedAndFees0,
+            erc20_1: total1 - unusedAndFees1,
+            erc6909_0: 0,
+            erc6909_1: 0
+        });
 
         pendingFees[poolId] = _pendingFees;
 
@@ -311,9 +397,19 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         payable
         override
         onlySpot
-        returns (uint256 liquidityAdded, uint256 amount0, uint256 amount1, uint256 unusedAmount0, uint256 unusedAmount1)
+        returns (
+            uint256 liquidityAdded,
+            uint256 amount0Used,
+            uint256 amount1Used,
+            uint256 unusedAmount0,
+            uint256 unusedAmount1
+        )
     {
         PoolId poolId = key.toId();
+
+        uint256 initialBalance0 = key.currency0.balanceOfSelf();
+        uint256 initialBalance1 = key.currency1.balanceOfSelf();
+
         // Pull tokens directly from the payer
         _handleTokenTransfersFromPayer(key.currency0, key.currency1, amount0Desired, amount1Desired, payer);
 
@@ -321,40 +417,43 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         _approveTokensForPosition(key.currency0, key.currency1);
 
         // Add liquidity to position
-        (liquidityAdded, amount0, amount1) =
+        (liquidityAdded, amount0Used, amount1Used) =
             _addLiquidityToPosition(key, amount0Desired, amount1Desired, amount0Min, amount1Min);
 
         // Calculate unused amounts
-        unusedAmount0 = amount0Desired - amount0;
-        unusedAmount1 = amount1Desired - amount1;
+        unusedAmount0 = amount0Desired - amount0Used;
+        unusedAmount1 = amount1Desired - amount1Used;
 
-        // Refund any unused ERC20 tokens to the payer, not the caller
-        if (unusedAmount0 > 0 && !key.currency0.isAddressZero()) {
-            IERC20Minimal(Currency.unwrap(key.currency0)).transfer(payer, unusedAmount0);
+        // Refund any unused tokens to the payer, not the caller
+        if (unusedAmount0 > 0) {
+            uint256 balance0 = key.currency0.balanceOfSelf();
+            // NOTE: we do Math.min as it's possible that there's a unit loss in the LiquidityAmounts math
+            key.currency0.transfer(payer, Math.min(unusedAmount0, balance0));
         }
 
-        if (unusedAmount1 > 0 && !key.currency1.isAddressZero()) {
-            IERC20Minimal(Currency.unwrap(key.currency1)).transfer(payer, unusedAmount1);
+        if (unusedAmount1 > 0) {
+            uint256 balance1 = key.currency1.balanceOfSelf();
+            key.currency1.transfer(payer, Math.min(unusedAmount1, balance1));
         }
 
         // shares correspond 1:1 with liquidity
         // Mint ERC6909 shares to recipient
         _mint(recipient, uint256(PoolId.unwrap(poolId)), liquidityAdded);
 
-        // Refund any excess ETH to the payer
-        uint256 ethNeeded = 0;
-        if (key.currency0.isAddressZero()) ethNeeded += amount0;
-        if (key.currency1.isAddressZero()) ethNeeded += amount1;
+        uint256 finalBalance0 = key.currency0.balanceOfSelf();
+        uint256 finalBalance1 = key.currency1.balanceOfSelf();
 
-        if (msg.value > ethNeeded) {
-            // Send ETH refund to the payer, not the caller
-            (bool success,) = payable(payer).call{value: msg.value - ethNeeded}("");
-            if (!success) revert Errors.ETHRefundFailed();
-        }
+        // compute accrued NFT fees
+        uint256 fees0 = finalBalance0 > initialBalance0 ? finalBalance0 : 0;
+        uint256 fees1 = finalBalance1 > initialBalance1 ? finalBalance1 : 0;
 
-        emit Deposit(poolId, recipient, liquidityAdded, amount0, amount1);
+        // add accrued NFT fees to pending fees
+        pendingFees[poolId].erc20_0 += fees0;
+        pendingFees[poolId].erc20_1 += fees1;
 
-        return (liquidityAdded, amount0, amount1, unusedAmount0, unusedAmount1);
+        emit Deposit(poolId, recipient, liquidityAdded, amount0Used, amount1Used);
+
+        return (liquidityAdded, amount0Used, amount1Used, unusedAmount0, unusedAmount1);
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
@@ -372,11 +471,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         emit Withdraw(key.toId(), sharesOwner, recipient, amount0, amount1, sharesToBurn);
 
         return (amount0, amount1);
-    }
-
-    /// @inheritdoc IFullRangeLiquidityManager
-    function emergencyWithdraw(Currency token, address to, uint256 amount) external override onlyPolicyOwner {
-        poolManager.take(token, to, amount);
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
@@ -403,7 +497,15 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
-    function sweepToken(address token, address recipient, uint256 amount)
+    function emergencyWithdraw(Currency token, address to, uint256 amount) external override onlyPolicyOwner {
+        IPoolManager _poolManager = poolManager;
+
+        bytes memory callbackData = abi.encode(CallbackAction.EMERGENCY_WITHDRAW, token, to, amount);
+        _poolManager.unlock(callbackData);
+    }
+
+    /// @inheritdoc IFullRangeLiquidityManager
+    function emergencyWithdrawNativeOrERC20(address token, address recipient, uint256 amount)
         external
         onlyPolicyOwner
         returns (uint256 amountSwept)
@@ -479,17 +581,17 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 amount1Desired,
         uint256 amount0Min,
         uint256 amount1Min
-    ) internal returns (uint256 liquidityAdded, uint256 amount0, uint256 amount1) {
+    ) internal returns (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) {
         // Check if position exists
         uint256 positionId = positionIds[key.toId()];
 
         if (positionId == 0) {
             // Create new position
-            (positionId, liquidityAdded, amount0, amount1) =
+            (positionId, liquidityAdded, amount0Used, amount1Used) =
                 _mintNewPosition(key, amount0Desired, amount1Desired, amount0Min, amount1Min);
         } else {
             // Increase existing position
-            (liquidityAdded, amount0, amount1) =
+            (liquidityAdded, amount0Used, amount1Used) =
                 _increaseLiquidity(key, positionId, amount0Desired, amount1Desired, amount0Min, amount1Min);
         }
     }
@@ -500,7 +602,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 amount1Desired,
         uint256 amount0Min,
         uint256 amount1Min
-    ) internal returns (uint256 positionId, uint256 liquidityAdded, uint256 amount0, uint256 amount1) {
+    ) internal returns (uint256 positionId, uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) {
         PoolId poolId = key.toId();
         // Calculate optimal liquidity for full range position
         (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
@@ -522,7 +624,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         }
 
         // Define actions and parameters
-        bytes memory actions = abi.encodePacked(Actions.MINT_POSITION, Actions.SETTLE_PAIR);
+        bytes memory actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
 
         bytes[] memory params = new bytes[](2);
 
@@ -544,13 +646,16 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // Calculate native ETH value to forward
         uint256 ethValue = 0;
         if (key.currency0.isAddressZero()) ethValue = amount0Desired;
-        if (key.currency1.isAddressZero()) ethValue = amount1Desired;
 
         // Execute the mint operation - forward ETH if needed
-        positionManager.modifyLiquidities{value: ethValue}(
-            abi.encode(actions, params),
-            block.timestamp + 60 // 60 second deadline
-        );
+        if (TransientStateLibrary.isUnlocked(poolManager)) {
+            positionManager.modifyLiquiditiesWithoutUnlock(actions, params);
+        } else {
+            positionManager.modifyLiquidities{value: ethValue}(
+                abi.encode(actions, params),
+                block.timestamp + 60 // 60 second deadline
+            );
+        }
 
         // Get the position ID (will be the last minted token)
         positionId = positionManager.nextTokenId() - 1;
@@ -559,18 +664,21 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         positionIds[poolId] = positionId;
 
         // Calculate actual amounts used based on the liquidity minted
-        (amount0, amount1) =
+        (amount0Used, amount1Used) =
             LiquidityAmounts.getAmountsForLiquidity(sqrtPriceX96, sqrtPriceLowerX96, sqrtPriceUpperX96, liquidity);
 
         // Validate minimum amounts
-        if (amount0 < amount0Min) revert Errors.TooLittleAmount0(amount0Min, amount0);
-        if (amount1 < amount1Min) revert Errors.TooLittleAmount1(amount1Min, amount1);
+        if (amount0Used < amount0Min) revert Errors.TooLittleAmount0(amount0Min, amount0Used);
+        if (amount1Used < amount1Min) revert Errors.TooLittleAmount1(amount1Min, amount1Used);
 
         // Subtract MIN_LOCKED_LIQUIDITY from the shares to be minted
         // This effectively locks MIN_LOCKED_LIQUIDITY in the position
         liquidityAdded = uint256(liquidity) - MIN_LOCKED_LIQUIDITY;
 
-        return (positionId, liquidityAdded, amount0, amount1);
+        // NOTE: for v1 we want 1:1 share liquidity correspondence
+        _mint(address(0), uint256(PoolId.unwrap(poolId)), MIN_LOCKED_LIQUIDITY);
+
+        return (positionId, liquidityAdded, amount0Used, amount1Used);
     }
 
     function _increaseLiquidity(
@@ -580,7 +688,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 amount1Desired,
         uint256 amount0Min,
         uint256 amount1Min
-    ) internal returns (uint256 liquidityAdded, uint256 amount0, uint256 amount1) {
+    ) internal returns (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) {
         // Calculate optimal liquidity increase
         (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, key.toId());
         int24 minTick = TickMath.minUsableTick(key.tickSpacing);
@@ -596,7 +704,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         );
 
         // Define actions and parameters
-        bytes memory actions = abi.encodePacked(Actions.INCREASE_LIQUIDITY, Actions.SETTLE_PAIR);
+        bytes memory actions = abi.encodePacked(uint8(Actions.INCREASE_LIQUIDITY), uint8(Actions.SETTLE_PAIR));
 
         bytes[] memory params = new bytes[](2);
 
@@ -615,25 +723,28 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // Calculate native ETH value to forward
         uint256 ethValue = 0;
         if (key.currency0.isAddressZero()) ethValue = amount0Desired;
-        if (key.currency1.isAddressZero()) ethValue = amount1Desired;
 
         // Execute the increase operation - forward ETH if needed
-        positionManager.modifyLiquidities{value: ethValue}(
-            abi.encode(actions, params),
-            block.timestamp + 60 // 60 second deadline
-        );
+        if (TransientStateLibrary.isUnlocked(poolManager)) {
+            positionManager.modifyLiquiditiesWithoutUnlock(actions, params);
+        } else {
+            positionManager.modifyLiquidities{value: ethValue}(
+                abi.encode(actions, params),
+                block.timestamp + 60 // 60 second deadline
+            );
+        }
 
         // Calculate actual amounts used
-        (amount0, amount1) =
+        (amount0Used, amount1Used) =
             LiquidityAmounts.getAmountsForLiquidity(sqrtPriceX96, sqrtPriceLowerX96, sqrtPriceUpperX96, liquidity);
 
         // Validate minimum amounts
-        if (amount0 < amount0Min) revert Errors.TooLittleAmount0(amount0Min, amount0);
-        if (amount1 < amount1Min) revert Errors.TooLittleAmount1(amount1Min, amount1);
+        if (amount0Used < amount0Min) revert Errors.TooLittleAmount0(amount0Min, amount0Used);
+        if (amount1Used < amount1Min) revert Errors.TooLittleAmount1(amount1Min, amount1Used);
 
         liquidityAdded = uint256(liquidity);
 
-        return (liquidityAdded, amount0, amount1);
+        return (liquidityAdded, amount0Used, amount1Used);
     }
 
     /// @notice Internal function to handle withdrawal of liquidity
@@ -668,8 +779,8 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
 
         // Prepare the actions for position manager
         bytes memory actions = abi.encodePacked(
-            Actions.DECREASE_LIQUIDITY, // Decrease liquidity from the position
-            Actions.TAKE_PAIR // Take tokens to this contract
+            uint8(Actions.DECREASE_LIQUIDITY), // Decrease liquidity from the position
+            uint8(Actions.TAKE_PAIR) // Take tokens to this contract
         );
 
         // Prepare the parameters
@@ -692,6 +803,9 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             address(this) // Receiver (this contract)
         );
 
+        uint256 balance0Before = key.currency0.balanceOfSelf();
+        uint256 balance1Before = key.currency1.balanceOfSelf();
+
         // Execute the position modification
         positionManager.modifyLiquidities(
             abi.encode(actions, params),
@@ -699,10 +813,45 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         );
 
         // Calculate how much we received
-        // For token0
-        uint256 balance0Before = key.currency0.balanceOfSelf();
-        // For token1
-        uint256 balance1Before = key.currency1.balanceOfSelf();
+        uint256 received0 = key.currency0.balanceOfSelf() - balance0Before;
+        uint256 received1 = key.currency1.balanceOfSelf() - balance1Before;
+
+        // Get the current pool price and tick range to calculate expected principal amount
+        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
+        int24 minTick = TickMath.minUsableTick(key.tickSpacing);
+        int24 maxTick = TickMath.maxUsableTick(key.tickSpacing);
+
+        // Get sqrtPrice at tick bounds
+        uint160 sqrtPriceLowerX96 = TickMath.getSqrtPriceAtTick(minTick);
+        uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(maxTick);
+
+        // Calculate the expected principal amounts based on the liquidity being withdrawn
+        (uint256 principal0, uint256 principal1) = LiquidityAmounts.getAmountsForLiquidity(
+            sqrtPriceX96, sqrtPriceLowerX96, sqrtPriceUpperX96, uint128(sharesToBurn)
+        );
+
+        // Calculate the fee component (difference between received and principal)
+        uint256 fee0 = 0;
+        uint256 fee1 = 0;
+
+        if (received0 > principal0) {
+            fee0 = received0 - principal0;
+            received0 = principal0;
+        }
+
+        if (received1 > principal1) {
+            fee1 = received1 - principal1;
+            received1 = principal1;
+        }
+
+        // Add fees to pendingFees for future reinvestment
+        if (fee0 > 0) {
+            pendingFees[poolId].erc20_0 += fee0;
+        }
+
+        if (fee1 > 0) {
+            pendingFees[poolId].erc20_1 += fee1;
+        }
 
         // Burn shares from the specified owner
         if (sharesOwner == address(this)) {
@@ -711,12 +860,12 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             _burnFrom(sharesOwner, poolIdUint, sharesToBurn);
         }
 
-        // Transfer tokens to recipient
-        key.currency0.transfer(recipient, balance0Before);
-        key.currency1.transfer(recipient, balance1Before);
+        // Transfer only the principal tokens to recipient (not the fees)
+        key.currency0.transfer(recipient, received0);
+        key.currency1.transfer(recipient, received1);
 
-        amount0 = balance0Before;
-        amount1 = balance1Before;
+        amount0 = received0;
+        amount1 = received1;
 
         return (amount0, amount1);
     }
@@ -730,15 +879,20 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     ) internal {
         // Handle native ETH if applicable
         if (currency0.isAddressZero()) {
-            if (msg.value < amount0) revert Errors.InsufficientETH(amount0, msg.value);
+            if (msg.value < amount0) {
+                revert Errors.InsufficientETH(amount0, msg.value);
+            } else if (msg.value > amount0) {
+                uint256 excessNative = msg.value - amount0;
+                currency0.transfer(payer, excessNative);
+            }
         } else {
-            IERC20Minimal(Currency.unwrap(currency0)).transferFrom(payer, address(this), amount0);
+            if (amount0 > 0) {
+                IERC20Minimal(Currency.unwrap(currency0)).transferFrom(payer, address(this), amount0);
+            }
         }
 
-        if (currency1.isAddressZero()) {
-            if (msg.value < amount1) revert Errors.InsufficientETH(amount1, msg.value);
-        } else if (!currency0.isAddressZero() || !(currency0 == currency1)) {
-            // Only transfer token1 if it's not the same native ETH as token0
+        if (amount1 > 0) {
+            // Given ordering currency1 is guaranteed to NOT be address(0)
             IERC20Minimal(Currency.unwrap(currency1)).transferFrom(payer, address(this), amount1);
         }
     }
