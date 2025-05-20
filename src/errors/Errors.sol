@@ -184,7 +184,7 @@ library Errors {
     error NonzeroNativeValue();
     error InsufficientETH(uint256 required, uint256 provided);
     error InsufficientContractBalance(uint256 required, uint256 available);
-    error ETHTransferFailed(address to, uint256 amount);
+    error ETHTransferFailed();
     error TransferFailed();
     error TransferFromFailed();
     error InsufficientReserves();

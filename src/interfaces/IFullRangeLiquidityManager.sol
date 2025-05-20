@@ -58,6 +58,11 @@ interface IFullRangeLiquidityManager is IUnlockCallback {
     /// @param amount The amount of tokens swept
     event ExcessTokensSwept(Currency indexed currency, address indexed recipient, uint256 amount);
 
+    /// @dev emitted in notifyModifyLiquidity whenever an NFT's liquidity is modified
+    event PositionFeeAccrued(uint256 indexed tokenId, PoolId indexed poolId, int128 fees0, int128 fees1);
+
+    event Donation(PoolId indexed poolId, address indexed donor, uint256 amount0, uint256 amount1);
+
     enum CallbackAction {
         TAKE_TOKENS,
         SWEEP_TOKEN
@@ -145,6 +150,25 @@ interface IFullRangeLiquidityManager is IUnlockCallback {
     /// @param recipient The address to send the excess tokens to
     /// @return amountSwept The amount of tokens swept
     function sweepExcessTokens(Currency currency, address recipient) external returns (uint256 amountSwept);
+
+    /// @notice Sweeps excess ERC6909 tokens accidentally minted to the contract
+    /// @param currency The currency to sweep
+    /// @param recipient The address to send the excess tokens to
+    /// @return amountSwept The amount of tokens swept
+    function sweepExcessERC6909(Currency currency, address recipient) external returns (uint256 amountSwept);
+
+    /// @notice Allows anyone to donate tokens to the pending fees of a specific pool
+    /// @param key The PoolKey of the pool to donate to
+    /// @param amount0 The amount of currency0 to donate
+    /// @param amount1 The amount of currency1 to donate
+    /// @return donated0 The actual amount of currency0 donated
+    /// @return donated1 The actual amount of currency1 donated
+    function donate(PoolKey calldata key, uint256 amount0, uint256 amount1)
+        external
+        payable
+        returns (uint256 donated0, uint256 donated1);
+
+    // - - - views - - -
 
     function poolManager() external view returns (IPoolManager);
     function positionManager() external view returns (PositionManager);

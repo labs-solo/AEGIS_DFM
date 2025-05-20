@@ -256,12 +256,31 @@ contract SpotTest is Base_Test {
         policyManager.setManualFee(poolId, manualFee);
         policyManager.setPoolPOLShare(poolId, polShare);
         spot.setReinvestmentPaused(reinvestmentPaused);
+
+        // - - - TODO: remove start - - -
+        console.log("in _testReinvestment 1");
+
+        // Donate and do initial reinvestment to setup the NFT and subscribe to notifications
+        liquidityManager.donate(poolKey, 1e10, 1e10);
+
+        console.log("in _testReinvestment 2");
+
+        vm.warp(block.timestamp + advanceTime);
+
+        liquidityManager.reinvest(poolKey);
+
+        console.log("in _testReinvestment 3");
+
+        // - - - TODO: remove end - - -
+
         vm.stopPrank();
 
         // Get initial state
         (uint256 pendingFee0Initial, uint256 pendingFee1Initial) = liquidityManager.getPendingFees(poolId);
         (uint256 protocolSharesInitial,,) = liquidityManager.getProtocolOwnedLiquidity(poolId);
         uint256 nextReinvestTime = liquidityManager.getNextReinvestmentTime(poolId);
+
+        assertGt(protocolSharesInitial, 0, "Expect initial donation to be invested into NFT");
 
         // Execute swaps to generate fees
         for (uint256 i = 0; i < numSwaps; i++) {
@@ -286,6 +305,8 @@ contract SpotTest is Base_Test {
                 sqrtPriceLimitX96: zeroForOne ? MIN_PRICE_LIMIT : MAX_PRICE_LIMIT
             });
 
+            console.log("- - - - swap");
+
             swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
             vm.stopPrank();
 
@@ -295,6 +316,8 @@ contract SpotTest is Base_Test {
             }
         }
 
+        console.log("t 2");
+
         // Check intermediate state - fees should have accumulated
         (uint256 pendingFee0Mid, uint256 pendingFee1Mid) = liquidityManager.getPendingFees(poolId);
         (uint256 protocolSharesMid,,) = liquidityManager.getProtocolOwnedLiquidity(poolId);
@@ -302,7 +325,7 @@ contract SpotTest is Base_Test {
         // Verify fees accumulated properly based on swap pattern
         if (swapPattern == 0 || swapPattern == 1) {
             // Should have token0 fees if we did zeroForOne swaps
-            assertGt(pendingFee0Mid, pendingFee0Initial, "Token0 fees should accumulate from zeroForOne swaps");
+            assertGt(pendingFee0Mid, pendingFee0Initial, "Token0 fees should accumulate from zeroForOne swaps"); // TODO
         }
 
         if (swapPattern == 0 || swapPattern == 2) {
@@ -325,8 +348,12 @@ contract SpotTest is Base_Test {
             );
         }
 
+        console.log("t 3");
+
         // Try manual reinvestment
         bool reinvestResult = liquidityManager.reinvest(poolKey);
+
+        console.log("t 4");
 
         // Check if result matches expectation
         assertEq(reinvestResult, expectSuccess, "Reinvestment result doesn't match expectation");

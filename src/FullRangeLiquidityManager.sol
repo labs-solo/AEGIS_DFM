@@ -30,6 +30,8 @@ import {LiquidityAmounts} from "./libraries/LiquidityAmounts.sol";
 import {Actions} from "v4-periphery/src/libraries/Actions.sol";
 import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
+import {ISubscriber} from "v4-periphery/src/interfaces/ISubscriber.sol";
+import {PositionInfo} from "v4-periphery/src/libraries/PositionInfoLibrary.sol";
 
 // - - - Project Interfaces - - -
 
@@ -44,7 +46,7 @@ import {PoolPolicyManager} from "./PoolPolicyManager.sol";
 /// @title FullRangeLiquidityManager
 /// @notice Manages hook fees and liquidity for Spot pools
 /// @dev Handles fee collection, reinvestment, and allows users to contribute liquidity
-contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims {
+contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, ERC6909Claims {
     using PoolIdLibrary for PoolKey;
     using PoolIdLibrary for PoolId;
     using CurrencyLibrary for Currency;
@@ -103,6 +105,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         PoolPolicyManager _policyManager,
         address _authorizedHookAddress
     ) {
+        console.log("In FRLM constructor");
+        console.log(address(_poolManager));
+        console.log(address(_positionManager));
+
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_positionManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
@@ -128,6 +134,11 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
 
     modifier onlyPoolManager() {
         if (msg.sender != address(poolManager)) revert Errors.NotPoolManager();
+        _;
+    }
+
+    modifier onlyPositionManager() {
+        if (msg.sender != address(positionManager)) revert Errors.UnauthorizedCaller(msg.sender);
         _;
     }
 
@@ -216,6 +227,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     function reinvest(PoolKey calldata key) external override returns (bool success) {
         PoolId poolId = key.toId();
 
+        console.log("** reinvest");
+        console.log(block.timestamp);
+        console.log(lastReinvestment[poolId]);
+
         // Check cooldown and thresholds
         if (block.timestamp < lastReinvestment[poolId] + REINVEST_COOLDOWN) {
             return false;
@@ -233,6 +248,19 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 total0 = erc6909_0 + erc20_0;
         uint256 total1 = erc6909_1 + erc20_1;
 
+        console.log("- - - - reinvest - - - -");
+        console.log("reinvest: starting erc20 balances");
+        console.log(key.currency0.balanceOfSelf());
+        console.log(key.currency1.balanceOfSelf());
+
+        console.log("erc6909 balances");
+        console.log(erc6909_0);
+        console.log(erc6909_1);
+
+        console.log("erc20 balances");
+        console.log(erc20_0);
+        console.log(erc20_1);
+
         // Check minimum thresholds
         if (total0 < MIN_REINVEST_AMOUNT || total1 < MIN_REINVEST_AMOUNT) {
             return false;
@@ -243,24 +271,24 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // and so the PositionManager does not yet have the ability to settle from PoolManager 6909 allowances that the user
         // would have granted to the PositionManager
 
-        IPoolManager _poolManager = poolManager;
-
-        if (!TransientStateLibrary.isUnlocked(_poolManager)) {
+        if (!TransientStateLibrary.isUnlocked(poolManager)) {
+            console.log("manual take");
             bytes memory callbackData =
                 abi.encode(CallbackAction.TAKE_TOKENS, key.currency0, key.currency1, erc6909_0, erc6909_1);
 
             // The unlockCallback function will update the accounted balances
-            _poolManager.unlock(callbackData);
+            poolManager.unlock(callbackData);
         } else {
+            console.log("take while live swap");
             // NOTE: this pathway is possible when reinvest is called in afterSwap
-            _poolManager.take(key.currency0, address(this), erc6909_0);
+            poolManager.take(key.currency0, address(this), erc6909_0);
             poolManager.burn(address(this), key.currency0.toId(), erc6909_0);
 
             // Track token balances when converting from ERC6909
             accountedERC6909Balances[key.currency0] -= erc6909_0;
             accountedBalances[key.currency0] += erc6909_0;
 
-            _poolManager.take(key.currency1, address(this), erc6909_1);
+            poolManager.take(key.currency1, address(this), erc6909_1);
             poolManager.burn(address(this), key.currency1.toId(), erc6909_1);
 
             // Track token balances when converting from ERC6909
@@ -271,24 +299,44 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // Approve tokens for position operations
         _approveTokensForPosition(key.currency0, key.currency1);
 
-        uint256 initialBalance0 = key.currency0.balanceOfSelf();
-        uint256 initialBalance1 = key.currency1.balanceOfSelf();
+        console.log("reinvest: pre add liquidity erc20 balances");
+        console.log(key.currency0.balanceOfSelf());
+        console.log(key.currency1.balanceOfSelf());
+        console.log("reinvest: desired amounts to add");
+        console.log(total0);
+        console.log(total1);
 
         // Add liquidity to position
         (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) =
             _addLiquidityToPosition(key, total0, total1, MIN_REINVEST_AMOUNT, MIN_REINVEST_AMOUNT);
 
-        uint256 unusedAndFees0 = initialBalance0 - key.currency0.balanceOfSelf();
-        uint256 unusedAndFees1 = initialBalance1 - key.currency1.balanceOfSelf();
+        console.log("reinvest: done _addLiquidityToPosition");
+
+        console.log(accountedBalances[key.currency0]);
+        console.log(amount0Used);
+
+        console.log(accountedBalances[key.currency1]);
+        console.log(amount1Used);
 
         // Update accountedBalances for tokens used in position
-        accountedBalances[key.currency0] = (accountedBalances[key.currency0] + unusedAndFees0) - amount0Used;
-        accountedBalances[key.currency1] = (accountedBalances[key.currency1] + unusedAndFees1) - amount1Used;
+        accountedBalances[key.currency0] -= amount0Used;
+        accountedBalances[key.currency1] -= amount1Used;
 
-        // Restore any unused amounts and accrued NFT fees to pendingFees
-        _pendingFees = PendingFees({erc20_0: unusedAndFees0, erc20_1: unusedAndFees1, erc6909_0: 0, erc6909_1: 0});
+        // NOTE: at this point pendingFees could've been updated in notifyModifyLiquidity so we reload into memory
+        PendingFees memory _finalPendingFees = pendingFees[poolId];
 
-        pendingFees[poolId] = _pendingFees;
+        console.log("reinvest: latest _pendingFees");
+        console.log(_pendingFees.erc20_0);
+        console.log(_pendingFees.erc20_1);
+
+        pendingFees[poolId] = PendingFees({
+            erc20_0: (_finalPendingFees.erc20_0 + total0 - amount0Used) - _pendingFees.erc20_0,
+            erc20_1: (_finalPendingFees.erc20_1 + total1 - amount1Used) - _pendingFees.erc20_1,
+            erc6909_0: 0,
+            erc6909_1: 0
+        });
+
+        console.log("reinvest: done");
 
         // Mint ERC6909 shares to this contract (protocol-owned)
         _mint(address(this), uint256(PoolId.unwrap(poolId)), liquidityAdded);
@@ -433,9 +481,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     {
         PoolId poolId = key.toId();
 
-        uint256 initialBalance0 = key.currency0.balanceOfSelf();
-        uint256 initialBalance1 = key.currency1.balanceOfSelf();
-
         // Pull tokens directly from the payer
         _handleTokenTransfersFromPayer(key.currency0, key.currency1, amount0Desired, amount1Desired, payer);
 
@@ -473,24 +518,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // shares correspond 1:1 with liquidity
         // Mint ERC6909 shares to recipient
         _mint(recipient, uint256(PoolId.unwrap(poolId)), liquidityAdded);
-
-        uint256 finalBalance0 = key.currency0.balanceOfSelf();
-        uint256 finalBalance1 = key.currency1.balanceOfSelf();
-
-        // compute accrued NFT fees
-        uint256 fees0 = finalBalance0 > initialBalance0 ? finalBalance0 - initialBalance0 : 0;
-        uint256 fees1 = finalBalance1 > initialBalance1 ? finalBalance1 - initialBalance1 : 0;
-
-        // Update accounted balances for any fees received
-        if (fees0 > 0) {
-            accountedBalances[key.currency0] += fees0;
-            pendingFees[poolId].erc20_0 += fees0;
-        }
-
-        if (fees1 > 0) {
-            accountedBalances[key.currency1] += fees1;
-            pendingFees[poolId].erc20_1 += fees1;
-        }
 
         emit Deposit(poolId, recipient, liquidityAdded, amount0Used, amount1Used);
 
@@ -569,12 +596,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         return amountSwept;
     }
 
-    /// @notice Sweeps excess ERC6909 tokens accidentally minted to the contract
-    /// @param currency The currency to sweep
-    /// @param recipient The address to send the excess tokens to
-    /// @return amountSwept The amount of tokens swept
+    /// @inheritdoc IFullRangeLiquidityManager
     function sweepExcessERC6909(Currency currency, address recipient)
         external
+        override
         onlyPolicyOwner
         returns (uint256 amountSwept)
     {
@@ -598,6 +623,80 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
 
         return amountSwept;
     }
+
+    /// @inheritdoc IFullRangeLiquidityManager
+    function donate(PoolKey calldata key, uint256 amount0, uint256 amount1)
+        external
+        payable
+        override
+        returns (uint256 donated0, uint256 donated1)
+    {
+        // Validate that the currencies match the pool
+        PoolId poolId = key.toId();
+
+        Currency currency0 = key.currency0;
+        Currency currency1 = key.currency1;
+
+        // Pull tokens from the donor
+        if (amount0 > 0) {
+            // Handle ETH donation if currency0 is native
+            if (currency0.isAddressZero()) {
+                if (msg.value < amount0) {
+                    revert Errors.InsufficientETH(amount0, msg.value);
+                }
+                donated0 = amount0;
+            } else {
+                // Handle ERC20 donation
+                uint256 balanceBefore = IERC20Minimal(Currency.unwrap(currency0)).balanceOf(address(this));
+                IERC20Minimal(Currency.unwrap(currency0)).transferFrom(msg.sender, address(this), amount0);
+                uint256 balanceAfter = IERC20Minimal(Currency.unwrap(currency0)).balanceOf(address(this));
+                donated0 = balanceAfter - balanceBefore; // Account for potential transfer fees
+            }
+
+            // Update pending fees and accounting
+            pendingFees[poolId].erc20_0 += donated0;
+            accountedBalances[currency0] += donated0;
+        }
+
+        if (amount1 > 0) {
+            // Handle ETH donation if currency1 is native (unlikely but possible)
+            if (currency1.isAddressZero()) {
+                if (msg.value < amount1 || (amount0 > 0 && currency0.isAddressZero() && msg.value < amount0 + amount1))
+                {
+                    revert Errors.InsufficientETH(amount0 + amount1, msg.value);
+                }
+                donated1 = amount1;
+            } else {
+                // Handle ERC20 donation
+                uint256 balanceBefore = IERC20Minimal(Currency.unwrap(currency1)).balanceOf(address(this));
+                IERC20Minimal(Currency.unwrap(currency1)).transferFrom(msg.sender, address(this), amount1);
+                uint256 balanceAfter = IERC20Minimal(Currency.unwrap(currency1)).balanceOf(address(this));
+                donated1 = balanceAfter - balanceBefore; // Account for potential transfer fees
+            }
+
+            // Update pending fees and accounting
+            pendingFees[poolId].erc20_1 += donated1;
+            accountedBalances[currency1] += donated1;
+        }
+
+        // Return any excess ETH
+        if (msg.value > 0) {
+            uint256 ethUsed = 0;
+            if (currency0.isAddressZero()) ethUsed += donated0;
+            if (currency1.isAddressZero()) ethUsed += donated1;
+
+            if (msg.value > ethUsed) {
+                (bool success,) = msg.sender.call{value: msg.value - ethUsed}("");
+                if (!success) revert Errors.ETHTransferFailed();
+            }
+        }
+
+        emit Donation(poolId, msg.sender, donated0, donated1);
+
+        return (donated0, donated1);
+    }
+
+    // - - - internals - - -
 
     function _approveTokensForPosition(Currency currency0, Currency currency1) internal {
         // Approve tokens to Permit2 with infinite allowance
@@ -653,7 +752,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
 
         if (positionId == 0) {
             // Create new position
-            (positionId, liquidityAdded, amount0Used, amount1Used) =
+            (liquidityAdded, amount0Used, amount1Used) =
                 _mintNewPosition(key, amount0Desired, amount1Desired, amount0Min, amount1Min);
         } else {
             // Increase existing position
@@ -668,7 +767,8 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 amount1Desired,
         uint256 amount0Min,
         uint256 amount1Min
-    ) internal returns (uint256 positionId, uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) {
+    ) internal returns (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) {
+        uint256 positionId;
         PoolId poolId = key.toId();
         // Calculate optimal liquidity for full range position
         (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
@@ -684,9 +784,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             )
         );
 
-        // Ensure minimum liquidity
-        if (liquidity <= MIN_LOCKED_LIQUIDITY) {
-            revert Errors.InsufficientInitialLiquidity();
+        if (liquidity <= MIN_LOCKED_LIQUIDITY || TransientStateLibrary.isUnlocked(poolManager)) {
+            // NOTE: we early return if not much liquidity would be minted
+            // Also if the PoolManager is unlocked we cannot PositionManager.subscribe to the NFT
+            return (0, 0, 0);
         }
 
         // Define actions and parameters
@@ -706,6 +807,8 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             "" // No hook data
         );
 
+        console.log("_mintNewPosition 1");
+
         // Parameters for SETTLE_PAIR
         params[1] = abi.encode(key.currency0, key.currency1);
 
@@ -714,20 +817,25 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         if (key.currency0.isAddressZero()) ethValue = amount0Desired;
 
         // Execute the mint operation - forward ETH if needed
-        if (TransientStateLibrary.isUnlocked(poolManager)) {
-            positionManager.modifyLiquiditiesWithoutUnlock(actions, params);
-        } else {
-            positionManager.modifyLiquidities{value: ethValue}(
-                abi.encode(actions, params),
-                block.timestamp + 60 // 60 second deadline
-            );
-        }
+        positionManager.modifyLiquidities{value: ethValue}(
+            abi.encode(actions, params),
+            block.timestamp + 60 // 60 second deadline
+        );
+
+        console.log("_mintNewPosition 2");
 
         // Get the position ID (will be the last minted token)
         positionId = positionManager.nextTokenId() - 1;
 
         // Store the position ID
         positionIds[poolId] = positionId;
+
+        // TODO: remove
+        require(positionManager.ownerOf(positionId) == address(this), "NOT owner");
+
+        positionManager.subscribe(positionId, address(this), "");
+
+        console.log("_mintNewPosition 3");
 
         // Calculate actual amounts used based on the liquidity minted
         (amount0Used, amount1Used) =
@@ -744,7 +852,8 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // NOTE: for v1 we want 1:1 share liquidity correspondence
         _mint(address(0), uint256(PoolId.unwrap(poolId)), MIN_LOCKED_LIQUIDITY);
 
-        return (positionId, liquidityAdded, amount0Used, amount1Used);
+        // round up just to be pessimistic regarding the amount taken
+        return (liquidityAdded, Math.min(amount0Used + 1, amount0Desired), Math.min(amount1Used + 1, amount1Desired));
     }
 
     function _increaseLiquidity(
@@ -769,6 +878,11 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             )
         );
 
+        if (liquidity < MIN_LOCKED_LIQUIDITY) {
+            // NOTE: we early return if not much liquidity would be added
+            return (0, 0, 0);
+        }
+
         // Define actions and parameters
         bytes memory actions = abi.encodePacked(uint8(Actions.INCREASE_LIQUIDITY), uint8(Actions.SETTLE_PAIR));
 
@@ -790,15 +904,20 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 ethValue = 0;
         if (key.currency0.isAddressZero()) ethValue = amount0Desired;
 
+        console.log("- - - _increaseLiquidity 1");
+
         // Execute the increase operation - forward ETH if needed
         if (TransientStateLibrary.isUnlocked(poolManager)) {
-            positionManager.modifyLiquiditiesWithoutUnlock(actions, params);
+            console.log("about to modifyLiquiditiesWithoutUnlock");
+            positionManager.modifyLiquiditiesWithoutUnlock{value: ethValue}(actions, params);
         } else {
             positionManager.modifyLiquidities{value: ethValue}(
                 abi.encode(actions, params),
                 block.timestamp + 60 // 60 second deadline
             );
         }
+
+        console.log("- - - _increaseLiquidity 2");
 
         // Calculate actual amounts used
         (amount0Used, amount1Used) =
@@ -810,7 +929,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
 
         liquidityAdded = uint256(liquidity);
 
-        return (liquidityAdded, amount0Used, amount1Used);
+        return (liquidityAdded, Math.min(amount0Used + 1, amount0Desired), Math.min(amount1Used + 1, amount1Desired));
     }
 
     /// @notice Internal function to handle withdrawal of liquidity
@@ -910,16 +1029,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             received1 = principal1;
         }
 
-        // Add fees to pendingFees for future reinvestment
-        if (fee0 > 0) {
-            pendingFees[poolId].erc20_0 += fee0;
-            accountedBalances[key.currency0] += fee0;
-        }
-
-        if (fee1 > 0) {
-            pendingFees[poolId].erc20_1 += fee1;
-            accountedBalances[key.currency1] += fee1;
-        }
+        // NOTE: we don't need to notify NFT fees as this was already done in notifyModifyLiquidity
 
         // Burn shares from the specified owner
         if (sharesOwner == address(this)) {
@@ -962,6 +1072,76 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         if (amount1 > 0) {
             // Given ordering currency1 is guaranteed to NOT be address(0)
             IERC20Minimal(Currency.unwrap(currency1)).transferFrom(payer, address(this), amount1);
+        }
+    }
+
+    // - - - Subscriber Public - - -
+
+    /// @inheritdoc ISubscriber
+    function notifySubscribe(uint256 tokenId, bytes memory data) external override {
+        // NOTE: not needed
+    }
+
+    /// @inheritdoc ISubscriber
+    function notifyUnsubscribe(uint256 tokenId) external override {
+        // NOTE: not needed
+    }
+
+    /// @inheritdoc ISubscriber
+    function notifyBurn(uint256 tokenId, address owner, PositionInfo info, uint256 liquidity, BalanceDelta feesAccrued)
+        external
+        override
+    {
+        // NOTE: not needed
+    }
+
+    /// @inheritdoc ISubscriber
+    function notifyModifyLiquidity(uint256 tokenId, int256 liquidityChange, BalanceDelta feesAccrued)
+        external
+        override
+        onlyPositionManager
+    {
+        console.log("notifyModifyLiquidity 1");
+
+        // Only process if there are fees
+        if (feesAccrued.amount0() == 0 && feesAccrued.amount1() == 0) return;
+
+        console.log("notifyModifyLiquidity 2:");
+        console.log(feesAccrued.amount0());
+        console.log(feesAccrued.amount1());
+
+        // Get position info to determine pool key
+        (PoolKey memory key,) = positionManager.getPoolAndPositionInfo(tokenId);
+        PoolId poolId = key.toId();
+
+        // Process fees accrued
+        _processFeeNotification(poolId, key.currency0, key.currency1, feesAccrued);
+
+        emit PositionFeeAccrued(tokenId, poolId, feesAccrued.amount0(), feesAccrued.amount1());
+
+        console.log("notifyModifyLiquidity complete");
+    }
+
+    // - - - Subscriber Internal - - -
+
+    function _processFeeNotification(PoolId poolId, Currency currency0, Currency currency1, BalanceDelta feesAccrued)
+        internal
+    {
+        // Extract fee amounts
+        int128 amount0 = feesAccrued.amount0();
+        int128 amount1 = feesAccrued.amount1();
+
+        // Only process positive amounts
+        if (amount0 > 0) {
+            uint256 fee0 = uint256(uint128(amount0));
+            pendingFees[poolId].erc20_0 += fee0;
+            accountedBalances[currency0] += fee0;
+        }
+
+        if (amount1 > 0) {
+            uint256 fee1 = uint256(uint128(amount1));
+            pendingFees[poolId].erc20_1 += fee1;
+            accountedBalances[currency1] += fee1;
         }
     }
 }

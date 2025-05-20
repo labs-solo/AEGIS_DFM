@@ -192,6 +192,21 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
         MockERC20(Currency.unwrap(currency1)).approve(address(swapRouter), type(uint256).max);
         vm.stopPrank();
 
+        vm.startPrank(owner);
+        MockERC20(Currency.unwrap(currency0)).approve(address(liquidityManager), type(uint256).max);
+        MockERC20(Currency.unwrap(currency1)).approve(address(liquidityManager), type(uint256).max);
+        vm.stopPrank();
+
+        vm.startPrank(user1);
+        MockERC20(Currency.unwrap(currency0)).approve(address(liquidityManager), type(uint256).max);
+        MockERC20(Currency.unwrap(currency1)).approve(address(liquidityManager), type(uint256).max);
+        vm.stopPrank();
+
+        vm.startPrank(user2);
+        MockERC20(Currency.unwrap(currency0)).approve(address(liquidityManager), type(uint256).max);
+        MockERC20(Currency.unwrap(currency1)).approve(address(liquidityManager), type(uint256).max);
+        vm.stopPrank();
+
         // Use the PosmTestSetup approvePosmFor helper to approve for PositionManager
         approvePosmFor(owner);
         vm.stopPrank();
@@ -221,7 +236,6 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
         // Get the position's liquidity to verify it was created with non-zero liquidity
         uint128 liquidity = lpm.getPositionLiquidity(positionId);
         assertGt(liquidity, 0, "Position has no liquidity");
-
         vm.stopPrank();
     }
 }
