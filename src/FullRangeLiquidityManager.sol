@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
-// TODO: consider replacing emergencyWithdraw and emergencyWithdrawNativeOrERC20 functions with sweep functions
-// that limit sweeping to excess funds(e.g. from accidental transfers), this would require tracking global notified balances to allow sweeping excess
-
 // TODO: remove
 
 import "forge-std/console.sol";
@@ -89,6 +86,12 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     /// @notice NFT token IDs for full range positions
     mapping(PoolId => uint256) private positionIds;
 
+    /// @notice Tracks accounted balances of tokens per currency
+    mapping(Currency => uint256) public override accountedBalances;
+
+    /// @notice Tracks accounted balances of ERC6909 tokens per currency ID
+    mapping(Currency => uint256) public override accountedERC6909Balances;
+
     /// @notice Constructs the FullRangeLiquidityManager
     /// @param _poolManager The Uniswap V4 PoolManager
     /// @param _positionManager The Uniswap V4 PositionManager
@@ -155,15 +158,23 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
                     poolManager.take(currency0, address(this), amount0);
                     // Burn ERC6909 tokens to balance the delta
                     poolManager.burn(address(this), currency0.toId(), amount0);
+
+                    // Track token balances when converting from ERC6909
+                    accountedERC6909Balances[currency0] -= amount0;
+                    accountedBalances[currency0] += amount0;
                 }
 
                 if (amount1 > 0) {
                     poolManager.take(currency1, address(this), amount1);
                     // Burn ERC6909 tokens to balance the delta
                     poolManager.burn(address(this), currency1.toId(), amount1);
+
+                    // Track token balances when converting from ERC6909
+                    accountedERC6909Balances[currency1] -= amount1;
+                    accountedBalances[currency1] += amount1;
                 }
-            } else if (action == CallbackAction.EMERGENCY_WITHDRAW) {
-                // Decode emergency withdrawal parameters
+            } else if (action == CallbackAction.SWEEP_TOKEN) {
+                // Decode sweep parameters
                 (
                     , // Skip the action we already decoded
                     Currency token,
@@ -175,6 +186,9 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
                 poolManager.take(token, to, amount);
                 // Burn ERC6909 tokens to balance the delta
                 poolManager.burn(address(this), token.toId(), amount);
+
+                // Update ERC6909 balance tracking
+                accountedERC6909Balances[token] -= amount;
             }
         }
 
@@ -187,10 +201,14 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // Update pending fees
         if (fee0 > 0) {
             pendingFees[poolId].erc6909_0 += fee0;
+            // Track ERC6909 balance
+            accountedERC6909Balances[poolKey.currency0] += fee0;
         }
 
         if (fee1 > 0) {
             pendingFees[poolId].erc6909_1 += fee1;
+            // Track ERC6909 balance
+            accountedERC6909Balances[poolKey.currency1] += fee1;
         }
     }
 
@@ -231,14 +249,23 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
             bytes memory callbackData =
                 abi.encode(CallbackAction.TAKE_TOKENS, key.currency0, key.currency1, erc6909_0, erc6909_1);
 
+            // The unlockCallback function will update the accounted balances
             _poolManager.unlock(callbackData);
         } else {
             // NOTE: this pathway is possible when reinvest is called in afterSwap
             _poolManager.take(key.currency0, address(this), erc6909_0);
             poolManager.burn(address(this), key.currency0.toId(), erc6909_0);
 
+            // Track token balances when converting from ERC6909
+            accountedERC6909Balances[key.currency0] -= erc6909_0;
+            accountedBalances[key.currency0] += erc6909_0;
+
             _poolManager.take(key.currency1, address(this), erc6909_1);
             poolManager.burn(address(this), key.currency1.toId(), erc6909_1);
+
+            // Track token balances when converting from ERC6909
+            accountedERC6909Balances[key.currency1] -= erc6909_1;
+            accountedBalances[key.currency1] += erc6909_1;
         }
 
         // Approve tokens for position operations
@@ -254,13 +281,12 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 unusedAndFees0 = initialBalance0 - key.currency0.balanceOfSelf();
         uint256 unusedAndFees1 = initialBalance1 - key.currency1.balanceOfSelf();
 
+        // Update accountedBalances for tokens used in position
+        accountedBalances[key.currency0] = (accountedBalances[key.currency0] + unusedAndFees0) - amount0Used;
+        accountedBalances[key.currency1] = (accountedBalances[key.currency1] + unusedAndFees1) - amount1Used;
+
         // Restore any unused amounts and accrued NFT fees to pendingFees
-        _pendingFees = PendingFees({
-            erc20_0: total0 - unusedAndFees0,
-            erc20_1: total1 - unusedAndFees1,
-            erc6909_0: 0,
-            erc6909_1: 0
-        });
+        _pendingFees = PendingFees({erc20_0: unusedAndFees0, erc20_1: unusedAndFees1, erc6909_0: 0, erc6909_1: 0});
 
         pendingFees[poolId] = _pendingFees;
 
@@ -413,6 +439,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // Pull tokens directly from the payer
         _handleTokenTransfersFromPayer(key.currency0, key.currency1, amount0Desired, amount1Desired, payer);
 
+        // Track received tokens
+        accountedBalances[key.currency0] += amount0Desired;
+        accountedBalances[key.currency1] += amount1Desired;
+
         // Approve tokens for position operations
         _approveTokensForPosition(key.currency0, key.currency1);
 
@@ -428,12 +458,16 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         if (unusedAmount0 > 0) {
             uint256 balance0 = key.currency0.balanceOfSelf();
             // NOTE: we do Math.min as it's possible that there's a unit loss in the LiquidityAmounts math
-            key.currency0.transfer(payer, Math.min(unusedAmount0, balance0));
+            uint256 transfer0 = Math.min(unusedAmount0, balance0);
+            accountedBalances[key.currency0] -= transfer0;
+            key.currency0.transfer(payer, transfer0);
         }
 
         if (unusedAmount1 > 0) {
             uint256 balance1 = key.currency1.balanceOfSelf();
-            key.currency1.transfer(payer, Math.min(unusedAmount1, balance1));
+            uint256 transfer1 = Math.min(unusedAmount1, balance1);
+            accountedBalances[key.currency1] -= transfer1;
+            key.currency1.transfer(payer, transfer1);
         }
 
         // shares correspond 1:1 with liquidity
@@ -444,12 +478,19 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         uint256 finalBalance1 = key.currency1.balanceOfSelf();
 
         // compute accrued NFT fees
-        uint256 fees0 = finalBalance0 > initialBalance0 ? finalBalance0 : 0;
-        uint256 fees1 = finalBalance1 > initialBalance1 ? finalBalance1 : 0;
+        uint256 fees0 = finalBalance0 > initialBalance0 ? finalBalance0 - initialBalance0 : 0;
+        uint256 fees1 = finalBalance1 > initialBalance1 ? finalBalance1 - initialBalance1 : 0;
 
-        // add accrued NFT fees to pending fees
-        pendingFees[poolId].erc20_0 += fees0;
-        pendingFees[poolId].erc20_1 += fees1;
+        // Update accounted balances for any fees received
+        if (fees0 > 0) {
+            accountedBalances[key.currency0] += fees0;
+            pendingFees[poolId].erc20_0 += fees0;
+        }
+
+        if (fees1 > 0) {
+            accountedBalances[key.currency1] += fees1;
+            pendingFees[poolId].erc20_1 += fees1;
+        }
 
         emit Deposit(poolId, recipient, liquidityAdded, amount0Used, amount1Used);
 
@@ -497,39 +538,64 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
-    function emergencyWithdraw(Currency token, address to, uint256 amount) external override onlyPolicyOwner {
-        IPoolManager _poolManager = poolManager;
-
-        bytes memory callbackData = abi.encode(CallbackAction.EMERGENCY_WITHDRAW, token, to, amount);
-        _poolManager.unlock(callbackData);
-    }
-
-    /// @inheritdoc IFullRangeLiquidityManager
-    function emergencyWithdrawNativeOrERC20(address token, address recipient, uint256 amount)
+    function sweepExcessTokens(Currency currency, address recipient)
         external
         onlyPolicyOwner
         returns (uint256 amountSwept)
     {
-        // Validate recipient
         if (recipient == address(0)) revert Errors.ZeroAddress();
 
-        // Handle native ETH
-        if (token == address(0)) {
-            uint256 balance = address(this).balance;
-            amountSwept = amount == 0 || amount > balance ? balance : amount;
-
-            if (amountSwept > 0) {
-                (bool success,) = payable(recipient).call{value: amountSwept}("");
-                if (!success) revert Errors.InvariantETHTransferFailed();
-            }
+        uint256 balance;
+        if (currency.isAddressZero()) {
+            // Native ETH
+            balance = address(this).balance;
         } else {
-            uint256 balance = IERC20Minimal(token).balanceOf(address(this));
-            amountSwept = amount == 0 || amount > balance ? balance : amount;
-
-            if (amountSwept > 0) {
-                IERC20Minimal(token).transfer(recipient, amountSwept);
-            }
+            // ERC20 token
+            balance = IERC20Minimal(Currency.unwrap(currency)).balanceOf(address(this));
         }
+
+        uint256 accounted = accountedBalances[currency];
+
+        // Only sweep excess tokens
+        if (balance > accounted) {
+            amountSwept = balance - accounted;
+
+            // Transfer the tokens
+            currency.transfer(recipient, amountSwept);
+
+            emit ExcessTokensSwept(currency, recipient, amountSwept);
+        }
+
+        return amountSwept;
+    }
+
+    /// @notice Sweeps excess ERC6909 tokens accidentally minted to the contract
+    /// @param currency The currency to sweep
+    /// @param recipient The address to send the excess tokens to
+    /// @return amountSwept The amount of tokens swept
+    function sweepExcessERC6909(Currency currency, address recipient)
+        external
+        onlyPolicyOwner
+        returns (uint256 amountSwept)
+    {
+        if (recipient == address(0)) revert Errors.ZeroAddress();
+
+        uint256 currencyId = currency.toId();
+        uint256 balance = poolManager.balanceOf(address(this), currencyId);
+        uint256 accounted = accountedERC6909Balances[currency];
+
+        // Only sweep excess tokens
+        if (balance > accounted) {
+            amountSwept = balance - accounted;
+
+            // Use unlock callback to take the tokens
+            bytes memory callbackData = abi.encode(CallbackAction.SWEEP_TOKEN, currency, recipient, amountSwept);
+
+            poolManager.unlock(callbackData);
+
+            emit ExcessTokensSwept(currency, recipient, amountSwept);
+        }
+
         return amountSwept;
     }
 
@@ -847,10 +913,12 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ERC6909Claims 
         // Add fees to pendingFees for future reinvestment
         if (fee0 > 0) {
             pendingFees[poolId].erc20_0 += fee0;
+            accountedBalances[key.currency0] += fee0;
         }
 
         if (fee1 > 0) {
             pendingFees[poolId].erc20_1 += fee1;
+            accountedBalances[key.currency1] += fee1;
         }
 
         // Burn shares from the specified owner

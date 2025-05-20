@@ -52,9 +52,15 @@ interface IFullRangeLiquidityManager is IUnlockCallback {
         PoolId indexed poolId, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1
     );
 
+    /// @notice Emitted when excess tokens are swept
+    /// @param currency The currency that was swept
+    /// @param recipient The address that received the tokens
+    /// @param amount The amount of tokens swept
+    event ExcessTokensSwept(Currency indexed currency, address indexed recipient, uint256 amount);
+
     enum CallbackAction {
         TAKE_TOKENS,
-        EMERGENCY_WITHDRAW
+        SWEEP_TOKEN
     }
 
     /// @notice Notifies the LiquidityManager of collected fees
@@ -116,13 +122,6 @@ interface IFullRangeLiquidityManager is IUnlockCallback {
         address sharesOwner
     ) external returns (uint256 amount0, uint256 amount1);
 
-    /// @notice Emergency withdrawal function for handling unexpected scenarios
-    /// @dev Allows policy owner to directly withdraw tokens from the pool manager
-    /// @param token The token currency to withdraw
-    /// @param to The recipient address to receive the withdrawn tokens
-    /// @param amount The amount of tokens to withdraw
-    function emergencyWithdraw(Currency token, address to, uint256 amount) external;
-
     /// @notice Withdraws protocol-owned liquidity from a pool's NFT position
     /// @dev Burns protocol-owned ERC6909 shares and withdraws proportional assets from the position
     /// @dev Only callable by policy manager owner
@@ -141,16 +140,11 @@ interface IFullRangeLiquidityManager is IUnlockCallback {
         address recipient
     ) external returns (uint256 amount0, uint256 amount1);
 
-    /// @notice Allows the policy owner to withdraw any ERC20 balances including pending fees
-    /// though use should preferably be limited to withdrawing tokens accidentally sent to this contract
-    /// as withdrawing pending fees will break reinvestments if it tries to reinvest withdrawn amounts
-    /// @param token The address of the token to sweep (address(0) for native ETH)
-    /// @param recipient The address to receive the tokens
-    /// @param amount The amount of tokens to sweep (0 for the entire balance)
-    /// @return amountSwept The actual amount swept
-    function emergencyWithdrawNativeOrERC20(address token, address recipient, uint256 amount)
-        external
-        returns (uint256 amountSwept);
+    /// @notice Sweeps excess tokens accidentally sent to the contract
+    /// @param currency The currency to sweep
+    /// @param recipient The address to send the excess tokens to
+    /// @return amountSwept The amount of tokens swept
+    function sweepExcessTokens(Currency currency, address recipient) external returns (uint256 amountSwept);
 
     function poolManager() external view returns (IPoolManager);
     function positionManager() external view returns (PositionManager);
@@ -158,6 +152,10 @@ interface IFullRangeLiquidityManager is IUnlockCallback {
 
     /// @notice Returns the authorized hook address that can notify fees
     function authorizedHookAddress() external view returns (address);
+
+    function accountedBalances(Currency currency) external view returns (uint256);
+
+    function accountedERC6909Balances(Currency currency) external view returns (uint256);
 
     /// @notice Gets the pending fees for a pool that haven't been reinvested yet
     /// @dev These fees accrue until reinvestment conditions are met
