@@ -221,11 +221,11 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
 
         uint256 positionId = lpm.nextTokenId();
 
-        // Create mint params - we'll add a full range position with 10 ETH worth of each token
+        // Create mint params - add much liquidity to the full range position
         // Use the mint helper from PosmTestSetup (LiquidityOperations)
         mint(
             PositionConfig({poolKey: poolKey, tickLower: minTick, tickUpper: maxTick}),
-            10 ether, // liquidity amount
+            100000 ether, // liquidity amount
             owner, // recipient
             "" // hookData
         );
