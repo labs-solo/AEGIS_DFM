@@ -1,9 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
-// TODO: remove
-import "forge-std/console.sol";
-
 // - - - Solmate Deps - - -
 
 import {ERC20} from "solmate/src/tokens/ERC20.sol";

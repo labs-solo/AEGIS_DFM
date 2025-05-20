@@ -1,10 +1,6 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
-// TODO: remove
-
-import "forge-std/console.sol";
-
 // - - - Permit2 Deps - - -
 
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
@@ -105,10 +101,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         PoolPolicyManager _policyManager,
         address _authorizedHookAddress
     ) {
-        console.log("In FRLM constructor");
-        console.log(address(_poolManager));
-        console.log(address(_positionManager));
-
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_positionManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
@@ -227,10 +219,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
     function reinvest(PoolKey calldata key) external override returns (bool success) {
         PoolId poolId = key.toId();
 
-        console.log("** reinvest");
-        console.log(block.timestamp);
-        console.log(lastReinvestment[poolId]);
-
         // Check cooldown and thresholds
         if (block.timestamp < lastReinvestment[poolId] + REINVEST_COOLDOWN) {
             return false;
@@ -248,19 +236,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         uint256 total0 = erc6909_0 + erc20_0;
         uint256 total1 = erc6909_1 + erc20_1;
 
-        console.log("- - - - reinvest - - - -");
-        console.log("reinvest: starting erc20 balances");
-        console.log(key.currency0.balanceOfSelf());
-        console.log(key.currency1.balanceOfSelf());
-
-        console.log("erc6909 balances");
-        console.log(erc6909_0);
-        console.log(erc6909_1);
-
-        console.log("erc20 balances");
-        console.log(erc20_0);
-        console.log(erc20_1);
-
         // Check minimum thresholds
         if (total0 < MIN_REINVEST_AMOUNT || total1 < MIN_REINVEST_AMOUNT) {
             return false;
@@ -272,14 +247,12 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // would have granted to the PositionManager
 
         if (!TransientStateLibrary.isUnlocked(poolManager)) {
-            console.log("manual take");
             bytes memory callbackData =
                 abi.encode(CallbackAction.TAKE_TOKENS, key.currency0, key.currency1, erc6909_0, erc6909_1);
 
             // The unlockCallback function will update the accounted balances
             poolManager.unlock(callbackData);
         } else {
-            console.log("take while live swap");
             // NOTE: this pathway is possible when reinvest is called in afterSwap
             poolManager.take(key.currency0, address(this), erc6909_0);
             poolManager.burn(address(this), key.currency0.toId(), erc6909_0);
@@ -299,25 +272,11 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // Approve tokens for position operations
         _approveTokensForPosition(key.currency0, key.currency1);
 
-        console.log("reinvest: pre add liquidity erc20 balances");
-        console.log(key.currency0.balanceOfSelf());
-        console.log(key.currency1.balanceOfSelf());
-        console.log("reinvest: desired amounts to add");
-        console.log(total0);
-        console.log(total1);
-
         // Add liquidity to position
         (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) =
             _addLiquidityToPosition(key, total0, total1, MIN_REINVEST_AMOUNT, MIN_REINVEST_AMOUNT);
 
-        console.log("reinvest: done _addLiquidityToPosition");
-
-        console.log(accountedBalances[key.currency0]);
-        console.log(amount0Used);
-
-        console.log(accountedBalances[key.currency1]);
-        console.log(amount1Used);
-
+        // Restore any unused amounts and accrued NFT fees to pendingFees
         // Update accountedBalances for tokens used in position
         accountedBalances[key.currency0] -= amount0Used;
         accountedBalances[key.currency1] -= amount1Used;
@@ -325,18 +284,12 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // NOTE: at this point pendingFees could've been updated in notifyModifyLiquidity so we reload into memory
         PendingFees memory _finalPendingFees = pendingFees[poolId];
 
-        console.log("reinvest: latest _pendingFees");
-        console.log(_pendingFees.erc20_0);
-        console.log(_pendingFees.erc20_1);
-
         pendingFees[poolId] = PendingFees({
-            erc20_0: (_finalPendingFees.erc20_0 + total0 - amount0Used) - _pendingFees.erc20_0,
-            erc20_1: (_finalPendingFees.erc20_1 + total1 - amount1Used) - _pendingFees.erc20_1,
+            erc20_0: (_finalPendingFees.erc20_0 + total0) - amount0Used - _pendingFees.erc20_0,
+            erc20_1: (_finalPendingFees.erc20_1 + total1) - amount1Used - _pendingFees.erc20_1,
             erc6909_0: 0,
             erc6909_1: 0
         });
-
-        console.log("reinvest: done");
 
         // Mint ERC6909 shares to this contract (protocol-owned)
         _mint(address(this), uint256(PoolId.unwrap(poolId)), liquidityAdded);
@@ -807,8 +760,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             "" // No hook data
         );
 
-        console.log("_mintNewPosition 1");
-
         // Parameters for SETTLE_PAIR
         params[1] = abi.encode(key.currency0, key.currency1);
 
@@ -822,20 +773,12 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             block.timestamp + 60 // 60 second deadline
         );
 
-        console.log("_mintNewPosition 2");
-
         // Get the position ID (will be the last minted token)
         positionId = positionManager.nextTokenId() - 1;
 
         // Store the position ID
         positionIds[poolId] = positionId;
-
-        // TODO: remove
-        require(positionManager.ownerOf(positionId) == address(this), "NOT owner");
-
         positionManager.subscribe(positionId, address(this), "");
-
-        console.log("_mintNewPosition 3");
 
         // Calculate actual amounts used based on the liquidity minted
         (amount0Used, amount1Used) =
@@ -904,11 +847,8 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         uint256 ethValue = 0;
         if (key.currency0.isAddressZero()) ethValue = amount0Desired;
 
-        console.log("- - - _increaseLiquidity 1");
-
         // Execute the increase operation - forward ETH if needed
         if (TransientStateLibrary.isUnlocked(poolManager)) {
-            console.log("about to modifyLiquiditiesWithoutUnlock");
             positionManager.modifyLiquiditiesWithoutUnlock{value: ethValue}(actions, params);
         } else {
             positionManager.modifyLiquidities{value: ethValue}(
@@ -916,8 +856,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
                 block.timestamp + 60 // 60 second deadline
             );
         }
-
-        console.log("- - - _increaseLiquidity 2");
 
         // Calculate actual amounts used
         (amount0Used, amount1Used) =
@@ -1101,14 +1039,8 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         override
         onlyPositionManager
     {
-        console.log("notifyModifyLiquidity 1");
-
         // Only process if there are fees
         if (feesAccrued.amount0() == 0 && feesAccrued.amount1() == 0) return;
-
-        console.log("notifyModifyLiquidity 2:");
-        console.log(feesAccrued.amount0());
-        console.log(feesAccrued.amount1());
 
         // Get position info to determine pool key
         (PoolKey memory key,) = positionManager.getPoolAndPositionInfo(tokenId);
@@ -1118,8 +1050,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         _processFeeNotification(poolId, key.currency0, key.currency1, feesAccrued);
 
         emit PositionFeeAccrued(tokenId, poolId, feesAccrued.amount0(), feesAccrued.amount1());
-
-        console.log("notifyModifyLiquidity complete");
     }
 
     // - - - Subscriber Internal - - -
