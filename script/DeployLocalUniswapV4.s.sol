@@ -35,7 +35,7 @@ import {IFullRangeLiquidityManager} from "../src/interfaces/IFullRangeLiquidityM
 import {IDynamicFeeManager} from "../src/interfaces/IDynamicFeeManager.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {HookMiner as HMiner} from "v4-periphery/src/utils/HookMiner.sol";
-import {DummyFullRangeHook} from "../test/integration/utils/DummyFullRangeHook.sol";
+import {DummyFullRangeHook} from "test/legacy/integration/utils/DummyFullRangeHook.sol";
 
 /**
  * @title DeployLocalUniswapV4

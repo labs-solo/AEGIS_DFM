@@ -36,13 +36,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     // === Fee Configuration Struct ===
 
-    struct FeeConfig {
-        uint24 polSharePpm;
-        uint24 fullRangeSharePpm;
-        uint24 lpSharePpm;
-        uint24 minimumTradingFeePpm;
-    }
-
     // === Dynamic Fee Configuration Struct ===
 
     struct DynamicFeeConfig {
@@ -62,9 +55,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     // === State Variables ===
 
-    /// @notice Global fee configuration
-    FeeConfig private _defaultFeeConfig;
-
     /// @notice Global dynamic fee configuration
     DynamicFeeConfig private _defaultDynamicFeeConfig;
 
@@ -76,9 +66,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @notice Pool-specific POL share percentages
     mapping(PoolId => uint256) private _poolPolSharePpm;
-
-    /// @notice Flag to enable/disable pool-specific POL percentages
-    bool private _allowPoolSpecificPolShare;
 
     /// @notice Pool-specific dynamic fee configurations
     mapping(PoolId => DynamicFeeConfig) private _poolDynamicFeeConfig;
@@ -115,15 +102,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         minBaseFeePpm = _minTradingFee;
         maxBaseFeePpm = _maxTradingFee;
 
-        // Initialize default fee configuration
-        _setFeeConfig({
-            _polSharePpm: 100_000,
-            _fullRangeSharePpm: 0,
-            _lpSharePpm: 900_000,
-            _minimumTradingFeePpm: _minTradingFee,
-            _feeClaimThresholdPpm: 10_000 // 1% claim threshold
-        });
-
         // Initialize default dynamic fee configuration
         _defaultDynamicFeeConfig = DynamicFeeConfig({
             targetCapsPerDay: 1,
@@ -144,39 +122,11 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     // === Fee Allocation Functions ===
 
     /// @inheritdoc IPoolPolicyManager
-    function getFeeAllocations(PoolId poolId) external view override returns (uint256, uint256, uint256) {
-        // Check if pool has a specific POL share
-        uint256 poolSpecificPolShare = _poolPolSharePpm[poolId];
-
-        // If pool-specific POL share is enabled and set for this pool, use it
-        if (_allowPoolSpecificPolShare && poolSpecificPolShare > 0) {
-            return (poolSpecificPolShare, 0, 1000000 - poolSpecificPolShare);
-        }
-
-        // Otherwise use the global settings
-        return (_defaultFeeConfig.polSharePpm, _defaultFeeConfig.fullRangeSharePpm, _defaultFeeConfig.lpSharePpm);
-    }
-
-    /// @inheritdoc IPoolPolicyManager
-    function getMinimumTradingFee() external view override returns (uint256) {
-        return _defaultFeeConfig.minimumTradingFeePpm;
-    }
-
-    /// @inheritdoc IPoolPolicyManager
-    function setFeeConfig(
-        uint256 _polSharePpm,
-        uint256 _fullRangeSharePpm,
-        uint256 _lpSharePpm,
-        uint256 _minimumTradingFeePpm,
-        uint256 _feeClaimThresholdPpm
-    ) external override onlyOwner {
-        _setFeeConfig(_polSharePpm, _fullRangeSharePpm, _lpSharePpm, _minimumTradingFeePpm, _feeClaimThresholdPpm);
-    }
-
-    /// @inheritdoc IPoolPolicyManager
     function setPoolPOLShare(PoolId poolId, uint256 newPolSharePpm) external override onlyOwner {
         // Validate POL share is within valid range (0-100%)
-        if (newPolSharePpm > 1000000) revert Errors.ParameterOutOfRange(newPolSharePpm, 0, 1000000);
+        if (newPolSharePpm > PrecisionConstants.PPM_SCALE) {
+            revert Errors.ParameterOutOfRange(newPolSharePpm, 0, PrecisionConstants.PPM_SCALE);
+        }
 
         uint256 oldShare = _poolPolSharePpm[poolId];
         _poolPolSharePpm[poolId] = newPolSharePpm;
@@ -187,24 +137,8 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function setPoolSpecificPOLSharingEnabled(bool enabled) external override onlyOwner {
-        _allowPoolSpecificPolShare = enabled;
-
-        emit PoolSpecificPOLSharingEnabled(enabled);
-        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.FEE, address(uint160(enabled ? 1 : 0)), msg.sender);
-    }
-
-    /// @inheritdoc IPoolPolicyManager
-    function getPoolPOLShare(PoolId poolId) external view override returns (uint256) {
-        uint256 poolSpecificPolShare = _poolPolSharePpm[poolId];
-
-        // If pool-specific POL share is enabled and set for this pool, use it
-        if (_allowPoolSpecificPolShare && poolSpecificPolShare > 0) {
-            return poolSpecificPolShare;
-        }
-
-        // Otherwise use the global setting
-        return _defaultFeeConfig.polSharePpm;
+    function getPoolPOLShare(PoolId poolId) external view override returns (uint256 poolSpecificPolShare) {
+        poolSpecificPolShare = _poolPolSharePpm[poolId];
     }
 
     // === Manual Fee Override Functions ===
@@ -424,46 +358,5 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @inheritdoc IPoolPolicyManager
     function setDecayWindow(uint32 secs) external override onlyOwner {
         _capBudgetDecayWindow = secs;
-    }
-
-    // === Internal Helper Functions ===
-
-    /// @dev Internal function to set fee configuration
-    /// @param _polSharePpm Protocol-owned liquidity share in PPM
-    /// @param _fullRangeSharePpm Full range incentive share in PPM
-    /// @param _lpSharePpm LP share in PPM
-    /// @param _minimumTradingFeePpm Minimum trading fee in PPM
-    /// @param _feeClaimThresholdPpm Fee claim threshold in PPM
-    function _setFeeConfig(
-        uint256 _polSharePpm,
-        uint256 _fullRangeSharePpm,
-        uint256 _lpSharePpm,
-        uint256 _minimumTradingFeePpm,
-        uint256 _feeClaimThresholdPpm
-    ) internal {
-        // Validate inputs
-        if (_polSharePpm + _fullRangeSharePpm + _lpSharePpm != 1_000_000) {
-            revert Errors.AllocationSumError(_polSharePpm, _fullRangeSharePpm, _lpSharePpm, 1_000_000);
-        }
-
-        if (_minimumTradingFeePpm > 100_000) {
-            revert Errors.ParameterOutOfRange(_minimumTradingFeePpm, 0, 100_000);
-        }
-
-        if (_feeClaimThresholdPpm > 100_000) {
-            revert Errors.ParameterOutOfRange(_feeClaimThresholdPpm, 0, 100_000);
-        }
-
-        // Update state variables
-        _defaultFeeConfig = FeeConfig({
-            polSharePpm: uint24(_polSharePpm),
-            fullRangeSharePpm: uint24(_fullRangeSharePpm),
-            lpSharePpm: uint24(_lpSharePpm),
-            minimumTradingFeePpm: uint24(_minimumTradingFeePpm)
-        });
-
-        // Emit event
-        emit FeeConfigChanged(_polSharePpm, _fullRangeSharePpm, _lpSharePpm, _minimumTradingFeePpm);
-        emit PolicySet(PoolId.wrap(bytes32(0)), PolicyType.FEE, address(0), msg.sender);
     }
 }

@@ -12,8 +12,4 @@ library PrecisionConstants {
     /// @notice Parts-per-million scaling factor (10^6)
     /// @dev Used for fee percentages, allocation shares, and other percentage-based calculations
     uint256 internal constant PPM_SCALE = 1e6;
-
-    /// @notice 100% represented in PPM (1,000,000)
-    /// @dev Can be used for percentage calculations or validations
-    uint256 internal constant ONE_HUNDRED_PERCENT_PPM = 1e6;
 }

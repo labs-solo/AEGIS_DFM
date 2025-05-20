@@ -189,13 +189,20 @@ contract Spot is BaseHook, ISpot {
             dynamicFee = base + surge; // ppm (1e-6)
         }
 
+        // Store pre-swap tick for oracle update in afterSwap
+        (, int24 preSwapTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+        assembly {
+            tstore(poolId, dynamicFee)
+            tstore(add(poolId, 1), preSwapTick) // use next slot for pre-swap tick
+        }
+
         // Calculate protocol fee based on policy
-        (uint256 protocolFeePPM,,) = policyManager.getFeeAllocations(poolId);
+        uint256 protocolFeePPM = policyManager.getPoolPOLShare(poolId);
 
         // Handle exactIn case in beforeSwap
-        if (params.amountSpecified > 0 && protocolFeePPM > 0) {
+        if (params.amountSpecified < 0 && protocolFeePPM > 0) {
             // exactIn case - we can charge the fee here
-            uint256 absAmount = uint256(params.amountSpecified);
+            uint256 absAmount = uint256(-params.amountSpecified);
             Currency feeCurrency = params.zeroForOne ? key.currency0 : key.currency1;
 
             // Calculate hook fee amount
@@ -224,13 +231,6 @@ contract Spot is BaseHook, ISpot {
             }
         }
 
-        // Store pre-swap tick for oracle update in afterSwap
-        (, int24 preSwapTick,,) = StateLibrary.getSlot0(poolManager, poolId);
-        assembly {
-            tstore(poolId, dynamicFee)
-            tstore(add(poolId, 1), preSwapTick) // use next slot for pre-swap tick
-        }
-
         // If we didn't charge a fee, return zero delta
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, dynamicFee);
     }
@@ -245,19 +245,33 @@ contract Spot is BaseHook, ISpot {
     ) internal override returns (bytes4, int128) {
         PoolId poolId = key.toId();
 
-        // Handle exactOut case in afterSwap (params.amountSpecified < 0)
-        if (params.amountSpecified < 0) {
+        // NOTE: we do oracle updates this regardless of manual fee setting
+
+        // Get pre-swap tick from transient storage
+        int24 preSwapTick;
+        assembly {
+            preSwapTick := tload(add(poolId, 1))
+        }
+
+        // Push observation to oracle & check cap
+        bool capped = truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick);
+
+        // Notify Dynamic Fee Manager about the oracle update
+        dynamicFeeManager.notifyOracleUpdate{gas: GAS_STIPEND}(poolId, capped);
+
+        // Handle exactOut case in afterSwap (params.amountSpecified > 0)
+        if (params.amountSpecified > 0) {
             // Get protocol fee percentage
-            (uint256 protocolFeePPM,,) = policyManager.getFeeAllocations(poolId);
+            uint256 protocolFeePPM = policyManager.getPoolPOLShare(poolId);
 
             if (protocolFeePPM > 0) {
                 // For exactOut, the input token is the unspecified token
-                bool zeroIsInput = !params.zeroForOne;
+                bool zeroIsInput = params.zeroForOne;
                 Currency feeCurrency = zeroIsInput ? key.currency0 : key.currency1;
 
                 // Get the actual input amount (should be positive) from the delta
                 int128 inputAmount = zeroIsInput ? delta.amount0() : delta.amount1();
-                if (inputAmount <= 0) revert Errors.InvalidSwapDelta(); // NOTE: invariant check
+                if (inputAmount > 0) revert Errors.InvalidSwapDelta(); // NOTE: invariant check
 
                 // Get the dynamic fee(could be actual base+surge or manual)
                 uint24 dynamicFee;
@@ -266,7 +280,7 @@ contract Spot is BaseHook, ISpot {
                 }
 
                 // Calculate hook fee
-                uint256 absInputAmount = uint256(uint128(inputAmount));
+                uint256 absInputAmount = uint256(uint128(-inputAmount));
                 uint256 swapFeeAmount = FullMath.mulDiv(absInputAmount, dynamicFee, 1e6);
                 uint256 hookFeeAmount = FullMath.mulDiv(swapFeeAmount, protocolFeePPM, 1e6);
 
@@ -286,25 +300,16 @@ contract Spot is BaseHook, ISpot {
                     }
                     liquidityManager.notifyFee(key, fee0, fee1);
 
+                    // Try to reinvest if not paused
+                    if (!reinvestmentPaused) {
+                        liquidityManager.reinvest(key);
+                    }
+
                     // Return the fee amount we took
                     return (BaseHook.afterSwap.selector, int128(int256(hookFeeAmount)));
                 }
             }
         }
-
-        // NOTE: we do oracle updates this regardless of manual fee setting
-
-        // Get pre-swap tick from transient storage
-        int24 preSwapTick;
-        assembly {
-            preSwapTick := tload(add(poolId, 1))
-        }
-
-        // Push observation to oracle & check cap
-        bool capped = truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick);
-
-        // Notify Dynamic Fee Manager about the oracle update
-        dynamicFeeManager.notifyOracleUpdate{gas: GAS_STIPEND}(poolId, capped);
 
         // Try to reinvest if not paused
         if (!reinvestmentPaused) {

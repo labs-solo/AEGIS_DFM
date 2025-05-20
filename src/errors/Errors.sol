@@ -25,6 +25,7 @@ library Errors {
     error HookAddressAlreadySet();
     error InvalidHookAddress();
     error ZeroDestination();
+    error NotPoolManager();
 
     // --- Validation & Input ---
     error InvalidHookAuthorization(address expected, address actual);
@@ -144,7 +145,7 @@ library Errors {
     error PolicyExpired();
     error PolicyNotActive();
     error PolicyNotImplemented();
-    error AllocationSumError(uint256 polShare, uint256 fullRangeShare, uint256 lpShare, uint256 expected);
+    error AllocationSumError(uint256 polShare, uint256 expected);
 
     // --- Hooks ---
     error HookNotFound();
@@ -183,7 +184,7 @@ library Errors {
     error NonzeroNativeValue();
     error InsufficientETH(uint256 required, uint256 provided);
     error InsufficientContractBalance(uint256 required, uint256 available);
-    error ETHTransferFailed(address to, uint256 amount);
+    error ETHTransferFailed();
     error TransferFailed();
     error TransferFromFailed();
     error InsufficientReserves();

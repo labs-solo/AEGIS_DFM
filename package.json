@@ -18,8 +18,8 @@
     "test": "./scripts/test.sh",
     "format": "forge fmt",
     "clean": "forge clean",
-    "t:i": "forge test --match-path test/integration/**/*.t.sol",
-    "t:u": "forge test --match-path test/unit/**/*.t.sol",
+    "t:i": "forge test --match-path \"test/revamped/integration/**/*.t.sol\"",
+    "t:u": "forge test --match-path \"test/legacy/unit/**/*.t.sol\"",
     "t:iu": "pnpm t:i && pnpm t:u"
   },
   "devDependencies": {

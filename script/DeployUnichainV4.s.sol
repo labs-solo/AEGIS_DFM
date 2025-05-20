@@ -23,7 +23,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {IPoolPolicyManager} from "../src/interfaces/IPoolPolicyManager.sol";
-import {DummyFullRangeHook} from "../test/integration/utils/DummyFullRangeHook.sol";
+import {DummyFullRangeHook} from "test/legacy/integration/utils/DummyFullRangeHook.sol";
 
 // Unused imports removed: Spot, FullRangeDynamicFeeManager, DefaultPoolCreationPolicy, HookMiner, Hooks, IERC20
 
