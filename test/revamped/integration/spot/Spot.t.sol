@@ -257,21 +257,10 @@ contract SpotTest is Base_Test {
         policyManager.setPoolPOLShare(poolId, polShare);
         spot.setReinvestmentPaused(reinvestmentPaused);
 
-        // - - - TODO: remove start - - -
-        console.log("in _testReinvestment 1");
-
         // Donate and do initial reinvestment to setup the NFT and subscribe to notifications
         liquidityManager.donate(poolKey, 1e10, 1e10);
-
-        console.log("in _testReinvestment 2");
-
         vm.warp(block.timestamp + advanceTime);
-
         liquidityManager.reinvest(poolKey);
-
-        console.log("in _testReinvestment 3");
-
-        // - - - TODO: remove end - - -
 
         vm.stopPrank();
 
@@ -305,8 +294,6 @@ contract SpotTest is Base_Test {
                 sqrtPriceLimitX96: zeroForOne ? MIN_PRICE_LIMIT : MAX_PRICE_LIMIT
             });
 
-            console.log("- - - - swap");
-
             swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
             vm.stopPrank();
 
@@ -315,8 +302,6 @@ contract SpotTest is Base_Test {
                 vm.warp(block.timestamp + advanceTime);
             }
         }
-
-        console.log("t 2");
 
         // Check intermediate state - fees should have accumulated
         (uint256 pendingFee0Mid, uint256 pendingFee1Mid) = liquidityManager.getPendingFees(poolId);
@@ -348,12 +333,8 @@ contract SpotTest is Base_Test {
             );
         }
 
-        console.log("t 3");
-
         // Try manual reinvestment
         bool reinvestResult = liquidityManager.reinvest(poolKey);
-
-        console.log("t 4");
 
         // Check if result matches expectation
         assertEq(reinvestResult, expectSuccess, "Reinvestment result doesn't match expectation");

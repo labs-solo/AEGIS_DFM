@@ -129,9 +129,6 @@ contract Spot is BaseHook, ISpot {
         emit ReinvestmentPausedChanged(paused);
     }
 
-    // Add this field to track if we've approved FRLM for each token
-    mapping(address => bool) private _tokenApprovedToFRLM;
-
     /// @inheritdoc ISpot
     function depositToFRLM(
         PoolKey calldata key,
@@ -326,19 +323,9 @@ contract Spot is BaseHook, ISpot {
         returns (bytes4)
     {
         PoolId poolId = key.toId();
-        if (sqrtPriceX96 == 0) revert Errors.InvalidPrice(sqrtPriceX96);
 
-        // Initialize oracle if possible
-        if (address(truncGeoOracle) != address(0) && address(key.hooks) == address(this)) {
-            truncGeoOracle.enableOracleForPool(key);
-            emit OracleInitialized(poolId, tick, TickMoveGuard.HARD_ABS_CAP);
-        }
-
-        // Initialize dynamic fee manager
-        if (address(dynamicFeeManager) != address(0)) {
-            dynamicFeeManager.initialize(poolId, tick);
-        }
-
+        truncGeoOracle.enableOracleForPool(key);
+        dynamicFeeManager.initialize(poolId, tick);
         return BaseHook.afterInitialize.selector;
     }
 }

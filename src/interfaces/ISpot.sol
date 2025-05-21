@@ -14,12 +14,6 @@ import {TruncGeoOracleMulti} from "../TruncGeoOracleMulti.sol";
 /// @title ISpot
 /// @notice Interface for the Spot hook contract that implements dynamic fees and oracle integration
 interface ISpot is IHooks {
-    /// @notice Emitted when a price oracle is successfully initialized for a pool
-    /// @param poolId The ID of the pool that had its oracle initialized
-    /// @param initialTick The initial tick value recorded at oracle initialization
-    /// @param maxAbsTickMove The maximum absolute tick movement allowed before triggering surge pricing
-    event OracleInitialized(PoolId indexed poolId, int24 initialTick, int24 maxAbsTickMove);
-
     /// @notice Emitted when policy initialization fails for a pool
     /// @param poolId The ID of the pool where policy initialization was attempted
     /// @param reason The string explanation of why initialization failed
