@@ -22,6 +22,9 @@ import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
 contract PoolPolicyManager is IPoolPolicyManager, Owned {
     // === Constants ===
 
+    uint24 private constant MIN_TRADING_FEE = 100; // 0.01%
+    uint24 private constant MAX_TRADING_FEE = 50_000; // 5%
+
     /// @notice Maximum step for base fee updates (10% per step)
     uint32 private constant MAX_STEP_PPM = 100_000;
 
@@ -55,7 +58,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     // === State Variables ===
 
-    /// @notice Global dynamic fee configuration
+    /// @notice Global dynamic fee configuration - NOTE: essentially immutable
     DynamicFeeConfig private _defaultDynamicFeeConfig;
 
     /// @notice Manual fee override per pool (if non-zero)
@@ -82,33 +85,19 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @notice Linear decay half-life for the budget counter (seconds)
     uint32 private _capBudgetDecayWindow;
 
-    /// @notice Immutable min base fee
-    uint24 public immutable minBaseFeePpm;
-
-    /// @notice Immutable max base fee
-    uint24 public immutable maxBaseFeePpm;
-
     /// @notice Constructor initializes the policy manager with default values
     /// @param _governance The owner of the contract
     /// @param _dailyBudget Initial daily budget
-    /// @param _minTradingFee Minimum trading fee
-    /// @param _maxTradingFee Maximum trading fee
-    constructor(address _governance, uint256 _dailyBudget, uint24 _minTradingFee, uint24 _maxTradingFee)
-        Owned(_governance)
-    {
+    constructor(address _governance, uint256 _dailyBudget) Owned(_governance) {
         if (_governance == address(0)) revert Errors.ZeroAddress();
-
-        // Initialize immutables
-        minBaseFeePpm = _minTradingFee;
-        maxBaseFeePpm = _maxTradingFee;
 
         // Initialize default dynamic fee configuration
         _defaultDynamicFeeConfig = DynamicFeeConfig({
             targetCapsPerDay: 1,
             capBudgetDecayWindow: 15_552_000, // 180 days
             freqScaling: 1e18, // 1x
-            minBaseFeePpm: _minTradingFee,
-            maxBaseFeePpm: _maxTradingFee,
+            minBaseFeePpm: MIN_TRADING_FEE, // NOTE: we just load these constants for consistency
+            maxBaseFeePpm: MAX_TRADING_FEE,
             surgeDecayPeriodSeconds: 3600, // 1 hour
             surgeFeeMultiplierPpm: 3_000_000 // 300%
         });
@@ -133,7 +122,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
         emit POLShareSet(oldShare, newPolSharePpm);
         emit PoolPOLShareChanged(poolId, newPolSharePpm);
-        emit PolicySet(poolId, PolicyType.FEE, address(uint160(newPolSharePpm)), msg.sender);
+        emit PolicySet(poolId, PolicyType.FEE);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -150,16 +139,15 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @inheritdoc IPoolPolicyManager
     function setManualFee(PoolId poolId, uint24 manualFee) external override onlyOwner {
-        // Validate fee is within range
-        if (manualFee < minBaseFeePpm || manualFee > maxBaseFeePpm) {
-            revert Errors.ParameterOutOfRange(manualFee, minBaseFeePpm, maxBaseFeePpm);
+        if (manualFee < MIN_TRADING_FEE || manualFee > MAX_TRADING_FEE) {
+            revert Errors.ParameterOutOfRange(manualFee, MIN_TRADING_FEE, MAX_TRADING_FEE);
         }
 
         _poolManualFee[poolId] = manualFee;
         _hasPoolManualFee[poolId] = true;
 
         emit ManualFeeSet(poolId, manualFee);
-        emit PolicySet(poolId, PolicyType.FEE, address(uint160(manualFee)), msg.sender);
+        emit PolicySet(poolId, PolicyType.FEE);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -169,7 +157,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
             _hasPoolManualFee[poolId] = false;
 
             emit ManualFeeSet(poolId, 0);
-            emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
+            emit PolicySet(poolId, PolicyType.FEE);
         }
     }
 
@@ -184,19 +172,19 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function getMinBaseFee(PoolId poolId) external view override returns (uint256) {
+    function getMinBaseFee(PoolId poolId) external view override returns (uint24) {
         if (_poolDynamicFeeConfig[poolId].minBaseFeePpm != 0) {
             return _poolDynamicFeeConfig[poolId].minBaseFeePpm;
         }
-        return minBaseFeePpm;
+        return MIN_TRADING_FEE;
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function getMaxBaseFee(PoolId poolId) external view override returns (uint256) {
+    function getMaxBaseFee(PoolId poolId) external view override returns (uint24) {
         if (_poolDynamicFeeConfig[poolId].maxBaseFeePpm != 0) {
             return _poolDynamicFeeConfig[poolId].maxBaseFeePpm;
         }
-        return maxBaseFeePpm;
+        return MAX_TRADING_FEE;
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -224,7 +212,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function getDailyBudgetPpm(PoolId poolId) external view override returns (uint32) {
+    function getDailyBudgetPpm(PoolId) external view override returns (uint32) {
         // TODO: consider making this per pool
         return _capBudgetDailyPpm;
     }
@@ -276,14 +264,23 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     // === Dynamic Fee Configuration Setters ===
 
     /// @inheritdoc IPoolPolicyManager
-    function setMaxBaseFee(PoolId poolId, uint256 f) external override onlyOwner {
-        if (f == 0) revert Errors.ParameterOutOfRange(f, 1, type(uint24).max);
+    function setMinBaseFee(PoolId poolId, uint24 newMinFee) external override onlyOwner {
+        uint24 maxFee = this.getMaxBaseFee(poolId);
+        if (newMinFee < MIN_TRADING_FEE || newMinFee >= maxFee) {
+            revert PolicyManagerErrors.InvalidFeeRange(newMinFee, MIN_TRADING_FEE, maxFee);
+        }
+        _poolDynamicFeeConfig[poolId].minBaseFeePpm = newMinFee;
+        emit PolicySet(poolId, PolicyType.FEE);
+    }
 
-        uint256 minFee = this.getMinBaseFee(poolId);
-        if (f < minFee) revert PolicyManagerErrors.InvalidFeeRange(uint24(f), uint24(minFee), maxBaseFeePpm);
-
-        _poolDynamicFeeConfig[poolId].maxBaseFeePpm = uint24(f);
-        emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
+    /// @inheritdoc IPoolPolicyManager
+    function setMaxBaseFee(PoolId poolId, uint24 newMaxFee) external override onlyOwner {
+        uint24 minFee = this.getMinBaseFee(poolId);
+        if (newMaxFee < minFee || newMaxFee > MAX_TRADING_FEE) {
+            revert PolicyManagerErrors.InvalidFeeRange(newMaxFee, minFee, MAX_TRADING_FEE);
+        }
+        _poolDynamicFeeConfig[poolId].maxBaseFeePpm = newMaxFee;
+        emit PolicySet(poolId, PolicyType.FEE);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -291,7 +288,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         if (v == 0 || v > type(uint32).max) revert Errors.ParameterOutOfRange(v, 1, type(uint32).max);
 
         _poolDynamicFeeConfig[poolId].targetCapsPerDay = uint32(v);
-        emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
+        emit PolicySet(poolId, PolicyType.FEE);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -299,7 +296,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         if (w == 0 || w > type(uint32).max) revert Errors.ParameterOutOfRange(w, 1, type(uint32).max);
 
         _poolDynamicFeeConfig[poolId].capBudgetDecayWindow = uint32(w);
-        emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
+        emit PolicySet(poolId, PolicyType.FEE);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -307,18 +304,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         if (s == 0) revert Errors.ParameterOutOfRange(s, 1, type(uint256).max);
 
         _poolDynamicFeeConfig[poolId].freqScaling = s;
-        emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
-    }
-
-    /// @inheritdoc IPoolPolicyManager
-    function setMinBaseFee(PoolId poolId, uint256 f) external override onlyOwner {
-        if (f == 0) revert Errors.ParameterOutOfRange(f, 1, type(uint24).max);
-
-        uint256 maxFee = this.getMaxBaseFee(poolId);
-        if (f > maxFee) revert PolicyManagerErrors.InvalidFeeRange(uint24(f), minBaseFeePpm, uint24(maxFee));
-
-        _poolDynamicFeeConfig[poolId].minBaseFeePpm = uint24(f);
-        emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
+        emit PolicySet(poolId, PolicyType.FEE);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -327,7 +313,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         if (s > 1 days) revert Errors.ParameterOutOfRange(s, 60, 1 days);
 
         _poolDynamicFeeConfig[poolId].surgeDecayPeriodSeconds = uint32(s);
-        emit PolicySet(poolId, PolicyType.FEE, address(uint160(s)), msg.sender);
+        emit PolicySet(poolId, PolicyType.FEE);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -336,7 +322,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         if (multiplier > 3_000_000) revert Errors.ParameterOutOfRange(multiplier, 1, 3_000_000);
 
         _poolDynamicFeeConfig[poolId].surgeFeeMultiplierPpm = multiplier;
-        emit PolicySet(poolId, PolicyType.FEE, address(uint160(multiplier)), msg.sender);
+        emit PolicySet(poolId, PolicyType.FEE);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -346,7 +332,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         _poolBaseFeeParams[poolId] = BaseFeeParams({stepPpm: stepPpm, updateIntervalSecs: updateIntervalSecs});
 
         emit BaseFeeParamsSet(poolId, stepPpm, updateIntervalSecs);
-        emit PolicySet(poolId, PolicyType.FEE, address(0), msg.sender);
+        emit PolicySet(poolId, PolicyType.FEE);
     }
 
     /// @inheritdoc IPoolPolicyManager

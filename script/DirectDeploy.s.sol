@@ -105,12 +105,7 @@ contract DirectDeploy is Script {
             uint256 initialProtocolFeePercentage = 0; // 0%
             address initialFeeCollector = deployer;
 
-            policyManager = new PoolPolicyManager(
-                msg.sender,
-                0,
-                EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
-                EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
-            );
+            policyManager = new PoolPolicyManager(msg.sender, 0);
             console.log("PolicyManager deployed at: %s", address(policyManager));
         }
 

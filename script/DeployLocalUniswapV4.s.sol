@@ -114,12 +114,7 @@ contract DeployLocalUniswapV4 is Script {
         supportedTickSpacings[0] = 10;
         supportedTickSpacings[1] = 60;
         supportedTickSpacings[2] = 200;
-        policyManager = new PoolPolicyManager(
-            msg.sender,
-            0,
-            EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
-            EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
-        );
+        policyManager = new PoolPolicyManager(msg.sender, 0);
         console.log("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
         // Step 2.5: Deploy Oracle now that we have the policyManager

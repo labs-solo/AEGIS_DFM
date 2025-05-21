@@ -64,9 +64,7 @@ contract HookValidate is Test {
         // First deploy PoolPolicyManager with required args
         PoolPolicyManager policyManager = new PoolPolicyManager(
             address(this), // governance
-            1_000_000, // dailyBudget (100%)
-            100, // minTradingFee (0.01%)
-            10_000 // maxTradingFee (1%)
+            1_000_000 // dailyBudget (100%)
         );
 
         // Deploy real dependencies for PositionManager

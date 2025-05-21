@@ -32,9 +32,7 @@ contract PoolPolicyManager_Admin_Test is Test {
 
         ppm = new PoolPolicyManager(
             OWNER,
-            1_000_000, // dailyBudget
-            EXPECTED_MIN_DYNAMIC_FEE,
-            EXPECTED_MAX_DYNAMIC_FEE
+            1_000_000 // dailyBudget
         );
     }
 

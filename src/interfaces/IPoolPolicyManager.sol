@@ -29,11 +29,7 @@ interface IPoolPolicyManager {
     /// @notice Emitted when a policy is set for a pool
     /// @param poolId The ID of the pool
     /// @param policyType The type of policy being set
-    /// @param implementation The address of the implementation (or address-encoded parameter)
-    /// @param setter The address that set the policy
-    event PolicySet(
-        PoolId indexed poolId, PolicyType indexed policyType, address implementation, address indexed setter
-    );
+    event PolicySet(PoolId indexed poolId, PolicyType indexed policyType);
 
     /// @notice Emitted when a pool is initialized
     /// @param poolId The ID of the pool
@@ -129,12 +125,12 @@ interface IPoolPolicyManager {
     /// @notice Returns the minimum base fee in PPM for the given pool
     /// @param poolId The pool ID
     /// @return Minimum base fee in PPM
-    function getMinBaseFee(PoolId poolId) external view returns (uint256);
+    function getMinBaseFee(PoolId poolId) external view returns (uint24);
 
     /// @notice Returns the maximum base fee in PPM for the given pool
     /// @param poolId The pool ID
     /// @return Maximum base fee in PPM
-    function getMaxBaseFee(PoolId poolId) external view returns (uint256);
+    function getMaxBaseFee(PoolId poolId) external view returns (uint24);
 
     /// @notice Returns the surge fee multiplier in PPM for the given pool
     /// @param poolId The pool ID
@@ -192,12 +188,12 @@ interface IPoolPolicyManager {
     /// @notice Sets the minimum base fee for a pool
     /// @param poolId The pool ID
     /// @param minBaseFee The minimum base fee in PPM
-    function setMinBaseFee(PoolId poolId, uint256 minBaseFee) external;
+    function setMinBaseFee(PoolId poolId, uint24 minBaseFee) external;
 
     /// @notice Sets the maximum base fee for a pool
     /// @param poolId The pool ID
     /// @param maxBaseFee The maximum base fee in PPM
-    function setMaxBaseFee(PoolId poolId, uint256 maxBaseFee) external;
+    function setMaxBaseFee(PoolId poolId, uint24 maxBaseFee) external;
 
     /// @notice Sets the surge decay period in seconds for a pool
     /// @param poolId The pool ID

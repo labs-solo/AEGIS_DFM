@@ -84,9 +84,7 @@ contract DeployUnichainV4 is Script {
         supportedTickSpacings_[2] = 200;
         policyManager = new PoolPolicyManager(
             deployerAddress, // owner
-            0,
-            EXPECTED_MIN_DYNAMIC_FEE, // NEW: min base fee
-            EXPECTED_MAX_DYNAMIC_FEE // NEW: max base fee
+            0
         );
 
         // ─── NEW flow: deploy hook first, then pass address to oracle ───

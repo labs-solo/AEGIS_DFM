@@ -35,9 +35,7 @@ contract PoolPolicyManager_Fee is Test {
 
         ppm = new PoolPolicyManager(
             OWNER, // governance / owner
-            2_000_000, // Updated dailyBudget to match production
-            EXPECTED_MIN_DYNAMIC_FEE,
-            EXPECTED_MAX_DYNAMIC_FEE
+            2_000_000 // Updated dailyBudget to match production
         );
     }
 

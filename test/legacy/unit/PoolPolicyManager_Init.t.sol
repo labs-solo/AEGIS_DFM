@@ -26,9 +26,7 @@ contract PoolPolicyManagerInitTest is Test {
 
         ppm = new PoolPolicyManager(
             OWNER, // governance / owner
-            1_000_000, // daily budget (ppm)
-            EXPECTED_MIN_DYNAMIC_FEE, // min base fee
-            EXPECTED_MAX_DYNAMIC_FEE // max base fee
+            1_000_000 // daily budget (ppm)
         );
     }
 

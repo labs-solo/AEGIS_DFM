@@ -56,11 +56,6 @@ contract Spot is BaseHook, ISpot {
     using BalanceDeltaLibrary for BalanceDelta;
     using CustomRevert for bytes4;
 
-    // - - - Constants - - -
-
-    // Gas-stipend for dynamic-fee-manager callback
-    uint256 private constant GAS_STIPEND = 100_000;
-
     // - - - State - - -
 
     PoolPolicyManager public immutable override policyManager;
@@ -161,7 +156,7 @@ contract Spot is BaseHook, ISpot {
     // - - - Hook Callback Implementations - - -
 
     /// @notice called in BaseHook.beforeSwap
-    function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
+    function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata)
         internal
         override
         returns (bytes4, BeforeSwapDelta, uint24)
@@ -235,7 +230,7 @@ contract Spot is BaseHook, ISpot {
         PoolKey calldata key,
         SwapParams calldata params,
         BalanceDelta delta,
-        bytes calldata hookData
+        bytes calldata
     ) internal override returns (bytes4, int128) {
         PoolId poolId = key.toId();
 
@@ -251,7 +246,7 @@ contract Spot is BaseHook, ISpot {
         bool capped = truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick);
 
         // Notify Dynamic Fee Manager about the oracle update
-        dynamicFeeManager.notifyOracleUpdate{gas: GAS_STIPEND}(poolId, capped);
+        dynamicFeeManager.notifyOracleUpdate(poolId, capped);
 
         // Handle exactOut case in afterSwap (params.amountSpecified > 0)
         if (params.amountSpecified > 0) {
@@ -314,11 +309,7 @@ contract Spot is BaseHook, ISpot {
     }
 
     /// @notice called in BaseHook.afterInitialize
-    function _afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
-        internal
-        override
-        returns (bytes4)
-    {
+    function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick) internal override returns (bytes4) {
         PoolId poolId = key.toId();
 
         truncGeoOracle.enableOracleForPool(key);

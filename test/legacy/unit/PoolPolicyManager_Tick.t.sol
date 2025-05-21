@@ -23,7 +23,7 @@ contract PoolPolicyManager_Tick is Test {
 
     /*─────────────────── set-up ───────────────────*/
     function setUp() public {
-        ppm = new PoolPolicyManager(OWNER, 1_000_000, EXPECTED_MIN_DYNAMIC_FEE, EXPECTED_MAX_DYNAMIC_FEE);
+        ppm = new PoolPolicyManager(OWNER, 1_000_000);
     }
 
     /*────────────────── Constructor defaults ──────────────────*/

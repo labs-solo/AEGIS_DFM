@@ -187,21 +187,21 @@ contract MockPolicyManager is IPoolPolicyManager {
         _p[pid] = p;
     }
 
-    function setMinBaseFee(PoolId id, uint256 fee) external {
+    function setMinBaseFee(PoolId id, uint24 fee) external {
         _p[id].minBaseFee = fee;
     }
 
-    function setMaxBaseFee(PoolId id, uint256 fee) external {
+    function setMaxBaseFee(PoolId id, uint24 fee) external {
         _p[id].maxBaseFee = fee;
     }
 
     /* ----------- getters used by the oracle ----------- */
-    function getMinBaseFee(PoolId id) external view override returns (uint256) {
-        return _p[id].minBaseFee != 0 ? _p[id].minBaseFee : 100;
+    function getMinBaseFee(PoolId id) external view override returns (uint24) {
+        return uint24(_p[id].minBaseFee != 0 ? _p[id].minBaseFee : 100);
     }
 
-    function getMaxBaseFee(PoolId id) external view override returns (uint256) {
-        return _p[id].maxBaseFee != 0 ? _p[id].maxBaseFee : 10_000;
+    function getMaxBaseFee(PoolId id) external view override returns (uint24) {
+        return uint24(_p[id].maxBaseFee != 0 ? _p[id].maxBaseFee : 10_000);
     }
 
     function getBaseFeeStepPpm(PoolId id) external view override returns (uint32) {

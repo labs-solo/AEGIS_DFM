@@ -33,7 +33,7 @@ contract PoolPolicyManager_Step is Test {
         supportedTickSpacings[0] = 1;
         supportedTickSpacings[1] = 10;
 
-        ppm = new PoolPolicyManager(OWNER, 1_000_000, EXPECTED_MIN_DYNAMIC_FEE, EXPECTED_MAX_DYNAMIC_FEE);
+        ppm = new PoolPolicyManager(OWNER, 1_000_000);
     }
 
     /*────────────────── Defaults ──────────────────*/

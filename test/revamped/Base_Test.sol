@@ -89,7 +89,7 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
         // Create the policy manager with proper parameters
         vm.startPrank(owner);
         // Constructor(governance, dailyBudget, minTradingFee, maxTradingFee)
-        policyManager = new PoolPolicyManager(owner, 1_000_000, 100, 10_000);
+        policyManager = new PoolPolicyManager(owner, 1_000_000);
         vm.stopPrank();
 
         // Define the permissions for Spot hook

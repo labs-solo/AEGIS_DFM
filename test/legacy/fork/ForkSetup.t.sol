@@ -193,9 +193,7 @@ contract ForkSetup is Test {
         emit log_string("Deploying PolicyManager...");
         PoolPolicyManager policyManagerImpl = new PoolPolicyManager(
             deployerEOA,
-            EXPECTED_DAILY_BUDGET, // dailyBudget
-            EXPECTED_MIN_DYNAMIC_FEE,
-            EXPECTED_MAX_DYNAMIC_FEE
+            EXPECTED_DAILY_BUDGET // dailyBudget
         );
         policyManager = policyManagerImpl; // Use concrete type
         emit log_named_address("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));

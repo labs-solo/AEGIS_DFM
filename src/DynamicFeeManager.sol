@@ -203,10 +203,6 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         uint32 nowTs = uint32(block.timestamp);
         uint256 w1 = w; // scratch copy (cheaper mutations)
 
-        // ── cache fee snapshot *before* state mutation ───────────────────────
-        uint256 oldBase = _baseFee(poolId); // Uses direct call internally now
-        uint256 oldSurge = _surge(poolId, w1); // Uses direct call internally now
-
         // ---- CAP-event handling ---------------------------------------
         if (tickWasCapped) {
             w1 = w1.setInCap(true).setCapSt(uint40(nowTs));

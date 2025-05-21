@@ -45,7 +45,7 @@ library TruncatedOracle {
      */
     function transform(Observation memory last, uint32 blockTimestamp, int24 tick, uint128 liquidity)
         internal
-        view
+        pure
         returns (Observation memory)
     {
         unchecked {

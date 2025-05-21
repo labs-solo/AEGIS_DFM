@@ -1026,7 +1026,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
     }
 
     /// @inheritdoc ISubscriber
-    function notifyModifyLiquidity(uint256 tokenId, int256 liquidityChange, BalanceDelta feesAccrued)
+    function notifyModifyLiquidity(uint256 tokenId, int256, BalanceDelta feesAccrued)
         external
         override
         onlyPositionManager
