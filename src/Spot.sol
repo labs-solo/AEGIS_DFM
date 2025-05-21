@@ -139,10 +139,7 @@ contract Spot is BaseHook, ISpot {
         address recipient
     ) external payable override onlyPolicyOwner returns (uint256 shares, uint256 amount0, uint256 amount1) {
         // Pass msg.sender as the payer to avoid token transfers through Spot
-        uint256 unusedAmount0;
-        uint256 unusedAmount1;
-
-        (shares, amount0, amount1, unusedAmount0, unusedAmount1) = liquidityManager.deposit{value: msg.value}(
+        (shares, amount0, amount1,,) = liquidityManager.deposit{value: msg.value}(
             key, amount0Desired, amount1Desired, amount0Min, amount1Min, recipient, msg.sender
         );
 

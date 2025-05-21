@@ -877,8 +877,8 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
     /// @param amount1Min Minimum amount of token1 to receive
     /// @param sharesOwner Address that owns the shares to be burned
     /// @param recipient Address to receive the withdrawn tokens
-    /// @return amount0 Amount of token0 withdrawn
-    /// @return amount1 Amount of token1 withdrawn
+    /// @return principal0 Amount of token0 withdrawn
+    /// @return principal1 Amount of token1 withdrawn
     function _withdrawLiquidity(
         PoolKey calldata key,
         uint256 sharesToBurn,
@@ -886,7 +886,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         uint256 amount1Min,
         address sharesOwner,
         address recipient
-    ) internal returns (uint256 amount0, uint256 amount1) {
+    ) internal returns (uint256 principal0, uint256 principal1) {
         // Get the pool ID
         PoolId poolId = key.toId();
 
@@ -949,7 +949,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         uint160 sqrtPriceUpperX96 = TickMath.getSqrtPriceAtTick(maxTick);
 
         // Calculate the expected principal amounts based on the liquidity being withdrawn
-        (uint256 principal0, uint256 principal1) = LiquidityAmounts.getAmountsForLiquidity(
+        (principal0, principal1) = LiquidityAmounts.getAmountsForLiquidity(
             sqrtPriceX96, sqrtPriceLowerX96, sqrtPriceUpperX96, uint128(sharesToBurn)
         );
 
@@ -959,31 +959,23 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
 
         if (received0 > principal0) {
             fee0 = received0 - principal0;
-            received0 = principal0;
         }
 
         if (received1 > principal1) {
             fee1 = received1 - principal1;
-            received1 = principal1;
         }
 
         // NOTE: we don't need to notify NFT fees as this was already done in notifyModifyLiquidity
 
-        // Burn shares from the specified owner
-        if (sharesOwner == address(this)) {
-            _burn(sharesOwner, poolIdUint, sharesToBurn);
-        } else {
-            _burnFrom(sharesOwner, poolIdUint, sharesToBurn);
-        }
+        // NOTE: ERC6909 claim allowances are essentially unused as msg.sender would be Spot
+        // So we don't do _burnFrom
+        _burn(sharesOwner, poolIdUint, sharesToBurn);
 
         // Transfer only the principal tokens to recipient (not the fees)
-        key.currency0.transfer(recipient, received0);
-        key.currency1.transfer(recipient, received1);
+        key.currency0.transfer(recipient, principal0);
+        key.currency1.transfer(recipient, principal1);
 
-        amount0 = received0;
-        amount1 = received1;
-
-        return (amount0, amount1);
+        return (principal0, principal1);
     }
 
     function _handleTokenTransfersFromPayer(
