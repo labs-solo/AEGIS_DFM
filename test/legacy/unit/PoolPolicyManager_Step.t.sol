@@ -20,12 +20,7 @@ contract PoolPolicyManager_Step is Test {
     uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     // Add event definition for testing
-    event PolicySet(
-        PoolId indexed poolId,
-        IPoolPolicyManager.PolicyType indexed policyType,
-        address implementation,
-        address indexed setter
-    );
+    event PolicySet(PoolId indexed poolId, address implementation, address indexed setter);
 
     /*─────────────────── set-up ───────────────────*/
     function setUp() public {
@@ -60,7 +55,7 @@ contract PoolPolicyManager_Step is Test {
         EventTools.expectEmitIf(this, willEmit, true, true, true, false);
         emit BaseFeeParamsSet(pool, 15_000, 2 days);
 
-        EventTools.expectPolicySetIf(this, true, pool, IPoolPolicyManager.PolicyType.FEE, address(0), OWNER);
+        EventTools.expectPolicySetIf(this, true, pool, address(0), OWNER);
 
         vm.prank(OWNER);
         ppm.setBaseFeeParams(pool, 15_000, 2 days);
@@ -90,7 +85,7 @@ contract PoolPolicyManager_Step is Test {
 
         // Set decay to 12h, check event
         vm.expectEmit(true, true, true, true);
-        emit PolicySet(pool, IPoolPolicyManager.PolicyType.FEE, address(uint160(12 hours)), OWNER);
+        emit PolicySet(pool, address(uint160(12 hours)), OWNER);
         vm.prank(OWNER);
         ppm.setSurgeDecayPeriodSeconds(pool, 12 hours);
         assertEq(ppm.getSurgeDecayPeriodSeconds(pool), 12 hours, "Surge decay not set");
@@ -120,7 +115,7 @@ contract PoolPolicyManager_Step is Test {
 
         // Set multiplier to 2x, check event
         vm.expectEmit(true, true, true, true);
-        emit PolicySet(pool, IPoolPolicyManager.PolicyType.FEE, address(uint160(2_000_000)), OWNER);
+        emit PolicySet(pool, address(uint160(2_000_000)), OWNER);
         vm.prank(OWNER);
         ppm.setSurgeFeeMultiplierPpm(pool, 2_000_000);
         assertEq(ppm.getSurgeFeeMultiplierPpm(pool), 2_000_000, "Surge mult not set");

@@ -7,54 +7,12 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
 /// @notice Consolidated interface for all policy types in the Spot system
 /// @dev Combines fee, tick scaling, v-tier, and various other policies into a single interface
 interface IPoolPolicyManager {
-    /// @notice Policy types supported by the system
-    enum PolicyType {
-        FEE, // Manages fee calculation and distribution
-        TICK_SCALING, // Controls tick movement restrictions
-        VTIER, // Validates fee tier and tick spacing combinations
-        REINVESTMENT, // Manages fee reinvestment strategies
-        ORACLE, // Manages oracle behavior and thresholds
-        INTEREST_FEE, // Manages protocol interest fee settings
-        REINVESTOR_AUTH // Manages authorized reinvestor addresses
-
-    }
-
     /// === Events ===
-
-    /// @notice Emitted when fee configuration is changed
-    /// @param polSharePpm Protocol-owned liquidity share in PPM
-    /// @param minimumTradingFeePpm Minimum trading fee in PPM
-    event FeeConfigChanged(uint256 polSharePpm, uint256 minimumTradingFeePpm);
-
-    /// @notice Emitted when a policy is set for a pool
-    /// @param poolId The ID of the pool
-    /// @param policyType The type of policy being set
-    event PolicySet(PoolId indexed poolId, PolicyType indexed policyType);
-
-    /// @notice Emitted when a pool is initialized
-    /// @param poolId The ID of the pool
-    /// @param hook The hook address
-    /// @param initialTick The initial tick
-    event PoolInitialized(PoolId indexed poolId, address hook, int24 initialTick);
 
     /// @notice Emitted when a pool's POL share is changed
     /// @param poolId The ID of the pool
     /// @param polSharePpm The new POL share in PPM
     event PoolPOLShareChanged(PoolId indexed poolId, uint256 polSharePpm);
-
-    /// @notice Emitted when pool-specific POL sharing is enabled or disabled
-    /// @param enabled Whether pool-specific POL sharing is enabled
-    event PoolSpecificPOLSharingEnabled(bool enabled);
-
-    /// @notice Emitted when the POL share is set
-    /// @param oldShare The old POL share
-    /// @param newShare The new POL share
-    event POLShareSet(uint256 oldShare, uint256 newShare);
-
-    /// @notice Emitted when the full range share is set
-    /// @param oldShare The old full range share
-    /// @param newShare The new full range share
-    event FullRangeShareSet(uint256 oldShare, uint256 newShare);
 
     /// @notice Emitted when the daily budget is set
     /// @param newBudget The new daily budget
@@ -70,6 +28,35 @@ interface IPoolPolicyManager {
     /// @param poolId The ID of the pool
     /// @param manualFee The manual fee in PPM
     event ManualFeeSet(PoolId indexed poolId, uint24 manualFee);
+
+    /// @notice Emitted when the minimum base fee is set for a pool
+    /// @param poolId The ID of the pool
+    /// @param minBaseFeePpm The new minimum base fee in PPM
+    event MinBaseFeeSet(PoolId indexed poolId, uint24 minBaseFeePpm);
+
+    /// @notice Emitted when the maximum base fee is set for a pool
+    /// @param poolId The ID of the pool
+    /// @param maxBaseFeePpm The new maximum base fee in PPM
+    event MaxBaseFeeSet(PoolId indexed poolId, uint24 maxBaseFeePpm);
+
+    /// @notice Emitted when the cap budget decay window is set for a pool
+    /// @param poolId The ID of the pool
+    /// @param decayWindow The new decay window in seconds
+    event CapBudgetDecayWindowSet(PoolId indexed poolId, uint32 decayWindow);
+
+    /// @notice Emitted when the surge decay period is set for a pool
+    /// @param poolId The ID of the pool
+    /// @param decayPeriod The new decay period in seconds
+    event SurgeDecayPeriodSet(PoolId indexed poolId, uint32 decayPeriod);
+
+    /// @notice Emitted when the surge fee multiplier is set for a pool
+    /// @param poolId The ID of the pool
+    /// @param multiplier The new multiplier in PPM
+    event SurgeFeeMultiplierSet(PoolId indexed poolId, uint24 multiplier);
+
+    /// @notice Emitted when the global decay window is set
+    /// @param decayWindow The new decay window in seconds
+    event GlobalDecayWindowSet(uint32 decayWindow);
 
     /// === Fee Configuration Functions ===
 
@@ -147,17 +134,12 @@ interface IPoolPolicyManager {
     /// @return Base fee update interval in seconds
     function getBaseFeeUpdateIntervalSeconds(PoolId poolId) external view returns (uint32);
 
-    /// @notice Legacy alias for getBaseFeeStepPpm
-    /// @param poolId The pool ID
-    /// @return Maximum step size in PPM
-    function getMaxStepPpm(PoolId poolId) external view returns (uint32);
-
     /// === Dynamic Fee Setter Functions ===
 
     /// @notice Sets the cap budget decay window for a pool
     /// @param poolId The pool ID
     /// @param decayWindow The decay window in seconds
-    function setCapBudgetDecayWindow(PoolId poolId, uint256 decayWindow) external;
+    function setCapBudgetDecayWindow(PoolId poolId, uint32 decayWindow) external;
 
     /// @notice Sets the minimum base fee for a pool
     /// @param poolId The pool ID
@@ -172,7 +154,7 @@ interface IPoolPolicyManager {
     /// @notice Sets the surge decay period in seconds for a pool
     /// @param poolId The pool ID
     /// @param surgeDecaySeconds The surge decay period in seconds
-    function setSurgeDecayPeriodSeconds(PoolId poolId, uint256 surgeDecaySeconds) external;
+    function setSurgeDecayPeriodSeconds(PoolId poolId, uint32 surgeDecaySeconds) external;
 
     /// @notice Sets the surge fee multiplier for a pool
     /// @param poolId The pool ID

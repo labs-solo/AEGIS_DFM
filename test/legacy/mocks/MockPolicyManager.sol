@@ -59,11 +59,6 @@ contract MockPolicyManager is IPoolPolicyManager {
         _currencySupported[address(0xB0B)] = true;
     }
 
-    // --- Functions already implemented (or deprecated) ---
-    function getMaxStepPpm(PoolId) external pure override returns (uint32) {
-        return _STEP_PPM;
-    }
-
     // NOTE: no longer part of the IPoolPolicyManager interface – keep for test convenience (no override)
     function isTickSpacingSupported(uint24 tickSpacing) external view returns (bool) {
         return _tickSupported[tickSpacing];
@@ -87,10 +82,6 @@ contract MockPolicyManager is IPoolPolicyManager {
     // Deprecated interface methods retained for legacy tests (no override)
     function initializePolicies(PoolId, address, address[] calldata) external {}
     function handlePoolInitialization(PoolId, PoolKey calldata, uint160, int24, address) external {}
-
-    function getPolicy(PoolId, PolicyType) external pure returns (address implementation) {
-        return address(0);
-    }
 
     function getFeeAllocations(PoolId)
         external
@@ -142,7 +133,7 @@ contract MockPolicyManager is IPoolPolicyManager {
     // --- New functions ---
 
     // Stubbed functions required by interface
-    function setCapBudgetDecayWindow(PoolId, uint256) external override {}
+    function setCapBudgetDecayWindow(PoolId, uint32) external override {}
     function setDailyBudgetPpm(uint32) external override {}
     function setDecayWindow(uint32) external override {}
 
@@ -214,6 +205,6 @@ contract MockPolicyManager is IPoolPolicyManager {
     /* ----------- new selector needed by interface ----------- */
 
     // Add missing interface implementations
-    function setSurgeDecayPeriodSeconds(PoolId, uint256) external override {}
+    function setSurgeDecayPeriodSeconds(PoolId, uint32) external override {}
     function setSurgeFeeMultiplierPpm(PoolId, uint24) external override {}
 }

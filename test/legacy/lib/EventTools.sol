@@ -14,50 +14,30 @@ library EventTools {
     // Maximum PPM value (100%)
     uint256 public constant MAX_PPM = 1_000_000;
 
-    event PolicySet(
-        PoolId indexed poolId,
-        IPoolPolicyManager.PolicyType indexed policyType,
-        address implementation,
-        address indexed setter
-    );
+    event PolicySet(PoolId indexed poolId, address implementation, address indexed setter);
 
     /**
      * @notice Expect a PolicySet event unconditionally
      * @param pid The pool ID
-     * @param ptype The policy type
      * @param impl The implementation address
      * @param setter The address setting the policy
      */
-    function expectPolicySet(
-        Test, /* t */
-        PoolId pid,
-        IPoolPolicyManager.PolicyType ptype,
-        address impl,
-        address setter
-    ) internal {
+    function expectPolicySet(Test, /* t */ PoolId pid, address impl, address setter) internal {
         vm.expectEmit(true, true, true, true);
-        emit PolicySet(pid, ptype, impl, setter);
+        emit PolicySet(pid, impl, setter);
     }
 
     /**
      * @notice Conditionally expect a PolicySet event based on a condition
      * @param willEmit Whether the event should be expected
      * @param pid The pool ID
-     * @param ptype The policy type
      * @param impl The implementation address
      * @param setter The address setting the policy
      */
-    function expectPolicySetIf(
-        Test, /* t */
-        bool willEmit,
-        PoolId pid,
-        IPoolPolicyManager.PolicyType ptype,
-        address impl,
-        address setter
-    ) internal {
+    function expectPolicySetIf(Test, /* t */ bool willEmit, PoolId pid, address impl, address setter) internal {
         if (willEmit) {
             vm.expectEmit(true, true, true, true);
-            emit PolicySet(pid, ptype, impl, setter);
+            emit PolicySet(pid, impl, setter);
         }
     }
 

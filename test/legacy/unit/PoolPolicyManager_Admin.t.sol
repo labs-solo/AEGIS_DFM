@@ -48,9 +48,7 @@ contract PoolPolicyManager_Admin_Test is Test {
         emit FeeConfigChanged(newPpm, 0, 1_000_000 - newPpm, EXPECTED_MIN_DYNAMIC_FEE);
 
         // Also expect the PolicySet event
-        EventTools.expectPolicySetIf(
-            this, true, PoolId.wrap(bytes32(0)), IPoolPolicyManager.PolicyType.FEE, address(0), OWNER
-        );
+        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), address(0), OWNER);
 
         vm.prank(OWNER);
         ppm.setPoolPOLShare(PoolId.wrap(bytes32(0)), newPpm);

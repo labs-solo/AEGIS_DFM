@@ -25,9 +25,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     uint24 private constant MIN_TRADING_FEE = 100; // 0.01%
     uint24 private constant MAX_TRADING_FEE = 50_000; // 5%
 
-    uint32 private constant DEFAULT_TARGET_CAPS_PER_DAY = 1;
     uint32 private constant DEFAULT_CAP_BUDGET_DECAY_WINDOW = 15_552_000;
-    uint256 private constant DEFAULT_FREQ_SCALING = 1e18;
     uint32 private constant DEFAULT_SURGE_DECAY_PERIOD_SECONDS = 3600;
     uint24 private constant DEFAULT_SURGE_FEE_MULTIPLIER_PPM = 3_000_000;
 
@@ -100,11 +98,10 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         }
 
         uint256 oldShare = _poolPolSharePpm[poolId];
-        _poolPolSharePpm[poolId] = newPolSharePpm;
-
-        emit POLShareSet(oldShare, newPolSharePpm);
-        emit PoolPOLShareChanged(poolId, newPolSharePpm);
-        emit PolicySet(poolId, PolicyType.FEE);
+        if (oldShare != newPolSharePpm) {
+            _poolPolSharePpm[poolId] = newPolSharePpm;
+            emit PoolPOLShareChanged(poolId, newPolSharePpm);
+        }
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -129,7 +126,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         _hasPoolManualFee[poolId] = true;
 
         emit ManualFeeSet(poolId, manualFee);
-        emit PolicySet(poolId, PolicyType.FEE);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -139,7 +135,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
             _hasPoolManualFee[poolId] = false;
 
             emit ManualFeeSet(poolId, 0);
-            emit PolicySet(poolId, PolicyType.FEE);
         }
     }
 
@@ -192,7 +187,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function getDefaultMaxTicksPerBlock(PoolId) external view override returns (uint24) {
+    function getDefaultMaxTicksPerBlock(PoolId) external pure override returns (uint24) {
         return DEFAULT_MAX_TICKS_PER_BLOCK;
     }
 
@@ -200,11 +195,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     function getBaseFeeStepPpm(PoolId poolId) public view override returns (uint32) {
         uint32 val = _poolBaseFeeParams[poolId].stepPpm;
         return val == 0 ? DEFAULT_BASE_FEE_STEP_PPM : val;
-    }
-
-    /// @inheritdoc IPoolPolicyManager
-    function getMaxStepPpm(PoolId poolId) external view override returns (uint32) {
-        return getBaseFeeStepPpm(poolId);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -222,7 +212,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
             revert PolicyManagerErrors.InvalidFeeRange(newMinFee, MIN_TRADING_FEE, maxFee);
         }
         _poolDynamicFeeConfig[poolId].minBaseFeePpm = newMinFee;
-        emit PolicySet(poolId, PolicyType.FEE);
+        emit MinBaseFeeSet(poolId, newMinFee);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -232,24 +222,28 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
             revert PolicyManagerErrors.InvalidFeeRange(newMaxFee, minFee, MAX_TRADING_FEE);
         }
         _poolDynamicFeeConfig[poolId].maxBaseFeePpm = newMaxFee;
-        emit PolicySet(poolId, PolicyType.FEE);
+        emit MaxBaseFeeSet(poolId, newMaxFee);
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function setCapBudgetDecayWindow(PoolId poolId, uint256 w) external override onlyOwner {
-        if (w == 0 || w > type(uint32).max) revert Errors.ParameterOutOfRange(w, 1, type(uint32).max);
+    function setCapBudgetDecayWindow(PoolId poolId, uint32 newCapBudgetDecayWindow) external override onlyOwner {
+        if (newCapBudgetDecayWindow == 0 || newCapBudgetDecayWindow > type(uint32).max) {
+            revert Errors.ParameterOutOfRange(newCapBudgetDecayWindow, 1, type(uint32).max);
+        }
 
-        _poolDynamicFeeConfig[poolId].capBudgetDecayWindow = uint32(w);
-        emit PolicySet(poolId, PolicyType.FEE);
+        _poolDynamicFeeConfig[poolId].capBudgetDecayWindow = newCapBudgetDecayWindow;
+        emit CapBudgetDecayWindowSet(poolId, newCapBudgetDecayWindow);
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function setSurgeDecayPeriodSeconds(PoolId poolId, uint256 s) external override onlyOwner {
-        if (s < 60) revert Errors.ParameterOutOfRange(s, 60, 1 days);
-        if (s > 1 days) revert Errors.ParameterOutOfRange(s, 60, 1 days);
+    function setSurgeDecayPeriodSeconds(PoolId poolId, uint32 newSurgeDecayPeriodSeconds) external override onlyOwner {
+        if (newSurgeDecayPeriodSeconds < 60) revert Errors.ParameterOutOfRange(newSurgeDecayPeriodSeconds, 60, 1 days);
+        if (newSurgeDecayPeriodSeconds > 1 days) {
+            revert Errors.ParameterOutOfRange(newSurgeDecayPeriodSeconds, 60, 1 days);
+        }
 
-        _poolDynamicFeeConfig[poolId].surgeDecayPeriodSeconds = uint32(s);
-        emit PolicySet(poolId, PolicyType.FEE);
+        _poolDynamicFeeConfig[poolId].surgeDecayPeriodSeconds = newSurgeDecayPeriodSeconds;
+        emit SurgeDecayPeriodSet(poolId, newSurgeDecayPeriodSeconds);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -258,7 +252,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         if (multiplier > 3_000_000) revert Errors.ParameterOutOfRange(multiplier, 1, 3_000_000);
 
         _poolDynamicFeeConfig[poolId].surgeFeeMultiplierPpm = multiplier;
-        emit PolicySet(poolId, PolicyType.FEE);
+        emit SurgeFeeMultiplierSet(poolId, multiplier);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -268,7 +262,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         _poolBaseFeeParams[poolId] = BaseFeeParams({stepPpm: stepPpm, updateIntervalSecs: updateIntervalSecs});
 
         emit BaseFeeParamsSet(poolId, stepPpm, updateIntervalSecs);
-        emit PolicySet(poolId, PolicyType.FEE);
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -280,5 +273,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @inheritdoc IPoolPolicyManager
     function setDecayWindow(uint32 secs) external override onlyOwner {
         _capBudgetDecayWindow = secs;
+        emit GlobalDecayWindowSet(secs);
     }
 }
