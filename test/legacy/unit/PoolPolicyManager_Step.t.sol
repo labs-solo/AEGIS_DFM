@@ -45,7 +45,7 @@ contract PoolPolicyManager_Step is Test {
 
         // Surge defaults
         assertEq(ppm.getSurgeFeeMultiplierPpm(pool), 3_000_000);
-        assertEq(ppm.getSurgeDecaySeconds(pool), 3_600);
+        assertEq(ppm.getSurgeDecayPeriodSeconds(pool), 3_600);
     }
 
     /*──────────────── setBaseFeeParams ────────────────*/
@@ -93,7 +93,7 @@ contract PoolPolicyManager_Step is Test {
         emit PolicySet(pool, IPoolPolicyManager.PolicyType.FEE, address(uint160(12 hours)), OWNER);
         vm.prank(OWNER);
         ppm.setSurgeDecayPeriodSeconds(pool, 12 hours);
-        assertEq(ppm.getSurgeDecaySeconds(pool), 12 hours, "Surge decay not set");
+        assertEq(ppm.getSurgeDecayPeriodSeconds(pool), 12 hours, "Surge decay not set");
     }
 
     function testSurgeDecayTooShortReverts() public {

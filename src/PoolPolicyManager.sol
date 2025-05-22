@@ -25,6 +25,14 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     uint24 private constant MIN_TRADING_FEE = 100; // 0.01%
     uint24 private constant MAX_TRADING_FEE = 50_000; // 5%
 
+    uint32 private constant DEFAULT_TARGET_CAPS_PER_DAY = 1;
+    uint32 private constant DEFAULT_CAP_BUDGET_DECAY_WINDOW = 15_552_000;
+    uint256 private constant DEFAULT_FREQ_SCALING = 1e18;
+    uint32 private constant DEFAULT_SURGE_DECAY_PERIOD_SECONDS = 3600;
+    uint24 private constant DEFAULT_SURGE_FEE_MULTIPLIER_PPM = 3_000_000;
+
+    uint24 private constant DEFAULT_MAX_TICKS_PER_BLOCK = 50;
+
     /// @notice Maximum step for base fee updates (10% per step)
     uint32 private constant MAX_STEP_PPM = 100_000;
 
@@ -34,17 +42,10 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @notice Default base fee update interval (1 day)
     uint32 private constant DEFAULT_BASE_FEE_UPDATE_INTERVAL_SECS = 1 days;
 
-    /// @notice Flag indicating a dynamic fee (0x800000)
-    uint24 private constant DYNAMIC_FEE_FLAG = 0x800000;
-
-    // === Fee Configuration Struct ===
-
     // === Dynamic Fee Configuration Struct ===
 
     struct DynamicFeeConfig {
-        uint32 targetCapsPerDay;
         uint32 capBudgetDecayWindow;
-        uint256 freqScaling;
         uint24 minBaseFeePpm;
         uint24 maxBaseFeePpm;
         uint32 surgeDecayPeriodSeconds;
@@ -57,9 +58,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     // === State Variables ===
-
-    /// @notice Global dynamic fee configuration - NOTE: essentially immutable
-    DynamicFeeConfig private _defaultDynamicFeeConfig;
 
     /// @notice Manual fee override per pool (if non-zero)
     mapping(PoolId => uint24) private _poolManualFee;
@@ -76,9 +74,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @notice Base fee parameters per pool
     mapping(PoolId => BaseFeeParams) private _poolBaseFeeParams;
 
-    /// @notice Default maximum ticks per block
-    uint24 private _defaultMaxTicksPerBlock;
-
     /// @notice Daily budget for CAP events (ppm/day)
     uint32 private _capBudgetDailyPpm;
 
@@ -90,20 +85,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @param _dailyBudget Initial daily budget
     constructor(address _governance, uint256 _dailyBudget) Owned(_governance) {
         if (_governance == address(0)) revert Errors.ZeroAddress();
-
-        // Initialize default dynamic fee configuration
-        _defaultDynamicFeeConfig = DynamicFeeConfig({
-            targetCapsPerDay: 1,
-            capBudgetDecayWindow: 15_552_000, // 180 days
-            freqScaling: 1e18, // 1x
-            minBaseFeePpm: MIN_TRADING_FEE, // NOTE: we just load these constants for consistency
-            maxBaseFeePpm: MAX_TRADING_FEE,
-            surgeDecayPeriodSeconds: 3600, // 1 hour
-            surgeFeeMultiplierPpm: 3_000_000 // 300%
-        });
-
         // Initialize global parameters
-        _defaultMaxTicksPerBlock = 50;
         _capBudgetDailyPpm = _dailyBudget == 0 ? 1_000_000 : uint32(_dailyBudget);
         _capBudgetDecayWindow = 15_552_000; // 180 days
     }
@@ -164,14 +146,6 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     // === Dynamic Fee Configuration Getters ===
 
     /// @inheritdoc IPoolPolicyManager
-    function getFreqScaling(PoolId poolId) external view override returns (uint256) {
-        if (_poolDynamicFeeConfig[poolId].freqScaling != 0) {
-            return _poolDynamicFeeConfig[poolId].freqScaling;
-        }
-        return _defaultDynamicFeeConfig.freqScaling;
-    }
-
-    /// @inheritdoc IPoolPolicyManager
     function getMinBaseFee(PoolId poolId) external view override returns (uint24) {
         if (_poolDynamicFeeConfig[poolId].minBaseFeePpm != 0) {
             return _poolDynamicFeeConfig[poolId].minBaseFeePpm;
@@ -188,11 +162,11 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function getSurgeDecayPeriodSeconds(PoolId poolId) external view override returns (uint256) {
+    function getSurgeDecayPeriodSeconds(PoolId poolId) external view override returns (uint32) {
         if (_poolDynamicFeeConfig[poolId].surgeDecayPeriodSeconds != 0) {
             return _poolDynamicFeeConfig[poolId].surgeDecayPeriodSeconds;
         }
-        return _defaultDynamicFeeConfig.surgeDecayPeriodSeconds;
+        return DEFAULT_SURGE_DECAY_PERIOD_SECONDS;
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -200,15 +174,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         if (_poolDynamicFeeConfig[poolId].surgeFeeMultiplierPpm != 0) {
             return _poolDynamicFeeConfig[poolId].surgeFeeMultiplierPpm;
         }
-        return _defaultDynamicFeeConfig.surgeFeeMultiplierPpm;
-    }
-
-    /// @inheritdoc IPoolPolicyManager
-    function getSurgeDecaySeconds(PoolId poolId) external view override returns (uint32) {
-        if (_poolDynamicFeeConfig[poolId].surgeDecayPeriodSeconds != 0) {
-            return _poolDynamicFeeConfig[poolId].surgeDecayPeriodSeconds;
-        }
-        return _defaultDynamicFeeConfig.surgeDecayPeriodSeconds;
+        return DEFAULT_SURGE_FEE_MULTIPLIER_PPM;
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -227,21 +193,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @inheritdoc IPoolPolicyManager
     function getDefaultMaxTicksPerBlock(PoolId) external view override returns (uint24) {
-        return _defaultMaxTicksPerBlock;
-    }
-
-    /// @inheritdoc IPoolPolicyManager
-    function getBudgetAndWindow(PoolId poolId)
-        external
-        view
-        override
-        returns (uint32 budgetPerDay, uint32 decayWindow)
-    {
-        budgetPerDay = _capBudgetDailyPpm;
-        decayWindow = _poolDynamicFeeConfig[poolId].capBudgetDecayWindow != 0
-            ? _poolDynamicFeeConfig[poolId].capBudgetDecayWindow
-            : _capBudgetDecayWindow;
-        return (budgetPerDay, decayWindow);
+        return DEFAULT_MAX_TICKS_PER_BLOCK;
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -284,26 +236,10 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function setTargetCapsPerDay(PoolId poolId, uint256 v) external override onlyOwner {
-        if (v == 0 || v > type(uint32).max) revert Errors.ParameterOutOfRange(v, 1, type(uint32).max);
-
-        _poolDynamicFeeConfig[poolId].targetCapsPerDay = uint32(v);
-        emit PolicySet(poolId, PolicyType.FEE);
-    }
-
-    /// @inheritdoc IPoolPolicyManager
     function setCapBudgetDecayWindow(PoolId poolId, uint256 w) external override onlyOwner {
         if (w == 0 || w > type(uint32).max) revert Errors.ParameterOutOfRange(w, 1, type(uint32).max);
 
         _poolDynamicFeeConfig[poolId].capBudgetDecayWindow = uint32(w);
-        emit PolicySet(poolId, PolicyType.FEE);
-    }
-
-    /// @inheritdoc IPoolPolicyManager
-    function setFreqScaling(PoolId poolId, uint256 s) external override onlyOwner {
-        if (s == 0) revert Errors.ParameterOutOfRange(s, 1, type(uint256).max);
-
-        _poolDynamicFeeConfig[poolId].freqScaling = s;
         emit PolicySet(poolId, PolicyType.FEE);
     }
 

@@ -131,7 +131,7 @@ contract MockPolicyManager is IPoolPolicyManager {
         return address(0);
     }
 
-    function getSurgeDecayPeriodSeconds(PoolId) external pure override returns (uint256) {
+    function getSurgeDecayPeriodSeconds(PoolId) external pure override returns (uint32) {
         return 0;
     }
 
@@ -139,22 +139,9 @@ contract MockPolicyManager is IPoolPolicyManager {
         return 0;
     }
 
-    function getSurgeDecaySeconds(PoolId) external pure override returns (uint32) {
-        return 0;
-    }
-
-    function getBudgetAndWindow(PoolId) external pure override returns (uint32 budgetPerDay, uint32 decayPeriod) {
-        return (0, 0);
-    }
-
     // --- New functions ---
-    // Updated to match interface (uint256 arg) + override
-    function setFreqScaling(PoolId pid, uint256 scaling) external override {
-        freqScalingPpm[pid] = uint32(scaling);
-    }
 
     // Stubbed functions required by interface
-    function setTargetCapsPerDay(PoolId, uint256) external override {}
     function setCapBudgetDecayWindow(PoolId, uint256) external override {}
     function setDailyBudgetPpm(uint32) external override {}
     function setDecayWindow(uint32) external override {}
@@ -225,9 +212,6 @@ contract MockPolicyManager is IPoolPolicyManager {
     }
 
     /* ----------- new selector needed by interface ----------- */
-    function getFreqScaling(PoolId id) external view override returns (uint256) {
-        return _p[id].freqScaling != 0 ? _p[id].freqScaling : 1e18; // 1.0 in 18-dec FP
-    }
 
     // Add missing interface implementations
     function setSurgeDecayPeriodSeconds(PoolId, uint256) external override {}

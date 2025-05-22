@@ -105,7 +105,7 @@ interface IPoolPolicyManager {
     /// @notice Returns the surge decay period in seconds for the given pool
     /// @param poolId The pool ID
     /// @return Surge decay period in seconds
-    function getSurgeDecayPeriodSeconds(PoolId poolId) external view returns (uint256);
+    function getSurgeDecayPeriodSeconds(PoolId poolId) external view returns (uint32);
 
     /// @notice Returns the daily budget for CAP events in PPM for the given pool
     /// @param poolId The pool ID
@@ -116,11 +116,6 @@ interface IPoolPolicyManager {
     /// @param poolId The pool ID
     /// @return Budget decay window in seconds
     function getCapBudgetDecayWindow(PoolId poolId) external view returns (uint32);
-
-    /// @notice Returns the scaling factor used for CAP frequency calculations
-    /// @param poolId The pool ID
-    /// @return Frequency scaling factor
-    function getFreqScaling(PoolId poolId) external view returns (uint256);
 
     /// @notice Returns the minimum base fee in PPM for the given pool
     /// @param poolId The pool ID
@@ -137,21 +132,10 @@ interface IPoolPolicyManager {
     /// @return Surge fee multiplier in PPM
     function getSurgeFeeMultiplierPpm(PoolId poolId) external view returns (uint24);
 
-    /// @notice Returns the surge decay seconds for the given pool
-    /// @param poolId The pool ID
-    /// @return Surge decay in seconds
-    function getSurgeDecaySeconds(PoolId poolId) external view returns (uint32);
-
     /// @notice Returns the default maximum ticks per block for a pool
     /// @param poolId The pool ID
     /// @return Default maximum ticks per block
     function getDefaultMaxTicksPerBlock(PoolId poolId) external view returns (uint24);
-
-    /// @notice Helper to get both budget and window values in a single call
-    /// @param poolId The pool ID
-    /// @return budgetPerDay Daily budget in PPM
-    /// @return decayWindow Decay window in seconds
-    function getBudgetAndWindow(PoolId poolId) external view returns (uint32 budgetPerDay, uint32 decayWindow);
 
     /// @notice Returns the base fee step size in PPM for the given pool
     /// @param poolId The pool ID
@@ -170,20 +154,10 @@ interface IPoolPolicyManager {
 
     /// === Dynamic Fee Setter Functions ===
 
-    /// @notice Sets the target caps per day for a pool
-    /// @param poolId The pool ID
-    /// @param targetCapsPerDay The target caps per day
-    function setTargetCapsPerDay(PoolId poolId, uint256 targetCapsPerDay) external;
-
     /// @notice Sets the cap budget decay window for a pool
     /// @param poolId The pool ID
     /// @param decayWindow The decay window in seconds
     function setCapBudgetDecayWindow(PoolId poolId, uint256 decayWindow) external;
-
-    /// @notice Sets the frequency scaling factor for a pool
-    /// @param poolId The pool ID
-    /// @param freqScaling The frequency scaling factor
-    function setFreqScaling(PoolId poolId, uint256 freqScaling) external;
 
     /// @notice Sets the minimum base fee for a pool
     /// @param poolId The pool ID

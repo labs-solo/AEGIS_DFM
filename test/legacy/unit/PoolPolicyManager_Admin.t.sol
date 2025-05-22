@@ -80,23 +80,6 @@ contract PoolPolicyManager_Admin_Test is Test {
         ppm.setPoolPOLShare(PoolId.wrap(bytes32(0)), 20_000); // 2% PPM
     }
 
-    /*────────────────── Daily budget & decay window ───────────*/
-    function testOwnerUpdatesBudgetAndWindow() public {
-        // Get current values to determine if events should emit
-        ppm.getBudgetAndWindow(pid(0)); // call to read state, discard return values - silence 2072
-
-        // Set the new values
-        vm.prank(OWNER);
-        ppm.setDailyBudgetPpm(2_000_000); // 2 caps/day
-
-        vm.prank(OWNER);
-        ppm.setDecayWindow(90 days);
-
-        (uint32 budget, uint32 window) = ppm.getBudgetAndWindow(pid(0));
-        assertEq(budget, 2_000_000);
-        assertEq(window, 90 days);
-    }
-
     /*───────────────── helpers & events ─────────────────*/
     event FeeConfigChanged(
         uint256 polSharePpm, uint256 fullRangeSharePpm, uint256 lpSharePpm, uint256 minimumTradingFeePpm
