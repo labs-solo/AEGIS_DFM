@@ -237,8 +237,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @inheritdoc IPoolPolicyManager
     function setSurgeDecayPeriodSeconds(PoolId poolId, uint32 newSurgeDecayPeriodSeconds) external override onlyOwner {
-        if (newSurgeDecayPeriodSeconds < 60) revert Errors.ParameterOutOfRange(newSurgeDecayPeriodSeconds, 60, 1 days);
-        if (newSurgeDecayPeriodSeconds > 1 days) {
+        if (newSurgeDecayPeriodSeconds < 60 || newSurgeDecayPeriodSeconds > 1 days) {
             revert Errors.ParameterOutOfRange(newSurgeDecayPeriodSeconds, 60, 1 days);
         }
 
@@ -248,8 +247,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @inheritdoc IPoolPolicyManager
     function setSurgeFeeMultiplierPpm(PoolId poolId, uint24 multiplier) external override onlyOwner {
-        if (multiplier == 0) revert Errors.ParameterOutOfRange(multiplier, 1, 3_000_000);
-        if (multiplier > 3_000_000) revert Errors.ParameterOutOfRange(multiplier, 1, 3_000_000);
+        if (multiplier == 0 || multiplier > 3_000_000) revert Errors.ParameterOutOfRange(multiplier, 1, 3_000_000);
 
         _poolDynamicFeeConfig[poolId].surgeFeeMultiplierPpm = multiplier;
         emit SurgeFeeMultiplierSet(poolId, multiplier);
