@@ -14,6 +14,10 @@ import {TruncGeoOracleMulti} from "../TruncGeoOracleMulti.sol";
 /// @title ISpot
 /// @notice Interface for the Spot hook contract that implements dynamic fees and oracle integration
 interface ISpot is IHooks {
+    event OracleUpdateFailed(PoolId indexed poolId, string reason);
+    event FeeManagerNotificationFailed(PoolId indexed poolId, string reason);
+    event ReinvestmentFailed(PoolId indexed poolId, string reason);
+
     /// @notice Emitted when policy initialization fails for a pool
     /// @param poolId The ID of the pool where policy initialization was attempted
     /// @param reason The string explanation of why initialization failed

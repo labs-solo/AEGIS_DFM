@@ -1,6 +1,11 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.27;
 
+// - - - OZ Deps - - -
+
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+
 // - - - Permit2 Deps - - -
 
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
@@ -43,6 +48,7 @@ import {PoolPolicyManager} from "./PoolPolicyManager.sol";
 /// @notice Manages hook fees and liquidity for Spot pools
 /// @dev Handles fee collection, reinvestment, and allows users to contribute liquidity
 contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, ERC6909Claims {
+    using SafeERC20 for IERC20;
     using PoolIdLibrary for PoolKey;
     using PoolIdLibrary for PoolId;
     using CurrencyLibrary for Currency;
@@ -84,10 +90,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
     /// @notice NFT token IDs for full range positions
     mapping(PoolId => uint256) private positionIds;
 
-    /// @notice Tracks accounted balances of tokens per currency
+    /// @notice Tracks accounted balances of tokens per currency custodied directly by this contract
     mapping(Currency => uint256) public override accountedBalances;
 
-    /// @notice Tracks accounted balances of ERC6909 tokens per currency ID
+    /// @notice Tracks accounted balances of ERC6909 tokens per currency ID custodied directly by this contract
     mapping(Currency => uint256) public override accountedERC6909Balances;
 
     /// @notice Constructs the FullRangeLiquidityManager
@@ -385,8 +391,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // shares amount to token amounts using the LiquidityAmounts library
         (amount0, amount1) =
             LiquidityAmounts.getAmountsForLiquidity(sqrtPriceX96, sqrtPriceLowerX96, sqrtPriceUpperX96, uint128(shares));
-
-        return (amount0, amount1);
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
@@ -437,10 +441,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // Pull tokens directly from the payer
         _handleTokenTransfersFromPayer(key.currency0, key.currency1, amount0Desired, amount1Desired, payer);
 
-        // Track received tokens
-        accountedBalances[key.currency0] += amount0Desired;
-        accountedBalances[key.currency1] += amount1Desired;
-
         // Approve tokens for position operations
         _approveTokensForPosition(key.currency0, key.currency1);
 
@@ -457,14 +457,12 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             uint256 balance0 = key.currency0.balanceOfSelf();
             // NOTE: we do Math.min as it's possible that there's a unit loss in the LiquidityAmounts math
             uint256 transfer0 = Math.min(unusedAmount0, balance0);
-            accountedBalances[key.currency0] -= transfer0;
             key.currency0.transfer(payer, transfer0);
         }
 
         if (unusedAmount1 > 0) {
             uint256 balance1 = key.currency1.balanceOfSelf();
             uint256 transfer1 = Math.min(unusedAmount1, balance1);
-            accountedBalances[key.currency1] -= transfer1;
             key.currency1.transfer(payer, transfer1);
         }
 
@@ -525,15 +523,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
     {
         if (recipient == address(0)) revert Errors.ZeroAddress();
 
-        uint256 balance;
-        if (currency.isAddressZero()) {
-            // Native ETH
-            balance = address(this).balance;
-        } else {
-            // ERC20 token
-            balance = IERC20Minimal(Currency.unwrap(currency)).balanceOf(address(this));
-        }
-
+        uint256 balance = currency.balanceOfSelf();
         uint256 accounted = accountedBalances[currency];
 
         // Only sweep excess tokens
@@ -545,8 +535,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
 
             emit ExcessTokensSwept(currency, recipient, amountSwept);
         }
-
-        return amountSwept;
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
@@ -573,8 +561,6 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
 
             emit ExcessTokensSwept(currency, recipient, amountSwept);
         }
-
-        return amountSwept;
     }
 
     /// @inheritdoc IFullRangeLiquidityManager
@@ -669,7 +655,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             if (currentAllowance < type(uint256).max) {
                 // NOTE: typically ERC20s with infinite allowances are not decreased
                 // however in the atypical case we always force the allowance to max
-                IERC20Minimal(token).approve(permit2, type(uint256).max);
+                IERC20(token).forceApprove(permit2, type(uint256).max);
             }
         }
     }
@@ -743,10 +729,21 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             return (0, 0, 0);
         }
 
-        // Define actions and parameters
-        bytes memory actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
+        // If native ETH then since we pass along the entire desired value
+        // we want to sweep from the PositionManager if any of that was unused
+        bool isNative = key.currency0.isAddressZero();
 
-        bytes[] memory params = new bytes[](2);
+        // Build actions conditionally
+        bytes memory actions;
+        bytes[] memory params;
+
+        if (isNative) {
+            actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR), uint8(Actions.SWEEP));
+            params = new bytes[](3);
+        } else {
+            actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
+            params = new bytes[](2);
+        }
 
         // Parameters for MINT_POSITION
         params[0] = abi.encode(
@@ -763,9 +760,14 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // Parameters for SETTLE_PAIR
         params[1] = abi.encode(key.currency0, key.currency1);
 
+        // Add sweep parameters only if needed
+        if (isNative) {
+            params[2] = abi.encode(key.currency0, address(this));
+        }
+
         // Calculate native ETH value to forward
         uint256 ethValue = 0;
-        if (key.currency0.isAddressZero()) ethValue = amount0Desired;
+        if (isNative) ethValue = amount0Desired;
 
         // Execute the mint operation - forward ETH if needed
         positionManager.modifyLiquidities{value: ethValue}(
@@ -826,10 +828,22 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             return (0, 0, 0);
         }
 
-        // Define actions and parameters
-        bytes memory actions = abi.encodePacked(uint8(Actions.INCREASE_LIQUIDITY), uint8(Actions.SETTLE_PAIR));
+        // If native ETH then since we pass along the entire desired value
+        // we want to sweep from the PositionManager if any of that was unused
+        bool isNative = key.currency0.isAddressZero();
 
-        bytes[] memory params = new bytes[](2);
+        // Build actions conditionally
+        bytes memory actions;
+        bytes[] memory params;
+
+        if (isNative) {
+            actions =
+                abi.encodePacked(uint8(Actions.INCREASE_LIQUIDITY), uint8(Actions.SETTLE_PAIR), uint8(Actions.SWEEP));
+            params = new bytes[](3);
+        } else {
+            actions = abi.encodePacked(uint8(Actions.INCREASE_LIQUIDITY), uint8(Actions.SETTLE_PAIR));
+            params = new bytes[](2);
+        }
 
         // Parameters for INCREASE_LIQUIDITY
         params[0] = abi.encode(
@@ -843,9 +857,14 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // Parameters for SETTLE_PAIR
         params[1] = abi.encode(key.currency0, key.currency1);
 
+        // Add sweep parameters only if needed
+        if (isNative) {
+            params[2] = abi.encode(key.currency0, address(this));
+        }
+
         // Calculate native ETH value to forward
         uint256 ethValue = 0;
-        if (key.currency0.isAddressZero()) ethValue = amount0Desired;
+        if (isNative) ethValue = amount0Desired;
 
         // Execute the increase operation - forward ETH if needed
         if (TransientStateLibrary.isUnlocked(poolManager)) {

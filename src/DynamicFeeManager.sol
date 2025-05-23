@@ -104,14 +104,12 @@ library _P {
 
 using _P for uint256; // Enable freqL(), setFreqL(), and other helpers
 
-/* ───────────────────────────────────────────────────────────── */
-
-// Renamed contract, implements the NEW interface
 contract DynamicFeeManager is IDynamicFeeManager, Owned {
     using _P for uint256;
     using PoolIdLibrary for PoolId;
 
-    /* ─── custom errors ──────────────────────────────── */
+    //  - - - custom errors - - -
+
     error UnauthorizedHook();
     error ZeroHookAddress();
     error NotInitialized();
@@ -121,7 +119,8 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     error ZeroOracleAddress();
     error AlreadyInitialised();
 
-    /* ─── events ─────────────────────────────────────── */
+    //  - - - events - - -
+
     /// @notice fired when a CAP event starts or ends
     event CapToggled(PoolId indexed id, bool inCap);
 
@@ -131,30 +130,43 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     /// @notice emitted when a pool is already initialized
     event AlreadyInitialized(PoolId indexed id);
 
-    /* ─── constants ─────────────────────────────────────────── */
+    //  - - - constants - - -
+
     /// @dev fallback base-fee when the oracle has no data yet (0.5 %)
     uint32 internal constant DEFAULT_BASE_FEE_PPM = 5_000;
     /// @dev oracle ticks → base-fee conversion factor (1 tick = 100 ppm)
     uint256 internal constant BASE_FEE_FACTOR_PPM = 100;
 
-    /* ─── config / state ─────────────────────────────────────── */
-    IPoolPolicyManager public immutable policyManager;
-    /// @notice address allowed to call `notifyOracleUpdate`; mutable so tests can wire cyclic deps
-    address public authorizedHook;
+    //  - - - immutable - - -
 
+    IPoolPolicyManager public immutable override policyManager;
     /// direct handle to the oracle (for cap → fee mapping)
-    TruncGeoOracleMulti public immutable oracle;
+    TruncGeoOracleMulti public immutable override oracle;
+    /// @notice address allowed to call `notifyOracleUpdate`; mutable so tests can wire cyclic deps
+    address public immutable override authorizedHook;
+
+    //  - - - state - - -
 
     /// @dev per-pool state word – we only use `capStart` + `inCap`
     mapping(PoolId => uint256) private _s;
 
-    /* ─── modifiers ─────────────────────────────────────── */
+    //  - - - modifiers - - -
+
     modifier onlyOwnerOrHook() {
         if (msg.sender != owner && msg.sender != authorizedHook) revert UnauthorizedHook();
         _;
     }
 
-    /* ─── constructor / init ─────────────────────────────────── */
+    modifier onlyOwnerOrHookOrOracle() {
+        // Allow calls from the authorised hook, the oracle itself or the contract owner
+        if (msg.sender != authorizedHook && msg.sender != address(oracle) && msg.sender != owner) {
+            revert UnauthorizedHook();
+        }
+        _;
+    }
+
+    //  - - - constructor - - -
+
     constructor(address _owner, IPoolPolicyManager _policyManager, address _oracleAddress, address _authorizedHook)
         Owned(_owner)
     {
@@ -178,25 +190,23 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
 
         // Fetch the current maxTicksPerBlock from the associated oracle contract
         uint24 maxTicks = oracle.maxTicksPerBlock(PoolId.unwrap(id)); // Direct call
-        uint256 baseFee;
+        uint96 baseFee;
         unchecked {
-            baseFee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM;
+            baseFee = uint96(maxTicks * BASE_FEE_FACTOR_PPM);
         }
 
         // Initialize state
-        uint32 ts = uint32(block.timestamp);
-        uint256 w = _s[id];
-        w = w.setFreqL(uint40(ts));
+        uint40 ts = uint40(block.timestamp);
+        uint256 w;
+        w = w.setFreqL(ts);
         // Store base fee derived from oracle (could be 0 if oracle returns 0)
-        w = w.setFreq(uint96(baseFee));
+        w = w.setFreq(baseFee);
         _s[id] = w;
 
         emit PoolInitialized(id);
     }
 
-    function notifyOracleUpdate(PoolId poolId, bool tickWasCapped) external override {
-        _requireHookAuth(); // Ensure only authorized hook can call
-
+    function notifyOracleUpdate(PoolId poolId, bool tickWasCapped) external override onlyOwnerOrHookOrOracle {
         uint256 w = _s[poolId];
         if (w == 0) revert NotInitialized();
 
@@ -234,7 +244,8 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         return fee == 0 ? DEFAULT_BASE_FEE_PPM : fee; // Use default if oracle returns 0
     }
 
-    /* ─── public views ───────────────────────────────────────── */
+    //  - - - public views - - -
+
     function getFeeState(PoolId id) external view override returns (uint256 baseFee, uint256 surgeFee) {
         uint256 w = _s[id];
         if (w == 0) revert NotInitialized();
@@ -254,7 +265,8 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         return uint32(_baseFee(id));
     }
 
-    /* ─── internal helpers ─────────────────────────────────── */
+    //  - - - internal helpers - - -
+
     function _surge(PoolId id, uint256 w) private view returns (uint256) {
         uint48 start = w.capStart();
         if (start == 0) return 0;
@@ -281,30 +293,5 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         uint256 multiplierPpm = policyManager.getSurgeFeeMultiplierPpm(id);
         uint256 maxSurge = currentBaseFee * multiplierPpm / 1e6;
         return maxSurge * (uint256(decay) - dt) / decay;
-    }
-
-    function _requireHookAuth() internal view {
-        // Allow calls from the authorised hook, the oracle itself or the contract owner
-        if (msg.sender != authorizedHook && msg.sender != address(oracle) && msg.sender != owner) {
-            revert UnauthorizedHook();
-        }
-    }
-
-    /* ---------- Back-compat alias (optional – can be deleted later) ---- */
-    /// @dev Temporary shim so older tests that call `.policy()` still compile.
-    /// @inheritdoc IDynamicFeeManager
-    function policy() external view override returns (IPoolPolicyManager) {
-        return policyManager;
-    }
-
-    /// @dev Convenience proxy; no longer declared in this contract's own
-    ///      interface, so `override` removed.
-    function getCapBudgetDecayWindow(PoolId pid) external view returns (uint32) {
-        return policyManager.getCapBudgetDecayWindow(pid);
-    }
-
-    function setAuthorizedHook(address newAuthorizedHook) external onlyOwner {
-        if (newAuthorizedHook == address(0)) revert ZeroHookAddress();
-        authorizedHook = newAuthorizedHook;
     }
 }

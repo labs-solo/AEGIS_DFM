@@ -242,11 +242,24 @@ contract Spot is BaseHook, ISpot {
             preSwapTick := tload(add(poolId, 1))
         }
 
-        // Push observation to oracle & check cap
-        bool capped = truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick);
+        // Push observation to oracle & check cap (with error handling)
+        bool capped = false;
+        try truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick) returns (bool _capped) {
+            capped = _capped;
+        } catch Error(string memory reason) {
+            emit OracleUpdateFailed(poolId, reason);
+        } catch (bytes memory lowLevelData) {
+            emit OracleUpdateFailed(poolId, "Low-level oracle failure");
+        }
 
-        // Notify Dynamic Fee Manager about the oracle update
-        dynamicFeeManager.notifyOracleUpdate(poolId, capped);
+        // Notify Dynamic Fee Manager about the oracle update (with error handling)
+        try dynamicFeeManager.notifyOracleUpdate(poolId, capped) {
+            // Oracle update notification succeeded
+        } catch Error(string memory reason) {
+            emit FeeManagerNotificationFailed(poolId, reason);
+        } catch (bytes memory lowLevelData) {
+            emit FeeManagerNotificationFailed(poolId, "Low-level fee manager failure");
+        }
 
         // Handle exactOut case in afterSwap (params.amountSpecified > 0)
         if (params.amountSpecified > 0) {
@@ -289,10 +302,8 @@ contract Spot is BaseHook, ISpot {
                     }
                     liquidityManager.notifyFee(key, fee0, fee1);
 
-                    // Try to reinvest if not paused
-                    if (!reinvestmentPaused) {
-                        liquidityManager.reinvest(key);
-                    }
+                    // Try to reinvest if not paused (with error handling)
+                    _tryReinvest(key);
 
                     // Return the fee amount we took
                     return (BaseHook.afterSwap.selector, int128(int256(hookFeeAmount)));
@@ -300,10 +311,8 @@ contract Spot is BaseHook, ISpot {
             }
         }
 
-        // Try to reinvest if not paused
-        if (!reinvestmentPaused) {
-            liquidityManager.reinvest(key);
-        }
+        // Try to reinvest if not paused (with error handling)
+        _tryReinvest(key);
 
         return (BaseHook.afterSwap.selector, 0);
     }
@@ -315,5 +324,25 @@ contract Spot is BaseHook, ISpot {
         truncGeoOracle.enableOracleForPool(key);
         dynamicFeeManager.initialize(poolId, tick);
         return BaseHook.afterInitialize.selector;
+    }
+
+    // - - - internal helpers - - -
+
+    /// @notice Private function to handle reinvestment with error handling
+    /// @param key The pool key for reinvestment
+    /// @dev Uses try-catch to prevent reinvestment failures from blocking swaps
+    function _tryReinvest(PoolKey calldata key) private {
+        if (!reinvestmentPaused) {
+            try liquidityManager.reinvest(key) returns (bool success) {
+                // Reinvestment attempted, success status is handled by the reinvest function
+                // No additional action needed here
+            } catch Error(string memory reason) {
+                // Log the error but don't revert the swap
+                emit ReinvestmentFailed(key.toId(), reason);
+            } catch (bytes memory lowLevelData) {
+                // Handle low-level failures (e.g., out of gas, invalid data)
+                emit ReinvestmentFailed(key.toId(), "Low-level reinvestment failure");
+            }
+        }
     }
 }

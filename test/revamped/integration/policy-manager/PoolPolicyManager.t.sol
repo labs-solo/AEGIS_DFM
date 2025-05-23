@@ -21,8 +21,7 @@ import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
 contract PoolPolicyManagerTest is Base_Test {
     uint24 MIN_TRADING_FEE = 100; // 0.01% (minimum allowed)
     uint24 MAX_TRADING_FEE = 50_000; // 5% (maximum allowed)
-
-    uint32 private constant DEFAULT_BASE_FEE_STEP_PPM = 20_000;
+    uint32 DEFAULT_BASE_FEE_STEP_PPM = 20_000;
 
     function setUp() public override {
         Base_Test.setUp();
@@ -1649,18 +1648,6 @@ contract PoolPolicyManagerTest is Base_Test {
         updatedBudget = policyManager.getDailyBudgetPpm(poolId);
         assertEq(updatedBudget, veryLargeBudget, "Daily budget not set to very large value");
 
-        // Test with zero (this is allowed)
-        // Expect event to be emitted with correct parameters
-        vm.expectEmit(true, true, true, true);
-        emit IPoolPolicyManager.DailyBudgetSet(0);
-
-        // Call the function with zero
-        policyManager.setDailyBudgetPpm(0);
-
-        // Verify zero was set correctly
-        updatedBudget = policyManager.getDailyBudgetPpm(poolId);
-        assertEq(updatedBudget, 0, "Daily budget not set to zero");
-
         // Test with maximum uint32 value
         uint32 maxValidBudget = type(uint32).max;
 
@@ -2005,7 +1992,6 @@ contract PoolPolicyManagerTest is Base_Test {
 
         // Test with zero step (which should use default when retrieved)
         uint32 zeroStep = 0;
-        uint32 DEFAULT_BASE_FEE_STEP_PPM = 20_000; // Default value from the contract
 
         // Expect event to be emitted with correct parameters
         vm.expectEmit(true, true, true, true);

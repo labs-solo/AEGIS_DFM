@@ -270,11 +270,11 @@ contract DynamicFeeManagerUnitTest is Test {
 
     /* ────────── legacy view pass-throughs ───────── */
     function testPolicyAlias() public {
-        assertEq(address(dfm.policy()), address(policy));
+        assertEq(address(dfm.policyManager()), address(policy));
     }
 
     function testCapBudgetDecayWindowPassThrough() public {
         policy.setParams(policy.decay(), policy.multiplier(), 1234);
-        assertEq(dfm.getCapBudgetDecayWindow(PID), 1234);
+        assertEq(policy.getCapBudgetDecayWindow(PID), 1234);
     }
 }

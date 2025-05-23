@@ -15,6 +15,7 @@ library PolicyManagerErrors {
     error ParameterOutOfRange(uint256 value, uint256 min, uint256 max);
     error AllocationSumError(uint256 pol, uint256 fullRange, uint256 lp, uint256 expected);
     error InvalidFeeRange(uint24 value, uint24 min, uint24 max);
+    error ZeroValue();
 
     // === Pool-specific errors ===
     error PoolNotFound(PoolId poolId);

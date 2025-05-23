@@ -3,6 +3,7 @@ pragma solidity >=0.5.0;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {IPoolPolicyManager} from "./IPoolPolicyManager.sol";
+import {TruncGeoOracleMulti} from "../TruncGeoOracleMulti.sol";
 
 /**
  * @title IDynamicFeeManager
@@ -13,7 +14,7 @@ import {IPoolPolicyManager} from "./IPoolPolicyManager.sol";
  *  • call `notifyOracleUpdate(poolId, tickWasCapped)` on	every	swap
  */
 interface IDynamicFeeManager {
-    /* ─────── Events ───────────────────────────────────────────────────── */
+    // - - - Events - - -
 
     /**
      * @notice Emitted whenever the fee state changes.
@@ -28,7 +29,7 @@ interface IDynamicFeeManager {
         PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent, uint32 timestamp
     );
 
-    /* ─────── Mutators (called by hook / factory) ──────────────────────── */
+    // - - - Mutators (called by hook) - - -
 
     /**
      * @notice One-shot pool bootstrap.  SHOULD be called by the factory.
@@ -45,7 +46,16 @@ interface IDynamicFeeManager {
      */
     function notifyOracleUpdate(PoolId poolId, bool tickWasCapped) external;
 
-    /* ─────── Views ────────────────────────────────────────────────────── */
+    // - - - Immutables - - -
+
+    function policyManager() external view returns (IPoolPolicyManager);
+
+    function oracle() external view returns (TruncGeoOracleMulti);
+
+    /// @notice The hook that is authorized to call this contract
+    function authorizedHook() external view returns (address);
+
+    // - - - Views - - -
 
     /**
      * @return baseFee  current base fee (ppm)
@@ -57,14 +67,4 @@ interface IDynamicFeeManager {
      * @return True if the pool is in a CAP event right now.
      */
     function isCAPEventActive(PoolId poolId) external view returns (bool);
-
-    /// @notice Pool-level policy contract that drives fee parameters
-    function policy() external view returns (IPoolPolicyManager);
-
-    /// @notice The hook that is authorized to call this contract
-    function authorizedHook() external view returns (address);
-
-    // ── ✂───────────────────────────────────────────────────────────────
-    //  The old alias is now removed – call-sites must use `policy()`.
-    // ───────────────────────────────────────────────────────────────────
 }

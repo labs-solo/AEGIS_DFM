@@ -58,7 +58,7 @@ contract DeploymentAndConfigTest is LocalSetup {
 
         // DynamicFeeManager exposes the link through `policy()`
         assertEq(
-            address(dynamicFeeManager.policy()),
+            address(dynamicFeeManager.policyManager()),
             address(policyManager),
             "DynamicFeeManager->PolicyManager link mismatch"
         );
@@ -89,7 +89,9 @@ contract DeploymentAndConfigTest is LocalSetup {
 
     /// @notice Test A5: Verify DynamicFeeManager linkages.
     function test_VerifyDynamicFeeManagerLinkages() public view {
-        assertEq(address(dynamicFeeManager.policy()), address(policyManager), "DFM PolicyManager linkage mismatch");
+        assertEq(
+            address(dynamicFeeManager.policyManager()), address(policyManager), "DFM PolicyManager linkage mismatch"
+        );
     }
 
     /// @notice Test A6: Verify Oracle linkage from DynamicFeeManager.

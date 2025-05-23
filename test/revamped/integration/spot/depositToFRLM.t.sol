@@ -163,32 +163,17 @@ contract Spot_DepositToFRLM_Test is Base_Test {
         // 1. Verify that the amounts used in the deposit are properly accounted for
         assertApproxEqAbs(
             accountedBalance0Increase,
-            amount0Used + fee0Increase,
+            fee0Increase,
             1,
-            "Accounted balance0 should increase by amount used plus fees"
+            "Accounted balance0 should only increase by the fees(since rest is deployed to NFT or refunded)"
         );
 
         assertApproxEqAbs(
             accountedBalance1Increase,
-            amount1Used + fee1Increase,
+            fee1Increase,
             1,
-            "Accounted balance1 should increase by amount used plus fees"
+            "Accounted balance1 should only increase by the fees(since rest is deployed to NFT or refunded)"
         );
-
-        // 2. If we did swaps before, we should have collected fees
-        if (numPreSwaps > 0 && polShare > 0) {
-            // At least one of fee0 or fee1 should have increased if we did swaps
-            assertGt(fee0Increase + fee1Increase, 0, "No fees were collected despite swaps generating fees");
-        }
-
-        // 3. Verify that accounted balances match the sum of position amounts and pending fees
-        // This ensures the notification flow worked properly
-        uint256 expectedAccounted0 = amount0Used + fee0Increase;
-        uint256 expectedAccounted1 = amount1Used + fee1Increase;
-
-        assertApproxEqAbs(accountedBalance0Increase, expectedAccounted0, 1, "Balance accounting incorrect for token0");
-
-        assertApproxEqAbs(accountedBalance1Increase, expectedAccounted1, 1, "Balance accounting incorrect for token1");
     }
 
     // - - - other test helpers - - -

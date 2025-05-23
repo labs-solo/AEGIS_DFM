@@ -263,14 +263,16 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function setDailyBudgetPpm(uint32 ppm) external override onlyOwner {
-        _capBudgetDailyPpm = ppm;
-        emit DailyBudgetSet(ppm);
+    function setDailyBudgetPpm(uint32 newCapBudgetDailyPpm) external override onlyOwner {
+        if (newCapBudgetDailyPpm == 0) revert PolicyManagerErrors.ZeroValue();
+        _capBudgetDailyPpm = newCapBudgetDailyPpm;
+        emit DailyBudgetSet(newCapBudgetDailyPpm);
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function setDecayWindow(uint32 secs) external override onlyOwner {
-        _capBudgetDecayWindow = secs;
-        emit GlobalDecayWindowSet(secs);
+    function setDecayWindow(uint32 newCapBudgetDecayWindow) external override onlyOwner {
+        if (newCapBudgetDecayWindow == 0) revert PolicyManagerErrors.ZeroValue();
+        _capBudgetDecayWindow = newCapBudgetDecayWindow;
+        emit GlobalDecayWindowSet(newCapBudgetDecayWindow);
     }
 }
