@@ -46,7 +46,7 @@ library Errors {
     error ArrayLengthMismatch();
     error InvalidCallbackSalt();
     error InvalidPolicyImplementationsLength(uint256 length);
-    error NotInitialized(string component);
+    error NotInitialized();
     error AlreadyInitialized(string component);
     error ReinvestmentDisabled();
     error RateLimited();

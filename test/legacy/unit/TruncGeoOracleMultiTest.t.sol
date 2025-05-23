@@ -132,13 +132,12 @@ contract TruncGeoOracleMultiTest is Test {
      * 1. Initialization paths                                      *
      * ------------------------------------------------------------ */
     function testEnablePoolSetsDefaults() public view {
-        bytes32 poolIdBytes = PoolId.unwrap(pid);
         assertEq(
-            oracle.maxTicksPerBlock(poolIdBytes),
+            oracle.maxTicksPerBlock(pid),
             policy.getDefaultMaxTicksPerBlock(pid) // Should be 50 ticks
         );
 
-        (, uint16 card,) = oracle.states(poolIdBytes);
+        (, uint16 card,) = oracle.states(pid);
         assertEq(card, 1, "cardinality should equal 1 after init");
     }
 
@@ -189,8 +188,7 @@ contract TruncGeoOracleMultiTest is Test {
      * 4. Rate-limit & step clamp – candidate inside band → skip    *
      * ------------------------------------------------------------ */
     function testAutoTuneSkippedInsideBand() public {
-        bytes32 idBytes = PoolId.unwrap(pid);
-        uint24 startCap = oracle.maxTicksPerBlock(idBytes);
+        uint24 startCap = oracle.maxTicksPerBlock(pid);
 
         // 1️⃣  stay just under the cap so no CAP event is registered
         poolManager.setTick(pid, int24(startCap) - 1);
@@ -204,7 +202,7 @@ contract TruncGeoOracleMultiTest is Test {
         vm.prank(address(hook));
         oracle.pushObservationAndCheckCap(pid, int24(0));
 
-        uint24 endCap = oracle.maxTicksPerBlock(idBytes);
+        uint24 endCap = oracle.maxTicksPerBlock(pid);
         assertEq(endCap, startCap, "Cap should remain unchanged when frequency is inside budget");
     }
 
@@ -240,8 +238,7 @@ contract TruncGeoOracleMultiTest is Test {
      * ------------------------------------------------------------ */
     /// @dev Fuzz: every observation must be clamped to ±cap
     function testFuzz_PushObservationWithinCap(int24 seedTick) public {
-        bytes32 idBytes = PoolId.unwrap(pid);
-        uint24 cap = oracle.maxTicksPerBlock(idBytes);
+        uint24 cap = oracle.maxTicksPerBlock(pid);
 
         int24 boundedTick = int24(bound(int256(seedTick), -int256(uint256(cap) * 2), int256(uint256(cap) * 2)));
         poolManager.setTick(pid, boundedTick);
@@ -257,10 +254,9 @@ contract TruncGeoOracleMultiTest is Test {
 
     function testPushObservationAndCheckCap_EnforcesMaxTicks() public {
         // 1. Enable Oracle for the pool (already done in setUp)
-        bytes32 pidBytes = PoolId.unwrap(pid); // Define pidBytes
 
         // 2. Check initial cap (should be > 0)
-        uint24 maxTicks = oracle.maxTicksPerBlock(pidBytes);
+        uint24 maxTicks = oracle.maxTicksPerBlock(pid);
         assertTrue(maxTicks > 0, "Max ticks should be initialized");
 
         // 3. Set tick far above the cap
@@ -287,7 +283,7 @@ contract TruncGeoOracleMultiTest is Test {
         (int24 latestTick,) = oracle.getLatestObservation(pid); // Use getter for latest info
 
         // Get the current state index to access the correct observation
-        (, uint16 currentIndex,) = oracle.states(pidBytes);
+        (, uint16 currentIndex,) = oracle.states(pid);
 
         // Verify using getLatestObservation instead, which should correctly return the capped value
         (int24 observedTick,) = oracle.getLatestObservation(pid);
@@ -312,7 +308,7 @@ contract TruncGeoOracleMultiTest is Test {
         (latestTick,) = oracle.getLatestObservation(pid); // Use getter
 
         // Get the current state index again
-        (, currentIndex,) = oracle.states(pidBytes);
+        (, currentIndex,) = oracle.states(pid);
 
         // Use getLatestObservation instead, which returns the correct value:
         (int24 observedUncappedTick,) = oracle.getLatestObservation(pid);
@@ -323,8 +319,7 @@ contract TruncGeoOracleMultiTest is Test {
      * 8. Explicit auto-tune path                                   *
      * ------------------------------------------------------------ */
     function testAutoTuneLoosensCapAfterFrequentHits() public {
-        bytes32 idBytes = PoolId.unwrap(pid);
-        uint24 startCap = oracle.maxTicksPerBlock(idBytes);
+        uint24 startCap = oracle.maxTicksPerBlock(pid);
 
         // Hit the cap 5 times quickly (simulate heavy volatility)
         for (uint8 i; i < 5; ++i) {
@@ -343,7 +338,7 @@ contract TruncGeoOracleMultiTest is Test {
         vm.prank(address(hook));
         oracle.pushObservationAndCheckCap(pid, int24(0));
 
-        uint24 newCap = oracle.maxTicksPerBlock(idBytes);
+        uint24 newCap = oracle.maxTicksPerBlock(pid);
         assertGt(newCap, startCap, "Cap should have loosened after frequent caps");
     }
 
@@ -354,7 +349,7 @@ contract TruncGeoOracleMultiTest is Test {
     /// @notice Push >512 observations to prove the ring really pages
     function testPagedRingStoresAcrossPages() public {
         uint16 pushes = 530; // crosses page boundary (PAGE_SIZE = 512)
-        uint24 cap = oracle.maxTicksPerBlock(PoolId.unwrap(pid));
+        uint24 cap = oracle.maxTicksPerBlock(pid);
 
         for (uint16 i = 1; i <= pushes; ++i) {
             // safe ladder-cast: uint24 -> uint256 -> int256 -> int24
@@ -365,7 +360,7 @@ contract TruncGeoOracleMultiTest is Test {
         }
 
         //  Bootstrap slot (index 0) + our `pushes` writes
-        (, uint16 cardinality,) = oracle.states(PoolId.unwrap(pid));
+        (, uint16 cardinality,) = oracle.states(pid);
         assertEq(cardinality, pushes + 1, "cardinality wrong after multi-page growth (must include bootstrap slot)");
 
         // ── latest observation must be the last one we wrote ──
@@ -375,8 +370,7 @@ contract TruncGeoOracleMultiTest is Test {
 
     /// @notice Owner can refresh the cached policy; cap is clamped into new bounds
     function testPolicyRefreshAdjustsCap() public {
-        bytes32 idBytes = PoolId.unwrap(pid);
-        uint24 oldCap = oracle.maxTicksPerBlock(idBytes);
+        uint24 oldCap = oracle.maxTicksPerBlock(pid);
 
         //  set new *higher* minBaseFee so old cap is now too small
         policy.setMinBaseFee(pid, (oldCap + 10) * 100); // oracle divides by 100
@@ -391,7 +385,7 @@ contract TruncGeoOracleMultiTest is Test {
         emit TruncGeoOracleMulti.PolicyCacheRefreshed(pid);
         oracle.refreshPolicyCache(pid);
 
-        uint24 newCap = oracle.maxTicksPerBlock(idBytes);
+        uint24 newCap = oracle.maxTicksPerBlock(pid);
         assertGt(newCap, oldCap, "cap should have been clamped up to new minCap");
     }
 
@@ -456,8 +450,6 @@ contract TruncGeoOracleMultiTest is Test {
     ///      t(now-10)=  100   (10 * 10)
     ///      t(now-20)=    0
     function testOracleObserveLinearAccumulation() public {
-        bytes memory encKey = abi.encode(poolKey);
-
         // ── write second & third observations ──
         _advanceAndPush(10, 10); // 10 s after bootstrap
         _advanceAndPush(30, 10); // another 10 s later (now total 20 s)
@@ -469,7 +461,7 @@ contract TruncGeoOracleMultiTest is Test {
         sa[2] = 20;
 
         // call observe()
-        (int56[] memory tc,) = oracle.observe(encKey, sa);
+        (int56[] memory tc,) = oracle.observe(poolKey, sa);
 
         // tick-seconds cumulatives should be increasing with age
         assertEq(tc.length, 3, "length mismatch");
@@ -480,7 +472,7 @@ contract TruncGeoOracleMultiTest is Test {
         // ⏱️  fast-path cross-check (secondsAgo == 0)
         uint32[] memory zero = new uint32[](1);
         zero[0] = 0;
-        (int56[] memory tcNow,) = oracle.observe(encKey, zero);
+        (int56[] memory tcNow,) = oracle.observe(poolKey, zero);
         assertEq(tcNow.length, 1);
         assertEq(tcNow[0], 400, "observe(0) cumulative mismatch");
 

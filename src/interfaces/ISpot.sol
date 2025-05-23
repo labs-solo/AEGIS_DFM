@@ -25,19 +25,19 @@ interface ISpot is IHooks {
 
     /// @notice Emitted when hook fees are collected from a swap but not automatically reinvested
     /// @dev This event is emitted when reinvestment is paused
-    /// @param id The pool ID from which fees were collected
+    /// @param poolId The pool ID from which fees were collected
     /// @param sender The address that executed the swap, triggering fee collection
     /// @param feeAmount0 The amount of token0 collected as fee
     /// @param feeAmount1 The amount of token1 collected as fee
-    event HookFee(PoolId indexed id, address indexed sender, uint128 feeAmount0, uint128 feeAmount1);
+    event HookFee(PoolId indexed poolId, address indexed sender, uint128 feeAmount0, uint128 feeAmount1);
 
     /// @notice Emitted when hook fees are collected from a swap and queued for reinvestment
     /// @dev This event is emitted when reinvestment is active (not paused)
-    /// @param id The pool ID from which fees were collected
+    /// @param poolId The pool ID from which fees were collected
     /// @param sender The address that executed the swap, triggering fee collection
     /// @param feeAmount0 The amount of token0 collected as fee and queued for reinvestment
     /// @param feeAmount1 The amount of token1 collected as fee and queued for reinvestment
-    event HookFeeReinvested(PoolId indexed id, address indexed sender, uint128 feeAmount0, uint128 feeAmount1);
+    event HookFeeReinvested(PoolId indexed poolId, address indexed sender, uint128 feeAmount0, uint128 feeAmount1);
 
     /// @notice Emitted when the reinvestment status changes
     /// @param paused Boolean indicating whether fee reinvestment is now paused (true) or active (false)

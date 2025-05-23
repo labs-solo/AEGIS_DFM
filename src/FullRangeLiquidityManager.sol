@@ -586,9 +586,9 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
                 donated0 = amount0;
             } else {
                 // Handle ERC20 donation
-                uint256 balanceBefore = IERC20Minimal(Currency.unwrap(currency0)).balanceOf(address(this));
+                uint256 balanceBefore = currency0.balanceOfSelf();
                 IERC20Minimal(Currency.unwrap(currency0)).transferFrom(msg.sender, address(this), amount0);
-                uint256 balanceAfter = IERC20Minimal(Currency.unwrap(currency0)).balanceOf(address(this));
+                uint256 balanceAfter = currency0.balanceOfSelf();
                 donated0 = balanceAfter - balanceBefore; // Account for potential transfer fees
             }
 
@@ -607,9 +607,9 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
                 donated1 = amount1;
             } else {
                 // Handle ERC20 donation
-                uint256 balanceBefore = IERC20Minimal(Currency.unwrap(currency1)).balanceOf(address(this));
+                uint256 balanceBefore = currency1.balanceOfSelf();
                 IERC20Minimal(Currency.unwrap(currency1)).transferFrom(msg.sender, address(this), amount1);
-                uint256 balanceAfter = IERC20Minimal(Currency.unwrap(currency1)).balanceOf(address(this));
+                uint256 balanceAfter = currency1.balanceOfSelf();
                 donated1 = balanceAfter - balanceBefore; // Account for potential transfer fees
             }
 

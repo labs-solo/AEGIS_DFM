@@ -43,7 +43,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     error ObservationTooOld(uint32 time, uint32 target);
     error TooManyObservationsRequested();
 
-    event TickCapParamChanged(bytes32 indexed poolId, uint24 newMaxTicksPerBlock);
+    event TickCapParamChanged(PoolId indexed poolId, uint24 newMaxTicksPerBlock);
     event MaxTicksPerBlockUpdated(
         PoolId indexed poolId, uint24 oldMaxTicksPerBlock, uint24 newMaxTicksPerBlock, uint32 blockTimestamp
     );
@@ -67,11 +67,11 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     address public immutable owner; // Governance address that can refresh policy cache
 
     /* ───────────────────── MUTABLE STATE ────────────────────── */
-    mapping(bytes32 => uint24) public maxTicksPerBlock; // adaptive cap
+    mapping(PoolId => uint24) public maxTicksPerBlock; // adaptive cap
     /* ppm-seconds never exceeds 8.64 e10 per event or 7.45 e15 per year  →
        well inside uint64.  Using uint64 halves slot gas / SLOAD cost.   */
-    mapping(bytes32 => uint64) private capFreq; // ***saturating*** counter
-    mapping(bytes32 => uint48) private lastFreqTs; // last decay update
+    mapping(PoolId => uint64) private capFreq; // ***saturating*** counter
+    mapping(PoolId => uint48) private lastFreqTs; // last decay update
 
     /* ────────────────────── LATEST TICK CACHE ─────────────────────── */
     // (latest-tick cache removed – callers can query pool slot0 directly)
@@ -97,7 +97,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         uint32 updateInterval;
     }
 
-    mapping(bytes32 => CachedPolicy) internal _policy;
+    mapping(PoolId => CachedPolicy) internal _policy;
 
     /* ──────────────────  CHUNKED OBSERVATION RING  ──────────────────
        Each pool owns *pages* (index ⇒ Observation[PAGE_SIZE]).
@@ -105,17 +105,17 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
        storage footprint grows with `grow()` instead of pre-allocating
        65 k slots (≈ 4 MiB) per pool.                                        */
     /// pool ⇒ page# ⇒ 512-slot chunk (lazily created)
-    mapping(bytes32 => mapping(uint16 => TruncatedOracle.Observation[PAGE_SIZE])) internal _pages;
+    mapping(PoolId => mapping(uint16 => TruncatedOracle.Observation[PAGE_SIZE])) internal _pages;
 
-    function _leaf(bytes32 id, uint16 globalIdx)
+    function _leaf(PoolId poolId, uint16 globalIdx)
         internal
         view
         returns (TruncatedOracle.Observation[PAGE_SIZE] storage)
     {
-        return _pages[id][globalIdx / PAGE_SIZE];
+        return _pages[poolId][globalIdx / PAGE_SIZE];
     }
 
-    mapping(bytes32 => ObservationState) public states;
+    mapping(PoolId => ObservationState) public states;
 
     // Store last max tick update time for rate limiting governance changes
     mapping(PoolId => uint32) private _lastMaxTickUpdate;
@@ -143,7 +143,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @notice Refreshes the cached policy parameters for a pool.
      * @dev Can only be called by the owner (governance). Re-fetches and validates
      *      all policy parameters, ensuring they remain within acceptable ranges.
-     * @param pid The PoolId of the pool.
+     * @param poolId The PoolId of the pool.
      */
     /// -----------------------------------------------------------------------
     /// @notice Sync the in-storage policy cache with the current policy
@@ -151,37 +151,36 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     ///         into the new `[minCap, maxCap]` band.
     /// @dev    Callable only by `owner`. Emits `PolicyCacheRefreshed`.
     /// -----------------------------------------------------------------------
-    function refreshPolicyCache(PoolId pid) external {
+    function refreshPolicyCache(PoolId poolId) external {
         if (msg.sender != owner) revert OnlyOwner();
 
-        bytes32 id = PoolId.unwrap(pid);
-        if (states[id].cardinality == 0) {
+        if (states[poolId].cardinality == 0) {
             revert Errors.OracleOperationFailed("refreshPolicyCache", "Pool not enabled");
         }
 
-        CachedPolicy storage pc = _policy[id];
+        CachedPolicy storage pc = _policy[poolId];
 
         // Re-fetch all policy parameters
-        pc.minCap = SafeCast.toUint24(policy.getMinBaseFee(pid) / 100);
-        pc.maxCap = SafeCast.toUint24(policy.getMaxBaseFee(pid) / 100);
-        pc.stepPpm = policy.getBaseFeeStepPpm(pid);
-        pc.budgetPpm = policy.getDailyBudgetPpm(pid);
-        pc.decayWindow = policy.getCapBudgetDecayWindow(pid);
-        pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(pid);
+        pc.minCap = SafeCast.toUint24(policy.getMinBaseFee(poolId) / 100);
+        pc.maxCap = SafeCast.toUint24(policy.getMaxBaseFee(poolId) / 100);
+        pc.stepPpm = policy.getBaseFeeStepPpm(poolId);
+        pc.budgetPpm = policy.getDailyBudgetPpm(poolId);
+        pc.decayWindow = policy.getCapBudgetDecayWindow(poolId);
+        pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(poolId);
 
         _validatePolicy(pc);
 
         // Ensure current maxTicksPerBlock is within new min/max bounds
-        uint24 currentCap = maxTicksPerBlock[id];
+        uint24 currentCap = maxTicksPerBlock[poolId];
         if (currentCap < pc.minCap) {
-            maxTicksPerBlock[id] = pc.minCap;
-            emit MaxTicksPerBlockUpdated(pid, currentCap, pc.minCap, uint32(block.timestamp));
+            maxTicksPerBlock[poolId] = pc.minCap;
+            emit MaxTicksPerBlockUpdated(poolId, currentCap, pc.minCap, uint32(block.timestamp));
         } else if (currentCap > pc.maxCap) {
-            maxTicksPerBlock[id] = pc.maxCap;
-            emit MaxTicksPerBlockUpdated(pid, currentCap, pc.maxCap, uint32(block.timestamp));
+            maxTicksPerBlock[poolId] = pc.maxCap;
+            emit MaxTicksPerBlockUpdated(poolId, currentCap, pc.maxCap, uint32(block.timestamp));
         }
 
-        emit PolicyCacheRefreshed(pid);
+        emit PolicyCacheRefreshed(poolId);
     }
 
     /**
@@ -191,58 +190,58 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      */
     /// -----------------------------------------------------------------------
     /// @notice One-time bootstrap that allocates the first observation page
-    ///         and persists all policy parameters for `pid`.
+    ///         and persists all policy parameters for `poolId`.
     /// @dev    Must be invoked through the authorised `hook`.
     /// -----------------------------------------------------------------------
     function enableOracleForPool(PoolKey calldata key) external {
         if (msg.sender != hook) revert OnlyHook();
-        bytes32 id = PoolId.unwrap(key.toId()); // explicit unwrap
-        if (states[id].cardinality > 0) revert Errors.OracleOperationFailed("enableOracleForPool", "Already enabled");
+        PoolId poolId = key.toId();
+        if (states[poolId].cardinality > 0) {
+            revert Errors.OracleOperationFailed("enableOracleForPool", "Already enabled");
+        }
 
         /* ------------------------------------------------------------------ *
          * Pull policy parameters once and *sanity-check* them               *
          * ------------------------------------------------------------------ */
-        uint24 defaultCap = SafeCast.toUint24(policy.getDefaultMaxTicksPerBlock(PoolId.wrap(id)));
-        CachedPolicy storage pc = _policy[id];
-        pc.minCap = SafeCast.toUint24(policy.getMinBaseFee(PoolId.wrap(id)) / 100);
-        pc.maxCap = SafeCast.toUint24(policy.getMaxBaseFee(PoolId.wrap(id)) / 100);
-        pc.stepPpm = policy.getBaseFeeStepPpm(PoolId.wrap(id));
-        pc.budgetPpm = policy.getDailyBudgetPpm(PoolId.wrap(id));
-        pc.decayWindow = policy.getCapBudgetDecayWindow(PoolId.wrap(id));
-        pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(PoolId.wrap(id));
+        uint24 defaultCap = SafeCast.toUint24(policy.getDefaultMaxTicksPerBlock(poolId));
+        CachedPolicy storage pc = _policy[poolId];
+        pc.minCap = SafeCast.toUint24(policy.getMinBaseFee(poolId) / 100);
+        pc.maxCap = SafeCast.toUint24(policy.getMaxBaseFee(poolId) / 100);
+        pc.stepPpm = policy.getBaseFeeStepPpm(poolId);
+        pc.budgetPpm = policy.getDailyBudgetPpm(poolId);
+        pc.decayWindow = policy.getCapBudgetDecayWindow(poolId);
+        pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(poolId);
 
         _validatePolicy(pc);
 
         // ---------- external read last (reduces griefing surface) ----------
-        (, int24 initialTick,,) = StateLibrary.getSlot0(poolManager, PoolId.wrap(id));
-        TruncatedOracle.Observation[PAGE_SIZE] storage first = _pages[id][0];
+        (, int24 initialTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+        TruncatedOracle.Observation[PAGE_SIZE] storage first = _pages[poolId][0];
         first.initialize(uint32(block.timestamp), initialTick);
-        states[id] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 1});
+        states[poolId] = ObservationState({index: 0, cardinality: 1, cardinalityNext: 1});
 
         // Clamp defaultCap inside the validated range
         if (defaultCap < pc.minCap) defaultCap = pc.minCap;
         if (defaultCap > pc.maxCap) defaultCap = pc.maxCap;
-        maxTicksPerBlock[id] = defaultCap;
+        maxTicksPerBlock[poolId] = defaultCap;
 
         // --- audit-aid event ----------------------------------------------------
-        emit OracleConfigured(PoolId.wrap(id), hook, owner, defaultCap);
+        emit OracleConfigured(poolId, hook, owner, defaultCap);
     }
 
     // Internal workhorse
-    function _recordObservation(PoolId pid, int24 preSwapTick) internal returns (bool tickWasCapped) {
-        bytes32 id = PoolId.unwrap(pid);
-
-        ObservationState storage state = states[id];
-        TruncatedOracle.Observation[PAGE_SIZE] storage obs = _leaf(id, state.index);
+    function _recordObservation(PoolId poolId, int24 preSwapTick) internal returns (bool tickWasCapped) {
+        ObservationState storage state = states[poolId];
+        TruncatedOracle.Observation[PAGE_SIZE] storage obs = _leaf(poolId, state.index);
         uint16 localIdx = state.index % PAGE_SIZE; // offset inside the 512-slot page
         uint16 pageBase = state.index - localIdx; // first global index of this page
 
         // Get current tick from PoolManager
-        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, pid);
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
 
         // Check against max ticks per block
         int24 prevTick = preSwapTick;
-        uint24 cap = maxTicksPerBlock[id];
+        uint24 cap = maxTicksPerBlock[poolId];
         int256 tickDelta256 = int256(currentTick) - int256(prevTick);
 
         /* ------------------------------------------------------------
@@ -266,7 +265,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         //  Preserve the library's returned page-index and   //
         //  translate it back to a *global* cursor.          //
         // -------------------------------------------------- //
-        uint128 liquidity = StateLibrary.getLiquidity(poolManager, pid);
+        uint128 liquidity = StateLibrary.getLiquidity(poolManager, poolId);
 
         /* --------------------------------------------------------------- *
          *  Page-local lengths                                             *
@@ -332,58 +331,57 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         }
 
         // Update auto-tune frequency counter if capped
-        _updateCapFrequency(pid, tickWasCapped);
+        _updateCapFrequency(poolId, tickWasCapped);
     }
 
     /// -----------------------------------------------------------------------
     /// @notice Record a new observation using the actual pre-swap tick.
     /// -----------------------------------------------------------------------
-    function pushObservationAndCheckCap(PoolId pid, int24 preSwapTick)
+    function pushObservationAndCheckCap(PoolId poolId, int24 preSwapTick)
         external
         nonReentrant
         returns (bool tickWasCapped)
     {
         if (msg.sender != hook) revert OnlyHook();
-        if (states[PoolId.unwrap(pid)].cardinality == 0) {
+        if (states[poolId].cardinality == 0) {
             revert Errors.OracleOperationFailed("pushObservationAndCheckCap", "Pool not enabled");
         }
-        return _recordObservation(pid, preSwapTick);
+        return _recordObservation(poolId, preSwapTick);
     }
 
     /* ─────────────────── VIEW FUNCTIONS ──────────────────────── */
 
     /**
      * @notice Checks if the oracle is enabled for a given pool.
-     * @param pid The PoolId to check.
+     * @param poolId The PoolId to check.
      * @return True if the oracle is enabled, false otherwise.
      */
-    /// @notice Read-only helper: check if the oracle has been enabled for `pid`.
-    function isOracleEnabled(PoolId pid) external view returns (bool) {
-        return states[PoolId.unwrap(pid)].cardinality > 0;
+    /// @notice Read-only helper: check if the oracle has been enabled for `poolId`.
+    function isOracleEnabled(PoolId poolId) external view returns (bool) {
+        return states[poolId].cardinality > 0;
     }
 
     /**
      * @notice Gets the latest observation for a pool.
-     * @param pid The PoolId of the pool.
+     * @param poolId The PoolId of the pool.
      * @return tick The tick from the latest observation.
      * @return blockTimestamp The timestamp of the latest observation.
      */
-    /// @notice Return the most recent observation stored for `pid`.
+    /// @notice Return the most recent observation stored for `poolId`.
     /// @dev    - Gas optimisation -
     ///         We *do not* copy the whole `Observation` struct to memory.
     ///         Instead we keep a **storage** reference and read only the
     ///         timestamp field, then fetch the live tick directly from
     ///         the pool's `slot0`, avoiding any extra per-observation state.
-    function getLatestObservation(PoolId pid) external view returns (int24 tick, uint32 blockTimestamp) {
-        bytes32 id = PoolId.unwrap(pid);
-        if (states[id].cardinality == 0) {
+    function getLatestObservation(PoolId poolId) external view returns (int24 tick, uint32 blockTimestamp) {
+        if (states[poolId].cardinality == 0) {
             revert Errors.OracleOperationFailed("getLatestObservation", "Pool not enabled");
         }
 
-        ObservationState storage state = states[id];
+        ObservationState storage state = states[poolId];
         // ---- inline fast-path (no struct copy) ----------------------------
-        TruncatedOracle.Observation storage o = _leaf(id, state.index)[state.index % PAGE_SIZE];
-        (, int24 liveTick,,) = StateLibrary.getSlot0(poolManager, pid); // fetch current tick
+        TruncatedOracle.Observation storage o = _leaf(poolId, state.index)[state.index % PAGE_SIZE];
+        (, int24 liveTick,,) = StateLibrary.getSlot0(poolManager, poolId); // fetch current tick
         return (liveTick, o.blockTimestamp);
     }
 
@@ -391,8 +389,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     /// 👀  External helpers (kept tiny – unit tests only)
     /// -----------------------------------------------------------------------
     /// @notice View helper mirroring the public mapping but typed for tests.
-    function getMaxTicksPerBlock(bytes32 id) external view returns (uint24) {
-        return maxTicksPerBlock[id];
+    function getMaxTicksPerBlock(PoolId poolId) external view returns (uint24) {
+        return maxTicksPerBlock[poolId];
     }
 
     /**
@@ -412,21 +410,19 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @return tickCumulatives The tick * time elapsed since the pool was first initialized, as of each secondsAgo
      * @return secondsPerLiquidityCumulativeX128s The cumulative seconds / max(1, liquidity) since pool initialized
      */
-    function observe(bytes calldata key, uint32[] calldata secondsAgos)
+    function observe(PoolKey calldata key, uint32[] calldata secondsAgos)
         external
         view
         returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s)
     {
-        PoolKey memory decodedKey = abi.decode(key, (PoolKey));
-        PoolId pid = decodedKey.toId();
+        PoolId poolId = key.toId();
 
         // Length guard removed – timestamp validation ensures safety even for multi-page history
-        bytes32 id = PoolId.unwrap(pid);
-        if (states[id].cardinality == 0) {
+        if (states[poolId].cardinality == 0) {
             revert Errors.OracleOperationFailed("observe", "Pool not enabled");
         }
 
-        ObservationState storage state = states[id];
+        ObservationState storage state = states[poolId];
         // --- Resolve leaf dynamically – supports TWAP windows spanning multiple pages ---
         uint16 gIdx = state.index; // global index of newest obs
         uint32 time = uint32(block.timestamp);
@@ -443,7 +439,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
         // Walk pages backwards until the first timestamp inside the leaf is <= oldestWanted
         while (true) {
-            TruncatedOracle.Observation[PAGE_SIZE] storage page = _leaf(id, leafCursor);
+            TruncatedOracle.Observation[PAGE_SIZE] storage page = _leaf(poolId, leafCursor);
             uint16 localIdx = uint16(leafCursor % PAGE_SIZE);
             uint16 pageBase = leafCursor - localIdx;
             uint16 pageCardinality = state.cardinality > pageBase ? state.cardinality - pageBase : 1;
@@ -457,7 +453,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         }
 
         // Fetch the resolved leaf *after* the loop to guarantee initialization
-        TruncatedOracle.Observation[PAGE_SIZE] storage obs = _leaf(id, leafCursor);
+        TruncatedOracle.Observation[PAGE_SIZE] storage obs = _leaf(poolId, leafCursor);
 
         uint16 idx = uint16(leafCursor % PAGE_SIZE);
 
@@ -469,8 +465,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
             card = PAGE_SIZE;
         }
 
-        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, pid);
-        uint128 liquidity = StateLibrary.getLiquidity(poolManager, pid);
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+        uint128 liquidity = StateLibrary.getLiquidity(poolManager, poolId);
 
         (tickCumulatives, secondsPerLiquidityCumulativeX128s) =
             obs.observe(time, secondsAgos, currentTick, idx, liquidity, card);
@@ -503,12 +499,11 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @dev Decays the frequency counter based on time elapsed since the last update.
      *      Increments the counter if a CAP occurred.
      *      Triggers auto-tuning if the frequency exceeds the budget or is too low.
-     * @param pid The PoolId of the pool.
+     * @param poolId The PoolId of the pool.
      * @param capOccurred True if a CAP event occurred in the current block.
      */
-    function _updateCapFrequency(PoolId pid, bool capOccurred) internal {
-        bytes32 id = PoolId.unwrap(pid);
-        uint32 lastTs = uint32(lastFreqTs[id]);
+    function _updateCapFrequency(PoolId poolId, bool capOccurred) internal {
+        uint32 lastTs = uint32(lastFreqTs[poolId]);
         uint32 nowTs = uint32(block.timestamp);
         uint32 timeElapsed = nowTs - lastTs;
 
@@ -517,13 +512,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
            state var is already correct, so we avoid **all** SSTOREs.      */
         if (!capOccurred && timeElapsed == 0) return;
 
-        lastFreqTs[id] = uint48(nowTs); // single SSTORE only when needed
+        lastFreqTs[poolId] = uint48(nowTs); // single SSTORE only when needed
 
         // Load current frequency counter once. The earlier fast-path has already
         // returned when `timeElapsed == 0 && !capOccurred`, so the additional
         // bail-out previously here was unreachable. Removing it saves ~200 gas
         // on the hot path while preserving identical behaviour.
-        uint64 currentFreq = capFreq[id];
+        uint64 currentFreq = capFreq[poolId];
 
         // --------------------------------------------------------------------- //
         //  1️⃣  Add this block's CAP contribution *first* and saturate.         //
@@ -540,7 +535,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         }
 
         /* -------- cache policy once – each field is an external SLOAD -------- */
-        CachedPolicy storage pc = _policy[id]; // 🔹 single SLOAD kept
+        CachedPolicy storage pc = _policy[poolId]; // 🔹 single SLOAD kept
         uint32 budgetPpm = pc.budgetPpm;
         uint32 decayWindow = pc.decayWindow;
         uint32 updateInterval = pc.updateInterval;
@@ -569,19 +564,19 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
             }
         }
 
-        capFreq[id] = currentFreq; // single SSTORE
+        capFreq[poolId] = currentFreq; // single SSTORE
 
         // Only auto-tune if enough time has passed since last governance update
         // and auto-tune is not paused for this pool
-        if (!_autoTunePaused[pid] && block.timestamp >= _lastMaxTickUpdate[pid] + updateInterval) {
+        if (!_autoTunePaused[poolId] && block.timestamp >= _lastMaxTickUpdate[poolId] + updateInterval) {
             // Target frequency = budgetPpm × 86 400 sec (computed only when needed)
             uint64 targetFreq = uint64(budgetPpm) * ONE_DAY_SEC;
             if (currentFreq > targetFreq) {
                 // Too frequent caps -> Increase maxTicksPerBlock (loosen cap)
-                _autoTuneMaxTicks(pid, pc, true); // re-use cached struct
+                _autoTuneMaxTicks(poolId, pc, true); // re-use cached struct
             } else {
                 // Caps too rare -> Decrease maxTicksPerBlock (tighten cap)
-                _autoTuneMaxTicks(pid, pc, false); // re-use cached struct
+                _autoTuneMaxTicks(poolId, pc, false); // re-use cached struct
             }
         }
     }
@@ -590,13 +585,12 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @notice Adjusts the maxTicksPerBlock based on CAP frequency.
      * @dev Increases the cap if caps are too frequent, decreases otherwise.
      *      Clamps the adjustment based on policy step size and min/max bounds.
-     * @param pid The PoolId of the pool.
+     * @param poolId The PoolId of the pool.
      * @param increase True to increase the cap, false to decrease.
      */
     /// @dev caller passes `pc` to avoid an extra SLOAD
-    function _autoTuneMaxTicks(PoolId pid, CachedPolicy storage pc, bool increase) internal {
-        bytes32 id = PoolId.unwrap(pid);
-        uint24 currentCap = maxTicksPerBlock[id];
+    function _autoTuneMaxTicks(PoolId poolId, CachedPolicy storage pc, bool increase) internal {
+        uint24 currentCap = maxTicksPerBlock[poolId];
 
         /* ------------------------------------------------------------------ *
          * ⚠️  Hot-path gas-saving:                                           *
@@ -628,10 +622,10 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         uint24 diff = currentCap > newCap ? currentCap - newCap : newCap - currentCap;
 
         if (newCap != currentCap) {
-            maxTicksPerBlock[id] = newCap;
-            _lastMaxTickUpdate[pid] = uint32(block.timestamp);
+            maxTicksPerBlock[poolId] = newCap;
+            _lastMaxTickUpdate[poolId] = uint32(block.timestamp);
             if (diff >= EVENT_DIFF) {
-                emit MaxTicksPerBlockUpdated(pid, currentCap, newCap, uint32(block.timestamp));
+                emit MaxTicksPerBlockUpdated(poolId, currentCap, newCap, uint32(block.timestamp));
             }
         }
     }
@@ -653,13 +647,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
     /**
      * @notice Pause or un-pause the adaptive cap algorithm for a pool.
-     * @param pid       Target pool id.
+     * @param poolId       Target PoolId.
      * @param paused    True to disable auto-tune, false to resume.
      */
-    function setAutoTunePaused(PoolId pid, bool paused) external {
+    function setAutoTunePaused(PoolId poolId, bool paused) external {
         if (msg.sender != owner) revert OnlyOwner();
-        _autoTunePaused[pid] = paused;
-        emit AutoTunePaused(pid, paused, uint32(block.timestamp));
+        _autoTunePaused[poolId] = paused;
+        emit AutoTunePaused(poolId, paused, uint32(block.timestamp));
     }
 
     /* ─────────────────────── public cardinality grow ─────────────────────── */
@@ -672,14 +666,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @return oldNext Previous next-size.
      * @return newNext Updated next-size after grow.
      */
-    function increaseCardinalityNext(bytes calldata key, uint16 cardinalityNext)
+    function increaseCardinalityNext(PoolKey calldata key, uint16 cardinalityNext)
         external
         returns (uint16 oldNext, uint16 newNext)
     {
-        PoolKey memory decodedKey = abi.decode(key, (PoolKey));
-        bytes32 id = PoolId.unwrap(decodedKey.toId());
+        PoolId poolId = key.toId();
 
-        ObservationState storage state = states[id];
+        ObservationState storage state = states[poolId];
         if (state.cardinality == 0) {
             revert Errors.OracleOperationFailed("increaseCardinalityNext", "Pool not enabled");
         }
@@ -690,7 +683,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         }
 
         state.cardinalityNext = TruncatedOracle.grow(
-            _leaf(id, state.cardinalityNext), // leaf storage slot
+            _leaf(poolId, state.cardinalityNext), // leaf storage slot
             oldNext,
             cardinalityNext
         );
