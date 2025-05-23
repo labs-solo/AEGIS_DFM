@@ -243,22 +243,21 @@ contract Spot is BaseHook, ISpot {
         }
 
         // Push observation to oracle & check cap (with error handling)
-        bool capped = false;
-        try truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick) returns (bool _capped) {
-            capped = _capped;
+        try truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick) returns (bool capped) {
+            // Notify Dynamic Fee Manager about the oracle update (with error handling)
+            try dynamicFeeManager.notifyOracleUpdate(poolId, capped) {
+                // Oracle update notification succeeded
+            } catch Error(string memory reason) {
+                emit FeeManagerNotificationFailed(poolId, reason);
+            } catch (bytes memory lowLevelData) {
+                // Low-level fee manager failure
+                emit FeeManagerNotificationFailed(poolId, "LLFM");
+            }
         } catch Error(string memory reason) {
             emit OracleUpdateFailed(poolId, reason);
         } catch (bytes memory lowLevelData) {
-            emit OracleUpdateFailed(poolId, "Low-level oracle failure");
-        }
-
-        // Notify Dynamic Fee Manager about the oracle update (with error handling)
-        try dynamicFeeManager.notifyOracleUpdate(poolId, capped) {
-            // Oracle update notification succeeded
-        } catch Error(string memory reason) {
-            emit FeeManagerNotificationFailed(poolId, reason);
-        } catch (bytes memory lowLevelData) {
-            emit FeeManagerNotificationFailed(poolId, "Low-level fee manager failure");
+            // Low-level oracle failure
+            emit OracleUpdateFailed(poolId, "LLOF");
         }
 
         // Handle exactOut case in afterSwap (params.amountSpecified > 0)
@@ -341,7 +340,8 @@ contract Spot is BaseHook, ISpot {
                 emit ReinvestmentFailed(key.toId(), reason);
             } catch (bytes memory lowLevelData) {
                 // Handle low-level failures (e.g., out of gas, invalid data)
-                emit ReinvestmentFailed(key.toId(), "Low-level reinvestment failure");
+                // Low-level reinvestment failure
+                emit ReinvestmentFailed(key.toId(), "LLRF");
             }
         }
     }
