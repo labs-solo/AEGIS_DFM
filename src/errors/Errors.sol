@@ -99,7 +99,7 @@ library Errors {
     // --- Pool State & Operations ---
     error PoolNotInitialized(bytes32 poolId);
     error PoolAlreadyInitialized(bytes32 poolId);
-    error PoolNotFound(bytes32 poolId);
+    error PoolNotFound(PoolId poolId);
     error PoolPaused(bytes32 poolId);
     error PoolLocked(bytes32 poolId);
     error PoolInvalidState(bytes32 poolId);

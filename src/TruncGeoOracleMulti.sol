@@ -670,6 +670,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         external
         returns (uint16 oldNext, uint16 newNext)
     {
+        if (msg.sender != owner) revert OnlyOwner();
         PoolId poolId = key.toId();
 
         ObservationState storage state = states[poolId];

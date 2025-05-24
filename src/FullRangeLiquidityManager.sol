@@ -573,6 +573,9 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // Validate that the currencies match the pool
         PoolId poolId = key.toId();
 
+        (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, poolId);
+        if (address(key.hooks) != authorizedHookAddress || sqrtPriceX96 == 0) revert Errors.PoolNotFound(poolId);
+
         Currency currency0 = key.currency0;
         Currency currency1 = key.currency1;
 
