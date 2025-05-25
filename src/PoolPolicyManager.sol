@@ -208,7 +208,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @inheritdoc IPoolPolicyManager
     function setMinBaseFee(PoolId poolId, uint24 newMinFee) external override onlyOwner {
         uint24 maxFee = this.getMaxBaseFee(poolId);
-        if (newMinFee < MIN_TRADING_FEE || newMinFee >= maxFee) {
+        if (newMinFee < MIN_TRADING_FEE || newMinFee > maxFee) {
             revert PolicyManagerErrors.InvalidFeeRange(newMinFee, MIN_TRADING_FEE, maxFee);
         }
         _poolDynamicFeeConfig[poolId].minBaseFeePpm = newMinFee;

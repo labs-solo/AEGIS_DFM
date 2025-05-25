@@ -4,8 +4,8 @@ pragma solidity ^0.8.27;
 import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 
-contract UniswapV4Addresses {
-    // Uniswap V4 Canonical Contracts
+abstract contract UniswapV4Addresses {
+    // Uniswap V4 Canonical Contracts mapping chainid -> address
     mapping(uint256 => address) private poolManagers;
     mapping(uint256 => address) private positionManagers;
 

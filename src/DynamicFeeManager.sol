@@ -100,7 +100,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
 
         // Get initial base fee from oracle
         uint24 maxTicksPerBlock = oracle.maxTicksPerBlock(poolId);
-        uint32 calculatedBaseFee = _calculateBaseFee(maxTicksPerBlock);
+        uint32 calculatedBaseFee = _calculateBaseFee(poolId, maxTicksPerBlock);
 
         // Initialize pool state
         DynamicFeeState initialState = DynamicFeeStateLibrary.empty().setBaseFee(calculatedBaseFee);
@@ -131,7 +131,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         if (currentState.isEmpty()) revert Errors.NotInitialized();
 
         uint24 maxTicksPerBlock = oracle.maxTicksPerBlock(poolId);
-        baseFee = _calculateBaseFee(maxTicksPerBlock);
+        baseFee = _calculateBaseFee(poolId, maxTicksPerBlock);
         surgeFee = _calculateSurge(poolId, currentState, maxTicksPerBlock);
     }
 
@@ -148,7 +148,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     /// @return The current base fee in PPM
     function baseFeeFromCap(PoolId poolId) external view returns (uint32) {
         uint24 maxTicksPerBlock = oracle.maxTicksPerBlock(poolId);
-        return _calculateBaseFee(maxTicksPerBlock);
+        return _calculateBaseFee(poolId, maxTicksPerBlock);
     }
 
     // - - - INTERNAL FUNCTIONS - Cap Event Handling - - -
@@ -189,7 +189,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     /// @param eventTimestamp The timestamp for the event
     function _emitFeeStateChanged(PoolId poolId, DynamicFeeState feeState, uint40 eventTimestamp) private {
         uint24 maxTicksPerBlock = oracle.maxTicksPerBlock(poolId);
-        uint256 updatedBaseFee = _calculateBaseFee(maxTicksPerBlock);
+        uint256 updatedBaseFee = _calculateBaseFee(poolId, maxTicksPerBlock);
         uint256 updatedSurgeFee = _calculateSurge(poolId, feeState, maxTicksPerBlock);
 
         emit FeeStateChanged(poolId, updatedBaseFee, updatedSurgeFee, feeState.inCap(), eventTimestamp);
@@ -200,7 +200,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     /// @notice Calculates base fee from oracle tick data
     /// @param maxTicksPerBlock The maximum ticks per block from oracle
     /// @return The calculated base fee in PPM
-    function _calculateBaseFee(uint24 maxTicksPerBlock) private pure returns (uint32) {
+    function _calculateBaseFee(PoolId poolId, uint24 maxTicksPerBlock) private view returns (uint32) {
         if (maxTicksPerBlock == 0) {
             return DEFAULT_BASE_FEE_PPM;
         }
@@ -210,8 +210,10 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
             calculatedFee = uint256(maxTicksPerBlock) * BASE_FEE_FACTOR_PPM;
         }
 
+        uint24 maxBaseFee = policyManager.getMaxBaseFee(poolId);
+
         // Ensure the result fits in uint32
-        return calculatedFee > type(uint32).max ? type(uint32).max : uint32(calculatedFee);
+        return calculatedFee > maxBaseFee ? maxBaseFee : uint32(calculatedFee);
     }
 
     /// @notice Calculates surge fee with exponential decay
@@ -237,7 +239,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         if (elapsedTime >= surgeDuration) return 0;
 
         // Get base fee for surge calculation
-        uint256 oracleBaseFee = _calculateBaseFee(oracleMaxTicks);
+        uint256 oracleBaseFee = _calculateBaseFee(poolId, oracleMaxTicks);
 
         // Calculate maximum surge fee
         uint256 surgeMultiplierPpm = policyManager.getSurgeFeeMultiplierPpm(poolId);

@@ -878,18 +878,13 @@ contract PoolPolicyManagerTest is Base_Test {
         // Execute: Attempt to set min fee equal to max fee
         vm.startPrank(owner);
 
-        // Expect the transaction to revert with InvalidFeeRange error
-        vm.expectRevert(
-            abi.encodeWithSelector(
-                PolicyManagerErrors.InvalidFeeRange.selector,
-                equalToMaxFee,
-                100, // MIN_TRADING_FEE
-                specificMaxFee
-            )
-        );
-
-        // Call the function that should revert
+        // Should NOT revert if we attempt to set min fee to max fee
         policyManager.setMinBaseFee(poolId, equalToMaxFee);
+
+        // reset minBaseFee
+        policyManager.setMinBaseFee(poolId, initialMinBaseFee);
+
+        // - - -
 
         // Attempt to set min fee slightly above max fee
         vm.expectRevert(
