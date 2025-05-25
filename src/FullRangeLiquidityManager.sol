@@ -784,11 +784,18 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         bytes[] memory params;
 
         if (isNative) {
-            actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR), uint8(Actions.SWEEP));
-            params = new bytes[](3);
+            actions = abi.encodePacked(
+                uint8(Actions.MINT_POSITION),
+                uint8(Actions.CLOSE_CURRENCY),
+                uint8(Actions.CLOSE_CURRENCY),
+                uint8(Actions.SWEEP)
+            );
+            params = new bytes[](4);
         } else {
-            actions = abi.encodePacked(uint8(Actions.MINT_POSITION), uint8(Actions.SETTLE_PAIR));
-            params = new bytes[](2);
+            actions = abi.encodePacked(
+                uint8(Actions.MINT_POSITION), uint8(Actions.CLOSE_CURRENCY), uint8(Actions.CLOSE_CURRENCY)
+            );
+            params = new bytes[](3);
         }
 
         // Parameters for MINT_POSITION
@@ -803,12 +810,15 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             "" // No hook data
         );
 
-        // Parameters for SETTLE_PAIR
-        params[1] = abi.encode(key.currency0, key.currency1);
+        // Parameters for CLOSE_CURRENCY (currency0)
+        params[1] = abi.encode(key.currency0);
+
+        // Parameters for CLOSE_CURRENCY (currency1)
+        params[2] = abi.encode(key.currency1);
 
         // Add sweep parameters only if needed
         if (isNative) {
-            params[2] = abi.encode(key.currency0, address(this));
+            params[3] = abi.encode(key.currency0, address(this));
         }
 
         // Calculate native ETH value to forward
@@ -883,12 +893,18 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         bytes[] memory params;
 
         if (isNative) {
-            actions =
-                abi.encodePacked(uint8(Actions.INCREASE_LIQUIDITY), uint8(Actions.SETTLE_PAIR), uint8(Actions.SWEEP));
-            params = new bytes[](3);
+            actions = abi.encodePacked(
+                uint8(Actions.INCREASE_LIQUIDITY),
+                uint8(Actions.CLOSE_CURRENCY),
+                uint8(Actions.CLOSE_CURRENCY),
+                uint8(Actions.SWEEP)
+            );
+            params = new bytes[](4);
         } else {
-            actions = abi.encodePacked(uint8(Actions.INCREASE_LIQUIDITY), uint8(Actions.SETTLE_PAIR));
-            params = new bytes[](2);
+            actions = abi.encodePacked(
+                uint8(Actions.INCREASE_LIQUIDITY), uint8(Actions.CLOSE_CURRENCY), uint8(Actions.CLOSE_CURRENCY)
+            );
+            params = new bytes[](3);
         }
 
         // Parameters for INCREASE_LIQUIDITY
@@ -900,12 +916,15 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             "" // No hook data
         );
 
-        // Parameters for SETTLE_PAIR
-        params[1] = abi.encode(key.currency0, key.currency1);
+        // Parameters for CLOSE_CURRENCY (currency0)
+        params[1] = abi.encode(key.currency0);
+
+        // Parameters for CLOSE_CURRENCY (currency1)
+        params[2] = abi.encode(key.currency1);
 
         // Add sweep parameters only if needed
         if (isNative) {
-            params[2] = abi.encode(key.currency0, address(this));
+            params[3] = abi.encode(key.currency0, address(this));
         }
 
         // Calculate native ETH value to forward

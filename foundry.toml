@@ -4,12 +4,20 @@ test = "test"
 out = "out"
 libs = ["lib"]
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
-dotenv = true  # Enable .env file loading
+dotenv = true
 solc_version = "0.8.27"
 evm_version = "cancun"
+# Fast compilation settings for development
+viaIR = true
+optimizer = false
+
+# NOTE: the default profile will be used for dev compilation and testing
+
+# Production profile - full optimization
+[profile.production]
 viaIR = true
 optimizer = true
-optimizer_runs = 1 # TODO: use 10000
+optimizer_runs = 10000
 
 [rpc_endpoints]
 mainnet = "${MAINNET_RPC_URL}"
