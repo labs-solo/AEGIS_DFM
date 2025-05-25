@@ -52,6 +52,8 @@ library Errors {
     error RateLimited();
     error InvalidPoolKey();
     error InvalidPoolId();
+    error InvalidTwapPeriod();
+    error InvalidTickTolerance();
     error ZeroAddress();
     error ZeroAmount();
     error ZeroLiquidity();

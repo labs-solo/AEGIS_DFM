@@ -1,17 +1,22 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.27;
 
-import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
+// - - - external deps - - -
+
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+
+// - - - local deps - - -
+
 import {Errors} from "./errors/Errors.sol";
+import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 import {PolicyValidator} from "./libraries/PolicyValidator.sol";
+import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
 
 contract TruncGeoOracleMulti is ReentrancyGuard {
     /* ========== paged ring – each "leaf" holds 512 observations ========== */
@@ -402,6 +407,41 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         return CAP_FREQ_MAX;
     }
 
+    /// @notice Calculates time-weighted means of tick and liquidity for a given Uniswap V3 pool
+    /// copied from v3-periphery OracleLibrary
+    /// @param key the key of the pool to consult
+    /// @param secondsAgo Number of seconds in the past from which to calculate the time-weighted means
+    /// @return arithmeticMeanTick The arithmetic mean tick from (block.timestamp - secondsAgo) to block.timestamp
+    /// @return harmonicMeanLiquidity The harmonic mean liquidity from (block.timestamp - secondsAgo) to block.timestamp
+    function consult(PoolKey calldata key, uint32 secondsAgo)
+        external
+        view
+        returns (int24 arithmeticMeanTick, uint128 harmonicMeanLiquidity)
+    {
+        require(secondsAgo != 0, "BP");
+
+        uint32[] memory secondsAgos = new uint32[](2);
+        secondsAgos[0] = secondsAgo;
+        secondsAgos[1] = 0;
+
+        (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) =
+            observe(key, secondsAgos);
+
+        int56 tickCumulativesDelta = tickCumulatives[1] - tickCumulatives[0];
+        uint160 secondsPerLiquidityCumulativesDelta =
+            secondsPerLiquidityCumulativeX128s[1] - secondsPerLiquidityCumulativeX128s[0];
+
+        int56 secondsAgoI56 = int56(uint56(secondsAgo));
+
+        arithmeticMeanTick = int24(tickCumulativesDelta / secondsAgoI56);
+        // Always round to negative infinity
+        if (tickCumulativesDelta < 0 && (tickCumulativesDelta % secondsAgoI56 != 0)) arithmeticMeanTick--;
+
+        // We are multiplying here instead of shifting to ensure that harmonicMeanLiquidity doesn't overflow uint128
+        uint192 secondsAgoX160 = uint192(secondsAgo) * type(uint160).max;
+        harmonicMeanLiquidity = uint128(secondsAgoX160 / (uint192(secondsPerLiquidityCumulativesDelta) << 32));
+    }
+
     /**
      * @notice Observe oracle values at specific secondsAgos from the current block timestamp
      * @dev Reverts if observation at or before the desired observation timestamp does not exist
@@ -410,8 +450,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
      * @return tickCumulatives The tick * time elapsed since the pool was first initialized, as of each secondsAgo
      * @return secondsPerLiquidityCumulativeX128s The cumulative seconds / max(1, liquidity) since pool initialized
      */
-    function observe(PoolKey calldata key, uint32[] calldata secondsAgos)
-        external
+    function observe(PoolKey calldata key, uint32[] memory secondsAgos)
+        public
         view
         returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s)
     {

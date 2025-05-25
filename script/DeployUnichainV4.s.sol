@@ -105,7 +105,7 @@ contract DeployUnichainV4 is Script {
         liquidityManager = new FullRangeLiquidityManager(
             poolManager,
             PositionManager(payable(address(0))),
-            policyManager,
+            truncGeoOracle,
             address(0) // TODO: Spot contract address
         );
 

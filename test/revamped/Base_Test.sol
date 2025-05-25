@@ -152,7 +152,7 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
         liquidityManager = new FullRangeLiquidityManager(
             manager,
             PositionManager(payable(address(lpm))), // Use the position manager from PosmTestSetup (named lpm)
-            policyManager,
+            oracle,
             hookAddress
         );
 

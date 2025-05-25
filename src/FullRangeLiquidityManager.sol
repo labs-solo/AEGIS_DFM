@@ -43,6 +43,7 @@ import {Math} from "./libraries/Math.sol";
 // - - - Project Contracts - - -
 
 import {PoolPolicyManager} from "./PoolPolicyManager.sol";
+import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
 
 /// @title FullRangeLiquidityManager
 /// @notice Manages hook fees and liquidity for Spot pools
@@ -62,17 +63,20 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
     /// @notice Minimum amount to reinvest to avoid dust
     uint256 private constant MIN_REINVEST_AMOUNT = 1e4;
 
-    /// @notice The "constant" Spot hook contract address that can notify fees
+    /// @inheritdoc IFullRangeLiquidityManager
     address public immutable override authorizedHookAddress;
 
-    /// @notice The Uniswap V4 PoolManager
+    /// @inheritdoc IFullRangeLiquidityManager
     IPoolManager public immutable override poolManager;
 
-    /// @notice The Uniswap V4 PositionManager for adding liquidity
+    /// @inheritdoc IFullRangeLiquidityManager
     PositionManager public immutable override positionManager;
 
-    /// @notice The policy manager contract that determines ownership
+    /// @inheritdoc IFullRangeLiquidityManager
     PoolPolicyManager public immutable override policyManager;
+
+    /// @inheritdoc IFullRangeLiquidityManager
+    TruncGeoOracleMulti public immutable override oracle;
 
     struct PendingFees {
         uint256 erc6909_0;
@@ -90,34 +94,44 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
     /// @notice NFT token IDs for full range positions
     mapping(PoolId => uint256) private positionIds;
 
-    /// @notice Tracks accounted balances of tokens per currency custodied directly by this contract
+    /// @inheritdoc IFullRangeLiquidityManager
+    uint32 public reinvestmentTwap;
+
+    /// @inheritdoc IFullRangeLiquidityManager
+    int24 public tickRangeTolerance;
+
+    /// @inheritdoc IFullRangeLiquidityManager
     mapping(Currency => uint256) public override accountedBalances;
 
-    /// @notice Tracks accounted balances of ERC6909 tokens per currency ID custodied directly by this contract
+    /// @inheritdoc IFullRangeLiquidityManager
     mapping(Currency => uint256) public override accountedERC6909Balances;
 
     /// @notice Constructs the FullRangeLiquidityManager
     /// @param _poolManager The Uniswap V4 PoolManager
     /// @param _positionManager The Uniswap V4 PositionManager
-    /// @param _policyManager The policy manager contract
+    /// @param _oracle The oracle contract
     /// @param _authorizedHookAddress The hook address that can notify fees
     constructor(
         IPoolManager _poolManager,
         PositionManager _positionManager,
-        PoolPolicyManager _policyManager,
+        TruncGeoOracleMulti _oracle,
         address _authorizedHookAddress
     ) {
         if (address(_poolManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_positionManager) == address(0)) revert Errors.ZeroAddress();
-        if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
+        if (address(_oracle) == address(0)) revert Errors.ZeroAddress();
         if (_authorizedHookAddress == address(0)) revert Errors.ZeroAddress();
 
         if (_positionManager.poolManager() != _poolManager) revert Errors.PoolPositionManagerMismatch();
 
         poolManager = _poolManager;
         positionManager = _positionManager;
-        policyManager = _policyManager;
+        policyManager = PoolPolicyManager(address(_oracle.policy()));
+        oracle = _oracle;
         authorizedHookAddress = _authorizedHookAddress;
+
+        reinvestmentTwap = 60; // 1min
+        tickRangeTolerance = 50; // ~±0.5%
     }
 
     modifier onlyPolicyOwner() {
@@ -245,6 +259,21 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // Check minimum thresholds
         if (total0 < MIN_REINVEST_AMOUNT || total1 < MIN_REINVEST_AMOUNT) {
             return false;
+        }
+
+        uint32 _reinvestmentTwap = reinvestmentTwap;
+        if (_reinvestmentTwap != 0) {
+            // Get current spot price tick
+            (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+
+            // Get TWAP tick from oracle
+            (int24 twapTick,) = oracle.consult(key, _reinvestmentTwap);
+
+            // Check if current tick is within tolerance of TWAP
+            int24 tickDeviation = currentTick > twapTick ? currentTick - twapTick : twapTick - currentTick;
+            if (tickDeviation > tickRangeTolerance) {
+                return false; // Reject reinvestment due to price manipulation
+            }
         }
 
         // Redeem ERC20 tokens from PoolManager
@@ -510,7 +539,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             recipient
         );
 
-        emit WithdrawProtocolLiquidity(key.toId(), recipient, sharesToBurn, amount0, amount1);
+        emit Withdraw(key.toId(), address(this), recipient, amount0, amount1, sharesToBurn);
 
         return (amount0, amount1);
     }
@@ -636,6 +665,20 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         emit Donation(poolId, msg.sender, donated0, donated1);
 
         return (donated0, donated1);
+    }
+
+    /// @inheritdoc IFullRangeLiquidityManager
+    function setReinvestmentTwap(uint32 _reinvestmentTwap) external onlyPolicyOwner {
+        if (_reinvestmentTwap > 7200) revert Errors.InvalidTwapPeriod();
+        reinvestmentTwap = _reinvestmentTwap;
+        emit ReinvestmentTwapUpdated(_reinvestmentTwap);
+    }
+
+    /// @inheritdoc IFullRangeLiquidityManager
+    function setTickRangeTolerance(int24 _tickRangeTolerance) external onlyPolicyOwner {
+        if (_tickRangeTolerance < 0 || _tickRangeTolerance > 500) revert Errors.InvalidTickTolerance();
+        tickRangeTolerance = _tickRangeTolerance;
+        emit TickRangeToleranceUpdated(_tickRangeTolerance);
     }
 
     // - - - internals - - -

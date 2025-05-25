@@ -114,7 +114,7 @@ contract DirectDeploy is Script {
             liquidityManager = new FullRangeLiquidityManager(
                 IPoolManager(UNICHAIN_POOL_MANAGER),
                 PositionManager(payable(address(0))), // TODO: specify actual PositionManager
-                policyManager,
+                truncGeoOracle,
                 address(0) // TODO: the Spot contract address
             );
             console.log("LiquidityManager deployed at: %s", address(liquidityManager));

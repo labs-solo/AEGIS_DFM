@@ -137,7 +137,7 @@ contract DeployLocalUniswapV4 is Script {
         liquidityManager = new FullRangeLiquidityManager(
             IPoolManager(address(poolManager)),
             PositionManager(payable(address(0))), // placeholder, to be wired later (cast via payable to satisfy compiler)
-            policyManager,
+            truncGeoOracle,
             address(0) // TODO: the Spot hook contract address
         );
         console.log("LiquidityManager deployed at:", address(liquidityManager));

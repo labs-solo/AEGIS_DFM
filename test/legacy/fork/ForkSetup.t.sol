@@ -210,7 +210,7 @@ contract ForkSetup is Test {
 
         emit log_string("Deploying LiquidityManager...");
         FullRangeLiquidityManager liquidityManagerImpl =
-            new FullRangeLiquidityManager(poolManager, posm, policyManager, deployerEOA);
+            new FullRangeLiquidityManager(poolManager, posm, truncGeoOracle, deployerEOA);
         liquidityManager = IFullRangeLiquidityManager(address(liquidityManagerImpl));
         emit log_named_address("LiquidityManager deployed at", address(liquidityManager));
         require(address(liquidityManager) != address(0), "LiquidityManager deployment failed");

@@ -264,7 +264,9 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @inheritdoc IPoolPolicyManager
     function setDailyBudgetPpm(uint32 newCapBudgetDailyPpm) external override onlyOwner {
-        if (newCapBudgetDailyPpm == 0) revert PolicyManagerErrors.ZeroValue();
+        if (newCapBudgetDailyPpm == 0 || newCapBudgetDailyPpm > PrecisionConstants.PPM_SCALE) {
+            revert Errors.ParameterOutOfRange(newCapBudgetDailyPpm, 1, PrecisionConstants.PPM_SCALE);
+        }
         _capBudgetDailyPpm = newCapBudgetDailyPpm;
         emit DailyBudgetSet(newCapBudgetDailyPpm);
     }

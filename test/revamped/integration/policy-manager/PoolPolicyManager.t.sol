@@ -1593,7 +1593,6 @@ contract PoolPolicyManagerTest is Base_Test {
         uint32 smallBudget = 100_000; // 10% of PPM_SCALE
         uint32 mediumBudget = 500_000; // 50% of PPM_SCALE
         uint32 largeBudget = 1_000_000; // 100% of PPM_SCALE (default)
-        uint32 veryLargeBudget = 2_000_000; // 200% of PPM_SCALE
 
         // Test first with small budget
         vm.startPrank(owner);
@@ -1636,39 +1635,7 @@ contract PoolPolicyManagerTest is Base_Test {
         updatedBudget = policyManager.getDailyBudgetPpm(poolId);
         assertEq(updatedBudget, largeBudget, "Daily budget not set to large value");
 
-        // Test with very large budget
-        // Expect event to be emitted with correct parameters
-        vm.expectEmit(true, true, true, true);
-        emit IPoolPolicyManager.DailyBudgetSet(veryLargeBudget);
-
-        // Call the function with very large budget
-        policyManager.setDailyBudgetPpm(veryLargeBudget);
-
-        // Verify very large budget was set correctly
-        updatedBudget = policyManager.getDailyBudgetPpm(poolId);
-        assertEq(updatedBudget, veryLargeBudget, "Daily budget not set to very large value");
-
-        // Test with maximum uint32 value
-        uint32 maxValidBudget = type(uint32).max;
-
-        // Expect event to be emitted with correct parameters
-        vm.expectEmit(true, true, true, true);
-        emit IPoolPolicyManager.DailyBudgetSet(maxValidBudget);
-
-        // Call the function with maximum value
-        policyManager.setDailyBudgetPpm(maxValidBudget);
-
-        // Verify maximum value was set correctly
-        updatedBudget = policyManager.getDailyBudgetPpm(poolId);
-        assertEq(updatedBudget, maxValidBudget, "Daily budget not set to maximum value");
-
         vm.stopPrank();
-
-        PoolId corruptedId = PoolId.wrap(bytes32(0));
-
-        // Test that the global setting applies to all pools
-        uint32 budgetForOtherPool = policyManager.getDailyBudgetPpm(corruptedId);
-        assertEq(budgetForOtherPool, maxValidBudget, "Daily budget setting should apply to all pools");
     }
 
     function test_Success_SetDecayWindow_WhenValidValue() public {
