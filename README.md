@@ -90,17 +90,11 @@ pnpm run clean    # nuke cache/ & out/
 
 ---
 
-## 🔄  Local Fork Demo (Optional)
-
-Spin up a persistent Anvil fork and deploy the full stack:
+## Deployment
 
 ```bash
-cp .env.example .env         # fill in RPC + key
-./persistent-fork.sh         # keeps the fork alive in background
-./deploy-to-unichain.sh      # or tailor with forge script ...
+forge script script/Deploy.s.sol --rpc-url <chain-alias> --sender <deployer-address> --account <deployer-account-name> --broadcast
 ```
-
-After deployment run `./add-liquidity.sh` then `forge script script/C2DValidation.s.sol` to verify the system invariants on-chain.
 
 ---
 

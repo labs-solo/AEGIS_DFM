@@ -23,6 +23,8 @@ import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
 import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
 
 contract DeployScript is Script, UniswapV4Config {
+    address constant CREATE2_DEPLOYER = 0x4e59b44847b379578588920cA78FbF26c0B4956C;
+
     // Deployed contracts struct for easy reference
     struct DeployedContracts {
         address policyManager;
@@ -38,14 +40,16 @@ contract DeployScript is Script, UniswapV4Config {
     uint256 private dailyBudget; // NOTE: if we use default(i.e. 0) then 1e6 will be used in PPM.constructor
 
     function run() external {
-        deployer = msg.sender;
-
         // Load Uniswap V4 addresses
         uniswapV4 = getChainConfig();
 
+        string memory activeProfile = vm.envString("FOUNDRY_PROFILE");
+
         console.log("=== Deployment Configuration ===");
+        console.log("Active profile:", activeProfile);
         console.log("Chain ID:", block.chainid);
-        console.log("Deployer:", deployer);
+
+        console.log("=== Uniswap V4 Info ===");
         console.log("Pool Manager:", address(uniswapV4.poolManager));
         console.log("Position Manager:", address(uniswapV4.positionManager));
         console.log("Daily Budget:", dailyBudget);
@@ -61,41 +65,39 @@ contract DeployScript is Script, UniswapV4Config {
     }
 
     function deployAllContracts() internal returns (DeployedContracts memory deployed) {
-        vm.startBroadcast(deployer);
+        vm.startBroadcast();
 
+        deployer = msg.sender;
+        console.log("Deployer:", deployer);
         console.log("Starting deployment...");
 
-        // Step 1: Deploy PoolPolicyManager
-        console.log("Deploying PoolPolicyManager...");
-        PoolPolicyManager policyManager = new PoolPolicyManager(
-            deployer, // governance
-            dailyBudget
-        );
-        deployed.policyManager = address(policyManager);
-        console.log("PoolPolicyManager deployed at:", deployed.policyManager);
+        // Step 1: Precompute ALL deployment addresses first (before any deployments)
+        uint256 currentNonce = vm.getNonce(deployer);
+        console.log("Current nonce:", currentNonce);
 
-        // Step 2: Calculate deployment addresses for circular dependencies
-        address oracleAddress = computeCreateAddress(deployer, vm.getNonce(deployer));
-        address feeManagerAddress = computeCreateAddress(deployer, vm.getNonce(deployer) + 1);
-        address liquidityManagerAddress = computeCreateAddress(deployer, vm.getNonce(deployer) + 2);
+        address policyManagerAddress = computeCreateAddress(deployer, currentNonce);
+        address oracleAddress = computeCreateAddress(deployer, currentNonce + 1);
+        address feeManagerAddress = computeCreateAddress(deployer, currentNonce + 2);
+        address liquidityManagerAddress = computeCreateAddress(deployer, currentNonce + 3);
 
         console.log("Precomputed addresses:");
+        console.log("PolicyManager:", policyManagerAddress);
         console.log("Oracle:", oracleAddress);
         console.log("FeeManager:", feeManagerAddress);
         console.log("LiquidityManager:", liquidityManagerAddress);
 
-        // Step 3: Mine hook address with correct permissions
+        // Step 2: Mine hook address with precomputed addresses
         uint160 hookFlags = getSpotHookFlags();
         console.log("Mining hook address with flags:", hookFlags);
 
         (address hookAddress, bytes32 salt) = HookMiner.find(
-            deployer,
+            CREATE2_DEPLOYER,
             hookFlags,
             type(Spot).creationCode,
             abi.encode(
                 address(uniswapV4.poolManager),
                 liquidityManagerAddress,
-                deployed.policyManager,
+                policyManagerAddress,
                 oracleAddress,
                 feeManagerAddress
             )
@@ -103,6 +105,16 @@ contract DeployScript is Script, UniswapV4Config {
 
         console.log("Hook address found:", hookAddress);
         console.log("Salt:", vm.toString(salt));
+
+        // Step 3: Deploy PoolPolicyManager
+        console.log("Deploying PoolPolicyManager...");
+        PoolPolicyManager policyManager = new PoolPolicyManager(
+            deployer, // governance
+            dailyBudget
+        );
+        deployed.policyManager = address(policyManager);
+        require(deployed.policyManager == policyManagerAddress, "PolicyManager address mismatch");
+        console.log("PoolPolicyManager deployed at:", deployed.policyManager);
 
         // Step 4: Deploy TruncGeoOracleMulti
         console.log("Deploying TruncGeoOracleMulti...");
@@ -127,7 +139,7 @@ contract DeployScript is Script, UniswapV4Config {
         require(deployed.liquidityManager == liquidityManagerAddress, "LiquidityManager address mismatch");
         console.log("FullRangeLiquidityManager deployed at:", deployed.liquidityManager);
 
-        // Step 7: Deploy Spot hook
+        // Step 7: Deploy Spot hook using precomputed addresses
         console.log("Deploying Spot hook...");
         Spot spot = new Spot{salt: salt}(uniswapV4.poolManager, liquidityManager, policyManager, oracle, feeManager);
         deployed.spot = address(spot);
