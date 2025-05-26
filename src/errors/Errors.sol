@@ -46,12 +46,14 @@ library Errors {
     error ArrayLengthMismatch();
     error InvalidCallbackSalt();
     error InvalidPolicyImplementationsLength(uint256 length);
-    error NotInitialized(string component);
+    error NotInitialized();
     error AlreadyInitialized(string component);
     error ReinvestmentDisabled();
     error RateLimited();
     error InvalidPoolKey();
     error InvalidPoolId();
+    error InvalidTwapPeriod();
+    error InvalidTickTolerance();
     error ZeroAddress();
     error ZeroAmount();
     error ZeroLiquidity();
@@ -99,7 +101,7 @@ library Errors {
     // --- Pool State & Operations ---
     error PoolNotInitialized(bytes32 poolId);
     error PoolAlreadyInitialized(bytes32 poolId);
-    error PoolNotFound(bytes32 poolId);
+    error PoolNotFound(PoolId poolId);
     error PoolPaused(bytes32 poolId);
     error PoolLocked(bytes32 poolId);
     error PoolInvalidState(bytes32 poolId);

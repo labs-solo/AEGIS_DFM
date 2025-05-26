@@ -90,7 +90,7 @@ interface ITruncGeoOracleMulti {
     function getLatestObservation(PoolId poolId) external view returns (int24 tick, uint32 timestamp);
 
     /// @return true if a pool has been enabled and at least one observation exists
-    function isOracleEnabled(PoolId pid) external view returns (bool);
+    function isOracleEnabled(PoolId poolId) external view returns (bool);
 
     /**
      * @notice Returns the current maximum ticks per block allowed for a pool.

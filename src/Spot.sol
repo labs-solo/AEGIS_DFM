@@ -7,6 +7,7 @@ import {ERC20} from "solmate/src/tokens/ERC20.sol";
 
 // - - - V4 Core Deps - - -
 
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {CurrencyDelta} from "v4-core/src/libraries/CurrencyDelta.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
@@ -55,11 +56,6 @@ contract Spot is BaseHook, ISpot {
     using CurrencyDelta for Currency;
     using BalanceDeltaLibrary for BalanceDelta;
     using CustomRevert for bytes4;
-
-    // - - - Constants - - -
-
-    // Gas-stipend for dynamic-fee-manager callback
-    uint256 private constant GAS_STIPEND = 100_000;
 
     // - - - State - - -
 
@@ -129,9 +125,6 @@ contract Spot is BaseHook, ISpot {
         emit ReinvestmentPausedChanged(paused);
     }
 
-    // Add this field to track if we've approved FRLM for each token
-    mapping(address => bool) private _tokenApprovedToFRLM;
-
     /// @inheritdoc ISpot
     function depositToFRLM(
         PoolKey calldata key,
@@ -142,10 +135,7 @@ contract Spot is BaseHook, ISpot {
         address recipient
     ) external payable override onlyPolicyOwner returns (uint256 shares, uint256 amount0, uint256 amount1) {
         // Pass msg.sender as the payer to avoid token transfers through Spot
-        uint256 unusedAmount0;
-        uint256 unusedAmount1;
-
-        (shares, amount0, amount1, unusedAmount0, unusedAmount1) = liquidityManager.deposit{value: msg.value}(
+        (shares, amount0, amount1,,) = liquidityManager.deposit{value: msg.value}(
             key, amount0Desired, amount1Desired, amount0Min, amount1Min, recipient, msg.sender
         );
 
@@ -167,7 +157,7 @@ contract Spot is BaseHook, ISpot {
     // - - - Hook Callback Implementations - - -
 
     /// @notice called in BaseHook.beforeSwap
-    function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata hookData)
+    function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata)
         internal
         override
         returns (bytes4, BeforeSwapDelta, uint24)
@@ -241,7 +231,7 @@ contract Spot is BaseHook, ISpot {
         PoolKey calldata key,
         SwapParams calldata params,
         BalanceDelta delta,
-        bytes calldata hookData
+        bytes calldata
     ) internal override returns (bytes4, int128) {
         PoolId poolId = key.toId();
 
@@ -253,11 +243,23 @@ contract Spot is BaseHook, ISpot {
             preSwapTick := tload(add(poolId, 1))
         }
 
-        // Push observation to oracle & check cap
-        bool capped = truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick);
-
-        // Notify Dynamic Fee Manager about the oracle update
-        dynamicFeeManager.notifyOracleUpdate{gas: GAS_STIPEND}(poolId, capped);
+        // Push observation to oracle & check cap (with error handling)
+        try truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick) returns (bool capped) {
+            // Notify Dynamic Fee Manager about the oracle update (with error handling)
+            try dynamicFeeManager.notifyOracleUpdate(poolId, capped) {
+                // Oracle update notification succeeded
+            } catch Error(string memory reason) {
+                emit FeeManagerNotificationFailed(poolId, reason);
+            } catch (bytes memory lowLevelData) {
+                // Low-level fee manager failure
+                emit FeeManagerNotificationFailed(poolId, "LLFM");
+            }
+        } catch Error(string memory reason) {
+            emit OracleUpdateFailed(poolId, reason);
+        } catch (bytes memory lowLevelData) {
+            // Low-level oracle failure
+            emit OracleUpdateFailed(poolId, "LLOF");
+        }
 
         // Handle exactOut case in afterSwap (params.amountSpecified > 0)
         if (params.amountSpecified > 0) {
@@ -300,10 +302,8 @@ contract Spot is BaseHook, ISpot {
                     }
                     liquidityManager.notifyFee(key, fee0, fee1);
 
-                    // Try to reinvest if not paused
-                    if (!reinvestmentPaused) {
-                        liquidityManager.reinvest(key);
-                    }
+                    // Try to reinvest if not paused (with error handling)
+                    _tryReinvest(key);
 
                     // Return the fee amount we took
                     return (BaseHook.afterSwap.selector, int128(int256(hookFeeAmount)));
@@ -311,34 +311,44 @@ contract Spot is BaseHook, ISpot {
             }
         }
 
-        // Try to reinvest if not paused
-        if (!reinvestmentPaused) {
-            liquidityManager.reinvest(key);
-        }
+        // Try to reinvest if not paused (with error handling)
+        _tryReinvest(key);
 
         return (BaseHook.afterSwap.selector, 0);
     }
 
     /// @notice called in BaseHook.afterInitialize
-    function _afterInitialize(address sender, PoolKey calldata key, uint160 sqrtPriceX96, int24 tick)
-        internal
-        override
-        returns (bytes4)
-    {
+    function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick) internal override returns (bytes4) {
         PoolId poolId = key.toId();
-        if (sqrtPriceX96 == 0) revert Errors.InvalidPrice(sqrtPriceX96);
 
-        // Initialize oracle if possible
-        if (address(truncGeoOracle) != address(0) && address(key.hooks) == address(this)) {
-            truncGeoOracle.enableOracleForPool(key);
-            emit OracleInitialized(poolId, tick, TickMoveGuard.HARD_ABS_CAP);
+        if (!LPFeeLibrary.isDynamicFee(key.fee)) {
+            // Only allow dynamic fee pools to be created
+            revert Errors.InvalidFee();
         }
 
-        // Initialize dynamic fee manager
-        if (address(dynamicFeeManager) != address(0)) {
-            dynamicFeeManager.initialize(poolId, tick);
-        }
-
+        truncGeoOracle.enableOracleForPool(key);
+        dynamicFeeManager.initialize(poolId, tick);
         return BaseHook.afterInitialize.selector;
+    }
+
+    // - - - internal helpers - - -
+
+    /// @notice Private function to handle reinvestment with error handling
+    /// @param key The pool key for reinvestment
+    /// @dev Uses try-catch to prevent reinvestment failures from blocking swaps
+    function _tryReinvest(PoolKey calldata key) private {
+        if (!reinvestmentPaused) {
+            try liquidityManager.reinvest(key) returns (bool success) {
+                // Reinvestment attempted, success status is handled by the reinvest function
+                // No additional action needed here
+            } catch Error(string memory reason) {
+                // Log the error but don't revert the swap
+                emit ReinvestmentFailed(key.toId(), reason);
+            } catch (bytes memory lowLevelData) {
+                // Handle low-level failures (e.g., out of gas, invalid data)
+                // Low-level reinvestment failure
+                emit ReinvestmentFailed(key.toId(), "LLRF");
+            }
+        }
     }
 }

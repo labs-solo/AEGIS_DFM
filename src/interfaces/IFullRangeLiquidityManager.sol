@@ -11,6 +11,7 @@ import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.s
 import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 
 import {PoolPolicyManager} from "../PoolPolicyManager.sol";
+import {TruncGeoOracleMulti} from "../TruncGeoOracleMulti.sol";
 
 /// @title IFullRangeLiquidityManager
 /// @notice Interface for the FullRangeLiquidityManager contract that handles liquidity and fee management
@@ -42,16 +43,6 @@ interface IFullRangeLiquidityManager is IUnlockCallback {
         PoolId indexed poolId, address indexed user, address recipient, uint256 amount0, uint256 amount1, uint256 shares
     );
 
-    /// @notice Emitted when protocol-owned liquidity is withdrawn
-    /// @param poolId The ID of the pool
-    /// @param recipient The address that received the withdrawn tokens
-    /// @param shares The amount of protocol-owned shares that were burned
-    /// @param amount0 The amount of token0 withdrawn
-    /// @param amount1 The amount of token1 withdrawn
-    event WithdrawProtocolLiquidity(
-        PoolId indexed poolId, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1
-    );
-
     /// @notice Emitted when excess tokens are swept
     /// @param currency The currency that was swept
     /// @param recipient The address that received the tokens
@@ -63,9 +54,17 @@ interface IFullRangeLiquidityManager is IUnlockCallback {
 
     event Donation(PoolId indexed poolId, address indexed donor, uint256 amount0, uint256 amount1);
 
+    /// @notice Emitted when the reinvestment TWAP period is updated
+    /// @param newTwapPeriod The new TWAP period in seconds
+    event ReinvestmentTwapUpdated(uint32 newTwapPeriod);
+
+    /// @notice Emitted when the tick range tolerance is updated
+    /// @param newTickTolerance The new tick range tolerance (maximum allowed deviation from TWAP)
+    event TickRangeToleranceUpdated(int24 newTickTolerance);
+
     enum CallbackAction {
         TAKE_TOKENS,
-        SWEEP_TOKEN
+        SWEEP_EXCESS_TOKEN
     }
 
     /// @notice Notifies the LiquidityManager of collected fees
@@ -168,18 +167,46 @@ interface IFullRangeLiquidityManager is IUnlockCallback {
         payable
         returns (uint256 donated0, uint256 donated1);
 
-    // - - - views - - -
+    /// @notice Sets the TWAP period used for reinvestment price validation
+    /// @param _reinvestmentTwap The TWAP period in seconds (must be > 0 and <= 7200)
+    /// @dev Only callable by policy owner. Used to prevent MEV attacks during reinvestment
+    function setReinvestmentTwap(uint32 _reinvestmentTwap) external;
 
+    /// @notice Sets the tick range tolerance for reinvestment price validation
+    /// @param _tickRangeTolerance Maximum allowed deviation from TWAP tick (must be >= 0 and <= 500)
+    /// @dev Only callable by policy owner. Used to prevent MEV attacks during reinvestment
+    function setTickRangeTolerance(int24 _tickRangeTolerance) external;
+
+    // - - - immutable views - - -
+
+    /// @notice The Uniswap V4 PoolManager
     function poolManager() external view returns (IPoolManager);
+
+    /// @notice The Uniswap V4 PositionManager for adding liquidity
     function positionManager() external view returns (PositionManager);
+
+    /// @notice The policy manager contract that determines ownership
     function policyManager() external view returns (PoolPolicyManager);
 
-    /// @notice Returns the authorized hook address that can notify fees
+    /// @notice The oracle contract
+    function oracle() external view returns (TruncGeoOracleMulti);
+
+    /// @notice The "constant" Spot hook contract address that can notify fees
     function authorizedHookAddress() external view returns (address);
 
+    // - - - variable views - - -
+
+    /// @notice Tracks accounted balances of tokens per currency custodied directly by this contract
     function accountedBalances(Currency currency) external view returns (uint256);
 
+    /// @notice Tracks accounted balances of ERC6909 tokens per currency ID custodied directly by this contract
     function accountedERC6909Balances(Currency currency) external view returns (uint256);
+
+    /// @notice Time window for TWAP calculation (e.g., 600 seconds = 10 minutes)
+    function reinvestmentTwap() external view returns (uint32);
+
+    /// @notice Allowed deviation from TWAP (e.g., ±50 ticks)
+    function tickRangeTolerance() external view returns (int24);
 
     /// @notice Gets the pending fees for a pool that haven't been reinvested yet
     /// @dev These fees accrue until reinvestment conditions are met

@@ -14,6 +14,7 @@ import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
@@ -56,6 +57,11 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
     /// @dev Constant for the minimum locked liquidity per position
     uint256 constant MIN_LOCKED_LIQUIDITY = 1000;
 
+    /// @notice Cooldown period between reinvestments (default: 1 day)
+    uint256 constant REINVEST_COOLDOWN = 1 days;
+
+    uint24 constant DEFAULT_MANUAL_FEE = 3_000; // 0.3%
+
     // Test accounts
     address owner = makeAddr("owner");
     address user1 = makeAddr("user1");
@@ -86,7 +92,7 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
         // Create the policy manager with proper parameters
         vm.startPrank(owner);
         // Constructor(governance, dailyBudget, minTradingFee, maxTradingFee)
-        policyManager = new PoolPolicyManager(owner, 1_000_000, 100, 10_000);
+        policyManager = new PoolPolicyManager(owner, 1_000_000);
         vm.stopPrank();
 
         // Define the permissions for Spot hook
@@ -149,7 +155,7 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
         liquidityManager = new FullRangeLiquidityManager(
             manager,
             PositionManager(payable(address(lpm))), // Use the position manager from PosmTestSetup (named lpm)
-            policyManager,
+            oracle,
             hookAddress
         );
 
@@ -168,7 +174,7 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
         poolKey = PoolKey(
             currency0,
             currency1,
-            3000, // 0.3% fee
+            LPFeeLibrary.DYNAMIC_FEE_FLAG,
             60, // tick spacing
             IHooks(address(spot))
         );

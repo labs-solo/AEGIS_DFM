@@ -128,8 +128,6 @@ library SimpleDeployLib {
          *     address, let the deps know and transfer ownership   *
          *     back to governance if desired.                      *
          * ------------------------------------------------------- */
-        // Dynamic Fee Manager: authorise the real hook
-        d.dfm.setAuthorizedHook(hookAddr);
 
         console2.log("LocalSetup address (this):");
         console2.logAddress(address(this));

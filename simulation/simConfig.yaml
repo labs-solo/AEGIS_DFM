@@ -8,4 +8,4 @@ initialLiquidity:
 feeParams:
   defaultBaseFeePpm: 3000
   minBaseFeePpm: 100
-  maxBaseFeePpm: 50000 
+  maxBaseFeePpm: 50000

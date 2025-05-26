@@ -59,11 +59,6 @@ contract MockPolicyManager is IPoolPolicyManager {
         _currencySupported[address(0xB0B)] = true;
     }
 
-    // --- Functions already implemented (or deprecated) ---
-    function getMaxStepPpm(PoolId) external pure override returns (uint32) {
-        return _STEP_PPM;
-    }
-
     // NOTE: no longer part of the IPoolPolicyManager interface – keep for test convenience (no override)
     function isTickSpacingSupported(uint24 tickSpacing) external view returns (bool) {
         return _tickSupported[tickSpacing];
@@ -87,10 +82,6 @@ contract MockPolicyManager is IPoolPolicyManager {
     // Deprecated interface methods retained for legacy tests (no override)
     function initializePolicies(PoolId, address, address[] calldata) external {}
     function handlePoolInitialization(PoolId, PoolKey calldata, uint160, int24, address) external {}
-
-    function getPolicy(PoolId, PolicyType) external pure returns (address implementation) {
-        return address(0);
-    }
 
     function getFeeAllocations(PoolId)
         external
@@ -131,7 +122,7 @@ contract MockPolicyManager is IPoolPolicyManager {
         return address(0);
     }
 
-    function getSurgeDecayPeriodSeconds(PoolId) external pure override returns (uint256) {
+    function getSurgeDecayPeriodSeconds(PoolId) external pure override returns (uint32) {
         return 0;
     }
 
@@ -139,23 +130,10 @@ contract MockPolicyManager is IPoolPolicyManager {
         return 0;
     }
 
-    function getSurgeDecaySeconds(PoolId) external pure override returns (uint32) {
-        return 0;
-    }
-
-    function getBudgetAndWindow(PoolId) external pure override returns (uint32 budgetPerDay, uint32 decayPeriod) {
-        return (0, 0);
-    }
-
     // --- New functions ---
-    // Updated to match interface (uint256 arg) + override
-    function setFreqScaling(PoolId pid, uint256 scaling) external override {
-        freqScalingPpm[pid] = uint32(scaling);
-    }
 
     // Stubbed functions required by interface
-    function setTargetCapsPerDay(PoolId, uint256) external override {}
-    function setCapBudgetDecayWindow(PoolId, uint256) external override {}
+    function setCapBudgetDecayWindow(PoolId, uint32) external override {}
     function setDailyBudgetPpm(uint32) external override {}
     function setDecayWindow(uint32) external override {}
 
@@ -187,21 +165,21 @@ contract MockPolicyManager is IPoolPolicyManager {
         _p[pid] = p;
     }
 
-    function setMinBaseFee(PoolId id, uint256 fee) external {
+    function setMinBaseFee(PoolId id, uint24 fee) external {
         _p[id].minBaseFee = fee;
     }
 
-    function setMaxBaseFee(PoolId id, uint256 fee) external {
+    function setMaxBaseFee(PoolId id, uint24 fee) external {
         _p[id].maxBaseFee = fee;
     }
 
     /* ----------- getters used by the oracle ----------- */
-    function getMinBaseFee(PoolId id) external view override returns (uint256) {
-        return _p[id].minBaseFee != 0 ? _p[id].minBaseFee : 100;
+    function getMinBaseFee(PoolId id) external view override returns (uint24) {
+        return uint24(_p[id].minBaseFee != 0 ? _p[id].minBaseFee : 100);
     }
 
-    function getMaxBaseFee(PoolId id) external view override returns (uint256) {
-        return _p[id].maxBaseFee != 0 ? _p[id].maxBaseFee : 10_000;
+    function getMaxBaseFee(PoolId id) external view override returns (uint24) {
+        return uint24(_p[id].maxBaseFee != 0 ? _p[id].maxBaseFee : 10_000);
     }
 
     function getBaseFeeStepPpm(PoolId id) external view override returns (uint32) {
@@ -225,11 +203,8 @@ contract MockPolicyManager is IPoolPolicyManager {
     }
 
     /* ----------- new selector needed by interface ----------- */
-    function getFreqScaling(PoolId id) external view override returns (uint256) {
-        return _p[id].freqScaling != 0 ? _p[id].freqScaling : 1e18; // 1.0 in 18-dec FP
-    }
 
     // Add missing interface implementations
-    function setSurgeDecayPeriodSeconds(PoolId, uint256) external override {}
+    function setSurgeDecayPeriodSeconds(PoolId, uint32) external override {}
     function setSurgeFeeMultiplierPpm(PoolId, uint24) external override {}
 }

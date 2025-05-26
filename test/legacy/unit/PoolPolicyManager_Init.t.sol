@@ -26,9 +26,7 @@ contract PoolPolicyManagerInitTest is Test {
 
         ppm = new PoolPolicyManager(
             OWNER, // governance / owner
-            1_000_000, // daily budget (ppm)
-            EXPECTED_MIN_DYNAMIC_FEE, // min base fee
-            EXPECTED_MAX_DYNAMIC_FEE // max base fee
+            1_000_000 // daily budget (ppm)
         );
     }
 
@@ -53,15 +51,8 @@ contract PoolPolicyManagerInitTest is Test {
             // assertEq(ppm.getMinimumPOLTarget(pid(7), tl, dyn), exp);
     }
 
-    function testDailyBudgetAndDecayWindowDefaults() public view {
-        (uint32 budget, uint32 window) = ppm.getBudgetAndWindow(pid(0));
-        assertEq(budget, 1e6); // 1 cap-event per day (ppm)
-        assertEq(window, 180 days); // six-month linear decay
-    }
-
     function testDefaultGetterFallbacks() public view {
         PoolId p = pid(42);
-        assertEq(ppm.getFreqScaling(p), 1e18);
         assertEq(ppm.getMinBaseFee(p), 100);
         assertEq(ppm.getMaxBaseFee(p), EXPECTED_MAX_DYNAMIC_FEE);
         assertEq(ppm.getSurgeDecayPeriodSeconds(p), 3_600);

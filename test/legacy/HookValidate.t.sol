@@ -64,9 +64,7 @@ contract HookValidate is Test {
         // First deploy PoolPolicyManager with required args
         PoolPolicyManager policyManager = new PoolPolicyManager(
             address(this), // governance
-            1_000_000, // dailyBudget (100%)
-            100, // minTradingFee (0.01%)
-            10_000 // maxTradingFee (1%)
+            1_000_000 // dailyBudget (100%)
         );
 
         // Deploy real dependencies for PositionManager
@@ -101,12 +99,6 @@ contract HookValidate is Test {
             Create2.computeAddress(salt, keccak256(abi.encodePacked(type(Spot).creationCode, args)), address(this));
 
         // 4. Deploy contracts that need the hook address upfront
-        FullRangeLiquidityManager liquidityManager = new FullRangeLiquidityManager(
-            IPoolManager(address(stub)),
-            positionManager,
-            policyManager,
-            hookAddr // authorized hook address
-        );
 
         // Deploy TruncGeoOracle
         TruncGeoOracleMulti oracle = new TruncGeoOracleMulti(
@@ -121,6 +113,13 @@ contract HookValidate is Test {
             address(this), // owner
             policyManager,
             address(oracle),
+            hookAddr // authorized hook address
+        );
+
+        FullRangeLiquidityManager liquidityManager = new FullRangeLiquidityManager(
+            IPoolManager(address(stub)),
+            positionManager,
+            oracle,
             hookAddr // authorized hook address
         );
 

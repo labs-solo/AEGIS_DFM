@@ -27,8 +27,4 @@ contract PoolPolicyManagerHarness {
     function getCapBudgetDecayWindow(PoolId pid) external view returns (uint32) {
         return target.getCapBudgetDecayWindow(pid);
     }
-
-    function setFreqScaling(PoolId pid, uint32 scalingPpm) external {
-        target.setFreqScaling(pid, scalingPpm);
-    }
 }

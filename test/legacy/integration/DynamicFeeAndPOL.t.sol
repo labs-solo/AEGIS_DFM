@@ -89,7 +89,6 @@ contract DynamicFeeAndPOLTest is LocalSetup {
         // Cast to concrete type PoolPolicyManager to call owner-only setters
         PoolPolicyManager(address(policyManager)).setDailyBudgetPpm(1e6);
         PoolPolicyManager(address(policyManager)).setDecayWindow(3600);
-        PoolPolicyManager(address(policyManager)).setFreqScaling(poolId, 1);
 
         //---------------- TEST-ONLY: shrink base-fee step interval ----------
         // Cast to concrete type PoolPolicyManager to call owner-only setter

@@ -186,9 +186,7 @@ contract LocalSetup is Test, PosmTestSetup {
 
         // Deploy PolicyManager (standard new)
         emit log_string("Deploying PolicyManager...");
-        PoolPolicyManager policyManagerImpl = new PoolPolicyManager(
-            deployerEOA, EXPECTED_DAILY_BUDGET, EXPECTED_MIN_DYNAMIC_FEE, EXPECTED_MAX_DYNAMIC_FEE
-        );
+        PoolPolicyManager policyManagerImpl = new PoolPolicyManager(deployerEOA, EXPECTED_DAILY_BUDGET);
         policyManager = policyManagerImpl; // Use concrete type
         emit log_named_address("[DEPLOY] PoolPolicyManager Deployed at:", address(policyManager));
 
@@ -200,7 +198,7 @@ contract LocalSetup is Test, PosmTestSetup {
 
         emit log_string("Deploying LiquidityManager...");
         FullRangeLiquidityManager liquidityManagerImpl =
-            new FullRangeLiquidityManager(poolManager, posm, policyManager, deployerEOA);
+            new FullRangeLiquidityManager(poolManager, posm, truncGeoOracle, deployerEOA);
         liquidityManager = IFullRangeLiquidityManager(address(liquidityManagerImpl));
         emit log_named_address("LiquidityManager deployed at", address(liquidityManager));
         require(address(liquidityManager) != address(0), "LiquidityManager deployment failed");
