@@ -1,95 +1,30 @@
 [profile.default]
-remappings = [
-  # solmate (longest prefix first)
-  "solmate/=node_modules/solmate/",
-
-  # openzeppelin - ensure both @openzeppelin/contracts and openzeppelin point to src
-  "@openzeppelin/contracts/=node_modules/@openzeppelin/contracts/",
-  "openzeppelin/=node_modules/@openzeppelin/contracts/", # Keep this low-priority fallback
-  "openzeppelin-contracts/=node_modules/@openzeppelin/", # Uniswap deps require this mapping
-
-  # core test libs
-  "forge-std/=node_modules/forge-std/src/",
-  "ds-test/=node_modules/ds-test/src/",
-
-  # uniswap v4 - ensure all variations point to the correct src dir
-  "v4-core/=node_modules/@uniswap/v4-core/",
-  "@uniswap/v4-core/=node_modules/@uniswap/v4-core/",
-
-  # uniswap v4 periphery - ensure all variations point to the correct src dir
-  "v4-periphery/=node_modules/@uniswap/v4-periphery/",
-  "@uniswap/v4-periphery/=node_modules/@uniswap/v4-periphery/",
-
-  # uniswap hooks (locally cloned)
-  "uniswap-hooks/=node_modules/uniswap-hooks/src/",
-
-  # Local utils & mocks (ADDED)
-  "utils/=src/utils/",
-  "mocks/=test/mocks/",
-
-  # Uniswap Permit2 library – resolves PositionManager dependency
-  "permit2/=node_modules/permit2/"
-]
 src = "src"
-test = "tests"
+test = "test"
 out = "out"
 libs = ["lib"]
-ffi = true
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
-solc_version = "0.8.27"
-evm_version = "cancun"
-viaIR = true # TODO: make false; would require refactoring to avoid stack too deep
-optimizer = true # TODO: create a profile with optimizer off for quick compilation when testing
-optimizer_runs = 1 # TODO: use 10000
-dotenv = true  # Enable .env file loading
-exclude_paths = [
-  "test/old-tests",            # legacy tests already excluded
-]
-
-# ──────────────────────────────────────────────────────────────
-# Explicit import remappings (Forge will also scan node_modules
-# automatically, but pinning them here prevents IDE / CI drift
-# and documents paths that rely on pnpm's symlinks).
-# ──────────────────────────────────────────────────────────────
-
-# Sepolia configuration for integration testing
-[profile.sepolia]
-src = "src"
-out = "out"
-libs = ["node_modules"]
-ffi = true
-fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
-solc_version = "0.8.27"
-evm_version = "cancun"
-viaIR = false
-# Sepolia settings
-eth_rpc_url = "${SEPOLIA_RPC_URL}"
-chain_id = 11155111
-
-# Unichain Sepolia configuration for E2E testing
-[profile.unichain-sepolia]
-src = "src"
-out = "out"
-libs = ["node_modules"]
-ffi = true
-fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}]
-solc_version = "0.8.27"
-evm_version = "cancun"
-viaIR = false
 dotenv = true
-# Unichain Sepolia settings
-eth_rpc_url = "${UNICHAIN_SEPOLIA_RPC_URL}"
-chain_id = 1301
+solc_version = "0.8.27"
+evm_version = "cancun"
+# Fast compilation settings for development
+viaIR = true
+optimizer = false
 
-# See more config options https://github.com/foundry-rs/foundry/tree/master/config
+# NOTE: the default profile will be used for dev compilation and testing
 
-[fuzz]
-runs = 256 # Default fuzz runs
-
-[fuzz.overrides."src/libraries/MathUtils.sol:MathUtils.testComputeLiquidityFromAmounts(uint160,uint160,uint160,uint256,uint256)"]
-# Constrain amount0 and amount1 to prevent hitting known V4 core overflow reverts
-# Using approximately type(uint128).max * 10 as a large but reasonable limit
-max_inputs = { amount0 = "3402823669209384634633746074317682114550", amount1 = "3402823669209384634633746074317682114550" }
+# Production profile - full optimization
+[profile.production]
+viaIR = true
+optimizer = true
+optimizer_runs = 10000
 
 [rpc_endpoints]
-unichain_mainnet = "${UNICHAIN_MAINNET_RPC_URL}"
+mainnet = "${MAINNET_RPC_URL}"
+unichain = "${UNICHAIN_MAINNET_RPC_URL}"
+
+[etherscan]
+mainnet = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/api" }
+unichain = { key = "${UNICHAIN_API_KEY}", url = "https://unichain.blockscout.com/api" }
+
+# See more config options https://github.com/foundry-rs/foundry/tree/master/crates/config

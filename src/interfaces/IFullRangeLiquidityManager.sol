@@ -5,10 +5,18 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency} from "v4-core/src/types/Currency.sol";
 
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {IUnlockCallback} from "v4-core/src/interfaces/callback/IUnlockCallback.sol";
+
+import {PositionManager} from "v4-periphery/src/PositionManager.sol";
+
+import {PoolPolicyManager} from "../PoolPolicyManager.sol";
+import {TruncGeoOracleMulti} from "../TruncGeoOracleMulti.sol";
+
 /// @title IFullRangeLiquidityManager
 /// @notice Interface for the FullRangeLiquidityManager contract that handles liquidity and fee management
 /// @dev Manages fee collection, accounting, reinvestment, and full-range liquidity positions
-interface IFullRangeLiquidityManager {
+interface IFullRangeLiquidityManager is IUnlockCallback {
     /// @notice Emitted when fees are reinvested into the pool
     /// @param poolId The ID of the pool
     /// @param amount0 The amount of token0 reinvested
@@ -35,15 +43,29 @@ interface IFullRangeLiquidityManager {
         PoolId indexed poolId, address indexed user, address recipient, uint256 amount0, uint256 amount1, uint256 shares
     );
 
-    /// @notice Emitted when protocol-owned liquidity is withdrawn
-    /// @param poolId The ID of the pool
-    /// @param recipient The address that received the withdrawn tokens
-    /// @param shares The amount of protocol-owned shares that were burned
-    /// @param amount0 The amount of token0 withdrawn
-    /// @param amount1 The amount of token1 withdrawn
-    event WithdrawProtocolLiquidity(
-        PoolId indexed poolId, address indexed recipient, uint256 shares, uint256 amount0, uint256 amount1
-    );
+    /// @notice Emitted when excess tokens are swept
+    /// @param currency The currency that was swept
+    /// @param recipient The address that received the tokens
+    /// @param amount The amount of tokens swept
+    event ExcessTokensSwept(Currency indexed currency, address indexed recipient, uint256 amount);
+
+    /// @dev emitted in notifyModifyLiquidity whenever an NFT's liquidity is modified
+    event PositionFeeAccrued(uint256 indexed tokenId, PoolId indexed poolId, int128 fees0, int128 fees1);
+
+    event Donation(PoolId indexed poolId, address indexed donor, uint256 amount0, uint256 amount1);
+
+    /// @notice Emitted when the reinvestment TWAP period is updated
+    /// @param newTwapPeriod The new TWAP period in seconds
+    event ReinvestmentTwapUpdated(uint32 newTwapPeriod);
+
+    /// @notice Emitted when the tick range tolerance is updated
+    /// @param newTickTolerance The new tick range tolerance (maximum allowed deviation from TWAP)
+    event TickRangeToleranceUpdated(int24 newTickTolerance);
+
+    enum CallbackAction {
+        TAKE_TOKENS,
+        SWEEP_EXCESS_TOKEN
+    }
 
     /// @notice Notifies the LiquidityManager of collected fees
     /// @dev Called by the authorized hook to record fees collected from swaps
@@ -104,13 +126,6 @@ interface IFullRangeLiquidityManager {
         address sharesOwner
     ) external returns (uint256 amount0, uint256 amount1);
 
-    /// @notice Emergency withdrawal function for handling unexpected scenarios
-    /// @dev Allows policy owner to directly withdraw tokens from the pool manager
-    /// @param token The token currency to withdraw
-    /// @param to The recipient address to receive the withdrawn tokens
-    /// @param amount The amount of tokens to withdraw
-    function emergencyWithdraw(Currency token, address to, uint256 amount) external;
-
     /// @notice Withdraws protocol-owned liquidity from a pool's NFT position
     /// @dev Burns protocol-owned ERC6909 shares and withdraws proportional assets from the position
     /// @dev Only callable by policy manager owner
@@ -129,16 +144,69 @@ interface IFullRangeLiquidityManager {
         address recipient
     ) external returns (uint256 amount0, uint256 amount1);
 
-    /// @notice Allows the policy owner to withdraw any tokens accidentally sent to this contract
-    /// @dev Excludes ERC6909 tokens minted by this contract that represent protocol-owned liquidity
-    /// @param token The address of the token to sweep (address(0) for native ETH)
-    /// @param recipient The address to receive the tokens
-    /// @param amount The amount of tokens to sweep (0 for the entire balance)
-    /// @return amountSwept The actual amount swept
-    function sweepToken(address token, address recipient, uint256 amount) external returns (uint256 amountSwept);
+    /// @notice Sweeps excess tokens accidentally sent to the contract
+    /// @param currency The currency to sweep
+    /// @param recipient The address to send the excess tokens to
+    /// @return amountSwept The amount of tokens swept
+    function sweepExcessTokens(Currency currency, address recipient) external returns (uint256 amountSwept);
 
-    /// @notice Returns the authorized hook address that can notify fees
+    /// @notice Sweeps excess ERC6909 tokens accidentally minted to the contract
+    /// @param currency The currency to sweep
+    /// @param recipient The address to send the excess tokens to
+    /// @return amountSwept The amount of tokens swept
+    function sweepExcessERC6909(Currency currency, address recipient) external returns (uint256 amountSwept);
+
+    /// @notice Allows anyone to donate tokens to the pending fees of a specific pool
+    /// @param key The PoolKey of the pool to donate to
+    /// @param amount0 The amount of currency0 to donate
+    /// @param amount1 The amount of currency1 to donate
+    /// @return donated0 The actual amount of currency0 donated
+    /// @return donated1 The actual amount of currency1 donated
+    function donate(PoolKey calldata key, uint256 amount0, uint256 amount1)
+        external
+        payable
+        returns (uint256 donated0, uint256 donated1);
+
+    /// @notice Sets the TWAP period used for reinvestment price validation
+    /// @param _reinvestmentTwap The TWAP period in seconds (must be > 0 and <= 7200)
+    /// @dev Only callable by policy owner. Used to prevent MEV attacks during reinvestment
+    function setReinvestmentTwap(uint32 _reinvestmentTwap) external;
+
+    /// @notice Sets the tick range tolerance for reinvestment price validation
+    /// @param _tickRangeTolerance Maximum allowed deviation from TWAP tick (must be >= 0 and <= 500)
+    /// @dev Only callable by policy owner. Used to prevent MEV attacks during reinvestment
+    function setTickRangeTolerance(int24 _tickRangeTolerance) external;
+
+    // - - - immutable views - - -
+
+    /// @notice The Uniswap V4 PoolManager
+    function poolManager() external view returns (IPoolManager);
+
+    /// @notice The Uniswap V4 PositionManager for adding liquidity
+    function positionManager() external view returns (PositionManager);
+
+    /// @notice The policy manager contract that determines ownership
+    function policyManager() external view returns (PoolPolicyManager);
+
+    /// @notice The oracle contract
+    function oracle() external view returns (TruncGeoOracleMulti);
+
+    /// @notice The "constant" Spot hook contract address that can notify fees
     function authorizedHookAddress() external view returns (address);
+
+    // - - - variable views - - -
+
+    /// @notice Tracks accounted balances of tokens per currency custodied directly by this contract
+    function accountedBalances(Currency currency) external view returns (uint256);
+
+    /// @notice Tracks accounted balances of ERC6909 tokens per currency ID custodied directly by this contract
+    function accountedERC6909Balances(Currency currency) external view returns (uint256);
+
+    /// @notice Time window for TWAP calculation (e.g., 600 seconds = 10 minutes)
+    function reinvestmentTwap() external view returns (uint32);
+
+    /// @notice Allowed deviation from TWAP (e.g., ±50 ticks)
+    function tickRangeTolerance() external view returns (int24);
 
     /// @notice Gets the pending fees for a pool that haven't been reinvested yet
     /// @dev These fees accrue until reinvestment conditions are met

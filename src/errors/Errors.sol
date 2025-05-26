@@ -25,6 +25,7 @@ library Errors {
     error HookAddressAlreadySet();
     error InvalidHookAddress();
     error ZeroDestination();
+    error NotPoolManager();
 
     // --- Validation & Input ---
     error InvalidHookAuthorization(address expected, address actual);
@@ -45,12 +46,14 @@ library Errors {
     error ArrayLengthMismatch();
     error InvalidCallbackSalt();
     error InvalidPolicyImplementationsLength(uint256 length);
-    error NotInitialized(string component);
+    error NotInitialized();
     error AlreadyInitialized(string component);
     error ReinvestmentDisabled();
     error RateLimited();
     error InvalidPoolKey();
     error InvalidPoolId();
+    error InvalidTwapPeriod();
+    error InvalidTickTolerance();
     error ZeroAddress();
     error ZeroAmount();
     error ZeroLiquidity();
@@ -98,7 +101,7 @@ library Errors {
     // --- Pool State & Operations ---
     error PoolNotInitialized(bytes32 poolId);
     error PoolAlreadyInitialized(bytes32 poolId);
-    error PoolNotFound(bytes32 poolId);
+    error PoolNotFound(PoolId poolId);
     error PoolPaused(bytes32 poolId);
     error PoolLocked(bytes32 poolId);
     error PoolInvalidState(bytes32 poolId);
@@ -144,7 +147,7 @@ library Errors {
     error PolicyExpired();
     error PolicyNotActive();
     error PolicyNotImplemented();
-    error AllocationSumError(uint256 polShare, uint256 fullRangeShare, uint256 lpShare, uint256 expected);
+    error AllocationSumError(uint256 polShare, uint256 expected);
 
     // --- Hooks ---
     error HookNotFound();
@@ -183,7 +186,7 @@ library Errors {
     error NonzeroNativeValue();
     error InsufficientETH(uint256 required, uint256 provided);
     error InsufficientContractBalance(uint256 required, uint256 available);
-    error ETHTransferFailed(address to, uint256 amount);
+    error ETHTransferFailed();
     error TransferFailed();
     error TransferFromFailed();
     error InsufficientReserves();

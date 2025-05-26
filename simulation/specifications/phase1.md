@@ -38,7 +38,7 @@ simulation/simConfig.yaml
 This YAML file configures the simulation parameters for Phase 1. It includes the token pair, initial states, and references to the price data file. For example:
 
 # Simulation configuration for Phase 1
-pair: 
+pair:
   token0: WBTC  # symbol for clarity
   token1: WETH
 tokenDecimals:
@@ -88,7 +88,7 @@ user2    = w3.eth.accounts[2]
 lpProvider = w3.eth.accounts[3]
 
 # Load contract ABIs and bytecodes (from Foundry artifacts)
-with open("out/PoolManager.sol/PoolManager.json") as f: 
+with open("out/PoolManager.sol/PoolManager.json") as f:
     pm_artifact = json.load(f)
 with open("out/MockERC20.sol/MockERC20.json") as f:
     erc20_artifact = json.load(f)
@@ -173,7 +173,7 @@ policyManager = w3.eth.contract(address=policy_mgr_addr, abi=policy_artifact["ab
 print(f"Deployed PoolPolicyManager at {policy_mgr_addr}")
 
 # 5. Deploy TruncGeoOracleMulti (Oracle) with a temporary hook placeholder
-tx = Oracle.constructor(pool_manager_addr, policy_mgr_addr, 
+tx = Oracle.constructor(pool_manager_addr, policy_mgr_addr,
                         "0x0000000000000000000000000000000000000000",  # temp hook, to be set after Spot deployed
                         deployer  # owner
                        ).build_transaction({'from': deployer})
@@ -185,9 +185,9 @@ print(f"Deployed Oracle at {oracle_addr}")
 # 6. Deploy FullRangeLiquidityManager (Liquidity Manager)
 # ExtendedPositionManager is a dependency but for simplicity we deploy via constructor (assuming constructor accepts addresses or set aside if already deployed).
 # If ExtendedPositionManager is needed, ensure it's deployed or use a stub if included in LM constructor.
-tx = LiquidityManager.constructor(pool_manager_addr, 
+tx = LiquidityManager.constructor(pool_manager_addr,
                                   "0x0000000000000000000000000000000000000000",  # ExtendedPositionManager placeholder
-                                  policy_mgr_addr, 
+                                  policy_mgr_addr,
                                   deployer  # governance
                                  ).build_transaction({'from': deployer})
 lm_receipt = w3.eth.wait_for_transaction_receipt(w3.eth.send_transaction(tx))
@@ -240,8 +240,8 @@ print(f"Deployed Spot Hook at {spot_addr}")
 # 8. Deploy DynamicFeeManager with actual references now known
 tx = DynamicFeeManager.constructor(
         deployer,          # owner/governance
-        policy_mgr_addr, 
-        oracle_addr, 
+        policy_mgr_addr,
+        oracle_addr,
         spot_addr          # authorize the Spot hook in constructor
     ).build_transaction({'from': deployer})
 dfm_receipt = w3.eth.wait_for_transaction_receipt(w3.eth.send_transaction(tx))
@@ -397,7 +397,7 @@ class BlockGenerator:
         self.start_block = start_block if start_block is not None else web3.eth.block_number
         self.current_block = self.start_block
         self.current_time = start_timestamp
-    
+
     def mine_block(self, timestamp=None):
         """Advance to the next block, optionally at a specific timestamp."""
         if timestamp is not None:
@@ -425,7 +425,7 @@ class PriceOracle:
         """
         self.price_series = iter(price_series)
         self.prev_price = None
-    
+
     def next_price(self):
         """Return the next price point from the series, or None if done."""
         try:

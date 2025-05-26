@@ -1,314 +1,252 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.27;
 
-import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
-import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
-import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
-import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
+// - - - external deps - - -
+
 import {Owned} from "solmate/src/auth/Owned.sol";
+
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+
+// - - - local deps - - -
+
+import {IDynamicFeeManager} from "./interfaces/IDynamicFeeManager.sol";
+import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
+import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
+import {DynamicFeeState, DynamicFeeStateLibrary} from "./libraries/DynamicFeeState.sol";
 import {Errors} from "./errors/Errors.sol";
 
-/*═══════════════════════════════════════╗
-║  DynamicFeeManager – single slot      ║
-║  ═══════════════════════════════════  ║
-║  [0   ..  95]  freq                  ║
-║  [96  .. 127]  ⟂ (deprecated)        ║
-║  [128 .. 167]  freqL                 ║
-║  [168 .. 207]  capSt                 ║
-║  [208 .. 239]  lastF                 ║
-║  [255]         C                     ║
-╚═══════════════════════════════════════*/
-
-/* -------------------------------------------------------------------------- */
-/*  *TickCheck* helper was moved to the hook repo – it is no longer referenced
-    inside the manager, so it is deleted here to avoid dead code clutter.     */
-/* -------------------------------------------------------------------------- */
-
-/* ───── packed word ──── */
-/**
- * @dev Library for packing/unpacking pool state into a single uint256 slot.
- * Layout:
- *   ┌─────────────────────────────────────────────────────────────────────────┐
- *   │   1   │    32     │     48     │      48     │    32    │     108    │
- *   │ inCap │  lastFee  │  capStart  │  freqLast   │  baseFee │    freq    │
- *   │ (bool)│ (uint32)  │  (uint48)  │  (uint48)   │ (uint32) │  (uint128) │
- *   └─────────────────────────────────────────────────────────────────────────┘
- */
-library _P {
-    /* -----------------------------------------------------------
-                NEW COMPACT LAYOUT   (total bits = 241)
-         ┌───────96──────┬──32──┬──40──┬──40──┬──32──┬─1─┐
-         │     freq      │  ⟂   │freqL │capSt │lastF │ C │
-         └────────────────────────────────────────────────┘
-         - 15 spare bits (240…254) keep slot <256 bits
-         - ⟂ = deprecated field, kept for storage compatibility
-    ----------------------------------------------------------- */
-
-    // bit offsets
-    uint256 constant BASE_OFFSET = 96;
-    uint256 constant FREQ_LAST_OFFSET = BASE_OFFSET + 32; // 128
-    uint256 constant CAP_START_OFFSET = FREQ_LAST_OFFSET + 40; // 168
-    uint256 constant LAST_FEE_OFFSET = CAP_START_OFFSET + 40; // 208
-    uint256 constant IN_CAP_OFFSET = 255; // fits
-
-    // bit masks
-    uint256 constant MASK_FREQ = (uint256(1) << BASE_OFFSET) - 1; // 96-bit
-    uint256 constant MASK_BASE = ((uint256(1) << 32) - 1) << BASE_OFFSET; // 32-bit
-    uint256 constant MASK_FREQ_LAST = ((uint256(1) << 40) - 1) << FREQ_LAST_OFFSET; // 40-bit
-    uint256 constant MASK_CAP_START = ((uint256(1) << 40) - 1) << CAP_START_OFFSET; // 40-bit
-    uint256 constant MASK_LAST_FEE = ((uint256(1) << 32) - 1) << LAST_FEE_OFFSET; // 32-bit
-    uint256 constant MASK_IN_CAP = uint256(1) << IN_CAP_OFFSET; // 1-bit
-
-    /* -------- accessors (return sizes kept for ABI stability) -------- */
-    function freq(uint256 w) internal pure returns (uint96) {
-        return uint96(w & MASK_FREQ);
-    }
-
-    function freqL(uint256 w) internal pure returns (uint48) {
-        return uint48((w & MASK_FREQ_LAST) >> FREQ_LAST_OFFSET);
-    }
-
-    function capStart(uint256 w) internal pure returns (uint48) {
-        return uint48((w & MASK_CAP_START) >> CAP_START_OFFSET);
-    }
-
-    function lastFee(uint256 w) internal pure returns (uint32) {
-        return uint32((w & MASK_LAST_FEE) >> LAST_FEE_OFFSET);
-    }
-
-    function inCap(uint256 w) internal pure returns (bool) {
-        return (w & MASK_IN_CAP) != 0;
-    }
-
-    /* -------- setters (internal only) -------- */
-    function _set(uint256 w, uint256 mask, uint256 v, uint256 shift) private pure returns (uint256) {
-        return (w & ~mask) | (v << shift);
-    }
-
-    function setFreq(uint256 w, uint96 v) internal pure returns (uint256) {
-        return _set(w, MASK_FREQ, v, 0);
-    }
-
-    function setFreqL(uint256 w, uint40 v) internal pure returns (uint256) {
-        return _set(w, MASK_FREQ_LAST, v, FREQ_LAST_OFFSET);
-    }
-
-    function setCapSt(uint256 w, uint40 v) internal pure returns (uint256) {
-        return _set(w, MASK_CAP_START, v, CAP_START_OFFSET);
-    }
-
-    function setInCap(uint256 w, bool y) internal pure returns (uint256) {
-        return y ? w | MASK_IN_CAP : w & ~MASK_IN_CAP;
-    }
-}
-
-using _P for uint256; // Enable freqL(), setFreqL(), and other helpers
-
-/* ───────────────────────────────────────────────────────────── */
-
-// Renamed contract, implements the NEW interface
+/// @title DynamicFeeManager
+/// @notice Manages dynamic fees for Uniswap v4 pools with base fees from oracle data and surge fees during capped periods
+/// @dev Implements a two-phase fee system:
+///      1. Base fees calculated from oracle tick volatility data
+///      2. Surge fees applied during capped trading periods with exponential decay
 contract DynamicFeeManager is IDynamicFeeManager, Owned {
-    using _P for uint256;
     using PoolIdLibrary for PoolId;
+    using DynamicFeeStateLibrary for DynamicFeeState;
 
-    /* ─── custom errors ──────────────────────────────── */
-    error UnauthorizedHook();
-    error ZeroHookAddress();
-    error NotInitialized();
-    error InvalidMaxTicks(uint24 maxTicks);
-    error InvalidBaseFee(uint256 baseFee);
-    error ZeroPolicyManager();
-    error ZeroOracleAddress();
-    error AlreadyInitialised();
+    // - - - CONSTANTS - - -
 
-    /* ─── events ─────────────────────────────────────── */
-    /// @notice fired when a CAP event starts or ends
-    event CapToggled(PoolId indexed id, bool inCap);
+    /// @dev Fallback base fee when oracle has no data (0.5% in PPM)
+    uint32 private constant DEFAULT_BASE_FEE_PPM = 5_000;
 
-    /// @notice emitted when a pool is successfully initialized
-    event PoolInitialized(PoolId indexed id);
+    /// @dev Oracle ticks to base fee conversion factor (1 tick = 100 PPM)
+    uint256 private constant BASE_FEE_FACTOR_PPM = 100;
 
-    /// @notice emitted when a pool is already initialized
-    event AlreadyInitialized(PoolId indexed id);
+    /// @dev Parts per million denominator for percentage calculations
+    uint256 private constant PPM_DENOMINATOR = 1e6;
 
-    /* ─── constants ─────────────────────────────────────────── */
-    /// @dev fallback base-fee when the oracle has no data yet (0.5 %)
-    uint32 internal constant DEFAULT_BASE_FEE_PPM = 5_000;
-    /// @dev oracle ticks → base-fee conversion factor (1 tick = 100 ppm)
-    uint256 internal constant BASE_FEE_FACTOR_PPM = 100;
+    // - - - IMMUTABLE STATE - - -
 
-    /* ─── config / state ─────────────────────────────────────── */
-    IPoolPolicyManager public immutable policyManager;
-    /// @notice address allowed to call `notifyOracleUpdate`; mutable so tests can wire cyclic deps
-    address public authorizedHook;
+    /// @inheritdoc IDynamicFeeManager
+    IPoolPolicyManager public immutable override policyManager;
 
-    /// direct handle to the oracle (for cap → fee mapping)
-    TruncGeoOracleMulti public immutable oracle;
+    /// @inheritdoc IDynamicFeeManager
+    TruncGeoOracleMulti public immutable override oracle;
 
-    /// @dev per-pool state word – we only use `capStart` + `inCap`
-    mapping(PoolId => uint256) private _s;
+    /// @inheritdoc IDynamicFeeManager
+    address public immutable override authorizedHook;
 
-    /* ─── modifiers ─────────────────────────────────────── */
+    // - - - STORAGE - - -
+
+    /// @dev Per-pool dynamic fee state packed into a single storage slot
+    mapping(PoolId => DynamicFeeState) private _poolFeeState;
+
+    // - - - MODIFIERS - - -
+
+    /// @notice Restricts access to contract owner or authorized hook
     modifier onlyOwnerOrHook() {
-        if (msg.sender != owner && msg.sender != authorizedHook) revert UnauthorizedHook();
+        if (msg.sender != owner && msg.sender != authorizedHook) {
+            revert Errors.UnauthorizedCaller(msg.sender);
+        }
         _;
     }
 
-    /* ─── constructor / init ─────────────────────────────────── */
-    constructor(address _owner, IPoolPolicyManager _policyManager, address _oracleAddress, address _authorizedHook)
-        Owned(_owner)
-    {
-        if (address(_policyManager) == address(0)) revert ZeroPolicyManager();
-        if (_oracleAddress == address(0)) revert ZeroOracleAddress();
-        if (_authorizedHook == address(0)) revert ZeroHookAddress();
-        policyManager = _policyManager;
-        oracle = TruncGeoOracleMulti(_oracleAddress);
-        authorizedHook = _authorizedHook;
+    /// @notice Restricts access to contract owner, authorized hook, or oracle contract
+    modifier onlyOwnerOrHookOrOracle() {
+        if (msg.sender != authorizedHook && msg.sender != address(oracle) && msg.sender != owner) {
+            revert Errors.UnauthorizedCaller(msg.sender);
+        }
+        _;
     }
 
-    function initialize(PoolId id, int24 /*initialTick*/ ) external override onlyOwnerOrHook {
-        /* --------------------------------------------------------
-         * Idempotency: if the pool is already initialised simply
-         * emit a notice and return without mutating state.
-         * ------------------------------------------------------*/
-        if (_s[id] != 0) {
-            emit AlreadyInitialized(id);
+    // - - - CONSTRUCTOR - - -
+
+    /// @notice Initializes the dynamic fee manager with required dependencies
+    /// @param contractOwner The address that will own this contract
+    /// @param _policyManager The policy manager contract for surge fee parameters
+    /// @param oracleAddress The oracle contract for tick volatility data
+    /// @param hookAddress The hook contract authorized to call state-changing functions
+    constructor(address contractOwner, IPoolPolicyManager _policyManager, address oracleAddress, address hookAddress)
+        Owned(contractOwner)
+    {
+        if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
+        if (oracleAddress == address(0)) revert Errors.ZeroAddress();
+        if (hookAddress == address(0)) revert Errors.ZeroAddress();
+
+        policyManager = _policyManager;
+        oracle = TruncGeoOracleMulti(oracleAddress);
+        authorizedHook = hookAddress;
+    }
+
+    // - - - EXTERNAL FUNCTIONS - - -
+
+    /// @inheritdoc IDynamicFeeManager
+    function initialize(PoolId poolId, int24) external override onlyOwnerOrHook {
+        // Idempotency check: return early if pool already initialized
+        if (!_poolFeeState[poolId].isEmpty()) {
+            emit AlreadyInitialized(poolId);
             return;
         }
 
-        // Fetch the current maxTicksPerBlock from the associated oracle contract
-        uint24 maxTicks = oracle.maxTicksPerBlock(PoolId.unwrap(id)); // Direct call
-        uint256 baseFee;
-        unchecked {
-            baseFee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM;
-        }
+        // Get initial base fee from oracle
+        uint24 maxTicksPerBlock = oracle.maxTicksPerBlock(poolId);
+        uint32 calculatedBaseFee = _calculateBaseFee(poolId, maxTicksPerBlock);
 
-        // Initialize state
-        uint32 ts = uint32(block.timestamp);
-        uint256 w = _s[id];
-        w = w.setFreqL(uint40(ts));
-        // Store base fee derived from oracle (could be 0 if oracle returns 0)
-        w = w.setFreq(uint96(baseFee));
-        _s[id] = w;
+        // Initialize pool state
+        DynamicFeeState initialState = DynamicFeeStateLibrary.empty().setBaseFee(calculatedBaseFee);
+        _poolFeeState[poolId] = initialState;
 
-        emit PoolInitialized(id);
+        emit PoolInitialized(poolId);
     }
 
-    function notifyOracleUpdate(PoolId poolId, bool tickWasCapped) external override {
-        _requireHookAuth(); // Ensure only authorized hook can call
-
-        uint256 w = _s[poolId];
-        if (w == 0) revert NotInitialized();
-
-        uint32 nowTs = uint32(block.timestamp);
-        uint256 w1 = w; // scratch copy (cheaper mutations)
-
-        // ── cache fee snapshot *before* state mutation ───────────────────────
-        uint256 oldBase = _baseFee(poolId); // Uses direct call internally now
-        uint256 oldSurge = _surge(poolId, w1); // Uses direct call internally now
-
-        // ---- CAP-event handling ---------------------------------------
-        if (tickWasCapped) {
-            w1 = w1.setInCap(true).setCapSt(uint40(nowTs));
-            emit CapToggled(poolId, true);
-            _s[poolId] = w1; // single SSTORE
-            uint256 newBase = _baseFee(poolId);
-            uint256 newSurge = _surge(poolId, w1);
-            emit FeeStateChanged(poolId, newBase, newSurge, true, nowTs);
-        } else if (w1.inCap()) {
-            if (_surge(poolId, w1) == 0) {
-                // Check if surge decayed
-                w1 = w1.setInCap(false);
-                emit CapToggled(poolId, false);
-                _s[poolId] = w1;
-                uint256 newBase = _baseFee(poolId);
-                uint256 newSurge = _surge(poolId, w1);
-                emit FeeStateChanged(poolId, newBase, newSurge, false, nowTs);
-            }
-        }
-    }
-
-    /* ── stateless base-fee helper ───────────────────────────────────── */
-    function _baseFee(PoolId id) private view returns (uint256) {
-        uint24 maxTicks = oracle.maxTicksPerBlock(PoolId.unwrap(id)); // Direct call
-        uint256 fee;
-        unchecked {
-            fee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM;
-        }
-        return fee == 0 ? DEFAULT_BASE_FEE_PPM : fee; // Use default if oracle returns 0
-    }
-
-    /* ─── public views ───────────────────────────────────────── */
-    function getFeeState(PoolId id) external view override returns (uint256 baseFee, uint256 surgeFee) {
-        uint256 w = _s[id];
-        if (w == 0) revert NotInitialized();
-
-        baseFee = _baseFee(id);
-        surgeFee = _surge(id, w);
-    }
-
-    function isCAPEventActive(PoolId id) external view override returns (bool) {
-        uint256 w = _s[id];
-        if (w == 0) revert NotInitialized();
-        return w.inCap();
-    }
-
-    /// @notice convenience view (used by unit-tests)
-    function baseFeeFromCap(PoolId id) external view returns (uint32) {
-        return uint32(_baseFee(id));
-    }
-
-    /* ─── internal helpers ─────────────────────────────────── */
-    function _surge(PoolId id, uint256 w) private view returns (uint256) {
-        uint48 start = w.capStart();
-        if (start == 0) return 0;
-
-        uint32 nowTs = uint32(block.timestamp);
-        uint32 decay = uint32(policyManager.getSurgeDecayPeriodSeconds(id));
-
-        if (decay == 0) return 0;
-
-        uint32 dt = nowTs > start ? nowTs - uint32(start) : 0;
-        if (dt >= decay) return 0;
-
-        // Get current base fee from oracle for surge calculation
-        bytes32 poolBytes = PoolId.unwrap(id);
-        uint24 maxTicks = oracle.maxTicksPerBlock(poolBytes); // Direct call
-        uint256 currentBaseFee;
-        unchecked {
-            currentBaseFee = uint256(maxTicks) * BASE_FEE_FACTOR_PPM;
-        }
-        if (currentBaseFee == 0) {
-            currentBaseFee = DEFAULT_BASE_FEE_PPM; // Use default if oracle returns 0
-        }
-
-        uint256 multiplierPpm = policyManager.getSurgeFeeMultiplierPpm(id);
-        uint256 maxSurge = currentBaseFee * multiplierPpm / 1e6;
-        return maxSurge * (uint256(decay) - dt) / decay;
-    }
-
-    function _requireHookAuth() internal view {
-        // Allow calls from the authorised hook, the oracle itself or the contract owner
-        if (msg.sender != authorizedHook && msg.sender != address(oracle) && msg.sender != owner) {
-            revert UnauthorizedHook();
-        }
-    }
-
-    /* ---------- Back-compat alias (optional – can be deleted later) ---- */
-    /// @dev Temporary shim so older tests that call `.policy()` still compile.
     /// @inheritdoc IDynamicFeeManager
-    function policy() external view override returns (IPoolPolicyManager) {
-        return policyManager;
+    function notifyOracleUpdate(PoolId poolId, bool tickWasCapped) external override onlyOwnerOrHookOrOracle {
+        DynamicFeeState currentState = _poolFeeState[poolId];
+        if (currentState.isEmpty()) revert Errors.NotInitialized();
+
+        uint40 currentTimestamp = uint40(block.timestamp);
+
+        if (tickWasCapped) {
+            _handleCapEntry(poolId, currentState, currentTimestamp);
+        } else if (currentState.inCap()) {
+            _handlePotentialCapExit(poolId, currentState, currentTimestamp);
+        }
     }
 
-    /// @dev Convenience proxy; no longer declared in this contract's own
-    ///      interface, so `override` removed.
-    function getCapBudgetDecayWindow(PoolId pid) external view returns (uint32) {
-        return policyManager.getCapBudgetDecayWindow(pid);
+    // - - - VIEW FUNCTIONS - - -
+
+    /// @inheritdoc IDynamicFeeManager
+    function getFeeState(PoolId poolId) external view override returns (uint256 baseFee, uint256 surgeFee) {
+        DynamicFeeState currentState = _poolFeeState[poolId];
+        if (currentState.isEmpty()) revert Errors.NotInitialized();
+
+        uint24 maxTicksPerBlock = oracle.maxTicksPerBlock(poolId);
+        baseFee = _calculateBaseFee(poolId, maxTicksPerBlock);
+        surgeFee = _calculateSurge(poolId, currentState, maxTicksPerBlock);
     }
 
-    function setAuthorizedHook(address newAuthorizedHook) external onlyOwner {
-        if (newAuthorizedHook == address(0)) revert ZeroHookAddress();
-        authorizedHook = newAuthorizedHook;
+    /// @inheritdoc IDynamicFeeManager
+    function isCAPEventActive(PoolId poolId) external view override returns (bool) {
+        DynamicFeeState currentState = _poolFeeState[poolId];
+        if (currentState.isEmpty()) revert Errors.NotInitialized();
+        return currentState.inCap();
+    }
+
+    /// @notice Returns the base fee calculated from current oracle data
+    /// @dev Convenience function primarily used for testing
+    /// @param poolId The pool identifier
+    /// @return The current base fee in PPM
+    function baseFeeFromCap(PoolId poolId) external view returns (uint32) {
+        uint24 maxTicksPerBlock = oracle.maxTicksPerBlock(poolId);
+        return _calculateBaseFee(poolId, maxTicksPerBlock);
+    }
+
+    // - - - INTERNAL FUNCTIONS - Cap Event Handling - - -
+
+    /// @notice Handles entering a capped trading state
+    /// @param poolId The pool identifier
+    /// @param currentState The current fee state
+    /// @param currentTimestamp The current block timestamp
+    function _handleCapEntry(PoolId poolId, DynamicFeeState currentState, uint40 currentTimestamp) private {
+        DynamicFeeState updatedState = currentState.updateCapState(true, currentTimestamp);
+        _poolFeeState[poolId] = updatedState;
+
+        emit CapToggled(poolId, true);
+        _emitFeeStateChanged(poolId, updatedState, currentTimestamp);
+    }
+
+    /// @notice Handles potential exit from capped trading state
+    /// @param poolId The pool identifier
+    /// @param currentState The current fee state
+    /// @param currentTimestamp The current block timestamp
+    function _handlePotentialCapExit(PoolId poolId, DynamicFeeState currentState, uint40 currentTimestamp) private {
+        // Check if surge has decayed to zero
+        uint24 maxTicksPerBlock = oracle.maxTicksPerBlock(poolId);
+        uint256 currentSurgeFee = _calculateSurge(poolId, currentState, maxTicksPerBlock);
+
+        if (currentSurgeFee == 0) {
+            DynamicFeeState updatedState = currentState.setInCap(false);
+            _poolFeeState[poolId] = updatedState;
+
+            emit CapToggled(poolId, false);
+            _emitFeeStateChanged(poolId, updatedState, currentTimestamp);
+        }
+    }
+
+    /// @notice Emits fee state change event with current fee calculations
+    /// @param poolId The pool identifier
+    /// @param feeState The current fee state
+    /// @param eventTimestamp The timestamp for the event
+    function _emitFeeStateChanged(PoolId poolId, DynamicFeeState feeState, uint40 eventTimestamp) private {
+        uint24 maxTicksPerBlock = oracle.maxTicksPerBlock(poolId);
+        uint256 updatedBaseFee = _calculateBaseFee(poolId, maxTicksPerBlock);
+        uint256 updatedSurgeFee = _calculateSurge(poolId, feeState, maxTicksPerBlock);
+
+        emit FeeStateChanged(poolId, updatedBaseFee, updatedSurgeFee, feeState.inCap(), eventTimestamp);
+    }
+
+    // - - - INTERNAL FUNCTIONS - Fee Calculations - - -
+
+    /// @notice Calculates base fee from oracle tick data
+    /// @param maxTicksPerBlock The maximum ticks per block from oracle
+    /// @return The calculated base fee in PPM
+    function _calculateBaseFee(PoolId poolId, uint24 maxTicksPerBlock) private view returns (uint32) {
+        if (maxTicksPerBlock == 0) {
+            return DEFAULT_BASE_FEE_PPM;
+        }
+
+        uint256 calculatedFee;
+        unchecked {
+            calculatedFee = uint256(maxTicksPerBlock) * BASE_FEE_FACTOR_PPM;
+        }
+
+        uint24 maxBaseFee = policyManager.getMaxBaseFee(poolId);
+
+        // Ensure the result fits in uint32
+        return calculatedFee > maxBaseFee ? maxBaseFee : uint32(calculatedFee);
+    }
+
+    /// @notice Calculates surge fee with exponential decay
+    /// @param poolId The pool identifier
+    /// @param feeState The current fee state
+    /// @param oracleMaxTicks The maximum ticks per block from oracle (to avoid redundant calls)
+    /// @return The calculated surge fee in PPM
+    function _calculateSurge(PoolId poolId, DynamicFeeState feeState, uint24 oracleMaxTicks)
+        private
+        view
+        returns (uint256)
+    {
+        uint40 capStartTime = feeState.capStart();
+        if (capStartTime == 0) return 0;
+
+        uint40 currentTimestamp = uint40(block.timestamp);
+        uint32 surgeDuration = uint32(policyManager.getSurgeDecayPeriodSeconds(poolId));
+
+        if (surgeDuration == 0) return 0;
+
+        // Calculate elapsed time since cap started
+        uint40 elapsedTime = currentTimestamp > capStartTime ? currentTimestamp - capStartTime : 0;
+        if (elapsedTime >= surgeDuration) return 0;
+
+        // Get base fee for surge calculation
+        uint256 oracleBaseFee = _calculateBaseFee(poolId, oracleMaxTicks);
+
+        // Calculate maximum surge fee
+        uint256 surgeMultiplierPpm = policyManager.getSurgeFeeMultiplierPpm(poolId);
+        uint256 maxSurgeFee = oracleBaseFee * surgeMultiplierPpm / PPM_DENOMINATOR;
+
+        // Apply exponential decay: surgeFee = maxSurge * (remaining_time / total_time)
+        uint256 remainingTime = uint256(surgeDuration) - elapsedTime;
+        return maxSurgeFee * remainingTime / surgeDuration;
     }
 }
