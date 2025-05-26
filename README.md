@@ -68,17 +68,13 @@ pnpm install --workspace-root                      # fetches ALL deps incl. Unis
 ### 3. Compile Contracts
 
 ```bash
-pnpm run build    # wrapper around forge build
+forge b
 ```
 
 ### 4. Run Tests
 
 ```bash
-# fast unit + fuzz suite
-pnpm run test
-
-# with gas report
-forge test --gas-report -vvv
+pnpm t:i
 ```
 
 ### 5. Format / Clean
