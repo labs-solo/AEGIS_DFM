@@ -64,7 +64,7 @@ interface IFullRangeLiquidityManager is IUnlockCallback {
 
     enum CallbackAction {
         TAKE_TOKENS,
-        SWEEP_TOKEN
+        SWEEP_EXCESS_TOKEN
     }
 
     /// @notice Notifies the LiquidityManager of collected fees

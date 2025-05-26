@@ -196,7 +196,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
                     accountedERC6909Balances[currency1] -= amount1;
                     accountedBalances[currency1] += amount1;
                 }
-            } else if (action == CallbackAction.SWEEP_TOKEN) {
+            } else if (action == CallbackAction.SWEEP_EXCESS_TOKEN) {
                 // Decode sweep parameters
                 (
                     , // Skip the action we already decoded
@@ -210,8 +210,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
                 // Burn ERC6909 tokens to balance the delta
                 poolManager.burn(address(this), token.toId(), amount);
 
-                // Update ERC6909 balance tracking
-                accountedERC6909Balances[token] -= amount;
+                // NOTE: No need to update ERC6909 balance tracking as we're only sweeping excess
             }
         }
 
@@ -584,7 +583,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             amountSwept = balance - accounted;
 
             // Use unlock callback to take the tokens
-            bytes memory callbackData = abi.encode(CallbackAction.SWEEP_TOKEN, currency, recipient, amountSwept);
+            bytes memory callbackData = abi.encode(CallbackAction.SWEEP_EXCESS_TOKEN, currency, recipient, amountSwept);
 
             poolManager.unlock(callbackData);
 
