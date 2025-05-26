@@ -14,6 +14,7 @@ import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
@@ -58,6 +59,8 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
 
     /// @notice Cooldown period between reinvestments (default: 1 day)
     uint256 constant REINVEST_COOLDOWN = 1 days;
+
+    uint24 constant DEFAULT_MANUAL_FEE = 3_000; // 0.3%
 
     // Test accounts
     address owner = makeAddr("owner");
@@ -171,7 +174,7 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
         poolKey = PoolKey(
             currency0,
             currency1,
-            3000, // 0.3% fee
+            LPFeeLibrary.DYNAMIC_FEE_FLAG,
             60, // tick spacing
             IHooks(address(spot))
         );

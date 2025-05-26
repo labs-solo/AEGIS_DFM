@@ -7,6 +7,7 @@ import {ERC20} from "solmate/src/tokens/ERC20.sol";
 
 // - - - V4 Core Deps - - -
 
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {CurrencyDelta} from "v4-core/src/libraries/CurrencyDelta.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
@@ -319,6 +320,11 @@ contract Spot is BaseHook, ISpot {
     /// @notice called in BaseHook.afterInitialize
     function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick) internal override returns (bytes4) {
         PoolId poolId = key.toId();
+
+        if (!LPFeeLibrary.isDynamicFee(key.fee)) {
+            // Only allow dynamic fee pools to be created
+            revert Errors.InvalidFee();
+        }
 
         truncGeoOracle.enableOracleForPool(key);
         dynamicFeeManager.initialize(poolId, tick);

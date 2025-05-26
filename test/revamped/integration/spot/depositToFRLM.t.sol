@@ -16,6 +16,7 @@ import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 
 // - - - v4 core imports - - -
 
@@ -468,7 +469,7 @@ contract Spot_DepositToFRLM_Test is Base_Test {
         PoolKey memory ethPoolKey = PoolKey({
             currency0: ethCurrency, // Native ETH is always currency0
             currency1: testCurrency, // Test token is currency1
-            fee: 3000, // 0.3% fee
+            fee: LPFeeLibrary.DYNAMIC_FEE_FLAG,
             tickSpacing: 60,
             hooks: IHooks(address(spot))
         });

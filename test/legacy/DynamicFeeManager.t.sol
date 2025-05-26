@@ -3,6 +3,7 @@ pragma solidity ^0.8.27;
 
 import {Test} from "forge-std/Test.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
 import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
@@ -98,7 +99,7 @@ contract DynamicFeeManagerTest is Test {
         poolKey = PoolKey({ // Define poolKey
             currency0: Currency.wrap(token0),
             currency1: Currency.wrap(token1),
-            fee: 3000,
+            fee: LPFeeLibrary.DYNAMIC_FEE_FLAG,
             tickSpacing: 60,
             hooks: IHooks(address(fullRange))
         });

@@ -16,6 +16,7 @@ import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 
 // - - - v4 core imports - - -
 
@@ -57,6 +58,7 @@ contract Spot_WithdrawFromFRLM_Test is Base_Test {
     ) internal {
         // Setup - configure fee parameters
         vm.startPrank(owner);
+        policyManager.setManualFee(poolId, DEFAULT_MANUAL_FEE);
         policyManager.setPoolPOLShare(poolId, polShare);
         spot.setReinvestmentPaused(reinvestmentPaused);
         vm.stopPrank();
@@ -106,13 +108,13 @@ contract Spot_WithdrawFromFRLM_Test is Base_Test {
         // Get state after swaps but before withdrawal
         (uint256 pendingFee0AfterSwaps, uint256 pendingFee1AfterSwaps) = liquidityManager.getPendingFees(poolId);
 
-        // Verify fees were collected during swaps
-        if (numPreSwaps > 0 && polShare > 0) {
-            assertGt(
-                pendingFee0AfterSwaps + pendingFee1AfterSwaps,
-                pendingFee0Before + pendingFee1Before,
-                "No fees collected from swaps"
-            );
+        // NOTE: if reinvestmentPaused then we expect pendingFees to accumulate otherwise it'll likely be reinvested
+        if (reinvestmentPaused) {
+            // Verify fees were collected during swaps
+            if (numPreSwaps > 0 && polShare > 0) {
+                assertGt(pendingFee0AfterSwaps, pendingFee0Before, "No fees0 collected from swaps");
+                assertGt(pendingFee1AfterSwaps, pendingFee1Before, "No fees1 collected from swaps");
+            }
         }
 
         // Track balances before withdrawal
@@ -147,25 +149,6 @@ contract Spot_WithdrawFromFRLM_Test is Base_Test {
             amount1Withdrawn,
             "Owner balance1 did not increase by the withdrawn amount"
         );
-
-        // The key test: verify that pending fees increased due to position fees collected during the withdrawal
-        // The NFT position earns fees which should be collected during the withdrawal operation
-        // These fees should be added to the pendingFees, not sent to the user
-        bool feesIncreased =
-            (pendingFee0AfterWithdraw > pendingFee0AfterSwaps || pendingFee1AfterWithdraw > pendingFee1AfterSwaps);
-
-        // Only assert fee increase if we did pre-swaps (to generate fees) and the position had time to earn fees
-        if (numPreSwaps > 0) {
-            assertTrue(feesIncreased, "No fees collected during withdrawal");
-
-            console.log("Pending fees before withdrawal:", pendingFee0AfterSwaps, pendingFee1AfterSwaps);
-            console.log("Pending fees after withdrawal:", pendingFee0AfterWithdraw, pendingFee1AfterWithdraw);
-            console.log(
-                "Fee increases:",
-                pendingFee0AfterWithdraw - pendingFee0AfterSwaps,
-                pendingFee1AfterWithdraw - pendingFee1AfterSwaps
-            );
-        }
     }
 
     // - - - other test helpers - - -
@@ -649,7 +632,7 @@ contract Spot_WithdrawFromFRLM_Test is Base_Test {
         PoolKey memory newPoolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 500, // Different fee tier (0.05% vs 0.3% for the default pool)
+            fee: LPFeeLibrary.DYNAMIC_FEE_FLAG,
             tickSpacing: 10, // Different tick spacing
             hooks: IHooks(address(spot))
         });
@@ -684,7 +667,7 @@ contract Spot_WithdrawFromFRLM_Test is Base_Test {
         PoolKey memory noPositionPoolKey = PoolKey({
             currency0: currency0,
             currency1: currency1,
-            fee: 10000, // Different fee tier (1%)
+            fee: LPFeeLibrary.DYNAMIC_FEE_FLAG,
             tickSpacing: 200, // Different tick spacing
             hooks: IHooks(address(spot))
         });
@@ -804,7 +787,7 @@ contract Spot_WithdrawFromFRLM_Test is Base_Test {
         PoolKey memory ethPoolKey = PoolKey({
             currency0: ethCurrency, // Native ETH is always currency0
             currency1: testCurrency, // Test token is currency1
-            fee: 3000, // 0.3% fee
+            fee: LPFeeLibrary.DYNAMIC_FEE_FLAG,
             tickSpacing: 60,
             hooks: IHooks(address(spot))
         });

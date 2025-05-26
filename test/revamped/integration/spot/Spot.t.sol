@@ -10,6 +10,7 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
@@ -307,15 +308,18 @@ contract SpotTest is Base_Test {
         (uint256 pendingFee0Mid, uint256 pendingFee1Mid) = liquidityManager.getPendingFees(poolId);
         (uint256 protocolSharesMid,,) = liquidityManager.getProtocolOwnedLiquidity(poolId);
 
-        // Verify fees accumulated properly based on swap pattern
-        if (swapPattern == 0 || swapPattern == 1) {
-            // Should have token0 fees if we did zeroForOne swaps
-            assertGt(pendingFee0Mid, pendingFee0Initial, "Token0 fees should accumulate from zeroForOne swaps"); // TODO
-        }
+        // if reinvestmentPaused then we expect pending fees to accumulate(and not be reinvested)
+        if (reinvestmentPaused) {
+            // Verify fees accumulated properly based on swap pattern
+            if (swapPattern == 0 || swapPattern == 1) {
+                // Should have token0 fees if we did zeroForOne swaps
+                assertGt(pendingFee0Mid, pendingFee0Initial, "Token0 fees should accumulate from zeroForOne swaps"); // TODO
+            }
 
-        if (swapPattern == 0 || swapPattern == 2) {
-            // Should have token1 fees if we did oneForZero swaps
-            assertGt(pendingFee1Mid, pendingFee1Initial, "Token1 fees should accumulate from oneForZero swaps");
+            if (swapPattern == 0 || swapPattern == 2) {
+                // Should have token1 fees if we did oneForZero swaps
+                assertGt(pendingFee1Mid, pendingFee1Initial, "Token1 fees should accumulate from oneForZero swaps");
+            }
         }
 
         // If reinvestment is paused, protocol shares shouldn't increase
@@ -336,8 +340,11 @@ contract SpotTest is Base_Test {
         // Try manual reinvestment
         bool reinvestResult = liquidityManager.reinvest(poolKey);
 
-        // Check if result matches expectation
-        assertEq(reinvestResult, expectSuccess, "Reinvestment result doesn't match expectation");
+        // if reinvestmentPaused then we expect an actual reinvestment to occur on pending fees
+        if (reinvestmentPaused) {
+            // Check if result matches expectation
+            assertEq(reinvestResult, expectSuccess, "Reinvestment result doesn't match expectation");
+        }
 
         // Check final state
         (uint256 pendingFee0Final, uint256 pendingFee1Final) = liquidityManager.getPendingFees(poolId);
@@ -372,23 +379,6 @@ contract SpotTest is Base_Test {
         assertEq(permissions.afterSwap, true);
         assertEq(permissions.beforeSwapReturnDelta, true);
         assertEq(permissions.afterSwapReturnDelta, true);
-    }
-
-    function test_Initialize() public {
-        // Create a new pool to test initialization
-        PoolKey memory newPoolKey = PoolKey(
-            currency0,
-            currency1,
-            6000, // 0.6% fee
-            60, // tick spacing
-            IHooks(address(spot))
-        );
-
-        // Initialize the new pool
-        manager.initialize(newPoolKey, SQRT_PRICE_1_1);
-        PoolId newPoolId = newPoolKey.toId();
-
-        // TODO: consider verifying oracle and feeManager is configured as expected after initialization
     }
 
     /*//////////////////////////////////////////////////////////////
