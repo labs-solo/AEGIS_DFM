@@ -92,6 +92,17 @@ pnpm run clean    # nuke cache/ & out/
 forge script script/Deploy.s.sol --rpc-url <chain-alias> --sender <deployer-address> --account <deployer-account-name> --broadcast
 ```
 
+```bash
+# verify the Spot contract
+
+forge verify-contract <Spot-address> Spot \
+  --constructor-args $(cast abi-encode "constructor(address,address,address,address,address)" <constructor-args>) \
+  --verifier etherscan \
+  --verifier-url https://api.uniscan.xyz/api \
+  --verifier-api-key <api-key> \
+  --watch
+```
+
 ---
 
 ## 🤝 Contributing
