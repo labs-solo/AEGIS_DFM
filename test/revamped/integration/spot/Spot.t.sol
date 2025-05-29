@@ -365,6 +365,165 @@ contract SpotTest is Base_Test {
         assertGt(pendingFee0AfterFinal, pendingFee0Final, "Token0 fees should accumulate from final swap");
     }
 
+    /**
+     * @notice Helper function to test NFT position earning LP fees (no hook fees)
+     * @param manualFee The fee in basis points (e.g., 3000 = 0.3%)
+     * @param donationAmount0 Initial donation amount for token0
+     * @param donationAmount1 Initial donation amount for token1
+     * @param swapAmount Amount for each swap
+     * @param numSwaps Number of swaps to perform
+     * @param bidirectional Whether to alternate swap directions
+     */
+    function _testNFTEarnsLPFees(
+        uint24 manualFee,
+        uint256 donationAmount0,
+        uint256 donationAmount1,
+        uint256 swapAmount,
+        uint256 numSwaps,
+        bool bidirectional
+    ) internal {
+        // Setup: No hook fees, paused reinvestment
+        vm.startPrank(owner);
+        policyManager.setManualFee(poolId, manualFee);
+        policyManager.setPoolPOLShare(poolId, 0); // No hook fees
+        spot.setReinvestmentPaused(true); // Prevent auto-reinvestment
+        vm.stopPrank();
+
+        // Get initial pool state before FRLM position
+        (uint160 sqrtPriceX96Before,,,) = StateLibrary.getSlot0(manager, poolId);
+        uint128 totalLiquidityBefore = StateLibrary.getLiquidity(manager, poolId);
+
+        // Donate to FRLM to create pending fees
+        vm.startPrank(user1);
+        liquidityManager.donate(poolKey, donationAmount0, donationAmount1);
+        vm.stopPrank();
+
+        // Verify donation created pending fees
+        (uint256 pendingFee0AfterDonation, uint256 pendingFee1AfterDonation) = liquidityManager.getPendingFees(poolId);
+        assertEq(pendingFee0AfterDonation, donationAmount0, "Donation should create pending fee0");
+        assertEq(pendingFee1AfterDonation, donationAmount1, "Donation should create pending fee1");
+
+        // Wait for cooldown and reinvest to create NFT position
+        vm.warp(block.timestamp + REINVEST_COOLDOWN + 1);
+        bool reinvestSuccess = liquidityManager.reinvest(poolKey);
+        assertTrue(reinvestSuccess, "Reinvestment should succeed");
+
+        // Verify NFT position was created
+        (uint256 positionId, uint128 nftLiquidity, uint256 nftAmount0, uint256 nftAmount1) =
+            liquidityManager.getPositionInfo(poolId);
+        assertGt(positionId, 0, "NFT position should exist");
+        assertGt(nftLiquidity, 0, "NFT should have liquidity");
+
+        // Get pool state after FRLM position
+        uint128 totalLiquidityAfter = StateLibrary.getLiquidity(manager, poolId);
+        uint128 liquidityIncrease = totalLiquidityAfter - totalLiquidityBefore;
+
+        // FRLM's share of the pool - since there's only 2 full range positions on the pool
+        // 1st added in the Base_Test.setUp function and the 2nd is from this FRLM NFT
+        uint256 frlmSharePPM = (uint256(nftLiquidity) * 1e6) / uint256(totalLiquidityAfter);
+
+        // Pending fees should be near zero after reinvestment (some dust possible)
+        (uint256 pendingFee0Initial, uint256 pendingFee1Initial) = liquidityManager.getPendingFees(poolId);
+        assertLt(pendingFee0Initial, 1e4, "Pending fee0 should be minimal after reinvestment");
+        assertLt(pendingFee1Initial, 1e4, "Pending fee1 should be minimal after reinvestment");
+
+        // Track cumulative fees
+        uint256 expectedFee0 = 0;
+        uint256 expectedFee1 = 0;
+
+        // Execute swaps and track fee accrual
+        for (uint256 i = 0; i < numSwaps; i++) {
+            bool zeroForOne = bidirectional ? (i % 2 == 0) : true;
+
+            // Execute swap
+            vm.startPrank(user2);
+            SwapParams memory params = SwapParams({
+                zeroForOne: zeroForOne,
+                amountSpecified: -int256(swapAmount), // exactIn
+                sqrtPriceLimitX96: zeroForOne ? MIN_PRICE_LIMIT : MAX_PRICE_LIMIT
+            });
+
+            BalanceDelta delta = swapRouter.swap(
+                poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), ""
+            );
+            vm.stopPrank();
+
+            // Calculate LP fee for this swap
+            uint256 inputAmount = uint256(uint128(-delta.amount0()));
+            if (!zeroForOne) {
+                inputAmount = uint256(uint128(-delta.amount1()));
+            }
+
+            // Total LP fee = inputAmount * manualFee / 1e6
+            uint256 totalLPFee = FullMath.mulDiv(inputAmount, manualFee, 1e6);
+
+            // FRLM's share of the LP fee
+            uint256 frlmFee = FullMath.mulDiv(totalLPFee, frlmSharePPM, 1e6);
+
+            if (zeroForOne) {
+                expectedFee0 += frlmFee;
+            } else {
+                expectedFee1 += frlmFee;
+            }
+        }
+
+        uint256 smallDeposit = MIN_REINVEST_AMOUNT * 10;
+
+        // NOTE: we do a small donation so that there is enough pending to reinvest which should trigger NFT fee accrual to pending
+        vm.startPrank(user1);
+        vm.warp(block.timestamp + REINVEST_COOLDOWN + 1);
+        liquidityManager.donate(poolKey, smallDeposit, smallDeposit);
+        reinvestSuccess = liquidityManager.reinvest(poolKey);
+        assertTrue(reinvestSuccess, "Reinvest pending should occur");
+        vm.stopPrank();
+
+        // Get final pending fees
+        (uint256 pendingFee0Final, uint256 pendingFee1Final) = liquidityManager.getPendingFees(poolId);
+
+        // Calculate actual fee accrual
+
+        // zeroForOne swaps generate token0 fees
+        if (expectedFee0 > 0) {
+            uint256 actualFeeAccrued0 = pendingFee0Final - pendingFee0Initial - smallDeposit;
+            // Allow some tolerance due to rounding
+            assertApproxEqRel(
+                actualFeeAccrued0,
+                expectedFee0,
+                2.1e16, // 2.1% tolerance
+                "Token0 fees should match expected"
+            );
+        }
+
+        // if !bidirectional then only zeroForOne swaps so no 1 earned in fees
+        if (bidirectional) {
+            // oneForZero swaps generate token1 fees
+            uint256 actualFeeAccrued1 = pendingFee1Final - pendingFee1Initial - smallDeposit;
+            if (expectedFee1 > 0) {
+                assertGt(actualFeeAccrued1, 0, "Should have accrued token1 fees");
+                assertApproxEqRel(
+                    actualFeeAccrued1,
+                    expectedFee1,
+                    2.1e16, // 2.1% tolerance
+                    "Token1 fees should match expected"
+                );
+            }
+        } else {
+            assertEq(expectedFee1, 0, "expected should be 0");
+            assertApproxEqAbs(pendingFee1Final, pendingFee1Initial, 10, "fees in token1 should not have been earned");
+        }
+
+        (, uint128 finalNftLiquidity,,) = liquidityManager.getPositionInfo(poolId);
+
+        // Verify no protocol shares were minted (since hook fee is 0)
+        (uint256 protocolShares,,) = liquidityManager.getProtocolOwnedLiquidity(poolId);
+        assertGt(finalNftLiquidity, nftLiquidity, "NFT liquidity should've increased from donation");
+        assertEq(
+            protocolShares,
+            finalNftLiquidity - MIN_LOCKED_LIQUIDITY,
+            "Protocol shares should only be from initial reinvestment"
+        );
+    }
+
     /*//////////////////////////////////////////////////////////////
                         HOOK INITIALIZATION TESTS
     //////////////////////////////////////////////////////////////*/
@@ -527,6 +686,54 @@ contract SpotTest is Base_Test {
             4, // numSwaps
             liquidityManager.REINVEST_COOLDOWN() + 1, // advance past cooldown
             true // expectSuccess - since NFT fees accrue to pending fees manual reinvest is still possible
+        );
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                        NFT LP FEE TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_NFT_Earns_LP_Fees_No_Hook_Fees_Balanced() public {
+        _testNFTEarnsLPFees(
+            3000, // 0.3% fee
+            10 ether, // donation amount0
+            10 ether, // donation amount1
+            1 ether, // swap amount
+            6, // number of swaps
+            true // bidirectional
+        );
+    }
+
+    function test_NFT_Earns_LP_Fees_No_Hook_Fees_Large_Position() public {
+        _testNFTEarnsLPFees(
+            5000, // 0.5% fee (higher fee)
+            50 ether, // large donation amount0
+            50 ether, // large donation amount1
+            2 ether, // swap amount
+            4, // number of swaps
+            true // bidirectional
+        );
+    }
+
+    function test_NFT_Earns_LP_Fees_No_Hook_Fees_Single_Direction() public {
+        _testNFTEarnsLPFees(
+            3000, // 0.3% fee
+            10 ether, // donation amount0
+            10 ether, // donation amount1
+            1 ether, // swap amount
+            5, // number of swaps
+            false // only zeroForOne swaps
+        );
+    }
+
+    function test_NFT_Earns_LP_Fees_No_Hook_Fees_Small_Swaps() public {
+        _testNFTEarnsLPFees(
+            10000, // 1% fee (high fee to make small swaps generate noticeable fees)
+            5 ether, // donation amount0
+            5 ether, // donation amount1
+            0.1 ether, // small swap amount
+            10, // more swaps to accumulate fees
+            true // bidirectional
         );
     }
 

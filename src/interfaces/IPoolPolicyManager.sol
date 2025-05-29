@@ -18,6 +18,11 @@ interface IPoolPolicyManager {
     /// @param newBudget The new daily budget
     event DailyBudgetSet(uint32 newBudget);
 
+    /// @notice Emitted when a pool-specific daily budget is set
+    /// @param poolId The pool ID
+    /// @param newBudget The new daily budget
+    event PoolDailyBudgetSet(PoolId indexed poolId, uint32 newBudget);
+
     /// @notice Emitted when base fee parameters are set
     /// @param poolId The ID of the pool
     /// @param stepPpm The step size in PPM
@@ -93,6 +98,10 @@ interface IPoolPolicyManager {
     /// @param poolId The pool ID
     /// @return Surge decay period in seconds
     function getSurgeDecayPeriodSeconds(PoolId poolId) external view returns (uint32);
+
+    /// @notice Gets the default/global/fallback daily budget for CAP events
+    /// @return The default daily budget in PPM
+    function getDefaultDailyBudgetPpm() external view returns (uint32);
 
     /// @notice Returns the daily budget for CAP events in PPM for the given pool
     /// @param poolId The pool ID
@@ -170,6 +179,11 @@ interface IPoolPolicyManager {
     /// @notice Sets the daily budget in PPM
     /// @param ppm The daily budget in PPM
     function setDailyBudgetPpm(uint32 ppm) external;
+
+    /// @notice Sets the daily budget for CAP events for a specific pool
+    /// @param poolId The pool ID
+    /// @param newBudget The new daily budget in PPM (0 means use default)
+    function setPoolDailyBudgetPpm(PoolId poolId, uint32 newBudget) external;
 
     /// @notice Sets the decay window in seconds
     /// @param secs The decay window in seconds

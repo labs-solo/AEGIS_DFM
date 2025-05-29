@@ -130,12 +130,17 @@ contract MockPolicyManager is IPoolPolicyManager {
         return 0;
     }
 
+    function getDefaultDailyBudgetPpm() external view override returns (uint32) {
+        return 0;
+    }
+
     // --- New functions ---
 
     // Stubbed functions required by interface
     function setCapBudgetDecayWindow(PoolId, uint32) external override {}
     function setDailyBudgetPpm(uint32) external override {}
     function setDecayWindow(uint32) external override {}
+    function setPoolDailyBudgetPpm(PoolId poolId, uint32 newBudget) external override {}
 
     function setBaseFeeParams(PoolId, uint32, uint32) external override {}
 

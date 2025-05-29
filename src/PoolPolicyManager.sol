@@ -72,8 +72,11 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @notice Base fee parameters per pool
     mapping(PoolId => BaseFeeParams) private _poolBaseFeeParams;
 
-    /// @notice Daily budget for CAP events (ppm/day)
-    uint32 private _capBudgetDailyPpm;
+    /// @notice Default daily budget for CAP events (ppm/day) 1e6 is 1 per day, 1e7 is 10 per day
+    uint32 private _defaultCapBudgetDailyPpm;
+
+    /// @notice Pool-specific daily budget for CAP events (0 means use default)
+    mapping(PoolId => uint32) private _poolCapBudgetDailyPpm;
 
     /// @notice Linear decay half-life for the budget counter (seconds)
     uint32 private _capBudgetDecayWindow;
@@ -84,7 +87,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     constructor(address _governance, uint256 _dailyBudget) Owned(_governance) {
         if (_governance == address(0)) revert Errors.ZeroAddress();
         // Initialize global parameters
-        _capBudgetDailyPpm = _dailyBudget == 0 ? 1_000_000 : uint32(_dailyBudget);
+        _defaultCapBudgetDailyPpm = _dailyBudget == 0 ? 1_000_000 : uint32(_dailyBudget);
         _capBudgetDecayWindow = 15_552_000; // 180 days
     }
 
@@ -173,9 +176,14 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function getDailyBudgetPpm(PoolId) external view override returns (uint32) {
-        // TODO: consider making this per pool
-        return _capBudgetDailyPpm;
+    function getDefaultDailyBudgetPpm() external view override returns (uint32) {
+        return _defaultCapBudgetDailyPpm;
+    }
+
+    /// @inheritdoc IPoolPolicyManager
+    function getDailyBudgetPpm(PoolId poolId) external view override returns (uint32) {
+        uint32 poolBudget = _poolCapBudgetDailyPpm[poolId];
+        return poolBudget == 0 ? _defaultCapBudgetDailyPpm : poolBudget;
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -264,11 +272,22 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @inheritdoc IPoolPolicyManager
     function setDailyBudgetPpm(uint32 newCapBudgetDailyPpm) external override onlyOwner {
-        if (newCapBudgetDailyPpm == 0 || newCapBudgetDailyPpm > PrecisionConstants.PPM_SCALE) {
-            revert Errors.ParameterOutOfRange(newCapBudgetDailyPpm, 1, PrecisionConstants.PPM_SCALE);
+        if (newCapBudgetDailyPpm == 0 || newCapBudgetDailyPpm > 10 * PrecisionConstants.PPM_SCALE) {
+            revert Errors.ParameterOutOfRange(newCapBudgetDailyPpm, 1, 10 * PrecisionConstants.PPM_SCALE);
         }
-        _capBudgetDailyPpm = newCapBudgetDailyPpm;
+        _defaultCapBudgetDailyPpm = newCapBudgetDailyPpm;
         emit DailyBudgetSet(newCapBudgetDailyPpm);
+    }
+
+    /// @inheritdoc IPoolPolicyManager
+    function setPoolDailyBudgetPpm(PoolId poolId, uint32 newBudget) external override onlyOwner {
+        // Validate: 0 means "use default", or 1 to 10*PPM_SCALE
+        if (newBudget != 0 && (newBudget < 1 || newBudget > 10 * PrecisionConstants.PPM_SCALE)) {
+            revert Errors.ParameterOutOfRange(newBudget, 1, 10 * PrecisionConstants.PPM_SCALE);
+        }
+
+        _poolCapBudgetDailyPpm[poolId] = newBudget;
+        emit PoolDailyBudgetSet(poolId, newBudget);
     }
 
     /// @inheritdoc IPoolPolicyManager

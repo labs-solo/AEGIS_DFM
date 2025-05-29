@@ -33,6 +33,7 @@ import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol
 // - - - Project Libraries - - -
 
 import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
+import {Math} from "./libraries/Math.sol";
 
 // - - - Project Interfaces - - -
 
@@ -217,12 +218,16 @@ contract Spot is BaseHook, ISpot {
                 // Create BeforeSwapDelta to account for the tokens we took
                 // We're taking tokens from the input, so return positive delta
                 int128 deltaSpecified = int128(int256(hookFeeAmount));
-                return (BaseHook.beforeSwap.selector, toBeforeSwapDelta(deltaSpecified, 0), dynamicFee);
+                return (
+                    BaseHook.beforeSwap.selector,
+                    toBeforeSwapDelta(deltaSpecified, 0),
+                    Math.setDynamicFeeOverride(dynamicFee)
+                );
             }
         }
 
         // If we didn't charge a fee, return zero delta
-        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, dynamicFee);
+        return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, Math.setDynamicFeeOverride(dynamicFee));
     }
 
     /// @notice called in BaseHook.afterSwap

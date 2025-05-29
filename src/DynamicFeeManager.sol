@@ -201,8 +201,13 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     /// @param maxTicksPerBlock The maximum ticks per block from oracle
     /// @return The calculated base fee in PPM
     function _calculateBaseFee(PoolId poolId, uint24 maxTicksPerBlock) private view returns (uint32) {
+        uint24 minBaseFee = policyManager.getMinBaseFee(poolId);
+        uint24 maxBaseFee = policyManager.getMaxBaseFee(poolId);
+
+        // Use DEFAULT_BASE_FEE_PPM when oracle has no data
         if (maxTicksPerBlock == 0) {
-            return DEFAULT_BASE_FEE_PPM;
+            // Return default or minBaseFee, whichever is higher
+            return DEFAULT_BASE_FEE_PPM > minBaseFee ? DEFAULT_BASE_FEE_PPM : minBaseFee;
         }
 
         uint256 calculatedFee;
@@ -210,10 +215,10 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
             calculatedFee = uint256(maxTicksPerBlock) * BASE_FEE_FACTOR_PPM;
         }
 
-        uint24 maxBaseFee = policyManager.getMaxBaseFee(poolId);
-
-        // Ensure the result fits in uint32
-        return calculatedFee > maxBaseFee ? maxBaseFee : uint32(calculatedFee);
+        // Clamp between min and max
+        if (calculatedFee < minBaseFee) return minBaseFee;
+        if (calculatedFee > maxBaseFee) return maxBaseFee;
+        return uint32(calculatedFee);
     }
 
     /// @notice Calculates surge fee with exponential decay
