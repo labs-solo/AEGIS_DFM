@@ -40,6 +40,12 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @notice Default base fee update interval (1 day)
     uint32 private constant DEFAULT_BASE_FEE_UPDATE_INTERVAL_SECS = 1 days;
 
+    /// @notice Default base fee factor (1 tick = 100 PPM)
+    uint32 private constant DEFAULT_BASE_FEE_FACTOR_PPM = 100;
+
+    /// @notice Maximum base fee factor to prevent overflow (1 tick = 1000 PPM max)
+    uint32 private constant MAX_BASE_FEE_FACTOR_PPM = 1000;
+
     // === Dynamic Fee Configuration Struct ===
 
     struct DynamicFeeConfig {
@@ -80,6 +86,9 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @notice Linear decay half-life for the budget counter (seconds)
     uint32 private _capBudgetDecayWindow;
+
+    /// @notice Pool-specific base fee factor for converting oracle ticks to PPM
+    mapping(PoolId => uint32) private _poolBaseFeeFactor;
 
     /// @notice Constructor initializes the policy manager with default values
     /// @param _governance The owner of the contract
@@ -211,6 +220,12 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         return val == 0 ? DEFAULT_BASE_FEE_UPDATE_INTERVAL_SECS : val;
     }
 
+    /// @inheritdoc IPoolPolicyManager
+    function getBaseFeeFactor(PoolId poolId) external view override returns (uint32) {
+        uint32 factor = _poolBaseFeeFactor[poolId];
+        return factor == 0 ? DEFAULT_BASE_FEE_FACTOR_PPM : factor;
+    }
+
     // === Dynamic Fee Configuration Setters ===
 
     /// @inheritdoc IPoolPolicyManager
@@ -295,5 +310,16 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         if (newCapBudgetDecayWindow == 0) revert PolicyManagerErrors.ZeroValue();
         _capBudgetDecayWindow = newCapBudgetDecayWindow;
         emit GlobalDecayWindowSet(newCapBudgetDecayWindow);
+    }
+
+    /// @inheritdoc IPoolPolicyManager
+    function setBaseFeeFactor(PoolId poolId, uint32 factor) external override onlyOwner {
+        // Validate factor is reasonable (0 means use default)
+        if (factor != 0 && (factor < 1 || factor > MAX_BASE_FEE_FACTOR_PPM)) {
+            revert Errors.ParameterOutOfRange(factor, 1, MAX_BASE_FEE_FACTOR_PPM);
+        }
+
+        _poolBaseFeeFactor[poolId] = factor;
+        emit BaseFeeFactorSet(poolId, factor);
     }
 }

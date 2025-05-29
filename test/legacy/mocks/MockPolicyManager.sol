@@ -134,6 +134,8 @@ contract MockPolicyManager is IPoolPolicyManager {
         return 0;
     }
 
+    function getBaseFeeFactor(PoolId poolId) external view returns (uint32) {}
+
     // --- New functions ---
 
     // Stubbed functions required by interface
@@ -177,6 +179,8 @@ contract MockPolicyManager is IPoolPolicyManager {
     function setMaxBaseFee(PoolId id, uint24 fee) external {
         _p[id].maxBaseFee = fee;
     }
+
+    function setBaseFeeFactor(PoolId poolId, uint32 factor) external {}
 
     /* ----------- getters used by the oracle ----------- */
     function getMinBaseFee(PoolId id) external view override returns (uint24) {
