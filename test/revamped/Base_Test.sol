@@ -54,6 +54,8 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
     using CurrencyLibrary for Currency;
     using StateLibrary for IPoolManager;
 
+    uint256 constant MIN_REINVEST_AMOUNT = 1e4;
+
     /// @dev Constant for the minimum locked liquidity per position
     uint256 constant MIN_LOCKED_LIQUIDITY = 1000;
 

@@ -18,6 +18,11 @@ interface IPoolPolicyManager {
     /// @param newBudget The new daily budget
     event DailyBudgetSet(uint32 newBudget);
 
+    /// @notice Emitted when a pool-specific daily budget is set
+    /// @param poolId The pool ID
+    /// @param newBudget The new daily budget
+    event PoolDailyBudgetSet(PoolId indexed poolId, uint32 newBudget);
+
     /// @notice Emitted when base fee parameters are set
     /// @param poolId The ID of the pool
     /// @param stepPpm The step size in PPM
@@ -58,6 +63,11 @@ interface IPoolPolicyManager {
     /// @param decayWindow The new decay window in seconds
     event GlobalDecayWindowSet(uint32 decayWindow);
 
+    /// @notice Emitted when the base fee factor is set for a pool
+    /// @param poolId The pool ID
+    /// @param factor The new base fee factor
+    event BaseFeeFactorSet(PoolId indexed poolId, uint32 factor);
+
     /// === Fee Configuration Functions ===
 
     /// @notice Sets the POL share percentage for a specific pool
@@ -93,6 +103,10 @@ interface IPoolPolicyManager {
     /// @param poolId The pool ID
     /// @return Surge decay period in seconds
     function getSurgeDecayPeriodSeconds(PoolId poolId) external view returns (uint32);
+
+    /// @notice Gets the default/global/fallback daily budget for CAP events
+    /// @return The default daily budget in PPM
+    function getDefaultDailyBudgetPpm() external view returns (uint32);
 
     /// @notice Returns the daily budget for CAP events in PPM for the given pool
     /// @param poolId The pool ID
@@ -134,6 +148,10 @@ interface IPoolPolicyManager {
     /// @return Base fee update interval in seconds
     function getBaseFeeUpdateIntervalSeconds(PoolId poolId) external view returns (uint32);
 
+    /// @notice Gets the base fee factor for converting oracle ticks to fee PPM
+    /// @param poolId The pool ID
+    function getBaseFeeFactor(PoolId poolId) external view returns (uint32);
+
     /// === Dynamic Fee Setter Functions ===
 
     /// @notice Sets the cap budget decay window for a pool
@@ -171,7 +189,17 @@ interface IPoolPolicyManager {
     /// @param ppm The daily budget in PPM
     function setDailyBudgetPpm(uint32 ppm) external;
 
+    /// @notice Sets the daily budget for CAP events for a specific pool
+    /// @param poolId The pool ID
+    /// @param newBudget The new daily budget in PPM (0 means use default)
+    function setPoolDailyBudgetPpm(PoolId poolId, uint32 newBudget) external;
+
     /// @notice Sets the decay window in seconds
     /// @param secs The decay window in seconds
     function setDecayWindow(uint32 secs) external;
+
+    /// @notice Sets the base fee factor for a specific pool
+    /// @param poolId The pool ID
+    /// @param factor The new base fee factor (1 tick = X PPM)
+    function setBaseFeeFactor(PoolId poolId, uint32 factor) external;
 }

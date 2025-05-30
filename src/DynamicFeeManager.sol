@@ -29,9 +29,6 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     /// @dev Fallback base fee when oracle has no data (0.5% in PPM)
     uint32 private constant DEFAULT_BASE_FEE_PPM = 5_000;
 
-    /// @dev Oracle ticks to base fee conversion factor (1 tick = 100 PPM)
-    uint256 private constant BASE_FEE_FACTOR_PPM = 100;
-
     /// @dev Parts per million denominator for percentage calculations
     uint256 private constant PPM_DENOMINATOR = 1e6;
 
@@ -201,19 +198,27 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
     /// @param maxTicksPerBlock The maximum ticks per block from oracle
     /// @return The calculated base fee in PPM
     function _calculateBaseFee(PoolId poolId, uint24 maxTicksPerBlock) private view returns (uint32) {
+        uint24 minBaseFee = policyManager.getMinBaseFee(poolId);
+        uint24 maxBaseFee = policyManager.getMaxBaseFee(poolId);
+
+        // Use DEFAULT_BASE_FEE_PPM when oracle has no data
         if (maxTicksPerBlock == 0) {
-            return DEFAULT_BASE_FEE_PPM;
+            // Return default or minBaseFee, whichever is higher
+            return DEFAULT_BASE_FEE_PPM > minBaseFee ? DEFAULT_BASE_FEE_PPM : minBaseFee;
         }
+
+        // Get the pool-specific base fee factor
+        uint32 baseFeeFactor = policyManager.getBaseFeeFactor(poolId);
 
         uint256 calculatedFee;
         unchecked {
-            calculatedFee = uint256(maxTicksPerBlock) * BASE_FEE_FACTOR_PPM;
+            calculatedFee = uint256(maxTicksPerBlock) * baseFeeFactor;
         }
 
-        uint24 maxBaseFee = policyManager.getMaxBaseFee(poolId);
-
-        // Ensure the result fits in uint32
-        return calculatedFee > maxBaseFee ? maxBaseFee : uint32(calculatedFee);
+        // Clamp between min and max
+        if (calculatedFee < minBaseFee) return minBaseFee;
+        if (calculatedFee > maxBaseFee) return maxBaseFee;
+        return uint32(calculatedFee);
     }
 
     /// @notice Calculates surge fee with exponential decay
