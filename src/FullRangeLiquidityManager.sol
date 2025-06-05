@@ -1077,6 +1077,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
                 currency0.transfer(payer, excessNative);
             }
         } else {
+            if (msg.value != 0) revert Errors.NonzeroNativeValue();
             if (amount0 > 0) {
                 IERC20Minimal(Currency.unwrap(currency0)).transferFrom(payer, address(this), amount0);
             }
