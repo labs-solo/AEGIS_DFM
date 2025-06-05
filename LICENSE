@@ -1,1 +1,47 @@
-BUSL-1.1 License
+-------------------------------------------------------------------------------
+                        Business Source License 1.1
+   License text copyright © 2017 MariaDB Corporation Ab, All Rights Reserved.
+        “Business Source License” is a trademark of MariaDB Corporation Ab.
+-------------------------------------------------------------------------------
+
+Parameters
+==========
+
+Licensed Work:            AEGIS DFM Hook (all source files in this repository)
+Licensor:                      Solo Labs, Inc
+Additional Use Grant:  See § 3 (“Evaluation Period”) below
+Change Date:              2029-05-01 (YYYY-MM-DD)
+Change License:         GNU General Public License v3.0 or later (GPL-3.0+)
+Initial Publication Date: 2025-05-01 (YYYY-MM-DD)
+
+1. Grant of Copyright License
+======================
+Subject to the terms and conditions of this License, the Licensor hereby grants you a non-exclusive, worldwide, non-transferable, non-sublicensable copyright license to reproduce, prepare derivative works of, publicly display, publicly perform, and distribute the Licensed Work **solely to the extent necessary to exercise the Limited Right of Use defined in § 2 and the Evaluation Period rights in § 3**.
+
+2. Use Limitation
+===============
+The Licensed Work may not be used in production—meaning generating revenue, providing hosted services, or running on main-net for end-users—except under the terms of an Additional Use Grant or a separate commercial licence from the Licensor.
+3. Change License
+=================
+Effective on the Change Date specified above, the Licensed Work will be governed by the Change License stated in the Parameters. From that date this Business Source License shall expire for the Licensed Work.
+
+4. Termination
+==============
+If you materially breach §§ 1–3 and fail to cure such breach within 30 days after receiving written notice, your rights under this License terminate automatically.
+
+5. Disclaimer of Warranty
+=========================
+THE LICENSED WORK IS PROVIDED “AS IS.” TO THE MAXIMUM EXTENT PERMITTED BY
+APPLICABLE LAW, LICENSOR DISCLAIMS ALL WARRANTIES, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE, AND NON-INFRINGEMENT.
+
+6. Limitation of Liability
+====================
+EXCEPT FOR WILLFUL MISCONDUCT OR FRAUD, LICENSOR SHALL NOT BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, OR CONSEQUENTIAL DAMAGES, OR LOST PROFITS, ARISING FROM OR RELATED TO THIS LICENSE OR THE LICENSED WORK, EVEN IF LICENSOR HAS BEEN ADVISED OF THE POSSIBILITY OF SUCH DAMAGES.
+
+7. Miscellaneous
+================
+This License shall be governed by and construed in accordance with the laws of the State of Delaware, USA, without regard to its conflict-of-law principles. Any dispute arising under this License shall be resolved in the courts of competent jurisdiction located in Wilmington, Delaware.
+
+END OF TERMS
