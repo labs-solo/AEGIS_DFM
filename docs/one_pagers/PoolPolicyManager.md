@@ -37,7 +37,7 @@ Everything is **read by hooks or off-chain agents**; the contract itself never c
 // Governance setters
 setFeeConfig(polPpm, frPpm, lpPpm, minFeePpm, claimPpm, polMult);
 setPoolPOLShare(pid, sharePpm);              // paired with setPoolSpecificPOLSharingEnabled()
-setBaseFeeParams(pid, stepPpm, interval);    // step-engine
+setBaseFeeParams(pid, stepPpm, interval);    // step-engine (interval must be >0)
 setSurgeDecayPeriodSeconds(pid, secs);
 setSurgeFeeMultiplierPpm(pid, ppm);
 setTickScalingFactor(int24 newFactor);
