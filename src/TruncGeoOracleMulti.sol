@@ -514,23 +514,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         return (tickCumulatives, secondsPerLiquidityCumulativeX128s);
     }
 
-    /**
-     * @notice Gets the current price for a pool with freshness check
-     * @param key The pool key
-     * @return sqrtPriceX96 The current sqrt price X96
-     */
-    function getPrice(PoolKey memory key) external view returns (uint160 sqrtPriceX96) {
-        uint32 maxAge = 1_800; // 30 minutes
-        uint160 _sqrt;
-        uint32 ts;
-        // StateLibrary.getSlot0 returns (sqrtPriceX96, int24 tick, uint32 timestamp, uint16 _)
-        // Capture the first three values to check freshness.
-        (_sqrt,, ts,) = StateLibrary.getSlot0(poolManager, key.toId());
-
-        if (block.timestamp - uint256(ts) > maxAge) revert Errors.StaleOracle();
-
-        sqrtPriceX96 = _sqrt;
-    }
 
     /* ────────────────────── INTERNALS ──────────────────────── */
 

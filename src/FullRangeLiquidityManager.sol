@@ -33,6 +33,7 @@ import {PositionManager} from "v4-periphery/src/PositionManager.sol";
 import {IWETH9} from "v4-periphery/src/interfaces/external/IWETH9.sol";
 import {ISubscriber} from "v4-periphery/src/interfaces/ISubscriber.sol";
 import {PositionInfo} from "v4-periphery/src/libraries/PositionInfoLibrary.sol";
+import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 
 // - - - Project Interfaces - - -
 
@@ -48,7 +49,7 @@ import {TruncGeoOracleMulti} from "./TruncGeoOracleMulti.sol";
 /// @title FullRangeLiquidityManager
 /// @notice Manages hook fees and liquidity for Spot pools
 /// @dev Handles fee collection, reinvestment, and allows users to contribute liquidity
-contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, ERC6909Claims {
+contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, ERC6909Claims, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using PoolIdLibrary for PoolKey;
     using PoolIdLibrary for PoolId;
@@ -161,7 +162,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
     }
 
     /// @inheritdoc IUnlockCallback
-    function unlockCallback(bytes calldata data) external override onlyPoolManager returns (bytes memory) {
+    function unlockCallback(bytes calldata data) external override onlyPoolManager nonReentrant returns (bytes memory) {
         if (data.length > 0) {
             // Decode the action type
             (CallbackAction action) = abi.decode(data[:32], (CallbackAction));
@@ -178,23 +179,23 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
 
                 // Take tokens from PoolManager to this contract
                 if (amount0 > 0) {
-                    poolManager.take(currency0, address(this), amount0);
-                    // Burn ERC6909 tokens to balance the delta
-                    poolManager.burn(address(this), currency0.toId(), amount0);
-
                     // Track token balances when converting from ERC6909
                     accountedERC6909Balances[currency0] -= amount0;
                     accountedBalances[currency0] += amount0;
+
+                    poolManager.take(currency0, address(this), amount0);
+                    // Burn ERC6909 tokens to balance the delta
+                    poolManager.burn(address(this), currency0.toId(), amount0);
                 }
 
                 if (amount1 > 0) {
-                    poolManager.take(currency1, address(this), amount1);
-                    // Burn ERC6909 tokens to balance the delta
-                    poolManager.burn(address(this), currency1.toId(), amount1);
-
                     // Track token balances when converting from ERC6909
                     accountedERC6909Balances[currency1] -= amount1;
                     accountedBalances[currency1] += amount1;
+
+                    poolManager.take(currency1, address(this), amount1);
+                    // Burn ERC6909 tokens to balance the delta
+                    poolManager.burn(address(this), currency1.toId(), amount1);
                 }
             } else if (action == CallbackAction.SWEEP_EXCESS_TOKEN) {
                 // Decode sweep parameters
