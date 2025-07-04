@@ -1,4 +1,4 @@
-> v1.1.0 – Typed batching & lean wrappers
+> v1.1.1 – Event + Invariant alignment
 # 5. Functional Specification
 
 This section details the functional behavior of the AEGIS V2 Unified Vault across all core features. It covers user and protocol operations introduced from Phase 1 through Phase 7 (including the final batch-processing extension), integrating liquidity management, fee handling, lending, advanced position types, liquidation, and atomic batching. For each topic (§5.1–§5.7), the relevant state variables (see **§4 Storage Layout**) and module interactions (see **§3 Architecture**) are cross-referenced to provide a complete understanding.
@@ -139,6 +139,10 @@ At this point, the user is wiped out in that pool (their UserVault for that pool
 > **Storage & Metrics:** Liquidation-related state: `insurancePolShares` (slot 22) holds how many POL shares are from insurance (liquidation penalties). `badDebt` (slot 23) tracks any unbacked debt per pool. These are both new in Phase 7 final. The vault emits `BadDebtRecorded` and `BadDebtCovered` events accordingly. The **VaultMetrics** event (emitted with throttling) includes fields for total collateral, total debt, and total POL in a pool, which let observers calculate health ratios easily. Module-wise, liquidations rely on the Spot hook’s price feed (or an integrated oracle) to value collateral vs debt. The PoolPolicyManager provides the collateral factors and could also specify a **liquidation fee** or bonus (hardcoded to 10% in current implementation, but could be adjustable). The design remains within Uniswap’s hook gas limits by performing liquidations as separate transactions (not within swaps). Finally, the integration of POL in liquidity is seamless: the vault’s POL shares simply sit as part of `shareData.totalShares` and earn fees like any liquidity – effectively acting as an insurance buffer that grows over time. An invariant holds that **insurancePolShares never exceeds totalPolShares** (by definition) and **totalPolShares <= shareData.totalShares** trivially. Thus, POL is always a subset of actual liquidity in the pools, ready to be burned to cover losses if needed.
 
 ## 5.7 Batch Engine (Atomic Multi-Action Processing)
+
+Each action’s expected results are summarized in the *Post‑Conditions* tables in
+`workflows.md`. At the end of every batch the vault calls `InvariantSuite.verify()`
+to ensure all referenced invariants hold before finalizing.
 
 One of the major enhancements in AEGIS V2 is the **Batch Processing Engine**, which allows users (or keepers) to execute multiple vault operations atomically in a single transaction. Instead of making separate calls for a series of actions (e.g. withdraw, then swap, then repay), a user can package them into one **batch** via `executeBatchTyped`. This improves UX (one-click complex interactions) and can save gas through shared computations. All actions in a batch either **succeed entirely or revert entirely** – ensuring no partial completion or intermediate unsafe states.
 

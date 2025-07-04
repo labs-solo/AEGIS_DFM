@@ -1,4 +1,4 @@
-> v1.1.0 – Typed batching & lean wrappers
+> v1.1.1 – Event + Invariant alignment
 # 5.7 Batch Processing Engine (Atomic Vault Action Batching)
 
 
@@ -83,7 +83,9 @@ The pipeline can be described in sequential stages:
    * **Fee accruals:** Actions like swaps and liquidity adjustments accrue trading fees to the vault. These fees remain in the vault’s accounting as “pending fees”. They are not reinvested or distributed mid-batch (unless a specific action for it is included) – they will either be reinvested by a separate `reinvestFees` call (which could itself be a batch action) or left for later. The key point is that fee accrual during a batch doesn’t destabilize anything; it slightly increases the vault’s collateral (fees earned) which only helps solvency. The batch engine doesn’t need special handling for fees aside from updating internal counters via the hook callbacks.
    * **Interest index caching:** If multiple borrow or repay actions on the same pool occur in one batch, interest was accrued at the start, so subsequent borrow/repay calculations reuse that updated index. The engine ensures it doesn’t double-accrue interest on a pool within one batch, which keeps gas costs down and avoids inconsistency.
 
-5. **Finalize Batch – Comprehensive Check and Commit:** After executing all actions in the proper order, the engine performs a final verification and then concludes the batch:
+5. **Verify Invariants:** After all state updates are written, the engine calls `InvariantSuite.verify()` to enforce every post-condition listed in the workflow tables. This corresponds to **Step 13** in the detailed pipeline diagram.
+
+6. **Finalize Batch – Comprehensive Check and Commit:** After executing all actions in the proper order, the engine performs a final verification and then concludes the batch:
 
    * **Final Invariant Enforcement:** The user’s vault (and any other affected vault, such as a liquidated party’s) is checked one last time for all safety requirements. This is a “failsafe” to catch any scenario not caught by prior checks. It verifies that **Loan-to-Value < 98%** (or whatever the liquidation threshold is) for every affected vault, meaning the vault is solvent and not in the danger zone. It also checks that pool utilization for each involved pool is ≤ 95% (ensuring the batch didn’t over-utilize liquidity). If any of these conditions are violated at this point, the entire batch is reverted (rolled back) – however, due to the ordering and per-action checks, such a situation *should not occur* unless there was an unforeseen error. Essentially, the final check is an assert that the system invariants hold.
    * **Unlock Reentrancy:** The `nonReentrant` lock is released as the function is about to return (this happens automatically when the external call finishes, but conceptually this is part of finalization).
@@ -952,6 +954,7 @@ All actions in a batch emit the same events they would in single operations, for
 * Deposits emit `Deposit` events, Withdraws emit `Withdraw`, Borrow emits `Borrow`, Repay emits `Repay`, etc., with identical semantics as if they were separate calls. The order of events in the transaction log will follow the execution order (which might be different from user-provided sequence).
 * Additional events introduced for new actions: `PositionOpened`, `PositionClosed`, `LimitOrderPlaced`, `LimitOrderExecuted/Cancelled`, `LiquidationOccurred`, etc., as described above, are emitted appropriately.
 * Because these events are indexed by user (and other keys like poolId), off-chain systems can track user activity even within batches by reading these events.
+* After each sub-action the engine emits `ActionExecuted(idx, code, success)` so external observers know exactly which step succeeded or failed.
 * A final `BatchExecuted` event may be emitted as mentioned, but it is auxiliary.
 
 Errors are reported via revert with specific error codes/strings:

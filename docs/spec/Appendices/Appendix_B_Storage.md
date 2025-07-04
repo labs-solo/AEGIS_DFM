@@ -1,4 +1,5 @@
 # Appendix B — Unified Storage Table
+> v1.1.1 – Event + Invariant alignment
 
 **Unified Vault Storage Map (Slots 0–24):** The table below presents the complete storage slot allocation for VaultManagerCore as of the Phase 7 freeze. It lists each slot, the variable(s) stored at that location, the data type and size, and the phase in which the slot was introduced or first used. This reflects the final state of the contract’s storage through version 2.0.
 
@@ -28,4 +29,14 @@
 |    **23** |          0 | `TimelockConfig` (struct)                                              |             256 |     7     | **Timelock Config** – Struct holding governance timelock parameters. Contains `{address timelockAddr; uint64 minDelay; uint64 gracePeriod;}` packed into one slot (20 + 8 + 8 bytes).                                                                        |
 |    **24** |          0 | `MetricsAccumulator` (struct)                                          |             256 |     7     | **Metrics Accumulator** – Struct for aggregated vault metrics, packed as `{uint96 totalCollateral; uint96 totalDebt; uint96 protocolLiquidity; uint32 lastUpdateBlock;}`. Allows periodic emission of system stats.                                                         |
 
-**Notes:** All multi-byte fields use **big-endian packing** within their slot (e.g. in slot 0, `owner` occupies bytes 0–19 and `pauseFlags` bytes 20–31). Mappings and dynamic arrays occupy a single **hash slot** (with actual entries stored at `keccak256(key ‖ slot)` as per Solidity rules). The gas costs listed (2100 for cold SLOAD, 100 for warm) reflect typical access for those slots in Ethereum’s Istanbul/EIP-2929 context.
+**Notes:** All multi-byte fields use **big-endian packing** within their slot (e.g. in slot 0, `owner` occupies bytes 0–19 and `pauseFlags` bytes 20–31). Mappings and dynamic arrays occupy a single **hash slot** (with actual entries stored at `keccak256(key ‖ slot)` as per Solidity rules). The gas costs listed (2100 for cold SLOAD, 100 for warm) reflect typical access for those slots in Ethereum’s Istanbul/EIP-2929 context.
+
+## B.3 Invariant Registry
+
+| ID | Formal Statement |
+|----|-----------------|
+| INV-01 | `totalShares == ΣuserShares` per pool |
+| INV-02 | `LTV(user) ≤ CF_maint` |
+| INV-03 | `totalBorrowShares ≤ totalShares` |
+| INV-04 | `utilization ≤ 95%` after any borrow/withdraw |
+| INV-05 | `insurancePolShares ≤ totalPolShares` |

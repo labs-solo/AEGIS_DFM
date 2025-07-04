@@ -1,8 +1,9 @@
 # Workflows.md — Single‑Action Flow Primitives
-> v1.1.0 – Typed batching & lean wrappers
+> v1.1.1 – Event + Invariant alignment
 
-This document defines the **canonical, reusable primitives** for every single‑action vault flow in AEGIS V2 through Phase‑3.  
+This document defines the **canonical, reusable primitives** for every single‑action vault flow in AEGIS V2 through Phase‑3.
 Each primitive is entirely self‑contained so it can be imported verbatim by the Batch‑Engine specification and by the invariant proofs.
+All IDs are enforced at batch end via `InvariantSuite.verify()` (see §5.7).
 
 ---
 
@@ -40,7 +41,96 @@ Each primitive is entirely self‑contained so it can be imported verbatim by th
 ### V0  Deposit
 *(unchanged — see previous version)*
 
-*(…* *All blocks V1 → V11 are identical to the previous delivery and therefore omitted here for brevity.*)*
+| ID | Post-Condition |
+|----|----------------|
+| INV-01 | totalShares equals sum of user shares |
+| INV-02 | caller LTV ≤ CF_maint |
+
+### V1  Withdraw
+*(unchanged — see previous version)*
+
+| ID | Post-Condition |
+|----|----------------|
+| INV-01 | totalShares equals sum of user shares |
+| INV-02 | caller LTV ≤ CF_maint |
+| INV-04 | utilization ≤ 95% |
+
+### V2  Borrow
+*(unchanged — see previous version)*
+
+| ID | Post-Condition |
+|----|----------------|
+| INV-02 | caller LTV ≤ CF_maint |
+| INV-03 | totalBorrowShares ≤ totalShares |
+| INV-04 | utilization ≤ 95% |
+
+### V3  Repay
+*(unchanged — see previous version)*
+
+| ID | Post-Condition |
+|----|----------------|
+| INV-01 | totalShares equals sum of user shares |
+| INV-03 | totalBorrowShares ≤ totalShares |
+
+### V4  Reinvest
+*(unchanged — see previous version)*
+
+| ID | Post-Condition |
+|----|----------------|
+| INV-01 | totalShares equals sum of user shares |
+
+### V5  Open LP‑NFT
+*(unchanged — see previous version)*
+
+| ID | Post-Condition |
+|----|----------------|
+| INV-01 | totalShares equals sum of user shares |
+| INV-02 | caller LTV ≤ CF_maint |
+
+### V6  Close LP‑NFT
+*(unchanged — see previous version)*
+
+| ID | Post-Condition |
+|----|----------------|
+| INV-01 | totalShares equals sum of user shares |
+| INV-02 | caller LTV ≤ CF_maint |
+
+### V7  Collect Fees
+*(unchanged — see previous version)*
+
+| ID | Post-Condition |
+|----|----------------|
+| INV-01 | totalShares equals sum of user shares |
+
+### V8  Place Limit Order
+*(unchanged — see previous version)*
+
+| ID | Post-Condition |
+|----|----------------|
+| INV-01 | totalShares equals sum of user shares |
+
+### V9  Cancel Limit Order
+*(unchanged — see previous version)*
+
+| ID | Post-Condition |
+|----|----------------|
+| INV-01 | totalShares equals sum of user shares |
+
+### V10  Execute Limit Order
+*(unchanged — see previous version)*
+
+| ID | Post-Condition |
+|----|----------------|
+| INV-01 | totalShares equals sum of user shares |
+| INV-02 | caller LTV ≤ CF_maint |
+
+### V11  Liquidate
+*(unchanged — see previous version)*
+
+| ID | Post-Condition |
+|----|----------------|
+| INV-01 | totalShares equals sum of user shares |
+| INV-02 | caller LTV ≤ CF_maint |
 
 ---
 
@@ -64,10 +154,12 @@ Each primitive is entirely self‑contained so it can be imported verbatim by th
 3. **Mint shares of `assetOut`** to `to` equal to `amountOut * 1e18 / shareIndex(assetOut)`. (≈ 9 000 gas warm).  
 4. Emit `Swap(msg.sender, assetIn, amountIn, assetOut, amountOut, to)`.
 
-**Post‑Conditions & Invariants**
+**Post‑Conditions**
 
-* I‑1  `INV‑01 “totalShares == ΣuserShares”` holds for every asset pool.  
-* I‑2  `INV‑02 “LTV(user) ≤ CF_maint”` holds.  
+| ID | Description |
+|----|-------------|
+| INV-01 | totalShares == ΣuserShares |
+| INV-02 | LTV(user) ≤ CF_maint |
 
 **Events Emitted**
 
