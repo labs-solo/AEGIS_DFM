@@ -1,4 +1,5 @@
 # 6 External Interfaces & ABIs
+> v1.1.0 – Typed batching & lean wrappers
 
 ## 6.1 Design Principles
 
@@ -30,4 +31,19 @@
 * **Observability:** `IVaultMetricsLens` contract for front‑ends and monitors.
 
 These items are already present in the interface code below—no migrations are required.
+
+```solidity
+/// @title IVaultManagerCore
+/// @custom:version 1.1.0
+interface IVaultManagerCore {
+    function deposit(address asset, uint256 amount, address recipient) external returns (uint256 shares);
+    function depositFor(address asset, uint256 amt, address onBehalf) external returns (uint256 shares);
+    function withdraw(address asset, uint256 shares, address recipient) external returns (uint256 amount);
+    function redeemTo(address asset, uint256 shares, address to) external returns (uint256 amount);
+    function borrow(PoolId poolId, uint256 amount, address recipient) external;
+    function repay(PoolId poolId, uint256 amount, address onBehalfOf) external returns (uint256 remaining);
+    function executeBatch(bytes[] calldata actions) external returns (bytes[] memory results); /// @deprecated
+    function executeBatchTyped(Action[] calldata actions) external returns (bytes[] memory results);
+}
+```
 

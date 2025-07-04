@@ -1,4 +1,5 @@
 # Appendix — Header‑Only Solidity Interfaces
+> v1.1.0 – Typed batching & lean wrappers
 
 ## `IVaultManagerCore.sol`
 
@@ -11,7 +12,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
 /// @title  IVaultManagerCore
 /// @notice Canonical external surface for the AEGIS V2 unified vault.
-/// @custom:version 1.0.0
+/// @custom:version 1.1.0
 interface IVaultManagerCore {
     /*───────────────────────────  EVENTS  ───────────────────────────*/
 
@@ -86,7 +87,11 @@ interface IVaultManagerCore {
     /*──────────  CORE MUTATIVE FUNCTIONS  ─────────*/
 
     function deposit(address asset, uint256 amount, address recipient) external returns (uint256 shares);
+    /// @notice Deposit on behalf of another user. Skips interest/oracle logic if caller has no debt.
+    function depositFor(address asset, uint256 amt, address onBehalf) external returns (uint256 shares);
     function withdraw(address asset, uint256 shares, address recipient) external returns (uint256 amount);
+    /// @notice Redeem shares to a recipient. Skips interest/oracle logic if caller has no debt.
+    function redeemTo(address asset, uint256 shares, address to) external returns (uint256 amount);
 
     function registerPool(PoolKey calldata poolKey) external returns (PoolId poolId);
 
@@ -129,7 +134,9 @@ interface IVaultManagerCore {
     function updateInsuranceFund(int256 delta, address recipient) external;
     function coverBadDebt(PoolId poolId, uint256 amount) external;
 
+    /// @deprecated Use {executeBatchTyped} instead.
     function executeBatch(bytes[] calldata actions) external returns (bytes[] memory results);
+    function executeBatchTyped(Action[] calldata actions) external returns (bytes[] memory results);
 
     function depositToVault(PoolId poolId, uint256 amount0, uint256 amount1) external;
     function withdrawFromVault(PoolId poolId, uint256 amount0, uint256 amount1, address recipient) external;

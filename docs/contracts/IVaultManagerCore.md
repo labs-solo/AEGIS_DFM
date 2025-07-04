@@ -1,3 +1,4 @@
+> v1.1.0 – Typed batching & lean wrappers
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
@@ -18,7 +19,7 @@ type LPShare is uint128;
 
 /// @title IVaultManagerCore
 /// @notice Canonical surface for the AEGIS V2 unified vault (Phases 1 → 7 + Batch)
-/// @custom:version 1.0.0
+/// @custom:version 1.1.0
 interface IVaultManagerCore {
     /*==============================  EVENTS  ==============================*/
 
@@ -148,9 +149,15 @@ interface IVaultManagerCore {
     /// @return shares Minted vault shares.
     function deposit(address asset, uint256 amount, address recipient) external returns (uint256 shares);
 
+    /// @notice Deposit assets for another user without triggering interest/oracle updates when caller has no debt.
+    function depositFor(address asset, uint256 amt, address onBehalf) external returns (uint256 shares);
+
     /// @phase1 Withdraw ERC‑20 assets by redeeming vault shares.
     /// @return amount Amount of underlying assets returned.
     function withdraw(address asset, uint256 shares, address recipient) external returns (uint256 amount);
+
+    /// @notice Redeem shares to a recipient. Skips oracle and interest logic when caller has no debt.
+    function redeemTo(address asset, uint256 shares, address to) external returns (uint256 amount);
 
     /// @phase1 Register a supported Uniswap V4 pool.
     function registerPool(PoolKey calldata poolKey) external returns (PoolId poolId);
@@ -229,7 +236,10 @@ interface IVaultManagerCore {
 
     /// @batch Execute a bundle of encoded vault actions **atomically**.
     /// @dev MUST revert if any sub‑call fails (`allSucceeded == false`).
+    /// @deprecated Use {executeBatchTyped} instead.
     function executeBatch(bytes[] calldata actions) external returns (bytes[] memory results);
+
+    function executeBatchTyped(Action[] calldata actions) external returns (bytes[] memory results);
 
     /*===========================  VIEW‑ONLY HELPERS  ======================*/
 
