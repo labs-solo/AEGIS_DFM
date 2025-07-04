@@ -1,4 +1,5 @@
 # Workflows.md — Single‑Action Flow Primitives
+> v1.1.0 – Typed batching & lean wrappers
 
 This document defines the **canonical, reusable primitives** for every single‑action vault flow in AEGIS V2 through Phase‑3.  
 Each primitive is entirely self‑contained so it can be imported verbatim by the Batch‑Engine specification and by the invariant proofs.
@@ -9,8 +10,8 @@ Each primitive is entirely self‑contained so it can be imported verbatim by th
 
 | Action ID | Name                    | Category            | Risk Effect     | Used In Batch? |
 |-----------|-------------------------|---------------------|-----------------|----------------|
-| **V0**    | Deposit                | Asset Flow          | risk‑reducing   | **Yes**        |
-| **V1**    | Withdraw               | Asset Flow          | risk‑increasing | **Yes**        |
+| **V0**    | Deposit¹               | Asset Flow          | risk‑reducing   | **Yes**        |
+| **V1**    | Withdraw¹              | Asset Flow          | risk‑increasing | **Yes**        |
 | **V2**    | Borrow                 | Lending             | risk‑increasing | **Yes**        |
 | **V3**    | Repay                  | Lending             | risk‑reducing   | **Yes**        |
 | **V4**    | Reinvest               | Compounding         | neutral         | **Yes**        |
@@ -22,6 +23,8 @@ Each primitive is entirely self‑contained so it can be imported verbatim by th
 | **V10**   | Execute Limit Order    | Order Book          | neutral         | **Yes**        |
 | **V11**   | Liquidate             | Risk Management     | risk‑reducing   | **Yes**        |
 | **V12**   | Swap                  | Asset Exchange      | neutral         | **Yes**        |
+
+¹ Also callable via `depositFor` / `redeemTo` when caller has no debt (~9 k gas saved).
 
 ---
 
@@ -102,3 +105,7 @@ Each primitive is entirely self‑contained so it can be imported verbatim by th
 * **Temporal Sorting** — When multiple actions share the same `Risk Effect`, they are ordered by ascending `Action ID` to guarantee determinism across clients.
 
 ---
+
+### Single‑Action Invariants
+
+* `depositFor` and `redeemTo` may only be used when the caller’s debt is zero; otherwise interest and oracle updates must run.

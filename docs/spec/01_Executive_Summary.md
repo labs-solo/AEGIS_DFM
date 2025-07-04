@@ -20,6 +20,7 @@ It extends the original AEGIS Dynamic Fee Manager (DFM) codebase without bre
 * **Automated Liquidations with Risk Reserve** – a protocol‑owned liquidity (POL) reserve grows from liquidation penalties and a slice of net fees **on a pool‑by‑pool basis** and serves as the ultimate bad‑debt absorber.
 * **Granular Governance & Observability** – two‑step timelock, pause bitmap per action family, and a gas‑free metrics lens for real‑time dashboards.
 * **Code‑Level Backward Compatibility** – every public function and storage slot from the AEGIS DFM code remains intact; V2 is a pure superset.
+* **Dual‑API Guarantee** – all single-action calls map 1:1 to batch operations. Typed batch (`executeBatchTyped`) supersedes legacy bytes variant from v1.1 onward.
 
 These features let LPs farm fees while retaining instant liquidity, let market‑makers quote two‑sided markets inside one block, empower desks to launch delta‑neutral structured notes with a single call, and allow traders to move from cash to leverage to hedged exposure without leaving the chain.
 
