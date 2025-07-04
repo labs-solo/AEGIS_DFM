@@ -5,12 +5,13 @@ flowchart TD
     classDef error   fill:#ffb3b3,stroke:#d33,stroke-width:2px,color:#000;
 
     %% ── main execution path ───────────────────────────────────────────────
-    Start([BatchEngine.entry()]) --> A0[0 - initBatch]
+    Start([BatchEngine.entry()]) --> A0[0 - initBatch\ninterest index cached (T4)]
     A0 -->|orders == 0| EndSuccess((Exit – No-op)):::success
     A0 -->|orders &gt; 0| A1[1 - validateBatchParams]
-
     A1 -->|invalid| ErrInvalid((Revert: BAD_PARAMS)):::error
-    A1 -->|ok| A2[2 - preFetchOraclesHook]
+    A1 -->|ok| SG{Selector Guard (T8)}
+    SG -->|blocked| ErrInvalid:::error
+    SG -->|ok| A2[2 - preFetchOraclesHook]
 
     A2 -->|oracle stale| ErrOracle((Revert: ORACLE_STALE)):::error
     A2 -->|fresh| A3[3 - computeDynamicFees]

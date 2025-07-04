@@ -41,6 +41,14 @@ package.json + pnpm-lock.yaml
 
 ## 🚀 Getting Started
 
+### Quick-Start
+
+```bash
+pnpm install --workspace-root
+forge build
+npx hardhat test
+```
+
 ### 1. Install Tooling
 
 | Tool | Purpose | Version |

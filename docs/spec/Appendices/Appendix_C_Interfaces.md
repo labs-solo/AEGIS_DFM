@@ -1,5 +1,6 @@
 # Appendix — Header‑Only Solidity Interfaces
-> v1.1.1 – Event + Invariant alignment
+
+> v1.2.1-rc3
 
 ## `IVaultManagerCore.sol`
 
@@ -12,7 +13,7 @@ import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
 /// @title  IVaultManagerCore
 /// @notice Canonical external surface for the AEGIS V2 unified vault.
-/// @custom:version 1.1.0
+/// @custom:version 1.2.1-rc3
 interface IVaultManagerCore {
     /*───────────────────────────  EVENTS  ───────────────────────────*/
 
@@ -132,9 +133,9 @@ interface IVaultManagerCore {
         PoolId poolId,
         uint256 debtToCover,
         address recipient
-    ) external returns (uint256 seizedCollateral);
+    ) external returns (uint256 seizedCollateral); /// @noBatch – rejected by Selector Guard (T8)
     function updateInsuranceFund(int256 delta, address recipient) external;
-    function coverBadDebt(PoolId poolId, uint256 amount) external;
+    function coverBadDebt(PoolId poolId, uint256 amount) external; /// @noBatch – rejected by Selector Guard (T8)
 
     /// @deprecated Use {executeBatchTyped} instead.
     function executeBatch(bytes[] calldata actions) external returns (bytes[] memory results);
