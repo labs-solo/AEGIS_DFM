@@ -1,5 +1,5 @@
 # Appendix — Header‑Only Solidity Interfaces
-> v1.1.0 – Typed batching & lean wrappers
+> v1.1.1 – Event + Invariant alignment
 
 ## `IVaultManagerCore.sol`
 
@@ -57,6 +57,8 @@ interface IVaultManagerCore {
     event VaultMetrics(uint256 totalAssets, uint256 totalLiabilities, uint256 totalCollateral);
     event BadDebtCovered(PoolId indexed poolId, uint256 amount);
     event BatchExecuted(address indexed caller, uint256 actions, bool allSucceeded);
+    /// @batch per sub-action result
+    event ActionExecuted(uint256 idx, uint8 code, bool success);
     event UserVaultDeposit(PoolId indexed poolId, address indexed user, uint256 amount0, uint256 amount1);
     event UserVaultWithdraw(PoolId indexed poolId, address indexed user, address indexed to, uint256 amount0, uint256 amount1);
     event FeesReinvested(PoolId indexed poolId, uint256 amount0, uint256 amount1, uint256 sharesMinted);

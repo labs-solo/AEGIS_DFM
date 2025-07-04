@@ -1,5 +1,5 @@
 # 6 External Interfaces & ABIs
-> v1.1.0 – Typed batching & lean wrappers
+> v1.1.1 – Event + Invariant alignment
 
 ## 6.1 Design Principles
 
@@ -34,7 +34,7 @@ These items are already present in the interface code below—no migrations are 
 
 ```solidity
 /// @title IVaultManagerCore
-/// @custom:version 1.1.0
+/// @custom:version 1.1.1
 interface IVaultManagerCore {
     function deposit(address asset, uint256 amount, address recipient) external returns (uint256 shares);
     function depositFor(address asset, uint256 amt, address onBehalf) external returns (uint256 shares);
@@ -42,6 +42,8 @@ interface IVaultManagerCore {
     function redeemTo(address asset, uint256 shares, address to) external returns (uint256 amount);
     function borrow(PoolId poolId, uint256 amount, address recipient) external;
     function repay(PoolId poolId, uint256 amount, address onBehalfOf) external returns (uint256 remaining);
+    /// @batch Emitted for each sub-action
+    event ActionExecuted(uint256 idx, uint8 code, bool success);
     function executeBatch(bytes[] calldata actions) external returns (bytes[] memory results); /// @deprecated
     function executeBatchTyped(Action[] calldata actions) external returns (bytes[] memory results);
 }

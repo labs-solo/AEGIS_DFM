@@ -29,22 +29,20 @@ flowchart TD
     A9 --> A10
     A10 --> A11[11 - syncOraclesHook]
     A11 --> A12[12 - settleGasRefund]
-    A12 --> A13[13 - finalizeBatch]
-    A13 --> EndSuccess
+    A12 --> A13[13 - verifyInvariants]
+    A13 --> A14[14 - finalizeBatch]
+    A14 --> EndSuccess
 
     %% ── side-notes for gas & invariants ──────────────────────────────────
-    note right of A3
-      INV-FEE-01  
-      ~35 k gas
+    note right of A7
+      ActionExecuted emitted
     end
 
     note right of A5
-      INV-LIM-01  
       ~66 k gas
     end
 
     note left of A9
-      INV-LIQ-01  
       external call → liquidate()
     end
 
