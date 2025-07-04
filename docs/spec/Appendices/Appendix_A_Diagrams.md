@@ -64,3 +64,41 @@ graph LR
     POL --> DFM[DynamicFeeManager]
     VMC --> LQ[LiquidationEngine]
 ```
+
+\### A.2 Roles & Permissions Graph (updated)
+
+```mermaid
+graph LR
+    GOV[Governor (DAO)] -->|queues tx| TIM[Timelock]
+    TIM -->|executes after delay| VMC[VaultManager Core]
+    TIM --> POLM[PoolPolicyManager]
+    TIM --> LENS[VaultMetricsLens]
+    GOV --> TSWY[Treasury]
+    GOV --> SH[Spot Hook]
+    GOV --> PM[PositionManager]
+    PG[Pause Guardian] --|toggle pauseFlags| VMC
+    PG --|cancel queue| TIM
+```
+
+\### A.3 Upgrade Sequence (normal + emergency pause)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant GOV as DAO Governor
+    participant TIM as Timelock
+    participant PG  as Pause Guardian
+    participant VMC as VaultManagerCore
+
+    GOV->>TIM: queueChange(new impl)
+    Note right of TIM: delay ≥ 48 h
+    alt critical bug
+        PG->>VMC: set PAUSE_ALL
+    end
+    TIM->>VMC: executeChange()
+    VMC-->>VMC: proxy → new logic
+    opt PAUSE_ALL set
+        PG->>VMC: clear PAUSE_ALL
+    end
+```
+
