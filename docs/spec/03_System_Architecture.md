@@ -54,6 +54,9 @@ flowchart LR
     subgraph Treasury
         TSWY[Treasury]
     end
+    subgraph Libraries
+        LIB[Math Libraries]
+    end
 
     EOA --> BE --> VMC
     VMC -->|addLiquidity| UV4
@@ -68,10 +71,12 @@ flowchart LR
     GOV --> POL --> VMC
     GOV --> VMC
     VMC --> TSWY
+    VMC -->|delegate-call (T9)| LIB
 ```
 
 *Solid arrows = direct calls / transfers*
 *Dashed arrow = optional rebate path*
+*Delegate-call arrow = uses Math Libraries (T9)*
 
 ---
 

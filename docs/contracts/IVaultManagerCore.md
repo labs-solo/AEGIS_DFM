@@ -1,4 +1,5 @@
-> v1.1.0 – Typed batching & lean wrappers
+> v1.2.1-rc3
+
 ```solidity
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
@@ -19,7 +20,7 @@ type LPShare is uint128;
 
 /// @title IVaultManagerCore
 /// @notice Canonical surface for the AEGIS V2 unified vault (Phases 1 → 7 + Batch)
-/// @custom:version 1.1.0
+/// @custom:version 1.2.1-rc3
 interface IVaultManagerCore {
     /*==============================  EVENTS  ==============================*/
 
