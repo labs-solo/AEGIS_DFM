@@ -51,7 +51,7 @@ The pipeline can be described in sequential stages:
 
 1. **Init Batch – Global Pre-Processing:** On batch start, perform one-time global updates to ensure a consistent baseline:
 
-   - **Interest Accrual:** For each liquidity pool that will be affected by the batch (e.g. any pool where the user has debt or will borrow/repay), call `accrueInterest` once upfront. This brings interest indexes up to date so that any borrow/repay actions use the latest rates. Each pool’s interest is accrued at most once per batch (no multiple accruals even if several actions use the same pool). An `InterestAccrued` event may be emitted per pool (as in single actions) when this happens.
+   - **Interest Accrual:** For each liquidity pool that will be affected by the batch (e.g. any pool where the user has debt or will borrow/repay), call `accrueInterest` once upfront. This brings interest indexes up to date so that any borrow/repay actions use the latest rates. Each pool’s interest is accrued at most once per batch (no multiple accruals even if several actions use the same pool). An `InterestAccrued` event may be emitted per pool (as in single actions) when this happens. [See “Share-Based Borrowing & Invariant Accounting”](#share-borrow-intro)
    - **Oracle Price Update:** Ensure fresh price data for all relevant assets. The vault will update or fetch the latest oracle prices (from the **Spot** Uniswap TWAP oracle or Chainlink feeds) for any pool whose collateral or debt will be evaluated. If the protocol’s design pushes oracle updates via the Uniswap hook on swaps, the engine may invoke a read to confirm the current price. This guarantees that collateral valuations and health checks use up-to-date prices.
    - **Policy Checks Cache:** Load any policy parameters needed for the batch. For example, fetch the collateral factor and utilization cap for each pool from the **PoolPolicyManager** once at the start. These will be used for checks during execution. (Policy data is generally static per block, so caching is safe.)
    - **Initial State Snapshot:** (Optional) The engine may record the vault’s starting state (e.g. initial LTV or debt) for use in relative safety comparisons. This helps enforce that intermediate steps do not exceed the initial risk level except as allowed (with final state still under limits).
@@ -287,12 +287,16 @@ Below, each action code is defined in detail, including its purpose, parameters,
    - The user must have sufficient collateral to support the new debt. We calculate the maximum shares they _could_ borrow under the current policy:
 
      - Get the user’s current collateral value and debt in that pool.
-     - Apply the **initial collateral factor** (a stricter limit for new debt, e.g. 80% LTV) to determine the borrow capacity. Essentially, `maxBorrowShares = (collateral_value * init_collateral_factor) - current_debt_shares`. The requested `shareAmount` must be <= `maxBorrowShares`. If not, revert `ExcessiveBorrow` or `InsufficientCollateral`.
+    - Apply the **initial collateral factor** (a stricter limit for new debt, e.g. 80% LTV) to determine the borrow capacity. Essentially, `maxBorrowShares = (collateral_value * init_collateral_factor) - current_debt_shares`. The requested `shareAmount` must be <= `maxBorrowShares`. If not, revert `ExcessiveBorrow` or `InsufficientCollateral`. (shares priced via \(\sqrt{a\times b}\) so collateral & debt move in lockstep) [INV-COL-02](Appendix_G_Invariants.md#inv-col-02)
 
    - If the pool or asset is in a state that disallows borrowing (e.g. an emergency shutdown or a governance flag blocking new debt on that asset), revert `PoolInEmergencyState`.
    - Accrue interest on the pool’s debt prior to borrowing (if not already done at batch start). This ensures the borrow is charged at the latest interest index.
    - Ensure `to` is not the zero address (revert `ZeroAddress` if so).
-   - Note: Borrowing in AEGIS is typically share-based, which yields both tokens in proportion to pool liquidity. If the design allows single-asset borrowing (via an `isToken0` flag or similar), that logic would adjust which tokens are delivered. In this spec, we assume proportional withdrawal of both assets (the user can always swap afterward if they want one asset).
+    - Note: Borrowing in AEGIS is typically share-based, which yields both tokens in proportion to pool liquidity. If the design allows single-asset borrowing (via an `isToken0` flag or similar), that logic would adjust which tokens are delivered. In this spec, we assume proportional withdrawal of both assets (the user can always swap afterward if they want one asset).
+
+    | token0 | token1 | full-range shares | borrow shares | sharePrice | health |
+    | ------ | ------ | ---------------- | ------------- | ---------- | ------ |
+    | 100    | 100    | 0                | 10            | \(\sqrt{a\times b}/totalShares\) | \(collateralUSD / debtUSD\) |
 
 2. **Execution:**
 
@@ -1079,3 +1083,6 @@ Errors are reported via revert with specific error codes/strings:
 _Deprecation Note:_ With this comprehensive Section 5.7 specification of the Batch Processing Engine, earlier draft documents **`batch_processing.md`** and **`batch_processing_v1.md`** are now redundant. They have been fully incorporated and superseded by this final spec. It is recommended to archive or remove those files to avoid confusion, as all up-to-date information is contained here.
 
 [^gas-saving]: Example calldata: 3 uint256 parameters require 128 bytes when passed as raw bytes, but only 106 bytes when packed with a 1-byte action code.
+
+### Maintenance
+Run `node scripts/update_selectors.ts` whenever selectors change. CI executes this check to keep `selectors.json` aligned with the T8 blacklist.
