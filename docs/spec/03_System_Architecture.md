@@ -27,10 +27,10 @@
 | Treasury | TreasuryProxy |
 | Governor + Timelock | governance-controlled |
 
-> *Design axiom:* **All state‑mutating user operations traverse `BatchEngine → VaultManagerCore`.**
+> *Design axiom:* **All state‑mutating user operations traverse `BatchEngine → VaultManagerCore`.**
 > Pool/Hook interactions are *fee‑only* and never alter vault state.
 
-Borrowing is handled inside the same core module: collateral and debt are tracked in invariant‑priced shares so lending operations use the same units as liquidity. [See “Share-Based Borrowing & Invariant Accounting”](#share-borrow-intro).
+Borrowing is handled inside the same core module: collateral and debt are tracked in invariant‑priced shares so lending operations use the same units as liquidity. [See "Share-Based Borrowing & Invariant Accounting"](#share-borrow-intro).
 
 ---
 
@@ -48,7 +48,7 @@ flowchart LR
         VMC[VaultManagerCore]
     end
     subgraph Pool
-        UV4[Uniswap V4 Pool]
+        UV4[Uniswap V4 Pool]
         SH[AEGIS SpotHook]
     end
     subgraph Services
@@ -62,7 +62,7 @@ flowchart LR
         LQ[LiquidationEngine]
     end
     subgraph Gov
-        GOV[Governor<br>+ Timelock]
+        GOV[Governor<br>+ Timelock]
         POL[PolicyManager]
     end
     subgraph Treasury
@@ -85,12 +85,12 @@ flowchart LR
     GOV --> POL --> VMC
     GOV --> VMC
     VMC --> TSWY
-    VMC -->|delegate-call (T9)| LIB
+    VMC -->|"delegate-call (T9)"| LIB
 ```
 
-*Solid arrows = direct calls / transfers*
-*Dashed arrow = optional rebate path*
-*Delegate-call arrow = uses Math Libraries (T9)*
+*Solid arrows = direct calls / transfers*
+*Dashed arrow = optional rebate path*
+*Delegate-call arrow = uses Math Libraries (T9)*
 
 ---
 
@@ -99,14 +99,14 @@ flowchart LR
 ```mermaid
 sequenceDiagram
     autonumber
-    participant U as User EOA
+    participant U as User EOA
     participant BE as BatchEngine
     participant V as VaultManagerCore
-    participant P as UniswapV4 Pool
+    participant P as UniswapV4 Pool
     participant H as SpotHook
     participant F as DynamicFeeManager
     participant O as Oracle
-    participant PN as PositionManager (LP‑NFT)
+    participant PN as PositionManager (LP-NFT)
 
     U->>BE: submitBatch(Deposit)
     BE->>V: deposit{user,amount}
@@ -119,9 +119,9 @@ sequenceDiagram
     H-->>F: quoteFee(params)
     F-->>O: σ
     O-->>F: vol
-    F-->>H: fee bps
+    F-->>H: fee bps
     H-->>TSWY: transferFee()
-    H-->>P: return 0x
+    H-->>P: return 0x
     deactivate H
     P-->>V: liquidityTokens
     deactivate P
@@ -134,12 +134,12 @@ sequenceDiagram
 
 ### 3.4 Roles & Authorisation Matrix
 
-| Role / Actor                                  | Privileges                                          | Granted By |
+| Role / Actor                                  | Privileges                                          | Granted By |
 | --------------------------------------------- | --------------------------------------------------- | ---------- |
 | **ProtocolGovernor (DAO)**                    | `DEFAULT_ADMIN_ROLE`; upgrades; parameter changes   | Deployer   |
-| **Timelock**                                  | Enforces 48 h delay on governor's sensitive actions | Governor   |
+| **Timelock**                                  | Enforces 48 h delay on governor's sensitive actions | Governor   |
 | **VaultAdmin** (`VAULT_CONF_ROLE`)            | Adjust interest curves; toggle liquidation          | Governor   |
 | **KeeperBot** (`LIQUIDATOR_ROLE`)             | Call `executeLiquidation()` on LiquidationEngine    | VaultAdmin |
 | **SpotHook** (`POOL_HOOK_ROLE`)               | Approved callback target inside Core                | Governor   |
-| **PositionManager** (`POSITION_MANAGER_ROLE`) | Mint/Burn LP‑NFT collateral                         | Governor   |
+| **PositionManager** (`POSITION_MANAGER_ROLE`) | Mint/Burn LP-NFT collateral                         | Governor   |
 | **Treasury** (`FEE_COLLECTOR_ROLE`)           | Receive fee & surplus transfers                     | Governor   |

@@ -10,7 +10,7 @@ At a high level, AEGIS V2 centres on an upgradeable **VaultManagerCore** that in
 
 ---
 
-### One-Transaction Strategies Enabled
+## One-Transaction Strategies Enabled
 
 * **Liquidity Providers (LPs):** Earn Uniswap trading fees on deposited assets *while retaining instant liquidity* by borrowing against or withdrawing from positions on demand.
 * **Market Makers:** Quote tight, two-sided markets within a single block using on-chain limit orders to deploy both bid and ask liquidity with minimal exposure.
