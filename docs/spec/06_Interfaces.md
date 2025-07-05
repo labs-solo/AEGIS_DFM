@@ -16,7 +16,7 @@
 
 | Interface file                | Core purpose (one‑liner)                                                                                                 |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| **`IVaultManagerCore.sol`**   | Unified user/keeper entry‑point: deposits, withdrawals, lending, LP‑NFTs, limit orders, liquidations, batching, metrics. |
+| **`IVaultManagerCore.sol`**   | Unified user/keeper entry‑point: deposits, withdrawals, lending, LP‑NFTs, limit orders, liquidations, batching, metrics. [See “Share-Based Borrowing & Invariant Accounting”](#share-borrow-intro) |
 | **`IPoolPolicyManager.sol`**  | Governance module for collateral factors, fee destinations, risk caps.                                                   |
 | **`IInterestRateModel.sol`**  | Plug‑in curve supplying per‑second borrow rates to the vault.                                                            |
 | **`IGovernanceTimelock.sol`** | Delay‑buffer that queues and executes privileged parameter changes.                                                      |
@@ -41,8 +41,10 @@ interface IVaultManagerCore {
     function depositFor(address asset, uint256 amt, address onBehalf) external returns (uint256 shares);
     function withdraw(address asset, uint256 shares, address recipient) external returns (uint256 amount);
     function redeemTo(address asset, uint256 shares, address to) external returns (uint256 amount);
-    function borrow(PoolId poolId, uint256 amount, address recipient) external;
-    function repay(PoolId poolId, uint256 amount, address onBehalfOf) external returns (uint256 remaining);
+    /// Debt recorded in shares; interest accrues via global borrowIndex; must meet collateral factor calculated with invariant-priced shares.
+    function borrowShares(PoolId poolId, uint256 shareAmount, address recipient) external;
+    /// Debt recorded in shares; interest accrues via global borrowIndex; must meet collateral factor calculated with invariant-priced shares.
+    function repayShares(PoolId poolId, uint256 shareAmount, address onBehalfOf) external returns (uint256 remaining);
     /// @batch Emitted for each sub-action
     event ActionExecuted(uint256 idx, uint8 code, bool success);
     function executeBatch(bytes[] calldata actions) external returns (bytes[] memory results); /// @deprecated

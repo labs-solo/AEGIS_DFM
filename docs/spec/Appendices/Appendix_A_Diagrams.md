@@ -101,4 +101,5 @@ sequenceDiagram
         PG->>VMC: clear PAUSE_ALL
     end
 ```
+*Debt and collateral are denominated in shares; each share’s USD value tracks \(\sqrt{token0\times token1}\).* 
 

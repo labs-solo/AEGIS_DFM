@@ -14,9 +14,23 @@
 | **PolicyManager**            | Registry for risk parameters, interest curves, caps                                                   | Governor proposals                           | Read‑only by Core & FeeManager                                                                      |
 | **Treasury**                 | Receives protocol fees & POL; handles vesting                                                         | Fee transfers from SpotHook & Core           | Admin withdrawals                                                                                   |
 | **Governor + Timelock**      | Two‑step governance over upgrades & parameters                                                        | Token‑holder votes                           | Updates PolicyManager & upgradeable contracts                                                       |
+| Module | Upgrade Proxy |
+| --- | --- |
+| VaultManagerCore | VaultManagerProxy |
+| BatchEngine Router | — |
+| SpotHook | per-pool immutable |
+| DynamicFeeManager | FeeManagerProxy |
+| TruncGeoOracleMulti | OracleProxy |
+| PositionManager | PositionManagerProxy |
+| LiquidationEngine | LiquidationProxy |
+| PolicyManager | PolicyManagerProxy |
+| Treasury | TreasuryProxy |
+| Governor + Timelock | governance-controlled |
 
 > *Design axiom:* **All state‑mutating user operations traverse `BatchEngine → VaultManagerCore`.**
 > Pool/Hook interactions are *fee‑only* and never alter vault state.
+
+Borrowing is handled inside the same core module: collateral and debt are tracked in invariant‑priced shares so lending operations use the same units as liquidity. [See “Share-Based Borrowing & Invariant Accounting”](#share-borrow-intro).
 
 ---
 
