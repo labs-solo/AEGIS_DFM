@@ -1,60 +1,12 @@
-# AEGIS V2 Unified Vault — Executive Summary
+# 1. Executive Summary
 
-> Version `vFinalSpec‑draft` – 2025‑07‑02 (rev. v1.2.1-rc3)
+**AEGIS V2 is a holistic liquidity engine for Uniswap V4** that allows any participant—liquidity provider, market-maker, structured-product desk, or trader—to compose deposits, loans, swaps, LP-NFT operations, and price-triggered orders **in a single atomic transaction** while enjoying pool-level risk isolation and deterministic execution. It integrates Uniswap’s liquidity provision, fee management, collateralized lending, advanced LP positions (including on-chain limit orders), and automated liquidations into one unified **Vault** architecture. Each user’s assets and debts are isolated in a per-pool vault (capping the blast radius to a single pair) even as a single global VaultManager contract coordinates all pools network-wide. A robust batch execution engine bundles up to 14 actions (e.g. *add liquidity → borrow → swap to hedge → place limit order*) in one go, guaranteeing that collateral-increasing steps execute before collateral-reducing steps. This design enables users to safely execute complex **DeFi** workflows that would otherwise require multiple protocols and transactions. Additionally, AEGIS V2 introduces share-based lending, whereby liquidity provider shares serve as direct collateral and borrowers repay a fixed share amount (not an unpredictable token amount), simplifying leverage management and enabling seamless **LP collateralization**. It even offers native on-chain limit orders via zero-range liquidity positions with deterministic settlement—unlocking tight spread, automated market-making strategies previously impossible in legacy AMMs.
 
----
+**One-Transaction Strategies Enabled:**
 
-## Mission Statement & Scope
+* **Liquidity Providers (LPs):** Earn Uniswap trading fees on deposited assets *while retaining instant liquidity* (via the ability to borrow against or withdraw from positions at any time).
+* **Market Makers:** Quote tight, two-sided markets within a single block, using on-chain limit orders to deploy both bid and ask liquidity with minimal exposure.
+* **Structured Product Desks:** Launch delta-neutral yield strategies or other structured products with a single contract call, bundling swaps, liquidity provision, and hedges atomically.
+* **Leveraged Traders:** Move from a spot position to a leveraged long or short and even add a hedge **entirely on-chain**, all in one unified margin transaction (no CeFi or multi-protocol hopping required).
 
-AEGIS V2 is a **holistic liquidity engine** for Uniswap V4 that lets any participant—liquidity provider, market‑maker, structured‑product desk, or directional trader—compose deposits, loans, swaps, LP‑NFT operations and price‑triggered orders **in a single atomic call** while enjoying pool‑level risk isolation and deterministic execution.
-It extends the original AEGIS Dynamic Fee Manager (DFM) codebase without breaking any of its hooks or fee logic.
-
-See the [Glossary](00_Glossary.md) for key notation used across the spec.
-
----
-
-## Unprecedented Capabilities
-
-- **Per‑User, Per‑Pool Vaults** – each wallet has its own segregated position and debt ledger for every pool, capping blast radius to a single pair while a **single `VaultManagerCore`** contract orchestrates all vaults network‑wide.
-- **Instant Portfolio Workflows** – `executeBatch` bundles up to 14 actions (e.g., add liquidity → borrow → hedge → place limit order) into one transaction, guaranteeing that collateral‑adding steps run before collateral‑reducing steps.
-- **Share‑Based Lending** – pool‑wide interest index updates in O(1); borrowers repay a deterministic share amount rather than variable principal, simplifying structured‑product payoff design.
-- **On‑Chain Limit Orders** – zero‑range LP‑NFTs act as maker orders with deterministic settlement, enabling tight‑spread market‑making strategies impossible in legacy AMMs.
-- **Automated Liquidations with Risk Reserve** – a protocol‑owned liquidity (POL) reserve grows from liquidation penalties and a slice of net fees **on a pool‑by‑pool basis** and serves as the ultimate bad‑debt absorber.
-- **Granular Governance & Observability** – two‑step timelock, pause bitmap per action family, and a gas‑free metrics lens for real‑time dashboards.
-- **Code‑Level Backward Compatibility** – every public function and storage slot from the AEGIS DFM code remains intact; V2 is a pure superset.
-- **Dual‑API Guarantee** – typed batch, per-sub-action events, and a global invariant-verification step ensure parity with single calls.
-- **Batch Engine Enhancements** – interest index cached once per batch (T4), delegate-call math libraries (T9) and selector guard (T8) secure execution.
-
-These features let LPs farm fees while retaining instant liquidity, let market‑makers quote two‑sided markets inside one block, empower desks to launch delta‑neutral structured notes with a single call, and allow traders to move from cash to leverage to hedged exposure without leaving the chain.
-
----
-
-## High‑Level Architecture
-
-| Layer              | Component                    | Role                                                                                    |
-| ------------------ | ---------------------------- | --------------------------------------------------------------------------------------- |
-| **Core State**     | **VaultManagerCore (proxy)** | Holds all balances, borrow indices & pause flags; exposes single‑action and batch APIs. |
-| **Swaps & LP Ops** | **Spot Hook**                | Mints/collects Uniswap V4 LP‑NFTs, pipes fees back to the vault.                        |
-| **Dynamic Fees**   | **DFM**                      | Adjusts swap fee/Δ according to pool volatility.                                        |
-| **Rates**          | **InterestRateModel (per-pool)**                     | Jump‑rate model returns `ratePerSecond` per pool.                                       |
-| **Pricing**        | **TruncGeoOracleMulti**      | Time‑weighted tick → on‑chain price.                                                    |
-| **Policy**         | **PolicyManager**            | Per‑pool LTV caps, liquidation penalties, whitelist gates.                              |
-| **Gov**            | **GovernanceTimelock**       | 48 h delay on upgrades or parameter bumps.                                              |
-| **Observability**  | **VaultMetricsLens**         | Read‑only contract for UI/APIs.                                                         |
-
-**Call flow:** Uniswap PoolManager ↔ **Spot Hook** ↔ **VaultManagerCore**; modul­ar contracts (oracle, DFM, FRLM, Policy) feed parameters—no circular writes.
-
----
-
-## Governance & Licensing
-
-- **License:** Business Source License 1.1 → automatic GPL‑3.0+ re‑license on **2029‑05‑01**.
-- **Roles:** `GOV` (timelock executor), `KEEPER` (interest, liquidations), `RELAYER` (optional limit‑order trigger).
-
----
-
-## Forward‑Compatibility
-
-- New collateral types, rate models, or action codes plug in without state migration.
-- Dispatcher reserves IDs `0x0B–0x0E`; unknown codes revert.
-- Per‑pool parameter structs are upgradeable via timelock, no contract redeploy required.
+At a high level, AEGIS V2’s architecture centers on an upgradeable **VaultManagerCore** that interfaces with Uniswap v4 pools via a specialized **Spot Hook**, supported by modular components for dynamic fees, interest rates, pricing oracles, and risk policy. All user operations flow through a stateless batch router into the VaultManager, which in turn manages liquidity positions (minting or burning Uniswap LP tokens) and enforces margin rules and liquidations in real time. This layered design ensures no pool can contaminate another’s solvency, and new collateral types or actions can be added without disruptive migrations. *(See Appendix A for a detailed architecture diagram and component overview.)*
