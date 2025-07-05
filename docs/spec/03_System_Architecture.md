@@ -13,7 +13,8 @@
 | **LiquidationEngine**        | Trust‑less collateral seizure & auction                                                               | VaultManagerCore callbacks, keeper tx        | Transfers collateral; records penalties; sends funds to Treasury                                    |
 | **PolicyManager**            | Registry for risk parameters, interest curves, caps                                                   | Governor proposals                           | Read‑only by Core & FeeManager                                                                      |
 | **Treasury**                 | Receives protocol fees & POL; handles vesting                                                         | Fee transfers from SpotHook & Core           | Admin withdrawals                                                                                   |
-| **Governor + Timelock**      | Two‑step governance over upgrades & parameters                                                        | Token‑holder votes                           | Updates PolicyManager & upgradeable contracts                                                       |
+| **Governor + Timelock**      | Two-step governance over upgrades & parameters                                                        | Token-holder votes                           | Updates PolicyManager & upgradeable contracts                                                       |
+
 | Module | Upgrade Proxy |
 | --- | --- |
 | VaultManagerCore | VaultManagerProxy |
