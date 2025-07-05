@@ -1,4 +1,4 @@
-### 7 Governance Roles & Privilege Mapping (updated)
+# 7 Governance Roles & Privilege Mapping (updated)
 
 | Role              | Control Surface                                         | Powers (⭑ = immediate, ⭘ = time-delayed)                                                                                         | Notes                                                                                                      |
 | ----------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
@@ -8,15 +8,15 @@
 | **Keeper(s)**     | Permissionless actors                                   | Call `accrueInterest`, `liquidate`, `reinvestFees`, batch helper ops                                                           | Incentivised; can be stopped instantly via the relevant pause bits.                                         |
 | **Treasury & POL**| Protocol-owned account                                  | Receives protocol-owned liquidity (POL) & fees; covers bad debt via `coverBadDebt`                                             | Treasury moves _must_ flow through Governor → Timelock.                                                     |
 
-**Operational Flow**
+Operational Flow
 
-1. **Normal governance** – proposal → Governor vote → Timelock *queue* → 48 h delay → _execute_ → change applied.
+1. **Normal governance** – proposal → Governor vote → Timelock queue → 48 h delay → _execute_ → change applied.
 2. **Emergency** – Pause Guardian sets `PAUSE_ALL` (bit 0) ⭑; protocol frozen while a fix is prepared.
 3. **Fast-track patch** – Governor submits upgrade; Timelock keeps standard delay, but risk is mitigated by the pause flag during the waiting window.
 4. **Recovery** – once the fix is executed, Guardian (or Governor) clears `PAUSE_ALL` and normal operation resumes.
 
 > **Where to find the bit-level mapping:** Table 7-1 in the main spec lists every pause bit and the functions it controls; the diagram in Appendix A.2 cross-links each role to the exact calls it can invoke.
 
-### 7.4 Cross-chain Re-entrancy (L2/L3)
+## 7.4 Cross-chain Re-entrancy (L2/L3)
 
 Bridged calls from layer-two or layer-three systems could attempt to reenter `VaultManagerCore` during finalization. The vault's `nonReentrant` guard and per-batch interest index checkpoint prevent loops. Governance transactions executed via cross-chain messengers must still pass through the Timelock, so the residual risk is low.

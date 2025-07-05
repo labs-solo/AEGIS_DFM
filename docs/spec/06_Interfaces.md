@@ -1,3 +1,5 @@
+<!-- markdownlint-disable MD033 -->
+
 # 6 External Interfaces & ABIs
 
 > v1.2.1-rc3
@@ -10,19 +12,17 @@
 | **Forward‑compatibility**    | New behaviour must appear as _additional_ signatures or in new interfaces. Existing selectors and storage layouts are never modified or removed.                                                          |
 | **Gas efficiency & clarity** | • Solidity 0.8.24, custom errors, 32‑byte selectors.<br>• Only the minimal set of public/external functions is exposed.<br>• No external dependencies beyond Uniswap v4 core types (`PoolId`, `PoolKey`). |
 | **Auditability**             | Events and errors are declared directly in the interfaces so off‑chain tooling can decode them reliably.                                                                                                  |
-| **No surprises**             | Selector‑collision CI and `solc --abi` compile checks are part of the release pipeline.                                                                                                                   |
+| **No surprises**             | Selector‑collision CI and `solc --abi` compile checks are part of the release pipeline.                                                                                                                   |
 
 ## 6.2 Canonical Interface Set
 
 | Interface file                | Core purpose (one‑liner)                                                                                                 |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| **`IVaultManagerCore.sol`**   | Unified user/keeper entry‑point: deposits, withdrawals, lending, LP‑NFTs, limit orders, liquidations, batching, metrics. [See “Share-Based Borrowing & Invariant Accounting”](#share-borrow-intro) |
+| **`IVaultManagerCore.sol`**   | Unified user/keeper entry‑point: deposits, withdrawals, lending, LP‑NFTs, limit orders, liquidations, batching, metrics. [See "Share-Based Borrowing & Invariant Accounting"](05_Functional_Specs.md#share-borrow-intro) |
 | **`IPoolPolicyManager.sol`**  | Governance module for collateral factors, fee destinations, risk caps.                                                   |
 | **`IInterestRateModel.sol`**  | Plug‑in curve supplying per‑second borrow rates to the vault.                                                            |
 | **`IGovernanceTimelock.sol`** | Delay‑buffer that queues and executes privileged parameter changes.                                                      |
 | **`IVaultMetricsLens.sol`**   | Gas‑cheap read‑only aggregation: vault health, utilisation, POL summaries.                                               |
-
-_(The Uniswap v4 “Spot” hook is an internal per‑pool contract and therefore not included in this public bundle.)_
 
 ## 6.3 Recent Additions
 
