@@ -1,11 +1,6 @@
-Understood. I'll begin assembling the definitive Section 8 — Security & Invariants for `docs/UnifiedSpec.md`, together with the updated Appendix G containing the full invariant catalog and mapping. I'll also prepare the deprecation note and change-log entries as instructed.
+# 8 Security & Invariants
 
-I'll let you know once the draft is ready for review.
-
-
-### 8 Security & Invariants
-
-#### 8.1 Threat Model & Assumptions
+## 8.1 Threat Model & Assumptions
 
 The **threat model** assumes a maximally adversarial on-chain environment: any user (or **EOA**/smart contract) may attempt to manipulate state, call functions out of order, or exploit economic edge cases for profit. Key **actors** include liquidity providers (LPs) who can add/remove liquidity freely, borrowers who may try to over-leverage, and keeper bots (liquidators, fee reinvest triggers) seeking rewards. Governance is constrained by a timelocked multi-sig, so **no instant malicious upgrades** are possible – any critical parameter or code change requires a delay, giving the community time to react (this is an assumed invariant enforced off-chain via the timelock contract).
 
@@ -13,7 +8,7 @@ The **threat model** assumes a maximally adversarial on-chain environment: any u
 
 **Circuit Breakers & Safety Switches:** The protocol incorporates multiple "circuit breakers" to halt or dampen activity under abnormal conditions. Governance or the designated Pause Guardian can set global and per-pool **pause flags** to instantly halt operations (e.g. `PAUSE_ALL` stops *all* vault actions system-wide). There are also finer-grained flags (see Appendix C) for specific functions: e.g. pausing only borrows, or only a particular pool's liquidity ops. These ensure that if a vulnerability or oracle failure is detected, the protocol can be frozen into a safe state for investigation. Additionally, **sanity caps** are enforced on critical parameters: for instance, each pool has a maximum utilization (debt-to-deposits) cap (default 95%) so that borrowing cannot completely exhaust available liquidity. If a withdrawal or borrow would push utilization above this threshold, the action is reverted with a `UtilizationTooHigh` error. This guarantees a buffer of liquidity remains and acts as a circuit breaker against bank-run scenarios. Similarly, the liquidation logic implements a **price deviation guard**: if the Uniswap-based price oracle is deemed stale or off by a wide margin (beyond preset tolerances), liquidations can be temporarily paused (`PAUSE_LIQUIDATIONS`) to avoid executing based on bad data. These measures, combined with conservative risk parameters, mean the system will **fail safe** (revert or pause) rather than enter an unsafe state under extreme conditions.
 
-#### 8.2 Invariant Catalogue by Subsystem
+## 8.2 Invariant Catalogue by Subsystem
 
 Throughout development, a series of **invariants** has been established to formalize the above safety properties. These invariants are assertions that must *always* hold true in the system state. Many are enforced explicitly by contract code (via require/assert checks), while others are guaranteed by design and architecture. The full invariant catalog is grouped below by subsystem for clarity, with each invariant labeled `INV-#.#` (or similar) corresponding to its time of introduction. For each invariant we note its enforcement mechanism (with references to Appendix C runtime checks) and rationale. All invariants have been rigorously tested via a combination of unit tests, fuzzing, and symbolic analysis to ensure no adversarial sequence of actions can break them (see §8.4).
 
@@ -55,7 +50,7 @@ Throughout development, a series of **invariants** has been established to forma
 
 * **INV-LIM-01: Single-Tick Limit Orders** – Any "limit order" position in the system is **encoded as a one-tick-wide LP position**. In practice, a limit order in AEGIS V2 is implemented by depositing liquidity confined to a single price tick (using the Uniswap V4 positions mechanism). The invariant ensures that what is accounted as a limit order is never multi-tick liquidity (which would behave like a normal LP position). This is more of a design rule than a runtime check: the `openLimitOrder()` function (part of later feature set) only ever mints liquidity with `tickLower == tickUpper`, and the vault treats such positions separately from full-range collateral. The invariant is upheld by construction of the order-handling logic and was reviewed in an earlier specification draft. It prevents any ambiguity between active LP liquidity and passive limit order funds – thus avoiding double counting of collateral or fee mis-accounting. (Limit order funds are excluded from free collateral until the order is executed or canceled, as noted in extended invariants.)
 
-#### 8.3 Enforcement Point Mapping
+## 8.3 Enforcement Point Mapping
 
 The table below maps each invariant to its primary **enforcement point** in the code (specific contract function or check). For detailed code references, see the annotated diffs in **Appendix C**. Inline anchors (【C】) in the table link to the relevant code snippet in Appendix C for convenience.
 
@@ -77,17 +72,14 @@ The table below maps each invariant to its primary **enforcement point** in the 
 | **INV-3.7**  Repay Reduces Debt       | `VaultManagerCore.repayShares` – decrements user's `borrowShares` and `totalBorrowShares` by exactly the repaid amount                                                                                                          |
 | **INV-LIM-01**  Single-Tick Order     | `VaultManagerCore.openLPPosition` (part of later feature set) – enforced via parameters: for limit orders, sets `tickLower == tickUpper` (no multi-tick range allowed)                                                                            |
 
-*(See Appendix C for code excerpts labeled by invariant tag. Invariants without an explicit require/assert are guaranteed by design or by other checks as noted above.)*
-
-#### 8.4 Verification & Testing
+## 8.4 Verification & Testing
 
 All the above invariants have corresponding tests in the Foundry test suite, including both **direct checks and continuous invariant monitoring**. During development, an `InvariantTest` contract was used to randomly simulate complex sequences of actions and assert that key conditions hold after each operation. For example, fuzz tests advanced time by random intervals to ensure the interest index never decreased, and random borrow/repay sequences were tried to confirm no user could bypass collateral limits. We also conducted an **Echidna fuzzing campaign** on critical functions: Echidna was configured to call deposit, withdraw, borrow, repay, etc. in arbitrary order with random inputs, and to flag any sequence that violated the invariants (none did). Moreover, for mathematical invariants like interest accrual, we performed informal **formal analysis**: e.g. proving that the interest index update formula is always ≥1 (given non-negative rates and time). The invariant "assertion" functions (as listed in earlier spec documents) were run extensively on random scenarios, providing a high degree of confidence in safety. The system was tested against adversarial conditions such as extreme price swings, partial liquidations, and block re-ordering to ensure that invariants hold in all cases or the protocol gracefully reverts. In summary, both **static checks and dynamic testing** indicate that the specified invariants are robust. Any violation of these invariants in production would imply a critical bug, hence the protocol's extensive test coverage and the availability of emergency pause switches as a last resort.
 
-#### 8.5 Changes from Earlier Drafts & Legacy Notes
+## 8.5 Changes from Earlier Drafts & Legacy Notes
 
 The above invariant catalogue consolidates and updates the original invariant set, with all **INV-2.x invariants** remaining **active** in the current system. None of those original invariants were removed or made obsolete in subsequent iterations – every original safety property still holds, though a few have been broadened. For instance, INV-2.6 (hook authorization) now also covers the BatchEngine's role (the BatchEngine is granted permission to invoke vault actions as needed, under the same checks), and INV-2.7 (pause flags) was expanded into a comprehensive pause matrix in a later iteration. These evolutions strengthen the original invariants but do not invalidate them.
 
 *Change-log:* A notable adjustment is that the **"Emergency and Governance" invariants from earlier drafts** (previously labeled INV-9.x in the old specification) have been **folded into the above framework**. For example, the old *INV-9.1 (Paused State Halts Risky Actions)* is now covered by INV-2.7 and the pause flag system; *INV-9.2 (Timelock Delay on Critical Changes)* remains a **governance assumption** – the timelock mechanism is external to the contracts but is an integral part of our security model (we document it here as an assumption rather than a contract invariant). *INV-9.3 (Module Upgrade Safety)* is ensured through interface checks and the immutable core architecture (upgrades cannot arbitrarily change storage or logic without passing compatibility checks), and *INV-9.4 (No Unbounded Loops)* was an architectural principle now evidenced by code (all loops are bounded as discussed). In short, all legacy invariants either persist in the current design or have been superseded by equivalent or stricter guarantees.
 
 *Deprecation Note:* The security analysis and invariant descriptions in the previous draft specification ("**specification.md**" Section 9) are now **archived**. Section 8 of this Unified Specification supersedes the older security section, providing an up-to-date and canonical source for all invariants and their enforcement. Any invariant numbering from older documents (e.g. INV-9.x) should be considered deprecated in favor of the INV-2.x / 3.x scheme used here. Future audits and reviews should refer to this Section 8 and Appendix G for the definitive list of security invariants in AEGIS V2.
-
