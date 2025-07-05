@@ -18,7 +18,7 @@
 
 | Interface file                | Core purpose (one‑liner)                                                                                                 |
 | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| **`IVaultManagerCore.sol`**   | Unified user/keeper entry‑point: deposits, withdrawals, lending, LP‑NFTs, limit orders, liquidations, batching, metrics. [See "Share-Based Borrowing & Invariant Accounting"](05_Functional_Specs.md#share-borrow-intro) |
+| **`IVaultManagerCore.sol`**   | Unified user/keeper entry-point: deposits, withdrawals, lending, LP-NFTs, limit orders, liquidations, batching, metrics. [See "Share-Based Borrowing & Invariant Accounting"](05_Functional_Specs.md) |
 | **`IPoolPolicyManager.sol`**  | Governance module for collateral factors, fee destinations, risk caps.                                                   |
 | **`IInterestRateModel.sol`**  | Plug‑in curve supplying per‑second borrow rates to the vault.                                                            |
 | **`IGovernanceTimelock.sol`** | Delay‑buffer that queues and executes privileged parameter changes.                                                      |
