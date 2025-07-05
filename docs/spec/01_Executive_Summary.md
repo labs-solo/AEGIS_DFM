@@ -36,7 +36,7 @@ These features let LPs farm fees while retaining instant liquidity, let market�
 | **Core State**     | **VaultManagerCore (proxy)** | Holds all balances, borrow indices & pause flags; exposes single‑action and batch APIs. |
 | **Swaps & LP Ops** | **Spot Hook**                | Mints/collects Uniswap V4 LP‑NFTs, pipes fees back to the vault.                        |
 | **Dynamic Fees**   | **DFM**                      | Adjusts swap fee/Δ according to pool volatility.                                        |
-| **Rates**          | **FRLM**                     | Jump‑rate model returns `ratePerSecond` per pool.                                       |
+| **Rates**          | **InterestRateModel (per-pool)**                     | Jump‑rate model returns `ratePerSecond` per pool.                                       |
 | **Pricing**        | **TruncGeoOracleMulti**      | Time‑weighted tick → on‑chain price.                                                    |
 | **Policy**         | **PolicyManager**            | Per‑pool LTV caps, liquidation penalties, whitelist gates.                              |
 | **Gov**            | **GovernanceTimelock**       | 48 h delay on upgrades or parameter bumps.                                              |
