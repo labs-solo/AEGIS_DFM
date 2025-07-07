@@ -41,6 +41,22 @@ Using `Action` structs saves roughly 17% calldata compared to the bytes array.[^
 
 **Return value:** The `executeBatch` function itself can return nothing (or a boolean success). All outputs from sub-actions (e.g., tokens transferred out) are observed via events or the actions' effects. An optional aggregate event `BatchExecuted(address user, uint256 actionsCount)` may be emitted on success to log the batch execution, but it's not strictly required since each sub-action emits its own event.
 
+### View‑mode `_simulate` wrapper
+
+`simulateBatchTyped` invokes the same engine via `staticcall` so callers can preview a batch without mutating state. The vault builds an in‑memory snapshot and calls `BatchEngine._simulate`, executing all ordering and invariant checks. Results are summarized in a `BatchPreview` struct.
+
+```plantuml
+@startuml
+actor Client
+participant Vault
+participant BE as BatchEngine
+Client -> Vault: simulateBatchTyped(actions)
+Vault -> BE: _simulate(actions) <<static>>
+BE --> Vault: BatchPreview
+Vault --> Client: preview
+@enduml
+```
+
 ### Batch Execution Pipeline (init → finalize)
 
 When `executeBatch` is invoked, the VaultManagerCore processes the batch through a series of **stages** from **initBatch** to **finalizeBatch**. The diagram below illustrates the control flow:

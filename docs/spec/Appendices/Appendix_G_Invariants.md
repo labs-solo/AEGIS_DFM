@@ -2,6 +2,9 @@
 
 The table below presents a **unified catalog of all invariants** in the AEGIS V2 system, along with their subsystem grouping, introduction milestone, enforcement point, and current status. This is intended as a quick-reference for auditors and developers. (Status Legend: **Active** – enforced in current code; **Folded** – merged into another invariant or design assumption; **Obsolete** – no longer applicable in current code.)
 
+### Scope
+- `simulateBatchTyped` is read-only; invariant checks run but **no storage mutates**. (See INV‑2.3 Pending Fees Cleared.)
+
 | **Tag** | **Invariant Description** | **Why it matters** | **Subsystem** | **Introduced** | **Enforcement Point** (Contract.Function) | **Status** |
 | --- | --- | --- | --- | --- | --- | --- |
 | **INV-2.1**    | — | **Total Shares ≥ Locked** – Total pool shares never falls below the immutable `lockedShares` minimum. Prevents draining pool to 0 liquidity. | Liquidity (Share Supply) | —              | VaultManagerCore – enforced via withdrawal logic (no user can withdraw locked portion)                                                                                   | **Active**        |

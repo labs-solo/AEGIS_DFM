@@ -74,6 +74,8 @@ flowchart LR
     end
 
     EOA --> BE --> VMC
+    EOA -.preview.-> VMC
+    VMC -.static-call.-> BE
     VMC -->|addLiquidity| UV4
     UV4 --> SH
     SH --> DFM
