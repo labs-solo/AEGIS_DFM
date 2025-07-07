@@ -243,3 +243,16 @@ The core math for deposits, withdrawals, borrows and repays has been extracted i
 
 Gas benchmarks were taken on Arbitrum and post‑Dencun Ethereum mainnet
 (EIP‑4844 blob pricing). Results show comparable savings across chains.
+
+### 5.7.5 Simulated Batch Preview
+
+> “GTM feedback highlighted the pain of paying gas only to discover a batch was invalid.”
+
+`simulateBatchTyped` provides a read‑only dry run. Users supply the same `Action[]` array and receive a `BatchPreview` struct containing:
+
+- `willSucceed` — whether the ordered batch passes all invariants.
+- `gasEstimate` — approximate intra‑block gas used.
+- `healthDeltaBps` — borrower health factor change in basis points.
+- `decodedResults` — per‑action return data if success.
+
+The function runs the full invariant suite including [INV‑2.3](08_Invariants.md#inv-2-3-pending-fees-cleared) but uses `staticcall`, so **no storage mutates** on success or failure. If ordering would fail or any action reverts, `willSucceed` is false and `decodedResults` is empty.

@@ -48,6 +48,14 @@ interface IVaultManagerCore {
     /// @batch Emitted for each sub-action
     event ActionExecuted(uint256 idx, uint8 code, bool success);
     function executeBatch(bytes[] calldata actions) external returns (bytes[] memory results); /// @deprecated
+    /// View-only dry-run — performs full invariant checks without state writes.
+    function simulateBatchTyped(Action[] calldata actions) external view returns (BatchPreview memory preview);
+    struct BatchPreview {
+        bool   willSucceed;        // after full invariant checks & ordering
+        uint64 gasEstimate;        // rough intra-block cost
+        int256 healthDeltaBps;     // borrower health factor change (bps)
+        bytes[] decodedResults;    // per-action return data if succeed
+    }
     function executeBatchTyped(Action[] calldata actions) external returns (bytes[] memory results);
     /// @noBatch – rejected by Selector Guard (T8)
     function liquidate(address borrower, PoolId poolId, uint256 debtToCover, address recipient) external returns (uint256 seizedCollateral);
