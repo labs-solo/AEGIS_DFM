@@ -1,5 +1,4 @@
 # Concentrated-Liquidity Borrow-Lend — Complete Math Specification
-
 *Uniswap v4 hook with one full-range position; users deposit raw tokens then allocate them into full-, finite-, or limit-order liquidity. Borrowing remains full-range shares only.*
 
 ---
@@ -7,7 +6,7 @@
 ## A. Process Flow
 
 1. **Deposit** – A user moves raw **Asset A** and/or **Asset B** into their vault.  
-2. **Allocation** – Vault tokens can be routed into three liquidity flavours:  
+2. **Allocation** – Vault tokens can be routed into three liquidity flavours:
 
    | Allocation | Characteristics |
    |------------|-----------------|
@@ -57,7 +56,7 @@ $$
 One FR-share represents  
 
 $$
-\frac{x}{S_{\text{FR\_tot}}}\,A + \frac{y}{S_{\text{FR\_tot}}}\,B
+\frac{x}{S_{\text{FR\_tot}}}\,A \;+\; \frac{y}{S_{\text{FR\_tot}}}\,B
 $$
 
 ---
@@ -92,7 +91,7 @@ Filled LO-shares have $L_i=0$; the shares are burned and the user just holds tok
 
 ## E. Token Equivalents of Idle Shares
 
-### E.1 Full-range shares  
+### E.1 Full-range shares
 
 $$
 \boxed{
@@ -266,7 +265,7 @@ p(L) =
 $$
 
 Liquidator may seize idle tokens, FR-, CR-, or open LO-shares.  
-Seized shares are burned; forced swap ≤ $1/350$ reserves; fee = 0–1 % (linear).
+Seized shares are burned; forced swap ≤ $1/350$ reserves; fee = 0 – 1 % (linear).
 
 ---
 
