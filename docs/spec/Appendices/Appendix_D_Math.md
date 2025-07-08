@@ -1,6 +1,6 @@
 # Concentrated-Liquidity Borrow-Lend — Complete Math Specification
 
-Uniswap v4 hook with one full-range position; users deposit raw tokens then allocate them into full-range, finite-range, or limit-order liquidity; borrowing remains full-range shares only
+*Uniswap v4 hook with one full-range position; users deposit raw tokens then allocate them into full-range, finite-range, or limit-order liquidity; borrowing remains full-range shares only*
 
 ---
 
@@ -9,11 +9,11 @@ Uniswap v4 hook with one full-range position; users deposit raw tokens then allo
 1. **Deposit** – A user moves raw **Asset A** and/or **Asset B** into their vault.  
 2. **Allocation** – Vault tokens can be routed into three liquidity flavours:  
 
-   | Allocation | Characteristics |
-   |------------|-----------------|
+   | Allocation   | Characteristics |
+   |--------------|-----------------|
    | **FR-shares** | Full-range; spans every price → classic constant-product block |
-   | **CR-shares** | Finite range \([\underline P,\;\overline P]\); behaves like a Uniswap v4 LP |
-   | **LO-shares** | Limit-order = single-tick CR-share: **Open** → acts like a CR-share over a 1-tick band **Filled** → instantly converts to idle raw tokens and ceases to be “shares” |
+   | **CR-shares** | Finite range `$[\underline{P},\;\overline{P}]$`; behaves like a Uniswap v4 LP |
+   | **LO-shares** | Limit-order = single-tick CR-share:<br>**Open** → acts like a CR-share over a 1-tick band<br>**Filled** → instantly converts to idle raw tokens and ceases to be “shares” |
 
    Tokens exit the vault and the vault now records the new shares (or, for a filled limit order, extra tokens).  
 3. **Borrow** – Only **FR-shares** can be borrowed.  
@@ -27,17 +27,17 @@ Uniswap v4 hook with one full-range position; users deposit raw tokens then allo
 A mandatory full-range block guarantees the global pool always satisfies  
 
 $$
-K = x\,y ,\qquad \sqrt{K} = \sqrt{x\,y}.
+x\,y \;=\; K,\qquad \sqrt{K} \;=\; \sqrt{x\,y}.
 $$
 
 ---
 
 ## B. Collateral Types & Uses
 
-| Raw vault asset | Optional allocations | Solvency valuation | Extra risk metric |
-|-----------------|----------------------|--------------------|-------------------|
-| **Asset A** | idle / mint FR / mint CR / place LO | 1 : 1 face value | — |
-| **Asset B** | idem | face value | — |
+| Raw vault asset | Optional allocations                           | Solvency valuation | Extra risk metric |
+|-----------------|------------------------------------------------|--------------------|-------------------|
+| **Asset A**     | idle / mint FR / mint CR / place LO            | 1 : 1 face value   | — |
+| **Asset B**     | idem                                           | face value         | — |
 
 * Shares receive no haircut because they can be burned in one transaction to regain raw tokens that directly repay debt.  
 * CR-shares and open LO-shares carry asymmetric tail risk; the protocol tracks a worst-case single-asset ledger (§ F).
@@ -50,26 +50,28 @@ $$
 
 | Symbol | Definition |
 |--------|------------|
-| \(x,\,y\) | reserves of A & B in the full-range position |
-| \(L_{\text{FR}}\) | v4 liquidity ( =\(\sqrt{K}\) ) |
-| \(S_{\text{FR,tot}}\) | total FR-shares |
+| $(x,\,y)$ | reserves of A & B in the full-range position |
+| $L_{\text{FR}}$ | v4 liquidity (= $\sqrt{K}$) |
+| $S_{\text{FR,tot}}$ | total FR-shares |
 
 One FR-share represents  
 
 \[
-\displaystyle \frac{x}{S_{\text{FR,tot}}}\,A \;+\; \displaystyle \frac{y}{S_{\text{FR,tot}}}\,B.
+\frac{x}{S_{\text{FR,tot}}}\,A \;+\; \frac{y}{S_{\text{FR,tot}}}\,B
 \]
+
+---
 
 ### C.2 Finite-range (or limit-order) position *i*
 
 | Symbol | Definition |
 |--------|------------|
-| \([\underline P_i,\;\overline P_i]\) | lower / upper price bound (B per A) |
-| \(a_i=\sqrt{\underline P_i},\; b_i=\sqrt{\overline P_i}\) | √-price bounds (for LO: \(a_i=b_i\)) |
-| \(L_i\) | v4 liquidity contributed |
-| \(S_{CR,i}\) | shares issued |
+| $[\underline{P}_i,\,\overline{P}_i]$ | lower / upper price bound (B per A) |
+| $a_i=\sqrt{\underline{P}_i},\; b_i=\sqrt{\overline{P}_i}$ | √-price bounds &nbsp;(for LO: $a_i=b_i$) |
+| $L_i$ | v4 liquidity contributed |
+| $S_{\text{CR},i}$ | shares issued |
 
-Filled LO-shares have \(L_i=0\); the shares are burned and the user just holds tokens.
+Filled LO-shares have $L_i=0$; the shares are burned and the user just holds tokens.
 
 ---
 
@@ -78,7 +80,7 @@ Filled LO-shares have \(L_i=0\); the shares are burned and the user just holds t
 | Field | Unit | Meaning |
 |-------|------|---------|
 | `sharesBorrowed` | FR-shares | debt |
-| `shareMultiplier` | \(1 \times 10^{18}\) | compounding factor |
+| `shareMultiplier` | $1\times10^{18}$ | compounding factor |
 | `assetA_Vault`, `assetB_Vault` | tokens | idle (includes tokens from filled LOs) |
 | `sharesFR_Vault` | FR-shares | minted from own tokens |
 | `sharesCR_Vault[i]` | CR-shares | each finite range *i* |
@@ -94,21 +96,21 @@ Filled LO-shares have \(L_i=0\); the shares are burned and the user just holds t
 
 $$
 \boxed{
-x_{S,\mathrm{FR}} = \frac{\text{sharesFR\_Vault},x}{S_{\text{FR,tot}}},
+x_{S,\mathrm{FR}} = \frac{\text{sharesFR\_Vault}\,x}{S_{\text{FR,tot}}},
 \qquad
-y_{S,\mathrm{FR}} = \frac{\text{sharesFR\_Vault},y}{S_{\text{FR,tot}}}}
+y_{S,\mathrm{FR}} = \frac{\text{sharesFR\_Vault}\,y}{S_{\text{FR,tot}}}}
 \tag{1}
 $$
 
-### E.2 Finite-range share *i* (spot price \(P\), \(\sigma=\sqrt{P}\))
+### E.2 Finite-range share *i* (spot price $P$, $\sigma=\sqrt{P}$)
 
 $$
 \boxed{
 \Delta A_i =
 \begin{cases}
-0 & P \ge \overline P_i \\[4pt]
-\dfrac{L_i\bigl(b_i-\sigma\bigr)}{\sigma\,b_i} & a_i \le P \le b_i \\[10pt]
-\dfrac{L_i\bigl(b_i-a_i\bigr)}{a_i\,b_i} & P \le \underline P_i
+0 & P \ge \overline{P}_i \\[4pt]
+\dfrac{L_i\!\bigl(b_i-\sigma\bigr)}{\sigma\,b_i} & a_i \le P \le b_i \\[10pt]
+\dfrac{L_i\!\bigl(b_i-a_i\bigr)}{a_i\,b_i} & P \le \underline{P}_i
 \end{cases}}
 \tag{2}
 $$
@@ -118,21 +120,25 @@ $$
 \Delta B_i =
 \begin{cases}
 L_i(\sigma-a_i) & a_i \le P \le b_i \\[4pt]
-L_i(b_i-a_i) & P \ge \overline P_i \\[4pt]
-0 & P \le \underline P_i
+L_i(b_i-a_i) & P \ge \overline{P}_i \\[4pt]
+0 & P \le \underline{P}_i
 \end{cases}}
 \tag{3}
 $$
 
-* For an open limit order (\(a_i=b_i\)); eqs. (2–3) reduce to 1-tick formulas.  
-* For a filled limit order, \(L_i=0\) so \(\Delta A_i=\Delta B_i=0\); the tokens are already idle.
+* For an open limit order ($a_i=b_i$) eqs. (2–3) reduce to the one-tick formulas.  
+* For a filled limit order $L_i=0$, so $\Delta A_i=\Delta B_i=0$; the tokens are already idle.
 
 $$
 \boxed{
-x_{S,\mathrm{CR}} = \sum_{i\in\mathrm{CR}} \Delta A_i + \sum_{j\in\mathrm{LO\text{-}open}} \Delta A_j},
+x_{S,\mathrm{CR}}
+= \sum_{i\in\mathrm{CR}} \Delta A_i
+  + \sum_{j\in\mathrm{LO\text{-}open}} \Delta A_j},
 \qquad
 \boxed{
-y_{S,\mathrm{CR}} = \sum_{i\in\mathrm{CR}} \Delta B_i + \sum_{j\in\mathrm{LO\text{-}open}} \Delta B_j}
+y_{S,\mathrm{CR}}
+= \sum_{i\in\mathrm{CR}} \Delta B_i
+  + \sum_{j\in\mathrm{LO\text{-}open}} \Delta B_j}
 \tag{4}
 $$
 
@@ -144,9 +150,9 @@ Worst-case (price leaves the range):
 
 $$
 \boxed{
-A^{\max}_i = \frac{L_i\bigl(b_i - a_i\bigr)}{a_i\,b_i},
+A^{\max}_i = \frac{L_i\!\bigl(b_i-a_i\bigr)}{a_i\,b_i},
 \qquad
-B^{\max}_i = L_i\bigl(b_i - a_i\bigr)}
+B^{\max}_i = L_i\!\bigl(b_i-a_i\bigr)}
 \tag{5}
 $$
 
@@ -169,8 +175,11 @@ Ledgers update when CR-shares or LO-shares are minted / burned / filled.
 Total tokens represented:
 
 \[
-A_{\text{tot}} = \text{assetA\_Vault} + x_{S,\mathrm{FR}} + x_{S,\mathrm{CR}},\qquad
-B_{\text{tot}} = \text{assetB\_Vault} + y_{S,\mathrm{FR}} + y_{S,\mathrm{CR}}.
+A_{\text{tot}}
+  = \text{assetA\_Vault} + x_{S,\mathrm{FR}} + x_{S,\mathrm{CR}},
+\qquad
+B_{\text{tot}}
+  = \text{assetB\_Vault} + y_{S,\mathrm{FR}} + y_{S,\mathrm{CR}}.
 \]
 
 $$
@@ -196,19 +205,24 @@ $$
 ## H. Interest Accrual
 
 $$
-\boxed{U = \frac{\sum D}{L_{\text{FR,balance}} + \sum D},\qquad U \le 0.95}
+\boxed{
+U = \frac{\sum D}{L_{\text{FR,balance}} + \sum D},
+\qquad
+U \le 0.95}
 \tag{10}
 $$
 
 $$
 \boxed{
-\Delta M = \text{shareMultiplier}\,r(U)\,\frac{\Delta t}{10^{18}},
+\Delta M = \text{shareMultiplier}\,r(U)\,
+           \frac{\Delta t}{10^{18}},
 \qquad
-\text{shareMultiplier} \leftarrow \text{shareMultiplier} + \Delta M}
+\text{shareMultiplier} \leftarrow
+  \text{shareMultiplier} + \Delta M}
 \tag{11}
 $$
 
-Protocol fee = \(f\,\Delta M\,\sum D / 10^{18}\).
+Protocol fee = $f\,\Delta M\,\sum D / 10^{18}$.
 
 ---
 
@@ -224,20 +238,21 @@ $$
 \tag{12}
 $$
 
-State: vault tokens +\(\Delta x\), +\(\Delta y\); `sharesBorrowed` += *s*.
+State: vault tokens + $\Delta x$, + $\Delta y$; `sharesBorrowed` += *s*.
 
 **Repay *s* FR-shares**
 
-Return idle FR-shares or deposit tokens \(\Delta x,\Delta y\) per (12); hook mints *s* FR-shares and retires them.  
+Return idle FR-shares or deposit tokens $\Delta x,\Delta y$ per (12);  
+hook mints *s* FR-shares and retires them.  
 Then `sharesBorrowed` −= *s*.
 
 ---
 
 ## J. Mint / Burn of CR-shares & Limit Orders
 
-* **Mint CR / place LO-open** – consume vault tokens, create \(L_i\), issue shares, add \(A^{\max}_i,B^{\max}_i\) to ledgers.  
+* **Mint CR / place LO-open** – consume vault tokens, create $L_i$, issue shares, add $A^{\max}_i,B^{\max}_i$ to ledgers.  
 * **Burn CR / cancel LO-open** – reverse tokens & ledgers.  
-* **LO fills** – hook burns shares automatically, credits tokens to vault, removes \(A^{\max}_i,B^{\max}_i\) from ledgers.  
+* **LO fills** – hook burns shares automatically, credits tokens to vault, removes $A^{\max}_i,B^{\max}_i$ from ledgers.  
 
 Change allowed only if § L guard holds.
 
@@ -245,11 +260,11 @@ Change allowed only if § L guard holds.
 
 ## K. Solvency & Liquidation
 
-| LTV \(L\) | Response |
-|-----------|----------|
-| \(L < 0.98\) | healthy |
-| \(0.98 \le L < 0.99\) | seize \(p(L)\) fraction of debt |
-| \(L \ge 0.99\) | up to 100 % seizure |
+| LTV $L$ | Response |
+|---------|----------|
+| $L < 0.98$ | healthy |
+| $0.98 \le L < 0.99$ | seize $p(L)$ fraction of debt |
+| $L \ge 0.99$ | up to 100 % seizure |
 
 $$
 \boxed{
@@ -263,7 +278,7 @@ p(L) =
 $$
 
 Liquidator may seize idle tokens, idle FR-shares, idle CR-shares, or open LO-shares.  
-Seized shares are burned; forced swap ≤ \(1/350\) reserves; fee = 0–1 % (linear).
+Seized shares are burned; forced swap ≤ $1/350$ reserves; fee = 0 – 1 % (linear).
 
 ---
 
@@ -277,7 +292,7 @@ $$
 \tag{14}
 $$
 
-NetA/B = on-chain pool reserves (FR spot value)  
+NetA/B = on-chain pool reserves (FR spot value):  
 
 * idle tokens in all vaults  
 * current token value of all CR-shares and open LO-shares (eqs. 2–3).  
@@ -288,10 +303,10 @@ Filled LOs are idle tokens (in NetA/B) but no longer part of WorstA/WorstB.
 
 ## M. Additional Safeguards
 
-1. Utilisation cap \(U \le 0.95\).  
+1. Utilisation cap $U \le 0.95$.  
 2. No negative balances (tokens or shares).  
 3. Spot–TWAP price deviation bound.  
-4. Forced swap ≤ \(1/350\) reserves.  
+4. Forced swap ≤ $1/350$ reserves.  
 5. Smooth penalty curves – no cliffs.
 
 ---
@@ -300,7 +315,7 @@ Filled LOs are idle tokens (in NetA/B) but no longer part of WorstA/WorstB.
 
 * Constant-product core via full-range block.  
 * Raw-token deposits with flexible allocation to FR, CR, or single-tick limit orders.  
-* Geometric-mean collateral; debt in signed \(\sqrt{K}\) units; exponential growth via a global multiplier.  
+* Geometric-mean collateral; debt in signed $\sqrt{K}$ units; exponential growth via a global multiplier.  
 * Worst-case ledgers fence the asymmetric risk of CR and open LO positions; ledgers shrink automatically when limit orders fill.  
 * Convex liquidation curve & utilisation-driven rates stabilise leverage demand.
 
