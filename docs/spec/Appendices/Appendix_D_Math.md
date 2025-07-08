@@ -44,12 +44,12 @@ $$
 |--------------------|---------------------------------------|
 | $(x,y)$            | reserves of A & B in the full-range position |
 | $L_{\text{FR}}$    | v4 liquidity (= $\sqrt{K}$)           |
-| $S_{\text{FR\_tot}}$ | total FR-shares                      |
+| $S_{\text{FRtot}}$ | total FR-shares                      |
 
 One FR-share represents  
 
 $$
-\frac{x}{S_{\text{FR\_tot}}}A + \frac{y}{S_{\text{FR\_tot}}}B
+\frac{x}{S_{\text{FRtot}}}A + \frac{y}{S_{\text{FRtot}}}B
 $$
 
 ### C.2 Finite-range (or limit-order) position *i*
