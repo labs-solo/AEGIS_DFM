@@ -166,13 +166,15 @@ A_{\text{tot}} = \text{assetAVault} + x_{S,\mathrm{FR}} + x_{S,\mathrm{CR}},
 B_{\text{tot}} = \text{assetBVault} + y_{S,\mathrm{FR}} + y_{S,\mathrm{CR}}
 $$
 
-$$
+\[
 \boxed{C = \sqrt{A_{\text{tot}}\,B_{\text{tot}}}}
 \tag{7}
-\qquad
+\]
+
+\[
 \boxed{D = \tfrac{\text{sharesBorrowed}\,\text{shareMultiplier}}{10^{18}}}
 \tag{8}
-$$
+\]
 
 $$
 \boxed{
