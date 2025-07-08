@@ -97,8 +97,8 @@ $$
 \boxed{
 \Delta A_i =
 \begin{cases}
-0 & P \ge \overline{P}_i\\[4pt]
-\dfrac{L_i(b_i-\sigma)}{\sigma\,b_i} & a_i \le P \le b_i\\[4pt]
+0 & P \ge \overline{P}_i\\
+\dfrac{L_i(b_i-\sigma)}{\sigma\,b_i} & a_i \le P \le b_i\\
 \dfrac{L_i(b_i-a_i)}{a_i\,b_i} & P \le \underline{P}_i
 \end{cases}
 }
@@ -109,8 +109,8 @@ $$
 \boxed{
 \Delta B_i =
 \begin{cases}
-L_i(\sigma-a_i) & a_i \le P \le b_i\\[4pt]
-L_i(b_i-a_i) & P \ge \overline{P}_i\\[4pt]
+L_i(\sigma-a_i) & a_i \le P \le b_i\\
+L_i(b_i-a_i) & P \ge \overline{P}_i\\
 0 & P \le \underline{P}_i
 \end{cases}
 }
@@ -161,9 +161,9 @@ $$
 ## G. Collateral, Debt & LTV
 
 $$
-A_{\text{tot}} = \text{assetA\_Vault} + x_{S,\mathrm{FR}} + x_{S,\mathrm{CR}},
+A_{\text{tot}} = \text{assetAVault} + x_{S,\mathrm{FR}} + x_{S,\mathrm{CR}},
 \qquad
-B_{\text{tot}} = \text{assetB\_Vault} + y_{S,\mathrm{FR}} + y_{S,\mathrm{CR}}
+B_{\text{tot}} = \text{assetBVault} + y_{S,\mathrm{FR}} + y_{S,\mathrm{CR}}
 $$
 
 $$
@@ -216,9 +216,9 @@ Borrow *s* FR-shares
 
 $$
 \boxed{
-\Delta x = \tfrac{s\,x}{S_{\text{FR\_tot}}},
+\Delta x = \tfrac{s\,x}{S_{\text{FRtot}}},
 \qquad
-\Delta y = \tfrac{s\,y}{S_{\text{FR\_tot}}}
+\Delta y = \tfrac{s\,y}{S_{\text{FRtot}}}
 }
 \tag{12}
 $$
