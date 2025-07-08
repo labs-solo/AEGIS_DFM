@@ -84,9 +84,9 @@ Filled LO-shares have $L_i=0$; shares auto-burn, user holds tokens.
 
 $$
 \boxed{
-x_{S,\mathrm{FR}} = \frac{\text{sharesFR\_Vault}\,x}{S_{\text{FR\_tot}}},
+x_{S,\mathrm{FR}} = \frac{\text{sharesFRVault}\,x}{S_{\text{FRtot}}},
 \qquad
-y_{S,\mathrm{FR}} = \frac{\text{sharesFR\_Vault}\,y}{S_{\text{FR\_tot}}}
+y_{S,\mathrm{FR}} = \frac{\text{sharesFRVault}\,y}{S_{\text{FRtot}}}
 }
 \tag{1}
 $$
