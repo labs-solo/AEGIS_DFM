@@ -246,8 +246,8 @@ Repay *s* FR-shares by returning shares or depositing tokens ($\Delta x,\Delta y
 
 $$
 p(L) = \begin{cases}
-0.0025 & L = 0.98\\[6pt]
-0.2 + 0.8\dfrac{L-0.985}{0.005} & 0.985 < L < 0.99\\[6pt]
+0.0025 & L = 0.98\\
+0.2 + 0.8\dfrac{L-0.985}{0.005} & 0.985 < L < 0.99\\
 1 & L \ge 0.99
 \end{cases}
 \tag{13}
