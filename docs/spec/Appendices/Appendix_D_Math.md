@@ -5,6 +5,7 @@
 ---
 
 ## A. Process Flow
+> _Plain-language summary:_ Think of one vault per user. Deposit raw tokens (step 1); allocate them into full-range, finite-range or 1-tick limit-order liquidity (step 2); borrow only full-range shares (step 3); repay by returning those shares or the equivalent tokens (step 4); and if loan-to-value is too high the engine seizes idle assets (step 5). The full-range block enforces Uniswap’s constant-product \(x\,y=K\) so \(\sqrt{K}\) becomes the natural collateral / debt unit.
 
 1. **Deposit** – Move raw **Asset A** and/or **Asset B** into the vault.  
 2. **Allocation** – Route vault tokens into three liquidity flavours:
@@ -28,6 +29,7 @@ $$
 ---
 
 ## B. Collateral Types & Uses
+> _Plain-language summary:_ Idle raw tokens count 1-for-1 toward solvency. Wrapping them into FR/CR/LO shares doesn’t apply haircuts at this layer; risk differentiation happens later via worst-case ledgers.
 
 | Raw vault asset | Optional allocations                | Solvency valuation  | Extra risk metric |
 |-----------------|-------------------------------------|---------------------|-------------------|
@@ -37,6 +39,9 @@ $$
 ---
 
 ## C. Pool Geometry
+> _Plain-language summary:_
+> • **Full-range block:** reserves \(x,y\) already satisfy \(L_{\mathrm{FR}}=\sqrt{K}\). Each FR-share is a fixed parcel \(x/S_{\mathrm{FRtot}}\,A + y/S_{\mathrm{FRtot}}\,B\).
+> • **Finite-range position:** liquidity \(L_i\) lives between prices \([a_i^2,b_i^2]\). Shares \(S_{\mathrm{CR},i}\) track ownership. A 1-tick limit order is just the special case \(a_i=b_i\); when filled, liquidity goes to zero and shares auto-burn.
 
 ### C.1 Full-range block
 
@@ -66,6 +71,7 @@ Filled LO-shares have $L_i=0$; shares auto-burn, user holds tokens.
 ---
 
 ## D. User State
+> _Plain-language summary:_ Vault fields record raw tokens, each share flavour, borrowed FR-shares, and the global `shareMultiplier` that meters interest over time.
 
 | Field                   | Unit            | Meaning                     |
 |-------------------------|-----------------|-----------------------------|
@@ -79,6 +85,7 @@ Filled LO-shares have $L_i=0$; shares auto-burn, user holds tokens.
 ---
 
 ## E. Token Equivalents of Idle Shares
+> _Plain-language summary:_ Eq. (1) converts a vault’s FR-shares into current token amounts. Eqs. (2–3) do the same for each CR/LO band; Eq. (4) sums them so the vault’s synthetic token balances are always explicit.
 
 ### E.1 Full-range shares  
 
@@ -137,6 +144,7 @@ $$
 ---
 
 ## F. Worst-Case Exposure of CR / Open-LO Shares
+> _Plain-language summary:_ Eq. (5) computes the maximum single-token exposure for each band; Eq. (6) aggregates them into WorstA/WorstB so the protocol always knows how many tokens it might suddenly owe.
 
 $$
 \boxed{
@@ -158,6 +166,10 @@ $$
 ---
 
 ## G. Collateral, Debt & LTV
+> _Plain-language summary:_
+> 1. Eq. (7) converts total tokens into geometric-mean collateral \(C\).
+> 2. Eq. (8) expresses debt in \(\sqrt{K}\) units via the global multiplier.
+> 3. Eq. (9) gives LTV \(L=D/C\) (or zero when no debt).
 
 $$
 A_{\text{tot}} = \text{assetAVault} + x_{S,\mathrm{FR}} + x_{S,\mathrm{CR}},
@@ -189,6 +201,7 @@ $$
 ---
 
 ## H. Interest Accrual
+> _Plain-language summary:_ Utilisation \(U\) (Eq. 10) measures how much FR liquidity is lent out. The multiplier bumps by \(\Delta M\) (Eq. 11) at a rate \(r(U)\); everyone’s debt scales automatically.
 
 $$
 \boxed{
@@ -212,6 +225,7 @@ Protocol fee = $f\,\Delta M\,\sum D / 10^{18}$.
 ---
 
 ## I. Borrow / Repay (Full-Range Shares Only)
+> _Plain-language summary:_ Eq. (12) shows the exact token amounts behind \(s\) borrowed FR-shares; repayment is simply the reverse transfer or share return.
 
 Borrow *s* FR-shares  
 
@@ -229,6 +243,7 @@ Repay *s* FR-shares by returning shares or depositing tokens ($\Delta x,\Delta y
 ---
 
 ## J. Mint / Burn of CR-shares & Limit Orders
+> _Plain-language summary:_ Minting CR/LO shares consumes idle tokens and enlarges WorstA/WorstB; burning or an LO fill does the opposite.
 
 * **Mint CR / place LO-open** – consume tokens, create $L_i$, issue shares, add $A^{\max}_i,B^{\max}_i$.  
 * **Burn CR / cancel LO-open** – reverse tokens & ledgers.  
@@ -237,6 +252,7 @@ Repay *s* FR-shares by returning shares or depositing tokens ($\Delta x,\Delta y
 ---
 
 ## K. Solvency & Liquidation
+> _Plain-language summary:_ The table defines actions by LTV bands. Eq. (13) gives a smooth, convex seizure fraction \(p(L)\) so liquidations begin gently and ramp to 100 % as \(L\to1\).
 
 | LTV $L$    | Response                      |
 |------------|-------------------------------|
@@ -256,6 +272,7 @@ $$
 ---
 
 ## L. System Worst-Case Guard
+> _Plain-language summary:_ Eq. (14) asserts the system’s on-chain reserves (NetA/NetB) always cover the WorstA/WorstB ledgers—even after any state change.
 
 $$
 \boxed{\text{NetA} \ge \text{WorstA}, \qquad \text{NetB} \ge \text{WorstB}}
@@ -267,6 +284,7 @@ NetA/B = on-chain reserves + idle tokens + current value of CR and open LO share
 ---
 
 ## M. Additional Safeguards
+> _Plain-language summary:_ Caps utilisation at 95 %, blocks negative balances, enforces price sanity, limits forced swaps to 0.29 % of reserves, and uses smooth curves everywhere to avoid cliffs.
 
 1. Utilisation cap $U\le0.95$.  
 2. No negative balances.  
@@ -277,6 +295,7 @@ NetA/B = on-chain reserves + idle tokens + current value of CR and open LO share
 ---
 
 ## N. Key Mathematical Motifs
+> _Plain-language summary:_ Constant-product backbone, composable liquidity, geometric-mean collateral, single global interest multiplier, worst-case ledgers, and convex liquidation/rate curves together create a stable yet flexible lending-LP engine.
 
 * Constant-product core via full-range block.  
 * Flexible allocation to FR, CR, or single-tick limit orders.  
