@@ -148,11 +148,7 @@ B^{\max}_i = L_i(b_i-a_i)
 $$
 
 $$
-\boxed{
-\text{WorstA} = \sum_{\mathrm{CR+LO\text{-}open}} A^{\max}_i,
-\qquad
-\text{WorstB} = \sum_{\mathrm{CR+LO\text{-}open}} B^{\max}_i
-}
+\boxed{\text{WorstA} = \sum_{\text{CR+LO-open}} A^{\max}_i \; , \qquad \text{WorstB} = \sum_{\text{CR+LO-open}} B^{\max}_i}
 \tag{6}
 $$
 
