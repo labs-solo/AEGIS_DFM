@@ -244,15 +244,14 @@ Repay *s* FR-shares by returning shares or depositing tokens ($\Delta x,\Delta y
 | $0.98\le L<0.99$ | seize $p(L)$ fraction of debt |
 | $L\ge0.99$ | up to 100 % seizure            |
 
-\[
- p(L) =
- \begin{cases}
- 0.0025 & \text{if } L = 0.98\\[4pt]
- 0.2 + 0.8\dfrac{L-0.985}{0.005} & \text{if } 0.985 < L < 0.99\\[4pt]
- 1 & \text{if } L \ge 0.99
- \end{cases}
- \tag{13}
-\]
+$$
+p(L)=\begin{cases}
+0.0025 & \text{if } L = 0.98\\
+0.2 + 0.8\dfrac{L-0.985}{0.005} & \text{if } 0.985 < L < 0.99\\
+1 & \text{if } L \ge 0.99
+\end{cases}
+\tag{13}
+$$
 
 ---
 
