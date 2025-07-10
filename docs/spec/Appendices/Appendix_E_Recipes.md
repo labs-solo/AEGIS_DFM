@@ -1,11 +1,9 @@
-# Appendix E – Aegis Liquidity Engine (ALE) Recipes
-
+# Appendix E – Aegis Liquidity Engine (ALE) Recipes  
 ## Example 1 · **10 000 USDC → 2.50 × Long-ETH**
 
 ---
 
 ### Executive Summary — 30-Day Hold, 7 % APR
-
 | ETH Move | **Aegis Liquidity Engine**<br>(rent = 187.71 √K, repay ≈ 19 200 USDC pair-value) | **Aave v3 Loop**<br>(debt ≈ 15 010 USDC) | ALE Beats Aave by |
 | :---: | :--- | :--- | :--- |
 | **+100 %** | cash-out **40 420 USDC** (+304 %) | cash-out 34 924 USDC (+249 %) | **+55 pp upside** |
@@ -224,3 +222,5 @@ After repay vault keeps **9.533 – 1.807 – 2.626 = 5.100 ETH**
 3. **Send one TX** `executeActionsAndSwap`.  
 4. **Watch** utilisation (> 95 %) or rate (> 10 % APR).  
 5. **Exit** via one batch (`swap → repay √K → withdraw`).
+
+---
