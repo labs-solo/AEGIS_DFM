@@ -256,12 +256,13 @@ $$
 | $L\ge0.99$ | up to 100 % seizure |
 
 $$
-p(L)=
-\begin{cases}
+\begin{aligned}
+p(L)=\begin{cases}
 0.0025 & L = 0.98\\
 0.2 + 0.8\dfrac{L-0.985}{0.005} & 0.985 < L < 0.99\\
 1 & L \ge 0.99
 \end{cases}\tag{13}
+\end{aligned}
 $$
 
 ⸻
@@ -349,7 +350,7 @@ $$
 \begin{aligned}
 &(P\,L_{\text{target}}^{2})\,\Delta^{2}\\
 &\quad-\bigl[L_{\text{target}}^{2}(A_{\text{tot}}P - B_{\text{tot}})\bigr] \, \Delta\\
-&\quad-\bigl[L_{\text{target}}^{2}A_{\text{tot}}B_{\text{tot}} - D^{2}\bigr] = 0.
+&\quad-\bigl[L_{\text{target}}^{2}A_{\text{tot}}B_{\text{tot}} - D^{2}\bigr] = 0\tag{15}
 \end{aligned}
 $$
 
@@ -367,7 +368,6 @@ A_{\text{tot}}P - B_{\text{tot}}
 }{
 2\,P\,L_{\text{target}}
 }.
-\tag{15}
 $$
 
 *(Choose the root that is non-negative and feasible for the vault.)*
@@ -428,26 +428,27 @@ Errors are ≤ 1 unit in every case.
 For input $\delta x\ll x$,
 
 $$
-\delta y = \frac{y\,\delta x}{x + \delta x}
+\begin{aligned}
+\delta y &= \frac{y\,\delta x}{x + \delta x}
            \;\approx\;
-y\!\left(
-  \frac{\delta x}{x}
+ y\!\left(\frac{\delta x}{x}
   {}- \Bigl(\tfrac{\delta x}{x}\Bigr)^{2}
   {}+ \Bigl(\tfrac{\delta x}{x}\Bigr)^{3}
-  {}- \dots
-\right).\tag{16}
+  {}- \dots\right)\tag{16}
+\end{aligned}
 $$
 
 #### LTV Sensitivity to Price
 
 $$
+\begin{aligned}
 \frac{\partial L}{\partial P}
-  = -\,\frac{D}{2\,C^{3}}\,
+  &= -\,\frac{D}{2\,C^{3}}\,
     \Bigl(
       B_{\text{tot}}\,\frac{dA_{\text{tot}}}{dP}
       + A_{\text{tot}}\,\frac{dB_{\text{tot}}}{dP}
-    \Bigr).
-\tag{17}
+    \Bigr)\tag{17}
+\end{aligned}
 $$
 
 #### Utilisation vs. APR
@@ -455,7 +456,8 @@ $$
 Per-second rate $r(U)$ ⇢ annual percentage rate:
 
 $$
+\begin{aligned}
 \text{APR}(U)
-  = \bigl(e^{\,r(U)\times 31\,536\,000} - 1\bigr)\times 100\%.
-\tag{18}
+  &= \bigl(e^{\,r(U)\times 31\,536\,000} - 1\bigr)\times 100\%\tag{18}
+\end{aligned}
 $$
