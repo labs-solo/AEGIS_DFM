@@ -126,8 +126,8 @@ $$
 \boxed{
 \Delta A_i =
 \begin{cases}
-0 & P \ge \overline{P}_i\\[6pt]
-\dfrac{L_i\,(b_i-\sigma)}{\sigma b_i} & a_i \le P \le b_i\\[10pt]
+0 & P \ge \overline{P}_i\\
+\dfrac{L_i\,(b_i-\sigma)}{\sigma b_i} & a_i \le P \le b_i\\
 \dfrac{L_i\,(b_i-a_i)}{a_i b_i} & P \le \underline{P}_i
 \end{cases}
 }\tag{2}
@@ -137,8 +137,8 @@ $$
 \boxed{
 \Delta B_i =
 \begin{cases}
-L_i\,(\sigma-a_i) & a_i \le P \le b_i\\[6pt]
-L_i\,(b_i-a_i) & P \ge \overline{P}_i\\[6pt]
+L_i\,(\sigma-a_i) & a_i \le P \le b_i\\
+L_i\,(b_i-a_i) & P \ge \overline{P}_i\\
 0 & P \le \underline{P}_i
 \end{cases}
 }\tag{3}
@@ -197,7 +197,7 @@ $$
 \boxed{
 L=
 \begin{cases}
-0 & D = 0\\[6pt]
+0 & D = 0\\
 \dfrac{D}{C} & D > 0
 \end{cases}
 }\tag{9}
@@ -258,8 +258,8 @@ $$
 $$
 p(L)=
 \begin{cases}
-0.0025 & L = 0.98\\[6pt]
-0.2 + 0.8\dfrac{L-0.985}{0.005} & 0.985 < L < 0.99\\[10pt]
+0.0025 & L = 0.98\\
+0.2 + 0.8\dfrac{L-0.985}{0.005} & 0.985 < L < 0.99\\
 1 & L \ge 0.99
 \end{cases}\tag{13}
 $$
