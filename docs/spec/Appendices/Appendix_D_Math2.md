@@ -36,14 +36,14 @@ $$
 so $x\,y = K$ at all times. Solving for a small incoming amount $\Delta x$ yields  
 
 $$
-\Delta y \;=\; y \;-\; \frac{x\,y}{x + \Delta x}
+\Delta y \;=\; y \;-\; \frac{x y}{x + \Delta x}
            \;=\; \frac{y\,\Delta x}{x + \Delta x},
 $$
 
 demonstrating that the reserves adjust to maintain $x\,y = K$. In a full-range position spanning all prices one may write reserves in terms of Uniswap liquidity $L_{\text{FR}}$ and the current √-price $\sigma=\sqrt{P}$: $x = L_{\text{FR}}/\sigma$ and $y = L_{\text{FR}}\,\sigma$, giving $x\,y = L_{\text{FR}}^{2}$, hence  
 
 $$
-L_{\text{FR}} = \sqrt{x\,y},
+L_{\text{FR}} = \sqrt{x y}\,.
 $$
 
 so the full-range liquidity **is** $\sqrt{K}$.
@@ -127,8 +127,8 @@ $$
 \Delta A_i =
 \begin{cases}
 0 & P \ge \overline{P}_i\\[6pt]
-\dfrac{L_i\,(b_i-\sigma)}{\sigma\,b_i} & a_i \le P \le b_i\\[10pt]
-\dfrac{L_i\,(b_i-a_i)}{a_i\,b_i} & P \le \underline{P}_i
+\dfrac{L_i\,(b_i-\sigma)}{\sigma b_i} & a_i \le P \le b_i\\[10pt]
+\dfrac{L_i\,(b_i-a_i)}{a_i b_i} & P \le \underline{P}_i
 \end{cases}
 }\tag{2}
 $$
@@ -167,7 +167,7 @@ $$
 
 $$
 \boxed{
-A^{\max}_i = \frac{L_i\,(b_i-a_i)}{a_i\,b_i},
+A^{\max}_i = \frac{L_i\,(b_i-a_i)}{a_i b_i},
 \qquad
 B^{\max}_i = L_i\,(b_i-a_i)
 }\tag{5}
@@ -186,7 +186,7 @@ $$
 ## G. Collateral, Debt & LTV
 
 $$
-\boxed{C = \sqrt{A_{\text{tot}}\,B_{\text{tot}}}}\tag{7}
+\boxed{C = \sqrt{A_{\text{tot}} B_{\text{tot}}}}\tag{7}
 $$
 
 $$
@@ -348,7 +348,7 @@ Squaring and simplifying yields
 $$
 (P\,L_{\text{target}}^{2})\,\Delta^{2}
 -
-\bigl[L_{\text{target}}^{2}(A_{\text{tot}}P - B_{\text{tot}})\bigr]\,\Delta
+\bigl[L_{\text{target}}^{2}(A_{\text{tot}}P - B_{\text{tot}})\bigr] \, \Delta
 -
 \bigl[L_{\text{target}}^{2}A_{\text{tot}}B_{\text{tot}} - D^{2}\bigr]
 = 0.
