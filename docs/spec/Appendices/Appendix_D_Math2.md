@@ -346,12 +346,11 @@ $$
 Squaring and simplifying yields  
 
 $$
-(P\,L_{\text{target}}^{2})\,\Delta^{2}
--
-\bigl[L_{\text{target}}^{2}(A_{\text{tot}}P - B_{\text{tot}})\bigr] \, \Delta
--
-\bigl[L_{\text{target}}^{2}A_{\text{tot}}B_{\text{tot}} - D^{2}\bigr]
-= 0.
+\begin{aligned}
+&(P\,L_{\text{target}}^{2})\,\Delta^{2}\\
+&\quad-\bigl[L_{\text{target}}^{2}(A_{\text{tot}}P - B_{\text{tot}})\bigr] \, \Delta\\
+&\quad-\bigl[L_{\text{target}}^{2}A_{\text{tot}}B_{\text{tot}} - D^{2}\bigr] = 0.
+\end{aligned}
 $$
 
 Hence
@@ -445,8 +444,8 @@ $$
 \frac{\partial L}{\partial P}
   = -\,\frac{D}{2\,C^{3}}\,
     \Bigl(
-      B_{\text{tot}}\frac{dA_{\text{tot}}}{dP}
-      + A_{\text{tot}}\frac{dB_{\text{tot}}}{dP}
+      B_{\text{tot}}\,\frac{dA_{\text{tot}}}{dP}
+      + A_{\text{tot}}\,\frac{dB_{\text{tot}}}{dP}
     \Bigr).
 \tag{17}
 $$
