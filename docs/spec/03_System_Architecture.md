@@ -31,7 +31,7 @@
 > *Design axiom:* **All state‑mutating user operations traverse `BatchEngine → VaultManagerCore`.**
 > Pool/Hook interactions are *fee‑only* and never alter vault state.
 
-Borrowing is handled inside the same core module: collateral and debt are tracked in invariant‑priced shares so lending operations use the same units as liquidity. see **Share-Based Borrowing & Invariant Accounting**
+Borrowing is handled inside the same core module: collateral and debt are tracked in invariant‑priced shares so lending operations use the same units as liquidity. see **Share-Based Borrowing & Invariant Accounting**. Debt is denominated in **full‑range liquidity shares** (`FR‑shares`, Eq 8) and collateral is the geometric mean `C = √(A_tot B_tot)` (Eq 7). Interest compounds by multiplying the global `shareMultiplier`, an exponential factor updated in `accrueInterest()` (Eq 11).
 
 ---
 

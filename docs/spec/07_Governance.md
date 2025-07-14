@@ -17,6 +17,12 @@ Operational Flow
 
 > **Where to find the bit-level mapping:** Table 7-1 in the main spec lists every pause bit and the functions it controls; the diagram in Appendix A.2 cross-links each role to the exact calls it can invoke.
 
+### Governance Parameters
+| Name | Purpose |
+| ---- | ------- |
+| utilCapBps | Utilisation hard cap (INV-UtilCap) |
+| penaltyCurve | Liquidation penalty curve p(L) |
+| rateCurve | Interest rate function r(U) |
 ## 7.4 Cross-chain Re-entrancy (L2/L3)
 
 Bridged calls from layer-two or layer-three systems could attempt to reenter `VaultManagerCore` during finalization. The vault's `nonReentrant` guard and per-batch interest index checkpoint prevent loops. Governance transactions executed via cross-chain messengers must still pass through the Timelock, so the residual risk is low.

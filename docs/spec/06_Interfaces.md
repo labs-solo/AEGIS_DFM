@@ -61,5 +61,20 @@ interface IVaultManagerCore {
     function liquidate(address borrower, PoolId poolId, uint256 debtToCover, address recipient) external returns (uint256 seizedCollateral);
     /// @noBatch – rejected by Selector Guard (T8)
     function coverBadDebt(PoolId poolId, uint256 amount) external;
+
+    struct VaultState {
+        uint256 sharesBorrowed;       // Eq 8
+        uint256 shareMultiplierSnap;  // last accrued value
+        uint256 assetA_Vault;
+        uint256 assetB_Vault;
+        uint256 sharesFR_Vault;
+        CRPos[]   crPositions;        // range, L_i, shares
+        LOPos[]   openLOs;            // tick, qty
+    }
+    struct PoolState {
+        uint256 shareMultiplier;
+        uint256 totalShares;
+        uint256 totalBorrowShares;
+    }
 }
 ```

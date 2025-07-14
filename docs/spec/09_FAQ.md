@@ -12,3 +12,5 @@
 | 8 | When will this ship? | Roadmap Phase 1 – "Integrator On-Ramp", Q3 2025. Tagged release v1.3.0 after the current ABI freeze (v1.2.1-rc3). | Roadmap timelines (GTM doc) |
 | 9 | What SDK helpers are planned? | wrapper.depositWithPermit() to bundle approval + deposit, wrapper.previewYield() (optional extension) and sdk.canDeposit(poolId) to guard against high utilisation reverts. | SDK changelog draft |
 | 10 | How do I list the vault on my dashboard? | Use the wrapper's ERC-20 address, call standard 4626 views (asset(), totalAssets(), convertToShares()); for accurate APR, also read utilisation() and pendingFees() from VaultMetricsLens. | §6.2.7 interface stub | 
+| 11 | Why only full-range borrowing? | Debt is denominated in FR-shares so collateral math stays invariant. | §5.3 Borrowing |
+| 12 | What happens when my limit order fills? | The LO shares burn and the received tokens remain in your vault. | §5.5 Position-Based Limit Orders |

@@ -287,4 +287,20 @@ interface IVaultMetricsLens {
     function getPOLSummary(bytes32 poolId) external view
         returns (uint256 polShares, uint16 polSharePctBps, uint256 polValueUSD);
 }
+
+/// @notice Simplified state snapshots
+struct VaultState {
+    uint256 sharesBorrowed;       // Eq 8
+    uint256 shareMultiplierSnap;
+    uint256 assetA_Vault;
+    uint256 assetB_Vault;
+    uint256 sharesFR_Vault;
+    CRPos[]   crPositions;
+    LOPos[]   openLOs;
+}
+struct PoolState {
+    uint256 shareMultiplier;
+    uint256 totalShares;
+    uint256 totalBorrowShares;
+}
 ```
