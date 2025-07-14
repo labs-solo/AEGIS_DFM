@@ -261,8 +261,8 @@ p(L)=\begin{cases}
 0.0025 & L = 0.98\\
 0.2 + 0.8\dfrac{L-0.985}{0.005} & 0.985 < L < 0.99\\
 1 & L \ge 0.99
-\end{cases}\tag{13}
-\end{aligned}
+\end{cases}
+\end{aligned}\tag{13}
 $$
 
 ⸻
@@ -350,7 +350,7 @@ $$
 \begin{aligned}
 &(P\,L_{\text{target}}^{2})\,\Delta^{2}\\
 &\quad-\bigl[L_{\text{target}}^{2}(A_{\text{tot}}P - B_{\text{tot}})\bigr] \, \Delta\\
-&\quad-\bigl[L_{\text{target}}^{2}A_{\text{tot}}B_{\text{tot}} - D^{2}\bigr] = 0\tag{15}
+&\quad-\bigl[L_{\text{target}}^{2}A_{\text{tot}}B_{\text{tot}} - D^{2}\bigr] = 0
 \end{aligned}
 $$
 
@@ -434,8 +434,8 @@ $$
  y\!\left(\frac{\delta x}{x}
   {}- \Bigl(\tfrac{\delta x}{x}\Bigr)^{2}
   {}+ \Bigl(\tfrac{\delta x}{x}\Bigr)^{3}
-  {}- \dots\right)\tag{16}
-\end{aligned}
+  {}- \dots\right)
+\end{aligned}\tag{16}
 $$
 
 #### LTV Sensitivity to Price
@@ -447,8 +447,8 @@ $$
     \Bigl(
       B_{\text{tot}}\,\frac{dA_{\text{tot}}}{dP}
       + A_{\text{tot}}\,\frac{dB_{\text{tot}}}{dP}
-    \Bigr)\tag{17}
-\end{aligned}
+    \Bigr)
+\end{aligned}\tag{17}
 $$
 
 #### Utilisation vs. APR
@@ -458,6 +458,6 @@ Per-second rate $r(U)$ ⇢ annual percentage rate:
 $$
 \begin{aligned}
 \text{APR}(U)
-  &= \bigl(e^{\,r(U)\times 31\,536\,000} - 1\bigr)\times 100\%\tag{18}
-\end{aligned}
+  &= \bigl(e^{\,r(U)\times 31\,536\,000} - 1\bigr)\times 100\%
+\end{aligned}\tag{18}
 $$
