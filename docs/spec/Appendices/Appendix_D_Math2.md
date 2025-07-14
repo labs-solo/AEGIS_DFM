@@ -362,7 +362,7 @@ A_{\text{tot}}P - B_{\text{tot}}
 \;\pm\;
 \sqrt{
   L_{\text{target}}^{2}(A_{\text{tot}}P + B_{\text{tot}})^{2}
-  - 4\,P\,D^{2}
+  {}- 4\,P\,D^{2}
 }
 }{
 2\,P\,L_{\text{target}}
@@ -432,9 +432,9 @@ $$
            \;\approx\;
 y\!\left(
   \frac{\delta x}{x}
-  - \Bigl(\tfrac{\delta x}{x}\Bigr)^{2}
-  + \Bigl(\tfrac{\delta x}{x}\Bigr)^{3}
-  - \dots
+  {}- \Bigl(\tfrac{\delta x}{x}\Bigr)^{2}
+  {}+ \Bigl(\tfrac{\delta x}{x}\Bigr)^{3}
+  {}- \dots
 \right).\tag{16}
 $$
 
