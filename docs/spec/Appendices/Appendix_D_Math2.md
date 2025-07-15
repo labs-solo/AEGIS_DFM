@@ -421,7 +421,7 @@ Errors are ≤ 1 unit in every case.
 
 ⸻
 
-### Appendix A. Analytics
+### Analytics
 
 #### Slippage Approximation
 
