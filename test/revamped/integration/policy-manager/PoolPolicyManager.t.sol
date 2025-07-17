@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.27;
+pragma solidity ^0.8.25;
 
 // - - - v4-core src imports - - -
 
@@ -1970,34 +1970,26 @@ contract PoolPolicyManagerTest is Base_Test {
         assertEq(updatedStep, DEFAULT_BASE_FEE_STEP_PPM, "When step is set to zero, getter should return default value");
         assertEq(updatedInterval, shortInterval, "Update interval should still be updated with zero step");
 
-        // Test with zero interval (should be allowed)
-        // Expect event to be emitted with correct parameters
-        vm.expectEmit(true, true, true, true);
-        emit IPoolPolicyManager.BaseFeeParamsSet(poolId, midStep, 0);
+        // Test with zero interval (should be rejected by contract)
+        // Expect the transaction to revert because zero interval is not allowed
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.ParameterOutOfRange.selector,
+                0, // invalid value
+                1, // minimum
+                type(uint32).max // maximum
+            )
+        );
 
-        // Call the function with zero interval
+        // Call the function with zero interval - should revert
         policyManager.setBaseFeeParams(poolId, midStep, 0);
 
-        // Get updated values
+        // After revert, verify the values are still the same as before the failed attempt
+        // (from the zero step test: step=20000 default, interval=3600)
         updatedStep = policyManager.getBaseFeeStepPpm(poolId);
         updatedInterval = policyManager.getBaseFeeUpdateIntervalSeconds(poolId);
-
-        // Check if zero interval uses default or keeps zero
-        uint32 DEFAULT_BASE_FEE_UPDATE_INTERVAL_SECS = 1 days; // Default value from the contract
-
-        // The behavior for zero interval depends on how getBaseFeeUpdateIntervalSeconds is implemented
-        // If it's similar to getBaseFeeStepPpm, it would return the default value
-        // Let's check both possibilities
-        if (updatedInterval == 0) {
-            assertEq(updatedInterval, 0, "Update interval should be set to zero if no default is used");
-        } else {
-            assertEq(
-                updatedInterval,
-                DEFAULT_BASE_FEE_UPDATE_INTERVAL_SECS,
-                "Update interval should return default value when set to zero"
-            );
-        }
-        assertEq(updatedStep, midStep, "Base fee step should still be updated with zero interval");
+        assertEq(updatedStep, 20000, "Base fee step should remain unchanged after failed zero interval attempt");
+        assertEq(updatedInterval, 3600, "Update interval should remain unchanged after failed zero interval attempt");
 
         // Test with maximum interval value
         uint32 maxInterval = type(uint32).max;

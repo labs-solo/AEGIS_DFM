@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.27;
+pragma solidity ^0.8.25;
 
 import {PoolManager} from "v4-core/src/PoolManager.sol";
 import {PositionManager} from "v4-periphery/src/PositionManager.sol";

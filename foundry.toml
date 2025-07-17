@@ -5,7 +5,7 @@ out = "out"
 libs = ["lib"]
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
 dotenv = true
-solc_version = "0.8.27"
+solc_version = "0.8.25"
 evm_version = "cancun"
 # Fast compilation settings for development
 viaIR = true
