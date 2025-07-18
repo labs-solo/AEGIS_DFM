@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.27;
+pragma solidity ^0.8.25;
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
@@ -8,11 +8,12 @@ import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 /// @dev Truncates price movements that exceed configurable thresholds to prevent oracle manipulation
 library TruncatedOracle {
     /* -------------------------------------------------------------------------- */
-    /*                              Library constants                              */
+    /*                              Library constants                             */
     /* -------------------------------------------------------------------------- */
     /// @dev Safety-fuse: prevent pathological gas usage in `grow()`
-    uint16 internal constant MAX_CARDINALITY_ALLOWED = 8_192;
+    uint16 internal constant MAX_CARDINALITY_ALLOWED = 1024;
     uint16 internal constant GROW_STEP_LIMIT = 256; // per-call growth guard
+    uint16 internal constant PAGE_SIZE = 512;
 
     /// @notice Thrown when trying to interact with an Oracle of a non-initialized pool
     error OracleCardinalityCannotBeZero();
@@ -131,7 +132,10 @@ library TruncatedOracle {
                 cardinalityUpdated = cardinality;
             }
 
-            indexUpdated = (index + 1) % cardinalityUpdated;
+            // Always work with local page indices (0-511)
+            // Use PAGE_SIZE for modulo to ensure proper local page wrapping
+            indexUpdated = (index + 1) % 512;
+            
             Observation storage o = self[indexUpdated];
 
             // --- wrap-safe delta --------------------------------------------
@@ -411,6 +415,300 @@ library TruncatedOracle {
                     )
             );
         }
+    }
+
+    // ===== NEW MULTI-PAGE FUNCTIONS =====
+
+    /// @notice Multi-page observation for ring buffer mode
+    /// @dev Handles cross-page searches when the buffer is at max capacity
+    /// @param pages Mapping of observation pages
+    /// @param time Current block timestamp
+    /// @param secondsAgos Array of seconds ago to observe
+    /// @param tick Current tick
+    /// @param globalIndex Current global index
+    /// @param liquidity Current liquidity
+    /// @param totalCardinality Total number of observations across all pages
+    /// @return tickCumulatives Array of tick cumulatives
+    /// @return secondsPerLiquidityCumulativeX128s Array of seconds per liquidity cumulatives
+    function observeRingBuffer(
+        mapping(uint16 => Observation[512]) storage pages,
+        uint32 time,
+        uint32[] memory secondsAgos,
+        int24 tick,
+        uint16 globalIndex,
+        uint128 liquidity,
+        uint16 totalCardinality
+    ) internal view returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) {
+        require(totalCardinality == MAX_CARDINALITY_ALLOWED, "Not ring buffer");
+        
+        tickCumulatives = new int56[](secondsAgos.length);
+        secondsPerLiquidityCumulativeX128s = new uint160[](secondsAgos.length);
+        
+        for (uint256 i = 0; i < secondsAgos.length; i++) {
+            (tickCumulatives[i], secondsPerLiquidityCumulativeX128s[i]) =
+                observeSingleRingBuffer(pages, time, secondsAgos[i], tick, globalIndex, liquidity, totalCardinality);
+        }
+    }
+
+    /// @notice Single observation for ring buffer mode
+    /// @dev Handles cross-page search for a single secondsAgo value
+    /// @param pages Mapping of observation pages
+    /// @param time Current block timestamp
+    /// @param secondsAgo Seconds ago to observe
+    /// @param tick Current tick
+    /// @param globalIndex Current global index
+    /// @param liquidity Current liquidity
+    /// @param totalCardinality Total number of observations
+    /// @return tickCumulative Tick cumulative for the target time
+    /// @return secondsPerLiquidityCumulativeX128 Seconds per liquidity cumulative for the target time
+    function observeSingleRingBuffer(
+        mapping(uint16 => Observation[512]) storage pages,
+        uint32 time,
+        uint32 secondsAgo,
+        int24 tick,
+        uint16 globalIndex,
+        uint128 liquidity,
+        uint16 totalCardinality
+    ) internal view returns (int56 tickCumulative, uint160 secondsPerLiquidityCumulativeX128) {
+        if (secondsAgo == 0 || secondsAgo > type(uint32).max) {
+            // Current observation - get from current page
+            uint16 pageIndex = globalIndex / PAGE_SIZE;
+            uint16 localIndex = globalIndex % PAGE_SIZE;
+            Observation memory last = pages[pageIndex][localIndex];
+            if (last.blockTimestamp != time) {
+                last = transform(last, time, tick, liquidity);
+            }
+            return (last.tickCumulative, last.secondsPerLiquidityCumulativeX128);
+        }
+
+        // Calculate target timestamp
+        uint32 target;
+        unchecked {
+            target = time >= secondsAgo ? time - secondsAgo : time + (type(uint32).max - secondsAgo) + 1;
+        }
+
+        // Find observations spanning the target time across pages
+        (Observation memory beforeOrAt, Observation memory atOrAfter) =
+            getSurroundingObservationsRingBuffer(pages, time, target, tick, globalIndex, liquidity, totalCardinality);
+
+        if (target == beforeOrAt.blockTimestamp) {
+            return (beforeOrAt.tickCumulative, beforeOrAt.secondsPerLiquidityCumulativeX128);
+        } else if (target == atOrAfter.blockTimestamp) {
+            return (atOrAfter.tickCumulative, atOrAfter.secondsPerLiquidityCumulativeX128);
+        } else {
+            // Interpolate between observations
+            uint32 base = beforeOrAt.blockTimestamp;
+            uint32 bTs = beforeOrAt.blockTimestamp;
+            uint32 aTs = atOrAfter.blockTimestamp;
+            uint32 tTs = target;
+
+            if (aTs < base) aTs += type(uint32).max + 1;
+            if (tTs < base) tTs += type(uint32).max + 1;
+
+            uint32 observationTimeDelta = aTs - bTs;
+            uint32 targetDelta = tTs - bTs;
+
+            return (
+                _safeCastTickCumulative(
+                    int256(beforeOrAt.tickCumulative)
+                        + (
+                            (int256(atOrAfter.tickCumulative) - int256(beforeOrAt.tickCumulative))
+                                * int256(uint256(targetDelta)) / int256(uint256(observationTimeDelta))
+                        )
+                ),
+                beforeOrAt.secondsPerLiquidityCumulativeX128
+                    + uint160(
+                        (
+                            uint256(atOrAfter.secondsPerLiquidityCumulativeX128)
+                                - uint256(beforeOrAt.secondsPerLiquidityCumulativeX128)
+                        ) * uint256(targetDelta) / uint256(observationTimeDelta)
+                    )
+            );
+        }
+    }
+
+    /// @notice Get surrounding observations for ring buffer mode
+    /// @dev Searches across pages to find observations before and after target time
+    /// @param pages Mapping of observation pages
+    /// @param time Current block timestamp
+    /// @param target Target timestamp
+    /// @param tick Current tick
+    /// @param globalIndex Current global index
+    /// @param liquidity Current liquidity
+    /// @param totalCardinality Total number of observations
+    /// @return beforeOrAt Observation at or before target time
+    /// @return atOrAfter Observation at or after target time
+    function getSurroundingObservationsRingBuffer(
+        mapping(uint16 => Observation[512]) storage pages,
+        uint32 time,
+        uint32 target,
+        int24 tick,
+        uint16 globalIndex,
+        uint128 liquidity,
+        uint16 totalCardinality
+    ) private view returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
+        // Start with newest observation (current index)
+        uint16 currentPageIndex = globalIndex / PAGE_SIZE;
+        uint16 currentLocalIndex = globalIndex % PAGE_SIZE;
+        beforeOrAt = pages[currentPageIndex][currentLocalIndex];
+
+        // If target is at or after newest observation, simulate forward
+        if (lte(time, beforeOrAt.blockTimestamp, target)) {
+            if (beforeOrAt.blockTimestamp == target) {
+                return (beforeOrAt, atOrAfter);
+            } else {
+                return (beforeOrAt, transform(beforeOrAt, target, tick, liquidity));
+            }
+        }
+
+        // Search backwards through the ring buffer to find the target range
+        // Start from the oldest observation (next index in ring buffer)
+        uint16 searchIndex = (globalIndex + 1) % totalCardinality;
+        
+        // Find the oldest observation that's at or before target
+        while (true) {
+            uint16 pageIndex = searchIndex / PAGE_SIZE;
+            uint16 localIndex = searchIndex % PAGE_SIZE;
+            Observation memory obs = pages[pageIndex][localIndex];
+            
+            if (obs.initialized && lte(time, obs.blockTimestamp, target)) {
+                // Found an observation at or before target
+                beforeOrAt = obs;
+                break;
+            }
+            
+            searchIndex = (searchIndex + 1) % totalCardinality;
+            
+            // If we've searched the entire buffer, the target is too old
+            if (searchIndex == (globalIndex + 1) % totalCardinality) {
+                revert TargetPredatesOldestObservation(obs.blockTimestamp, target);
+            }
+        }
+
+        // Find the observation after the target
+        uint16 nextIndex = (searchIndex + 1) % totalCardinality;
+        uint16 nextPageIndex = nextIndex / PAGE_SIZE;
+        uint16 nextLocalIndex = nextIndex % PAGE_SIZE;
+        atOrAfter = pages[nextPageIndex][nextLocalIndex];
+
+        // If the next observation is not initialized, we need to find the next valid one
+        if (!atOrAfter.initialized) {
+            nextIndex = (nextIndex + 1) % totalCardinality;
+            while (nextIndex != searchIndex) {
+                nextPageIndex = nextIndex / PAGE_SIZE;
+                nextLocalIndex = nextIndex % PAGE_SIZE;
+                atOrAfter = pages[nextPageIndex][nextLocalIndex];
+                
+                if (atOrAfter.initialized) {
+                    break;
+                }
+                nextIndex = (nextIndex + 1) % totalCardinality;
+            }
+        }
+
+        return (beforeOrAt, atOrAfter);
+    }
+
+    /// @notice Multi-page observation for growing buffer mode
+    /// @dev Handles cross-page searches when the buffer is still growing
+    /// @param pages Mapping of observation pages
+    /// @param time Current block timestamp
+    /// @param secondsAgos Array of seconds ago to observe
+    /// @param tick Current tick
+    /// @param globalIndex Current global index
+    /// @param liquidity Current liquidity
+    /// @param totalCardinality Total number of observations across all pages
+    /// @return tickCumulatives Array of tick cumulatives
+    /// @return secondsPerLiquidityCumulativeX128s Array of seconds per liquidity cumulatives
+    function observeGrowingBuffer(
+        mapping(uint16 => Observation[512]) storage pages,
+        uint32 time,
+        uint32[] memory secondsAgos,
+        int24 tick,
+        uint16 globalIndex,
+        uint128 liquidity,
+        uint16 totalCardinality
+    ) internal view returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) {
+        require(totalCardinality < MAX_CARDINALITY_ALLOWED, "Not growing buffer");
+        
+        tickCumulatives = new int56[](secondsAgos.length);
+        secondsPerLiquidityCumulativeX128s = new uint160[](secondsAgos.length);
+        
+        for (uint256 i = 0; i < secondsAgos.length; i++) {
+            (tickCumulatives[i], secondsPerLiquidityCumulativeX128s[i]) =
+                observeSingleGrowingBuffer(pages, time, secondsAgos[i], tick, globalIndex, liquidity, totalCardinality);
+        }
+    }
+
+    /// @notice Single observation for growing buffer mode
+    /// @dev Handles cross-page search for a single secondsAgo value in growing buffer
+    /// @param pages Mapping of observation pages
+    /// @param time Current block timestamp
+    /// @param secondsAgo Seconds ago to observe
+    /// @param tick Current tick
+    /// @param globalIndex Current global index
+    /// @param liquidity Current liquidity
+    /// @param totalCardinality Total number of observations
+    /// @return tickCumulative Tick cumulative for the target time
+    /// @return secondsPerLiquidityCumulativeX128 Seconds per liquidity cumulative for the target time
+    function observeSingleGrowingBuffer(
+        mapping(uint16 => Observation[512]) storage pages,
+        uint32 time,
+        uint32 secondsAgo,
+        int24 tick,
+        uint16 globalIndex,
+        uint128 liquidity,
+        uint16 totalCardinality
+    ) internal view returns (int56 tickCumulative, uint160 secondsPerLiquidityCumulativeX128) {
+        if (secondsAgo == 0 || secondsAgo > type(uint32).max) {
+            // Current observation
+            uint16 pageIndex = globalIndex / PAGE_SIZE;
+            uint16 localIndex = globalIndex % PAGE_SIZE;
+            Observation memory last = pages[pageIndex][localIndex];
+            if (last.blockTimestamp != time) {
+                last = transform(last, time, tick, liquidity);
+            }
+            return (last.tickCumulative, last.secondsPerLiquidityCumulativeX128);
+        }
+
+        // Calculate target timestamp
+        uint32 target;
+        unchecked {
+            target = time >= secondsAgo ? time - secondsAgo : time + (type(uint32).max - secondsAgo) + 1;
+        }
+
+        // Find the page containing the target observation
+        uint16 leafCursor = globalIndex;
+        uint32 oldestWanted = target;
+
+        // Walk pages backwards until we find the target time range
+        while (true) {
+            uint16 pageIndex = leafCursor / PAGE_SIZE;
+            uint16 localIndex = leafCursor % PAGE_SIZE;
+            uint16 pageBase = leafCursor - localIndex;
+            uint16 pageCardinality = totalCardinality > pageBase ? totalCardinality - pageBase : 1;
+
+            uint16 firstSlot = pageCardinality == PAGE_SIZE ? (localIndex + 1) % PAGE_SIZE : 0;
+            uint32 firstTs = pages[pageIndex][firstSlot].blockTimestamp;
+
+            if (oldestWanted >= firstTs || leafCursor < PAGE_SIZE) break;
+            leafCursor -= PAGE_SIZE;
+        }
+
+        // Use the found page for the observation
+        uint16 pageIndex = leafCursor / PAGE_SIZE;
+        uint16 localIndex = leafCursor % PAGE_SIZE;
+        uint16 pageBase = leafCursor - localIndex;
+        uint16 pageCardinality = totalCardinality > pageBase ? totalCardinality - pageBase : 1;
+
+        if (pageCardinality == 0) {
+            revert OracleCardinalityCannotBeZero();
+        }
+        if (pageCardinality > PAGE_SIZE) {
+            pageCardinality = PAGE_SIZE;
+        }
+
+        return observeSingle(pages[pageIndex], time, secondsAgo, tick, localIndex, liquidity, pageCardinality);
     }
 
     /// @dev Safe cast/ clamp helper for accumulator.

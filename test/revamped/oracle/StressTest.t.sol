@@ -5,7 +5,7 @@ import "forge-std/Test.sol";
 import "forge-std/console.sol";
 
 // Import the base test
-import "./Base_Test.sol";
+import "../Base_Test.sol";
 
 // Import v4 periphery interfaces
 import {IV4Router} from "v4-periphery/src/interfaces/IV4Router.sol";
@@ -49,7 +49,7 @@ contract StressTest is Base_Test {
 
     /// @notice Test ring buffer behavior by performing enough swaps to fill and wrap the oracle buffer
     /// @dev Page size is 512, total capacity is 1024 (2 full pages of 512 each)
-    function testRingBufferBehavior() public {
+    function test_RingBufferBehavior() public {
         console.log("=== Testing Ring Buffer Behavior (2000 swaps, PAGE_SIZE=512, MAX_CARD=1024) ===");
         (uint160 sqrtPriceX96, int24 tick, uint128 liquidity,,) = getPoolState();
         console.log("Initial pool state:");
@@ -58,7 +58,7 @@ contract StressTest is Base_Test {
         console.log("- Liquidity:", liquidity);
         vm.startPrank(user1);
         PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false});
-        uint256 swapAmount = 0.01 ether;
+        uint256 swapAmount = 1 ether;
         (uint16 initialIndex, uint16 initialCardinality,) = oracle.states(poolId);
         console.log("Initial oracle state:");
         console.log("- Index:", initialIndex);
@@ -72,9 +72,12 @@ contract StressTest is Base_Test {
         uint16 card = initialCardinality;
         uint256 totalSwaps = 2000;
         for (uint256 i = 0; i < totalSwaps; i++) {
-            SwapParams memory params = (i % 2 == 0)
-                ? SwapParams({zeroForOne: true, amountSpecified: -int256(swapAmount), sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1})
-                : SwapParams({zeroForOne: false, amountSpecified: -int256(swapAmount), sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1});
+            // Use unidirectional swaps to create meaningful price movements
+            SwapParams memory params = SwapParams({
+                zeroForOne: true, 
+                amountSpecified: -int256(swapAmount), 
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            });
             try swapRouter.swap(poolKey, params, testSettings, "") {} catch { revert("Swap failed"); }
             vm.roll(block.number + 1);
             vm.warp(block.timestamp + 13);
@@ -180,7 +183,7 @@ contract StressTest is Base_Test {
 
     /// @notice Test consult functionality with significant price movements
     /// @dev Performs large swaps to create substantial price changes and verifies TWAP calculations
-    function testConsultWithBigSwaps() public {
+    function test_ConsultWithBigSwaps() public {
         console.log("=== Testing Consult with Big Swaps ===");
         
         // Get initial state
@@ -197,14 +200,17 @@ contract StressTest is Base_Test {
         console.log("=== Initial Consult Test ===");
         _testComprehensiveConsult("Initial state");
         
-        // Phase 1: Small price movements to build history
-        console.log("=== Phase 1: Building Oracle History ===");
-        uint256 smallSwapAmount = 0.1 ether;
+        // Phase 1: Unidirectional price movements to build history
+        console.log("=== Phase 1: Building Oracle History with Unidirectional Swaps ===");
+        uint256 moderateSwapAmount = 20 ether; // Increased from 5 ether
         for (uint256 i = 0; i < 50; i++) {
-            SwapParams memory params = (i % 2 == 0)
-                ? SwapParams({zeroForOne: true, amountSpecified: -int256(smallSwapAmount), sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1})
-                : SwapParams({zeroForOne: false, amountSpecified: -int256(smallSwapAmount), sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1});
-            try swapRouter.swap(poolKey, params, testSettings, "") {} catch { revert("Small swap failed"); }
+            // All swaps in the same direction (zeroForOne: true) for sustained movement
+            SwapParams memory params = SwapParams({
+                zeroForOne: true, 
+                amountSpecified: -int256(moderateSwapAmount), 
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            });
+            try swapRouter.swap(poolKey, params, testSettings, "") {} catch { revert("Moderate swap failed"); }
             vm.roll(block.number + 1);
             vm.warp(block.timestamp + 30); // 30 seconds between swaps
         }
@@ -214,99 +220,73 @@ contract StressTest is Base_Test {
         console.log("After small swaps - Timestamp:", timestampAfterSmall);
         _testComprehensiveConsult("After small swaps");
         
-        // Phase 2: Large price movements
-        console.log("=== Phase 2: Large Price Movements ===");
-        uint256 largeSwapAmount = 10 ether; // Much larger swaps
+        // Phase 2: Large unidirectional price movements
+        console.log("=== Phase 2: Large Unidirectional Price Movements ===");
+        uint256 largeSwapAmount = 50 ether; // Increased from 10 ether
         
-        // First large swap - token0 to token1 (price up)
-        SwapParams memory largeUpParams = SwapParams({
-            zeroForOne: true, 
-            amountSpecified: -int256(largeSwapAmount), 
-            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
-        });
-        try swapRouter.swap(poolKey, largeUpParams, testSettings, "") {} catch { revert("Large up swap failed"); }
-        vm.roll(block.number + 1);
-        vm.warp(block.timestamp + 60); // 1 minute gap
+        // Large unidirectional swaps - all in the same direction
+        for (uint256 i = 0; i < 10; i++) {
+            SwapParams memory largeParams = SwapParams({
+                zeroForOne: true, 
+                amountSpecified: -int256(largeSwapAmount), 
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            });
+            try swapRouter.swap(poolKey, largeParams, testSettings, "") {} catch { revert("Large swap failed"); }
+            vm.roll(block.number + 1);
+            vm.warp(block.timestamp + 60); // 1 minute gap
+        }
         
-        (int24 tickAfterLargeUp, uint32 timestampAfterLargeUp) = oracle.getLatestObservation(poolId);
-        console.log("After large up swap - Tick:", tickAfterLargeUp);
-        console.log("After large up swap - Timestamp:", timestampAfterLargeUp);
-        console.log("Price change:", int256(tickAfterLargeUp) - int256(tickAfterSmall));
-        _testComprehensiveConsult("After large up swap");
+        (int24 tickAfterLarge, uint32 timestampAfterLarge) = oracle.getLatestObservation(poolId);
+        console.log("After large unidirectional swaps - Tick:", tickAfterLarge);
+        console.log("After large unidirectional swaps - Timestamp:", timestampAfterLarge);
+        console.log("Price change from moderate:", int256(tickAfterLarge) - int256(tickAfterSmall));
+        _testComprehensiveConsult("After large unidirectional swaps");
         
-        // Second large swap - token1 to token0 (price down)
-        SwapParams memory largeDownParams = SwapParams({
-            zeroForOne: false, 
-            amountSpecified: -int256(largeSwapAmount), 
-            sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
-        });
-        try swapRouter.swap(poolKey, largeDownParams, testSettings, "") {} catch { revert("Large down swap failed"); }
-        vm.roll(block.number + 1);
-        vm.warp(block.timestamp + 60); // 1 minute gap
+        // Phase 3: Extreme unidirectional price movements
+        console.log("=== Phase 3: Extreme Unidirectional Price Movements ===");
+        uint256 extremeSwapAmount = 100 ether; // Increased from 50 ether
         
-        (int24 tickAfterLargeDown, uint32 timestampAfterLargeDown) = oracle.getLatestObservation(poolId);
-        console.log("After large down swap - Tick:", tickAfterLargeDown);
-        console.log("After large down swap - Timestamp:", timestampAfterLargeDown);
-        console.log("Price change:", int256(tickAfterLargeDown) - int256(tickAfterLargeUp));
-        _testComprehensiveConsult("After large down swap");
+        // Extreme unidirectional swaps - all in the same direction
+        for (uint256 i = 0; i < 5; i++) {
+            SwapParams memory extremeParams = SwapParams({
+                zeroForOne: true, 
+                amountSpecified: -int256(extremeSwapAmount), 
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            });
+            try swapRouter.swap(poolKey, extremeParams, testSettings, "") {} catch { revert("Extreme swap failed"); }
+            vm.roll(block.number + 1);
+            vm.warp(block.timestamp + 120); // 2 minute gap
+        }
         
-        // Phase 3: Extreme price movements
-        console.log("=== Phase 3: Extreme Price Movements ===");
-        uint256 extremeSwapAmount = 50 ether; // Very large swaps
+        (int24 tickAfterExtreme, uint32 timestampAfterExtreme) = oracle.getLatestObservation(poolId);
+        console.log("After extreme unidirectional swaps - Tick:", tickAfterExtreme);
+        console.log("After extreme unidirectional swaps - Timestamp:", timestampAfterExtreme);
+        console.log("Price change from large:", int256(tickAfterExtreme) - int256(tickAfterLarge));
+        _testComprehensiveConsult("After extreme unidirectional swaps");
         
-        // Extreme up movement
-        SwapParams memory extremeUpParams = SwapParams({
-            zeroForOne: true, 
-            amountSpecified: -int256(extremeSwapAmount), 
-            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
-        });
-        try swapRouter.swap(poolKey, extremeUpParams, testSettings, "") {} catch { revert("Extreme up swap failed"); }
-        vm.roll(block.number + 1);
-        vm.warp(block.timestamp + 120); // 2 minute gap
-        
-        (int24 tickAfterExtremeUp, uint32 timestampAfterExtremeUp) = oracle.getLatestObservation(poolId);
-        console.log("After extreme up swap - Tick:", tickAfterExtremeUp);
-        console.log("After extreme up swap - Timestamp:", timestampAfterExtremeUp);
-        console.log("Price change:", int256(tickAfterExtremeUp) - int256(tickAfterLargeDown));
-        _testComprehensiveConsult("After extreme up swap");
-        
-        // Extreme down movement
-        SwapParams memory extremeDownParams = SwapParams({
-            zeroForOne: false, 
-            amountSpecified: -int256(extremeSwapAmount), 
-            sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
-        });
-        try swapRouter.swap(poolKey, extremeDownParams, testSettings, "") {} catch { revert("Extreme down swap failed"); }
-        vm.roll(block.number + 1);
-        vm.warp(block.timestamp + 120); // 2 minute gap
-        
-        (int24 tickAfterExtremeDown, uint32 timestampAfterExtremeDown) = oracle.getLatestObservation(poolId);
-        console.log("After extreme down swap - Tick:", tickAfterExtremeDown);
-        console.log("After extreme down swap - Timestamp:", timestampAfterExtremeDown);
-        console.log("Price change:", int256(tickAfterExtremeDown) - int256(tickAfterExtremeUp));
-        _testComprehensiveConsult("After extreme down swap");
-        
-        // Phase 4: Volatile trading pattern
-        console.log("=== Phase 4: Volatile Trading Pattern ===");
-        uint256 volatileSwapAmount = 5 ether;
+        // Phase 4: Sustained unidirectional trading pattern
+        console.log("=== Phase 4: Sustained Unidirectional Trading Pattern ===");
+        uint256 sustainedSwapAmount = 30 ether; // Increased from 5 ether
         for (uint256 i = 0; i < 20; i++) {
-            // Alternate between up and down with varying amounts
-            uint256 amount = volatileSwapAmount + (i * 0.5 ether);
-            SwapParams memory params = (i % 2 == 0)
-                ? SwapParams({zeroForOne: true, amountSpecified: -int256(amount), sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1})
-                : SwapParams({zeroForOne: false, amountSpecified: -int256(amount), sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1});
-            try swapRouter.swap(poolKey, params, testSettings, "") {} catch { revert("Volatile swap failed"); }
+            // All swaps in the same direction with increasing amounts
+            uint256 amount = sustainedSwapAmount + (i * 2 ether);
+            SwapParams memory params = SwapParams({
+                zeroForOne: true, 
+                amountSpecified: -int256(amount), 
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            });
+            try swapRouter.swap(poolKey, params, testSettings, "") {} catch { revert("Sustained swap failed"); }
             vm.roll(block.number + 1);
             vm.warp(block.timestamp + 45); // 45 seconds between swaps
             
             // Test consult every 5 swaps
             if (i % 5 == 4) {
                 (int24 currentTick, uint32 currentTimestamp) = oracle.getLatestObservation(poolId);
-                console.log("Volatile trading - Swap");
+                console.log("Sustained unidirectional trading - Swap");
                 console.log("Swap number:", i+1);
                 console.log("Tick:", currentTick);
                 console.log("Timestamp:", currentTimestamp);
-                _testComprehensiveConsult(string(abi.encodePacked("Volatile swap ", _toString(i+1))));
+                _testComprehensiveConsult(string(abi.encodePacked("Sustained swap ", _toString(i+1))));
             }
         }
         
@@ -401,7 +381,7 @@ contract StressTest is Base_Test {
 
     /// @notice Test consult functionality with very large swaps and dramatic price movements
     /// @dev Performs massive swaps to create substantial tick changes and verifies TWAP calculations
-    function testConsultWithMassiveSwaps() public {
+    function test_ConsultWithMassiveSwaps() public {
         console.log("=== Testing Consult with Massive Swaps ===");
         
         // Get initial state
@@ -418,13 +398,16 @@ contract StressTest is Base_Test {
         console.log("=== Initial Consult Test ===");
         _testComprehensiveConsult("Initial state");
         
-        // Phase 1: Build some history with moderate swaps
-        console.log("=== Phase 1: Building Oracle History ===");
-        uint256 moderateSwapAmount = 1 ether;
+        // Phase 1: Build some history with unidirectional moderate swaps
+        console.log("=== Phase 1: Building Oracle History with Unidirectional Swaps ===");
+        uint256 moderateSwapAmount = 10 ether; // Increased from 1 ether
         for (uint256 i = 0; i < 30; i++) {
-            SwapParams memory params = (i % 2 == 0)
-                ? SwapParams({zeroForOne: true, amountSpecified: -int256(moderateSwapAmount), sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1})
-                : SwapParams({zeroForOne: false, amountSpecified: -int256(moderateSwapAmount), sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1});
+            // All swaps in the same direction for sustained movement
+            SwapParams memory params = SwapParams({
+                zeroForOne: true, 
+                amountSpecified: -int256(moderateSwapAmount), 
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            });
             try swapRouter.swap(poolKey, params, testSettings, "") {} catch { revert("Moderate swap failed"); }
             vm.roll(block.number + 1);
             vm.warp(block.timestamp + 60); // 1 minute between swaps
@@ -435,83 +418,94 @@ contract StressTest is Base_Test {
         console.log("After moderate swaps - Timestamp:", timestampAfterModerate);
         _testComprehensiveConsult("After moderate swaps");
         
-        // Phase 2: Massive price movements - token0 to token1 (price up significantly)
-        console.log("=== Phase 2: Massive Price Up Movement ===");
-        uint256 massiveUpAmount = 100 ether; // Very large swap to drive price up
+        // Phase 2: Massive unidirectional price movements
+        console.log("=== Phase 2: Massive Unidirectional Price Movements ===");
+        uint256 massiveAmount = 200 ether; // Increased from 100 ether
         
-        SwapParams memory massiveUpParams = SwapParams({
-            zeroForOne: true, 
-            amountSpecified: -int256(massiveUpAmount), 
-            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
-        });
-        try swapRouter.swap(poolKey, massiveUpParams, testSettings, "") {} catch { revert("Massive up swap failed"); }
-        vm.roll(block.number + 1);
-        vm.warp(block.timestamp + 120); // 2 minute gap
+        // Multiple massive unidirectional swaps
+        for (uint256 i = 0; i < 5; i++) {
+            SwapParams memory massiveParams = SwapParams({
+                zeroForOne: true, 
+                amountSpecified: -int256(massiveAmount), 
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            });
+            try swapRouter.swap(poolKey, massiveParams, testSettings, "") {} catch { revert("Massive swap failed"); }
+            vm.roll(block.number + 1);
+            vm.warp(block.timestamp + 120); // 2 minute gap
+        }
         
-        (int24 tickAfterMassiveUp, uint32 timestampAfterMassiveUp) = oracle.getLatestObservation(poolId);
-        console.log("After massive up swap - Tick:", tickAfterMassiveUp);
-        console.log("After massive up swap - Timestamp:", timestampAfterMassiveUp);
-        console.log("Price change:", int256(tickAfterMassiveUp) - int256(tickAfterModerate));
-        _testComprehensiveConsult("After massive up swap");
+        (int24 tickAfterMassive, uint32 timestampAfterMassive) = oracle.getLatestObservation(poolId);
+        console.log("After massive unidirectional swaps - Tick:", tickAfterMassive);
+        console.log("After massive unidirectional swaps - Timestamp:", timestampAfterMassive);
+        console.log("Price change from moderate:", int256(tickAfterMassive) - int256(tickAfterModerate));
+        _testComprehensiveConsult("After massive unidirectional swaps");
         
-        // Phase 3: Even more extreme movement - token1 to token0 (price down dramatically)
-        console.log("=== Phase 3: Extreme Price Down Movement ===");
-        uint256 extremeDownAmount = 200 ether; // Even larger swap to drive price down
+        // Phase 3: Extreme unidirectional movements
+        console.log("=== Phase 3: Extreme Unidirectional Movements ===");
+        uint256 extremeAmount = 300 ether; // Increased from 200 ether
         
-        SwapParams memory extremeDownParams = SwapParams({
-            zeroForOne: false, 
-            amountSpecified: -int256(extremeDownAmount), 
-            sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1
-        });
-        try swapRouter.swap(poolKey, extremeDownParams, testSettings, "") {} catch { revert("Extreme down swap failed"); }
-        vm.roll(block.number + 1);
-        vm.warp(block.timestamp + 180); // 3 minute gap
+        // Multiple extreme unidirectional swaps
+        for (uint256 i = 0; i < 3; i++) {
+            SwapParams memory extremeParams = SwapParams({
+                zeroForOne: true, 
+                amountSpecified: -int256(extremeAmount), 
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            });
+            try swapRouter.swap(poolKey, extremeParams, testSettings, "") {} catch { revert("Extreme swap failed"); }
+            vm.roll(block.number + 1);
+            vm.warp(block.timestamp + 180); // 3 minute gap
+        }
         
-        (int24 tickAfterExtremeDown, uint32 timestampAfterExtremeDown) = oracle.getLatestObservation(poolId);
-        console.log("After extreme down swap - Tick:", tickAfterExtremeDown);
-        console.log("After extreme down swap - Timestamp:", timestampAfterExtremeDown);
-        console.log("Price change:", int256(tickAfterExtremeDown) - int256(tickAfterMassiveUp));
-        _testComprehensiveConsult("After extreme down swap");
+        (int24 tickAfterExtreme, uint32 timestampAfterExtreme) = oracle.getLatestObservation(poolId);
+        console.log("After extreme unidirectional swaps - Tick:", tickAfterExtreme);
+        console.log("After extreme unidirectional swaps - Timestamp:", timestampAfterExtreme);
+        console.log("Price change from massive:", int256(tickAfterExtreme) - int256(tickAfterMassive));
+        _testComprehensiveConsult("After extreme unidirectional swaps");
         
-        // Phase 4: Another massive up movement
-        console.log("=== Phase 4: Another Massive Price Up Movement ===");
-        uint256 anotherMassiveUpAmount = 150 ether;
+        // Phase 4: Sustained extreme movements
+        console.log("=== Phase 4: Sustained Extreme Movements ===");
+        uint256 sustainedAmount = 250 ether;
         
-        SwapParams memory anotherMassiveUpParams = SwapParams({
-            zeroForOne: true, 
-            amountSpecified: -int256(anotherMassiveUpAmount), 
-            sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
-        });
-        try swapRouter.swap(poolKey, anotherMassiveUpParams, testSettings, "") {} catch { revert("Another massive up swap failed"); }
-        vm.roll(block.number + 1);
-        vm.warp(block.timestamp + 240); // 4 minute gap
+        // Multiple sustained extreme swaps
+        for (uint256 i = 0; i < 4; i++) {
+            SwapParams memory sustainedParams = SwapParams({
+                zeroForOne: true, 
+                amountSpecified: -int256(sustainedAmount), 
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            });
+            try swapRouter.swap(poolKey, sustainedParams, testSettings, "") {} catch { revert("Sustained swap failed"); }
+            vm.roll(block.number + 1);
+            vm.warp(block.timestamp + 240); // 4 minute gap
+        }
         
-        (int24 tickAfterAnotherUp, uint32 timestampAfterAnotherUp) = oracle.getLatestObservation(poolId);
-        console.log("After another massive up swap - Tick:", tickAfterAnotherUp);
-        console.log("After another massive up swap - Timestamp:", timestampAfterAnotherUp);
-        console.log("Price change:", int256(tickAfterAnotherUp) - int256(tickAfterExtremeDown));
-        _testComprehensiveConsult("After another massive up swap");
+        (int24 tickAfterSustained, uint32 timestampAfterSustained) = oracle.getLatestObservation(poolId);
+        console.log("After sustained extreme swaps - Tick:", tickAfterSustained);
+        console.log("After sustained extreme swaps - Timestamp:", timestampAfterSustained);
+        console.log("Price change from extreme:", int256(tickAfterSustained) - int256(tickAfterExtreme));
+        _testComprehensiveConsult("After sustained extreme swaps");
         
-        // Phase 5: Volatile trading with varying large amounts
-        console.log("=== Phase 5: Volatile Large Trading Pattern ===");
+        // Phase 5: Sustained large trading pattern
+        console.log("=== Phase 5: Sustained Large Trading Pattern ===");
         for (uint256 i = 0; i < 15; i++) {
-            // Vary between very large amounts
-            uint256 amount = 50 ether + (i * 10 ether); // 50 ETH to 190 ETH
-            SwapParams memory params = (i % 2 == 0)
-                ? SwapParams({zeroForOne: true, amountSpecified: -int256(amount), sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1})
-                : SwapParams({zeroForOne: false, amountSpecified: -int256(amount), sqrtPriceLimitX96: TickMath.MAX_SQRT_PRICE - 1});
-            try swapRouter.swap(poolKey, params, testSettings, "") {} catch { revert("Volatile large swap failed"); }
+            // Vary between very large amounts, all in the same direction
+            uint256 amount = 100 ether + (i * 15 ether); // 100 ETH to 310 ETH
+            SwapParams memory params = SwapParams({
+                zeroForOne: true, 
+                amountSpecified: -int256(amount), 
+                sqrtPriceLimitX96: TickMath.MIN_SQRT_PRICE + 1
+            });
+            try swapRouter.swap(poolKey, params, testSettings, "") {} catch { revert("Sustained large swap failed"); }
             vm.roll(block.number + 1);
             vm.warp(block.timestamp + 90); // 1.5 minutes between swaps
             
             // Test consult every 3 swaps
             if (i % 3 == 2) {
                 (int24 currentTick, uint32 currentTimestamp) = oracle.getLatestObservation(poolId);
-                console.log("Volatile large trading - Swap");
+                console.log("Sustained large trading - Swap");
                 console.log("Swap number:", i+1);
                 console.log("Tick:", currentTick);
                 console.log("Timestamp:", currentTimestamp);
-                _testComprehensiveConsult(string(abi.encodePacked("Volatile large swap ", _toString(i+1))));
+                _testComprehensiveConsult(string(abi.encodePacked("Sustained large swap ", _toString(i+1))));
             }
         }
         

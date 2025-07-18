@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.27;
+pragma solidity ^0.8.25;
 
 // - - - external deps - - -
 
@@ -47,6 +47,11 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     error ObservationOverflow(uint16 cardinality);
     error ObservationTooOld(uint32 time, uint32 target);
     error TooManyObservationsRequested();
+    
+    // Enhanced error handling for better debugging
+    error OracleDataUnavailable(uint16 pageIndex, string reason);
+    error OraclePageEmpty(uint16 pageIndex, uint16 expectedCardinality);
+    error OracleNotInitialized(PoolId poolId);
 
     event TickCapParamChanged(PoolId indexed poolId, uint24 newMaxTicksPerBlock);
     event MaxTicksPerBlockUpdated(
@@ -160,7 +165,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         if (msg.sender != owner) revert OnlyOwner();
 
         if (states[poolId].cardinality == 0) {
-            revert Errors.OracleOperationFailed("refreshPolicyCache", "Pool not enabled");
+            revert OracleNotInitialized(poolId);
         }
 
         CachedPolicy storage pc = _policy[poolId];
@@ -303,20 +308,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         }
 
         if (wroteNewSlot) {
-            // Translate the page-local index back to the global cursor.
-            // If we just wrote the last slot of a page and the library wrapped
-            // to 0, jump to the **first slot of the next page** so subsequent
-            // observations fill fresh storage instead of overwriting the old page.
-            if (localIdx == PAGE_SIZE - 1 && newLocalIdx == 0) {
-                unchecked {
-                    state.index = pageBase + PAGE_SIZE;
-                } // next leaf
-            } else {
-                unchecked {
-                    state.index = pageBase + newLocalIdx;
-                }
-            }
-
             // ----------- bump global counters (bootstrap slot included) --------------
             unchecked {
                 if (state.cardinality < TruncatedOracle.MAX_CARDINALITY_ALLOWED) {
@@ -331,10 +322,28 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
             ) {
                 state.cardinalityNext = state.cardinality + 1;
             }
-
-            // latest-tick cache removed – nothing to update here.
         }
 
+        if (wroteNewSlot) {
+            // Update global index based on local page transitions
+            if (localIdx == PAGE_SIZE - 1 && newLocalIdx == 0) {
+                // Transition from end of current page to start of next page
+                if (state.cardinality >= TruncatedOracle.MAX_CARDINALITY_ALLOWED) {
+                    // At max capacity: wrap around using ring buffer
+                    unchecked { 
+                        state.index = (state.index + 1) % TruncatedOracle.MAX_CARDINALITY_ALLOWED;
+                    }
+                } else {
+                    // Not at max: advance to next page
+                    unchecked { state.index = pageBase + PAGE_SIZE; }
+                }
+            } else {
+                // Normal case: advance within the current page
+                unchecked { state.index = pageBase + newLocalIdx; }
+            }
+        }
+
+        // latest-tick cache removed – nothing to update here.
         // Update auto-tune frequency counter if capped
         _updateCapFrequency(poolId, tickWasCapped);
     }
@@ -349,7 +358,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     {
         if (msg.sender != hook) revert OnlyHook();
         if (states[poolId].cardinality == 0) {
-            revert Errors.OracleOperationFailed("pushObservationAndCheckCap", "Pool not enabled");
+            revert OracleNotInitialized(poolId);
         }
         return _recordObservation(poolId, preSwapTick);
     }
@@ -380,7 +389,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     ///         the pool's `slot0`, avoiding any extra per-observation state.
     function getLatestObservation(PoolId poolId) external view returns (int24 tick, uint32 blockTimestamp) {
         if (states[poolId].cardinality == 0) {
-            revert Errors.OracleOperationFailed("getLatestObservation", "Pool not enabled");
+            revert OracleNotInitialized(poolId);
         }
 
         ObservationState storage state = states[poolId];
@@ -440,6 +449,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
         // We are multiplying here instead of shifting to ensure that harmonicMeanLiquidity doesn't overflow uint128
         uint192 secondsAgoX160 = uint192(secondsAgo) * type(uint160).max;
         harmonicMeanLiquidity = uint128(secondsAgoX160 / (uint192(secondsPerLiquidityCumulativesDelta) << 32));
+
+
     }
 
     /**
@@ -457,61 +468,83 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
     {
         PoolId poolId = key.toId();
 
-        // Length guard removed – timestamp validation ensures safety even for multi-page history
         if (states[poolId].cardinality == 0) {
-            revert Errors.OracleOperationFailed("observe", "Pool not enabled");
+            revert OracleNotInitialized(poolId);
         }
 
         ObservationState storage state = states[poolId];
-        // --- Resolve leaf dynamically – supports TWAP windows spanning multiple pages ---
-        uint16 gIdx = state.index; // global index of newest obs
         uint32 time = uint32(block.timestamp);
 
-        // Determine oldest timestamp the caller cares about (largest secondsAgo)
-        uint32 oldestWanted;
-        if (secondsAgos.length != 0) {
-            uint32 sa = secondsAgos[secondsAgos.length - 1];
-            // Same wrap-around logic used by TruncatedOracle.observeSingle
-            oldestWanted = time >= sa ? time - sa : time + (type(uint32).max - sa) + 1;
+        // At max capacity, use proper ring buffer logic
+        if (state.cardinality >= TruncatedOracle.MAX_CARDINALITY_ALLOWED) {
+            // For full ring buffer, we need to handle multi-page reads
+            // The oldest observation is at (index + 1) % MAX_CARDINALITY_ALLOWED
+            uint16 oldestIndex = (state.index + 1) % TruncatedOracle.MAX_CARDINALITY_ALLOWED;
+            
+            // Find the page containing the oldest observation
+            TruncatedOracle.Observation[PAGE_SIZE] storage oldestPage = _leaf(poolId, oldestIndex);
+            uint16 oldestLocalIdx = oldestIndex % PAGE_SIZE;
+            
+            // Use the page containing the oldest observation for the entire query
+            (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+            uint128 liquidity = StateLibrary.getLiquidity(poolManager, poolId);
+            
+            return oldestPage.observe(
+                time, 
+                secondsAgos, 
+                currentTick, 
+                oldestLocalIdx, 
+                liquidity, 
+                PAGE_SIZE // Use full page size for ring buffer reads
+            );
+        } else {
+            // Not at max capacity: use existing logic for growing buffer
+            uint16 gIdx = state.index;
+            uint32 oldestWanted;
+            if (secondsAgos.length != 0) {
+                uint32 sa = secondsAgos[secondsAgos.length - 1];
+                oldestWanted = time >= sa ? time - sa : time + (type(uint32).max - sa) + 1;
+            }
+
+            uint16 leafCursor = gIdx;
+
+            // Walk pages backwards until the first timestamp inside the leaf is <= oldestWanted
+            while (true) {
+                TruncatedOracle.Observation[PAGE_SIZE] storage page = _leaf(poolId, leafCursor);
+                uint16 localIdx = uint16(leafCursor % PAGE_SIZE);
+                uint16 pageBase = leafCursor - localIdx;
+                uint16 pageCardinality = state.cardinality > pageBase ? state.cardinality - pageBase : 1;
+
+                uint16 firstSlot = pageCardinality == PAGE_SIZE ? (localIdx + 1) % PAGE_SIZE : 0;
+                uint32 firstTs = page[firstSlot].blockTimestamp;
+
+                // Skip uninitialized pages (firstTs == 0) unless we're on the very first page
+                if (firstTs == 0 && leafCursor >= PAGE_SIZE) {
+                    leafCursor -= PAGE_SIZE;
+                    continue;
+                }
+
+                if (oldestWanted >= firstTs || leafCursor < PAGE_SIZE) break;
+                leafCursor -= PAGE_SIZE;
+            }
+
+            TruncatedOracle.Observation[PAGE_SIZE] storage obs = _leaf(poolId, leafCursor);
+            uint16 idx = uint16(leafCursor % PAGE_SIZE);
+            uint16 card = state.cardinality > leafCursor - idx ? state.cardinality - (leafCursor - idx) : 1;
+
+            if (card == 0) {
+                uint16 pageIndex = leafCursor / PAGE_SIZE;
+                revert OraclePageEmpty(pageIndex, state.cardinality);
+            }
+            if (card > PAGE_SIZE) {
+                card = PAGE_SIZE;
+            }
+
+            (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+            uint128 liquidity = StateLibrary.getLiquidity(poolManager, poolId);
+
+            return obs.observe(time, secondsAgos, currentTick, idx, liquidity, card);
         }
-
-        uint16 leafCursor = gIdx;
-
-        // Walk pages backwards until the first timestamp inside the leaf is <= oldestWanted
-        while (true) {
-            TruncatedOracle.Observation[PAGE_SIZE] storage page = _leaf(poolId, leafCursor);
-            uint16 localIdx = uint16(leafCursor % PAGE_SIZE);
-            uint16 pageBase = leafCursor - localIdx;
-            uint16 pageCardinality = state.cardinality > pageBase ? state.cardinality - pageBase : 1;
-
-            // slot 0 may be uninitialised if page not yet full; choose first initialised slot
-            uint16 firstSlot = pageCardinality == PAGE_SIZE ? (localIdx + 1) % PAGE_SIZE : 0;
-            uint32 firstTs = page[firstSlot].blockTimestamp;
-
-            if (oldestWanted >= firstTs || leafCursor < PAGE_SIZE) break;
-            leafCursor -= PAGE_SIZE;
-        }
-
-        // Fetch the resolved leaf *after* the loop to guarantee initialization
-        TruncatedOracle.Observation[PAGE_SIZE] storage obs = _leaf(poolId, leafCursor);
-
-        uint16 idx = uint16(leafCursor % PAGE_SIZE);
-
-        // Cardinality of *this* leaf (cannot exceed PAGE_SIZE)
-        uint16 card = state.cardinality > leafCursor - idx ? state.cardinality - (leafCursor - idx) : 1;
-
-        if (card == 0) revert("empty-page-card");
-        if (card > PAGE_SIZE) {
-            card = PAGE_SIZE;
-        }
-
-        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
-        uint128 liquidity = StateLibrary.getLiquidity(poolManager, poolId);
-
-        (tickCumulatives, secondsPerLiquidityCumulativeX128s) =
-            obs.observe(time, secondsAgos, currentTick, idx, liquidity, card);
-
-        return (tickCumulatives, secondsPerLiquidityCumulativeX128s);
     }
 
 
@@ -698,7 +731,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard {
 
         ObservationState storage state = states[poolId];
         if (state.cardinality == 0) {
-            revert Errors.OracleOperationFailed("increaseCardinalityNext", "Pool not enabled");
+            revert OracleNotInitialized(poolId);
         }
 
         oldNext = state.cardinalityNext;

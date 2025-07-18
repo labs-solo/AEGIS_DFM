@@ -5,7 +5,7 @@ import "forge-std/Test.sol";
 import "forge-std/console.sol";
 
 // Import the base test
-import "./Base_Test.sol";
+import "../Base_Test.sol";
 
 // Import v4 periphery interfaces
 import {IV4Router} from "v4-periphery/src/interfaces/IV4Router.sol";
@@ -32,7 +32,7 @@ contract UnidirectionalTest is Base_Test {
 
     /// @notice Test consult functionality with sustained upward price movement
     /// @dev Performs swaps that only move price up to create dramatic cumulative tick changes
-    function testConsultWithSustainedUpwardMovement() public {
+    function test_ConsultWithSustainedUpwardMovement() public {
         console.log("=== Testing Consult with Sustained Upward Movement ===");
         
         // Get initial state
@@ -263,7 +263,7 @@ contract UnidirectionalTest is Base_Test {
 
     /// @notice Test that the oracle ring buffer loops back to index 0
     /// @dev Performs enough swaps to fill the buffer (1024 observations) and then continues
-    function testOracleRingBufferLooping() public {
+    function test_OracleRingBufferLooping() public {
         console.log("=== Testing Oracle Ring Buffer Looping ===");
         
         // Get initial state
