@@ -37,7 +37,7 @@ contract DeployTimelockScript is Script, UniswapV4Config {
 
     function getTimelockConfig() internal view returns (TimelockConfig memory config) {
         config.admin = vm.envOr("TIMELOCK_ADMIN", msg.sender);
-        config.delay = vm.envOr("TIMELOCK_DELAY", uint256(180));
+        config.delay = vm.envOr("TIMELOCK_DELAY", uint256(1 days));
 
         if (config.admin == address(0)) {
             config.admin = msg.sender;
@@ -48,7 +48,7 @@ contract DeployTimelockScript is Script, UniswapV4Config {
 
     function validateConfig(TimelockConfig memory config) internal pure {
         require(config.admin != address(0), "DeployTimelock: Admin address cannot be zero");
-        require(config.delay >= 60, "DeployTimelock: Delay must be at least 2 days (minimum delay)");
+        require(config.delay >= 1 days, "DeployTimelock: Delay must be at least 2 days (minimum delay)");
         require(config.delay <= 30 days, "DeployTimelock: Delay cannot exceed 30 days (maximum delay)");
     }
 
@@ -75,7 +75,7 @@ contract DeployTimelockScript is Script, UniswapV4Config {
         require(timelock.delay() == config.delay, "DeployTimelock: Delay verification failed");
         require(timelock.pendingAdmin() == address(0), "DeployTimelock: Pending admin should be zero");
 
-        require(timelock.MINIMUM_DELAY() == 60, "DeployTimelock: Minimum delay constant incorrect");
+        require(timelock.MINIMUM_DELAY() == 1 days, "DeployTimelock: Minimum delay constant incorrect");
         require(timelock.MAXIMUM_DELAY() == 30 days, "DeployTimelock: Maximum delay constant incorrect");
         require(timelock.GRACE_PERIOD() == 14 days, "DeployTimelock: Grace period constant incorrect");
 
