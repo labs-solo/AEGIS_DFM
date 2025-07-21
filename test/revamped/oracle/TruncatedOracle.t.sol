@@ -609,4 +609,42 @@ contract OracleTest is Base_Test {
     function abs(int256 x) internal pure returns (uint256) {
         return x >= 0 ? uint256(x) : uint256(-x);
     }
+
+    function test_ManualIncreaseBeyondMax() public {
+        console.log("=== Testing Manual Increase Beyond 1024 ===");
+        
+        // Fill buffer to 1024
+        for (uint i = 0; i < 1024; i++) {
+            _performSwap(1e18, true);
+            vm.warp(block.timestamp + 60);
+        }
+        
+        (uint16 index, uint16 cardinality, uint16 cardinalityNext) = oracle.states(poolId);
+        console.log("After 1024 swaps:");
+        console.log("  Index:", index);
+        console.log("  Cardinality:", cardinality);
+        console.log("  CardinalityNext:", cardinalityNext);
+        assertEq(cardinalityNext, 1024, "Should be at max 1024");
+
+        // Manually increase to 1100
+        oracle.increaseCardinalityNext(poolKey, 1100);
+        (index, cardinality, cardinalityNext) = oracle.states(poolId);
+        console.log("After manual increase to 1100:");
+        console.log("  Index:", index);
+        console.log("  Cardinality:", cardinality);
+        console.log("  CardinalityNext:", cardinalityNext);
+        assertEq(cardinalityNext, 1100, "Should be increased to 1100");
+
+        // Perform more swaps and check that buffer grows
+        for (uint i = 0; i < 80; i++) {
+            _performSwap(1e18, true);
+            vm.warp(block.timestamp + 60);
+        }
+        (index, cardinality, cardinalityNext) = oracle.states(poolId);
+        console.log("After 80 more swaps:");
+        console.log("  Index:", index);
+        console.log("  Cardinality:", cardinality);
+        console.log("  CardinalityNext:", cardinalityNext);
+        assertGt(cardinalityNext, 1024, "Should have grown beyond 1024");
+    }
 } 

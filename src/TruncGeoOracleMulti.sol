@@ -259,9 +259,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         // Update state
         state.index = newIndex;
         state.cardinality = newCardinality;
-
-        // Update cap frequency (only decay here, cap events are handled in afterSwap)
-        _updateCapFrequency(poolId, false);
     }
 
     /* ─────────────────── VIEW FUNCTIONS ──────────────────────── */
@@ -378,7 +375,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         ObservationState storage state = states[poolId];
 
         cardinalityNextOld = state.cardinalityNext;
-        cardinalityNextNew = _observations[poolId].grow(state.cardinality, cardinalityNext);
+        cardinalityNextNew = _observations[poolId].grow(state.cardinalityNext, cardinalityNext);
         state.cardinalityNext = cardinalityNextNew;
     }
 
