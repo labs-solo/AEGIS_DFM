@@ -34,6 +34,7 @@ import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol
 
 import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
 import {Math} from "./libraries/Math.sol";
+import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 
 // - - - Project Interfaces - - -
 
@@ -187,6 +188,16 @@ contract Spot is BaseHook, ISpot {
             tstore(add(poolId, 1), preSwapTick) // use next slot for pre-swap tick
         }
 
+        // Record observation with the pre-swap tick (no capping applied yet)
+        try truncGeoOracle.recordObservation(poolId, preSwapTick) {
+            // Observation recorded successfully
+        } catch Error(string memory reason) {
+            emit OracleUpdateFailed(poolId, reason);
+        } catch (bytes memory lowLevelData) {
+            // Low-level oracle failure
+            emit OracleUpdateFailed(poolId, "LLOF");
+        }
+
         // Calculate protocol fee based on policy
         uint256 protocolFeePPM = policyManager.getPoolPOLShare(poolId);
 
@@ -248,22 +259,32 @@ contract Spot is BaseHook, ISpot {
             preSwapTick := tload(add(poolId, 1))
         }
 
-        // Push observation to oracle & check cap (with error handling)
-        try truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick) returns (bool capped) {
-            // Notify Dynamic Fee Manager about the oracle update (with error handling)
-            try dynamicFeeManager.notifyOracleUpdate(poolId, capped) {
-                // Oracle update notification succeeded
-            } catch Error(string memory reason) {
-                emit FeeManagerNotificationFailed(poolId, reason);
-            } catch (bytes memory lowLevelData) {
-                // Low-level fee manager failure
-                emit FeeManagerNotificationFailed(poolId, "LLFM");
-            }
+        // Get current tick after the swap
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+
+        // Check if tick movement exceeded the cap
+        int24 tickMovement = currentTick - preSwapTick;
+        uint24 maxTicks = truncGeoOracle.maxTicksPerBlock(poolId);
+        bool tickWasCapped = TruncatedOracle.abs(tickMovement) > maxTicks;
+
+        // Update cap frequency in the oracle
+        try truncGeoOracle.updateCapFrequency(poolId, tickWasCapped) {
+            // Cap frequency updated successfully
         } catch Error(string memory reason) {
             emit OracleUpdateFailed(poolId, reason);
         } catch (bytes memory lowLevelData) {
             // Low-level oracle failure
             emit OracleUpdateFailed(poolId, "LLOF");
+        }
+
+        // Notify Dynamic Fee Manager about the oracle update (with error handling)
+        try dynamicFeeManager.notifyOracleUpdate(poolId, tickWasCapped) {
+            // Oracle update notification succeeded
+        } catch Error(string memory reason) {
+            emit FeeManagerNotificationFailed(poolId, reason);
+        } catch (bytes memory lowLevelData) {
+            // Low-level fee manager failure
+            emit FeeManagerNotificationFailed(poolId, "LLFM");
         }
 
         // Handle exactOut case in afterSwap (params.amountSpecified > 0)

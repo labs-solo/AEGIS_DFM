@@ -17,6 +17,27 @@ interface ITruncGeoOracleMulti {
     function enableOracleForPool(bytes calldata key) external;
 
     /**
+     * @notice Records a new observation for the given pool
+     * @param poolId The pool identifier
+     * @param tickToRecord The tick to record in the observation
+     */
+    function recordObservation(PoolId poolId, int24 tickToRecord) external;
+
+    /**
+     * @notice Updates cap frequency based on whether capping occurred
+     * @param poolId The pool identifier
+     * @param capOccurred Whether capping occurred during this swap
+     */
+    function updateCapFrequency(PoolId poolId, bool capOccurred) external;
+
+    /**
+     * @notice Gets the current cap frequency for a pool (for testing purposes)
+     * @param poolId The pool identifier
+     * @return The current cap frequency
+     */
+    function getCapFrequency(PoolId poolId) external view returns (uint64);
+
+    /**
      * @notice Updates oracle observations for a pool.
      * @param key The pool key.
      * @dev Called by the hook (Spot.sol) during its callbacks.
