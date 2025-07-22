@@ -613,10 +613,30 @@ contract OracleTest is Base_Test {
     function test_ManualIncreaseBeyondMax() public {
         console.log("=== Testing Manual Increase Beyond 1024 ===");
         
-        // Fill buffer to 1024
-        for (uint i = 0; i < 1024; i++) {
+        // Warm up the oracle with 100 swaps (with time progression)
+        for (uint i = 0; i < 100; i++) {
             _performSwap(1e18, true);
             vm.warp(block.timestamp + 60);
+        }
+
+        // Fill buffer for 1024 swaps
+        for (uint i = 100; i < 1024; i++) {
+            _performSwap(1e18, true);
+            vm.warp(block.timestamp + 60);
+            // Call consult and assert it succeeds
+            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
+                assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
+            } catch { revert("Consult failed after swap in initial 1024 loop"); }
+        }
+
+        // Call consult and assert it succeeds
+        try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128 harmonicMeanLiquidity) {
+            console.log("Consult after 1024 swaps succeeded. TWAP tick:", twapTick);
+            assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
+        } catch Error(string memory reason) {
+            revert(string(abi.encodePacked("Consult failed after 1024 swaps: ", reason)));
+        } catch {
+            revert("Consult failed after 1024 swaps with low-level error");
         }
         
         (uint16 index, uint16 cardinality, uint16 cardinalityNext) = oracle.states(poolId);
@@ -639,6 +659,9 @@ contract OracleTest is Base_Test {
         for (uint i = 0; i < 80; i++) {
             _performSwap(1e18, true);
             vm.warp(block.timestamp + 60);
+            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
+                assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
+            } catch { revert("Consult failed after swap in 80 loop"); }
         }
         (index, cardinality, cardinalityNext) = oracle.states(poolId);
         console.log("After 80 more swaps:");
@@ -646,5 +669,50 @@ contract OracleTest is Base_Test {
         console.log("  Cardinality:", cardinality);
         console.log("  CardinalityNext:", cardinalityNext);
         assertGt(cardinalityNext, 1024, "Should have grown beyond 1024");
+
+        // Continue swapping to demonstrate ring buffer wrapping back to 0
+        console.log("=== Testing Ring Buffer Wrapping ===");
+        uint16 currentIndex = index;
+        uint16 swapsToZero = 0;
+        
+        // Calculate how many more swaps needed to reach index 0
+        if (currentIndex > 0) {
+            swapsToZero = 1100 - currentIndex; // Since cardinality is 1100, we need this many swaps to wrap
+        }
+        
+        console.log("Current index:", currentIndex);
+        console.log("Swaps needed to reach index 0:", swapsToZero);
+        
+        // Perform swaps until we wrap back to 0
+        for (uint i = 0; i < swapsToZero; i++) {
+            _performSwap(1e18, true);
+            vm.warp(block.timestamp + 60);
+            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
+                assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
+            } catch { revert("Consult failed after swap in wrap-to-0 loop"); }
+        }
+        
+        (index, cardinality, cardinalityNext) = oracle.states(poolId);
+        console.log("After wrapping to 0:");
+        console.log("  Index:", index);
+        console.log("  Cardinality:", cardinality);
+        console.log("  CardinalityNext:", cardinalityNext);
+        assertEq(index, 0, "Index should have wrapped back to 0");
+        
+        // Do a few more swaps to confirm it continues past 0
+        for (uint i = 0; i < 5; i++) {
+            _performSwap(1e18, true);
+            vm.warp(block.timestamp + 60);
+            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
+                assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
+            } catch { revert("Consult failed after swap in final 5 loop"); }
+        }
+        
+        (index, cardinality, cardinalityNext) = oracle.states(poolId);
+        console.log("After 5 more swaps past 0:");
+        console.log("  Index:", index);
+        console.log("  Cardinality:", cardinality);
+        console.log("  CardinalityNext:", cardinalityNext);
+        assertGt(index, 0, "Index should have continued past 0");
     }
 } 
