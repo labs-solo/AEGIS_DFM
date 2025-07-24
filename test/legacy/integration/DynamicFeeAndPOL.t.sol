@@ -102,7 +102,7 @@ contract DynamicFeeAndPOLTest is LocalSetup {
         // The lines below redeploying the oracle were incorrect and are removed.
 
         // Ensure pool is enabled in the oracle deployed by LocalSetup
-        // This might already be handled if the hook deployed by LocalSetup calls enableOracleForPool
+        // This might already be handled if the hook deployed by LocalSetup calls initializeOracleForPool
         // or if the pool initialization logic triggers it.
         // Adding a check or explicit call if needed:
         address oracleAddr = address(oracle);
@@ -111,8 +111,8 @@ contract DynamicFeeAndPOLTest is LocalSetup {
             // must impersonate the spot hook, which is the only authorised caller
             vm.prank(address(fullRange));
             // bytes memory encodedKey = abi.encode(poolKey); // Convert PoolKey to bytes <-- Reverted
-            // Cast to concrete type TruncGeoOracleMulti for enableOracleForPool call
-            TruncGeoOracleMulti(oracleAddr).enableOracleForPool(poolKey); // <-- Pass poolKey directly
+            // Cast to concrete type TruncGeoOracleMulti for initializeOracleForPool call
+            TruncGeoOracleMulti(oracleAddr).initializeOracleForPool(poolKey, initialTick); // <-- Pass poolKey and initialTick
         }
 
         // ---- Hook Simulation Setup ----

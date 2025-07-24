@@ -10,10 +10,6 @@ library TruncatedOracle {
     /* -------------------------------------------------------------------------- */
     /*                              Library constants                             */
     /* -------------------------------------------------------------------------- */
-    /// @dev Safety-fuse: prevent pathological gas usage in `grow()`
-    uint16 internal constant MAX_CARDINALITY_ALLOWED = 65535;
-    uint16 internal constant GROW_STEP_LIMIT = 256; // per-call growth guard
-
     /// @notice Thrown when trying to interact with an Oracle of a non-initialized pool
     error OracleCardinalityCannotBeZero();
 

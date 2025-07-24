@@ -56,6 +56,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     /// emitted once per pool when the oracle is first enabled
     event OracleConfigured(PoolId indexed poolId, address indexed hook, address indexed owner, uint24 initialCap);
 
+    /* ───────────────────── Emergency pause ────────────────────── */
+    /// @notice Emitted when the governor toggles the auto-tune circuit-breaker.
+    event AutoTunePaused(PoolId indexed poolId, bool paused, uint32 timestamp);
+
+    /// @dev circuit-breaker flag per pool (default: false = auto-tune active)
+    mapping(PoolId => bool) public autoTunePaused;
+
     /* ────────────────────── LIB-LEVEL HELPERS ─────────────────────── */
 
     /// @dev Shorthand wrapper that forwards storage-struct fields to the library
@@ -81,7 +88,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         uint16 index;
         /**
          * @notice total number of populated observations.
-         * Includes the bootstrap slot written by `enableOracleForPool`,
+         * Includes the bootstrap slot written by `initializeOracleForPool`,
          * so after N user pushes the value is **N + 1**.
          */
         uint16 cardinality;
@@ -173,11 +180,21 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         emit PolicyCacheRefreshed(poolId);
     }
 
+    /**
+     * @notice Pause or un-pause the adaptive cap algorithm for a pool.
+     * @param poolId       Target PoolId.
+     * @param paused    True to disable auto-tune, false to resume.
+     */
+    function setAutoTunePaused(PoolId poolId, bool paused) external onlyOwner {
+        autoTunePaused[poolId] = paused;
+        emit AutoTunePaused(poolId, paused, uint32(block.timestamp));
+    }
+
     /// -----------------------------------------------------------------------
     /// @notice Enable oracle for a pool and seed the observation history
     /// @dev    Callable only by the hook. Emits `OracleConfigured`.
     /// -----------------------------------------------------------------------
-    function enableOracleForPool(PoolKey calldata key) external onlyHook {
+    function initializeOracleForPool(PoolKey calldata key, int24 initialTick) external onlyHook {
         PoolId poolId = key.toId();
 
         /* ------------------------------------------------------------------ *
@@ -195,7 +212,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         _validatePolicy(pc);
 
         // ---------- external read last (reduces griefing surface) ----------
-        (, int24 initialTick,,) = StateLibrary.getSlot0(poolManager, poolId);
         TruncatedOracle.Observation[65535] storage obs = _observations[poolId];
         (uint16 cardinality, uint16 cardinalityNext) = obs.initialize(uint32(block.timestamp), initialTick);
         states[poolId] = ObservationState({index: 0, cardinality: cardinality, cardinalityNext: cardinalityNext});
@@ -466,12 +482,20 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
             }
         }
 
-        // 3️⃣  Store the updated frequency counter
-        capFreq[poolId] = currentFreq;
+        capFreq[poolId] = currentFreq; // single SSTORE
 
-        // 4️⃣  Auto-tune the cap if conditions are met
-        if (timeElapsed >= updateInterval) {
-            _autoTuneMaxTicks(poolId, pc, currentFreq > budgetPpm);
+        // Only auto-tune if enough time has passed since last governance update
+        // and auto-tune is not paused for this pool
+        if (!autoTunePaused[poolId] && block.timestamp >= _lastMaxTickUpdate[poolId] + updateInterval) {
+            // Target frequency = budgetPpm × 86 400 sec (computed only when needed)
+            uint64 targetFreq = uint64(budgetPpm) * ONE_DAY_SEC;
+            if (currentFreq > targetFreq) {
+                // Too frequent caps -> Increase maxTicksPerBlock (loosen cap)
+                _autoTuneMaxTicks(poolId, pc, true); // re-use cached struct
+            } else {
+                // Caps too rare -> Decrease maxTicksPerBlock (tighten cap)
+                _autoTuneMaxTicks(poolId, pc, false); // re-use cached struct
+            }
         }
     }
 
@@ -491,7 +515,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
          *   – `minCap    != 0`                                               *
          *   – `maxCap    >= minCap`                                          *
          * are **already checked once** in `PolicyValidator.validate()`       *
-         * (called from `enableOracleForPool` and `refreshPolicyCache`).      *
+         * (called from `initializeOracleForPool` and `refreshPolicyCache`).      *
          * After that, the cached `pc` struct can only change through the     *
          * same validated path, so repeating the `require`s here costs        *
          * ~500 gas per swap without adding security.                         *

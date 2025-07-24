@@ -11,10 +11,11 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
  */
 interface ITruncGeoOracleMulti {
     /**
-     * @notice Enable the oracle for a pool
+     * @notice Initialize the oracle for a pool
      * @param key The pool key
+     * @param initialTick The initial tick to seed the oracle with
      */
-    function enableOracleForPool(bytes calldata key) external;
+    function initializeOracleForPool(bytes calldata key, int24 initialTick) external;
 
     /**
      * @notice Records a new observation for the given pool
@@ -36,6 +37,15 @@ interface ITruncGeoOracleMulti {
      * @return The current cap frequency
      */
     function getCapFrequency(PoolId poolId) external view returns (uint64);
+
+    /**
+     * @notice Pause or un-pause the adaptive cap algorithm for a pool.
+     * @param poolId       Target PoolId.
+     * @param paused    True to disable auto-tune, false to resume.
+     */
+    function setAutoTunePaused(PoolId poolId, bool paused) external;
+
+
 
     /**
      * @notice Updates oracle observations for a pool.

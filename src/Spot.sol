@@ -352,7 +352,7 @@ contract Spot is BaseHook, ISpot {
             revert Errors.InvalidFee();
         }
 
-        truncGeoOracle.enableOracleForPool(key);
+        truncGeoOracle.initializeOracleForPool(key, tick);
         dynamicFeeManager.initialize(poolId, tick);
         return BaseHook.afterInitialize.selector;
     }
