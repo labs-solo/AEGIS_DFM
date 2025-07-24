@@ -191,29 +191,31 @@ library TruncatedOracle {
         view
         returns (Observation memory beforeOrAt, Observation memory atOrAfter)
     {
-        uint256 l = (index + 1) % cardinality; // oldest observation
-        uint256 r = l + cardinality - 1; // newest observation
-        uint256 i;
-        while (true) {
-            i = (l + r) / 2;
+        unchecked {
+            uint256 l = (index + 1) % cardinality; // oldest observation
+            uint256 r = l + cardinality - 1; // newest observation
+            uint256 i;
+            while (true) {
+                i = (l + r) / 2;
 
-            beforeOrAt = self[i % cardinality];
+                beforeOrAt = self[i % cardinality];
 
-            // we've landed on an uninitialized tick, keep searching higher (more recently)
-            if (!beforeOrAt.initialized) {
-                l = i + 1;
-                continue;
+                // we've landed on an uninitialized tick, keep searching higher (more recently)
+                if (!beforeOrAt.initialized) {
+                    l = i + 1;
+                    continue;
+                }
+
+                atOrAfter = self[(i + 1) % cardinality];
+
+                bool targetAtOrAfter = lte(time, beforeOrAt.blockTimestamp, target);
+
+                // check if we've found the answer!
+                if (targetAtOrAfter && lte(time, target, atOrAfter.blockTimestamp)) break;
+
+                if (!targetAtOrAfter) r = i - 1;
+                else l = i + 1;
             }
-
-            atOrAfter = self[(i + 1) % cardinality];
-
-            bool targetAtOrAfter = lte(time, beforeOrAt.blockTimestamp, target);
-
-            // check if we've found the answer!
-            if (targetAtOrAfter && lte(time, target, atOrAfter.blockTimestamp)) break;
-
-            if (!targetAtOrAfter) r = i - 1;
-            else l = i + 1;
         }
     }
 
@@ -237,46 +239,48 @@ library TruncatedOracle {
         uint128 liquidity,
         uint16 cardinality
     ) private view returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
-        // ===== fast-path: ring length 1  =====
-        if (cardinality == 1) {
-            Observation memory only = self[index];
+        unchecked {
+            // ===== fast-path: ring length 1  =====
+            if (cardinality == 1) {
+                Observation memory only = self[index];
 
-            // target newer  ➜ simulate forward
-            if (lte(time, only.blockTimestamp, target)) {
-                if (only.blockTimestamp == target) return (only, only);
-                return (only, transform(only, target, tick, liquidity, 0)); // No maxTicks for fast-path
+                // target newer  ➜ simulate forward
+                if (lte(time, only.blockTimestamp, target)) {
+                    if (only.blockTimestamp == target) return (only, only);
+                    return (only, transform(only, target, tick, liquidity, 0)); // No maxTicks for fast-path
+                }
+
+                // target older  ➜ invalid
+                revert TargetPredatesOldestObservation(only.blockTimestamp, target);
             }
 
-            // target older  ➜ invalid
-            revert TargetPredatesOldestObservation(only.blockTimestamp, target);
-        }
+            // ----- normal multi-element path -----
+            // optimistically set before to the newest observation
+            beforeOrAt = self[index];
 
-        // ----- normal multi-element path -----
-        // optimistically set before to the newest observation
-        beforeOrAt = self[index];
-
-        // if the target is chronologically at or after the newest observation, we can early return
-        if (lte(time, beforeOrAt.blockTimestamp, target)) {
-            if (beforeOrAt.blockTimestamp == target) {
-                // if newest observation equals target, we're in the same block, so we can ignore atOrAfter
-                return (beforeOrAt, atOrAfter);
-            } else {
-                // otherwise, we need to transform using the pool-specific tick movement cap
-                return (beforeOrAt, transform(beforeOrAt, target, tick, liquidity, 0)); // No maxTicks for normal path
+            // if the target is chronologically at or after the newest observation, we can early return
+            if (lte(time, beforeOrAt.blockTimestamp, target)) {
+                if (beforeOrAt.blockTimestamp == target) {
+                    // if newest observation equals target, we're in the same block, so we can ignore atOrAfter
+                    return (beforeOrAt, atOrAfter);
+                } else {
+                    // otherwise, we need to transform using the pool-specific tick movement cap
+                    return (beforeOrAt, transform(beforeOrAt, target, tick, liquidity, 0)); // No maxTicks for normal path
+                }
             }
+
+            // now, set before to the oldest observation
+            beforeOrAt = self[(index + 1) % cardinality];
+            if (!beforeOrAt.initialized) beforeOrAt = self[0];
+
+            // ensure that the target is chronologically at or after the oldest observation
+            if (!lte(time, beforeOrAt.blockTimestamp, target)) {
+                revert TargetPredatesOldestObservation(beforeOrAt.blockTimestamp, target);
+            }
+
+            // if we've reached this point, we have to binary search
+            return binarySearch(self, time, target, index, cardinality);
         }
-
-        // now, set before to the oldest observation
-        beforeOrAt = self[(index + 1) % cardinality];
-        if (!beforeOrAt.initialized) beforeOrAt = self[0];
-
-        // ensure that the target is chronologically at or after the oldest observation
-        if (!lte(time, beforeOrAt.blockTimestamp, target)) {
-            revert TargetPredatesOldestObservation(beforeOrAt.blockTimestamp, target);
-        }
-
-        // if we've reached this point, we have to binary search
-        return binarySearch(self, time, target, index, cardinality);
     }
 
     /// @notice Observe oracle values at specific secondsAgos from the current block timestamp
@@ -299,13 +303,15 @@ library TruncatedOracle {
         uint128 liquidity,
         uint16 cardinality
     ) internal view returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s) {
-        require(cardinality > 0, "I");
+        if (cardinality == 0) revert OracleCardinalityCannotBeZero();
 
-        tickCumulatives = new int48[](secondsAgos.length);
-        secondsPerLiquidityCumulativeX128s = new uint144[](secondsAgos.length);
-        for (uint256 i = 0; i < secondsAgos.length; i++) {
-            (tickCumulatives[i], secondsPerLiquidityCumulativeX128s[i]) =
-                observeSingle(self, time, secondsAgos[i], tick, index, liquidity, cardinality);
+        unchecked {
+            tickCumulatives = new int48[](secondsAgos.length);
+            secondsPerLiquidityCumulativeX128s = new uint144[](secondsAgos.length);
+            for (uint256 i = 0; i < secondsAgos.length; i++) {
+                (tickCumulatives[i], secondsPerLiquidityCumulativeX128s[i]) =
+                    observeSingle(self, time, secondsAgos[i], tick, index, liquidity, cardinality);
+            }
         }
     }
 
@@ -331,63 +337,63 @@ library TruncatedOracle {
     ) internal view returns (int48 tickCumulative, uint144 secondsPerLiquidityCumulativeX128) {
         if (cardinality == 0) revert OracleCardinalityCannotBeZero();
 
-        // base case: target is the current block? Handle large secondsAgo here.
-        if (secondsAgo == 0 || secondsAgo > type(uint32).max) {
-            Observation memory last = self[index];
-            if (last.blockTimestamp != time) {
-                last = transform(last, time, tick, liquidity, 0); // No maxTicks for base case
-            }
-            return (last.tickCumulative, last.secondsPerLiquidityCumulativeX128);
-        }
-
-        // Safe subtraction logic applied *before* getSurroundingObservations
-        uint32 target;
         unchecked {
+            // base case: target is the current block? Handle large secondsAgo here.
+            if (secondsAgo == 0 || secondsAgo > type(uint32).max) {
+                Observation memory last = self[index];
+                if (last.blockTimestamp != time) {
+                    last = transform(last, time, tick, liquidity, 0); // No maxTicks for base case
+                }
+                return (last.tickCumulative, last.secondsPerLiquidityCumulativeX128);
+            }
+
+            // Safe subtraction logic applied *before* getSurroundingObservations
+            uint32 target;
             target = time >= secondsAgo ? time - secondsAgo : time + (type(uint32).max - secondsAgo) + 1;
-        }
 
-        (Observation memory beforeOrAt, Observation memory atOrAfter) =
-            getSurroundingObservations(self, time, target, tick, index, liquidity, cardinality);
+            (Observation memory beforeOrAt, Observation memory atOrAfter) =
+                getSurroundingObservations(self, time, target, tick, index, liquidity, cardinality);
 
-        if (target == beforeOrAt.blockTimestamp) {
-            // we're at the left boundary
-            return (beforeOrAt.tickCumulative, beforeOrAt.secondsPerLiquidityCumulativeX128);
-        } else if (target == atOrAfter.blockTimestamp) {
-            // we're at the right boundary
-            return (atOrAfter.tickCumulative, atOrAfter.secondsPerLiquidityCumulativeX128);
-        } else {
-            // ----------  NORMALISE for wrap-around ----------
-            // Bring all three timestamps into the same "era" (≥ beforeOrAt)
-            uint32 base = beforeOrAt.blockTimestamp;
-            uint32 norm = base; // avoids stack-too-deep
-            uint32 bTs = beforeOrAt.blockTimestamp;
-            uint32 aTs = atOrAfter.blockTimestamp;
-            uint32 tTs = target;
+            if (target == beforeOrAt.blockTimestamp) {
+                // we're at the left boundary
+                return (beforeOrAt.tickCumulative, beforeOrAt.secondsPerLiquidityCumulativeX128);
+            } else if (target == atOrAfter.blockTimestamp) {
+                // we're at the right boundary
+                return (atOrAfter.tickCumulative, atOrAfter.secondsPerLiquidityCumulativeX128);
+            } else {
+                // ----------  NORMALISE for wrap-around ----------
+                // Bring all three timestamps into the same "era" (≥ beforeOrAt)
+                uint32 base = beforeOrAt.blockTimestamp;
+                uint32 norm = base; // avoids stack-too-deep
+                uint32 bTs = beforeOrAt.blockTimestamp;
+                uint32 aTs = atOrAfter.blockTimestamp;
+                uint32 tTs = target;
 
-            if (aTs < norm) aTs += type(uint32).max + 1;
-            if (tTs < norm) tTs += type(uint32).max + 1;
+                if (aTs < norm) aTs += type(uint32).max + 1;
+                if (tTs < norm) tTs += type(uint32).max + 1;
 
-            // Use the normalised copies for deltas below
-            // we're in the middle
-            uint32 observationTimeDelta = aTs - bTs;
-            uint32 targetDelta = tTs - bTs;
+                // Use the normalised copies for deltas below
+                // we're in the middle
+                uint32 observationTimeDelta = aTs - bTs;
+                uint32 targetDelta = tTs - bTs;
 
-            return (
-                int48(
-                    int256(beforeOrAt.tickCumulative)
-                        + (
-                            (int256(atOrAfter.tickCumulative) - int256(beforeOrAt.tickCumulative))
-                                * int256(uint256(targetDelta)) / int256(uint256(observationTimeDelta))
+                return (
+                    int48(
+                        int256(beforeOrAt.tickCumulative)
+                            + (
+                                (int256(atOrAfter.tickCumulative) - int256(beforeOrAt.tickCumulative))
+                                    * int256(uint256(targetDelta)) / int256(uint256(observationTimeDelta))
+                            )
+                    ),
+                    beforeOrAt.secondsPerLiquidityCumulativeX128
+                        + uint144(
+                            (
+                                uint256(atOrAfter.secondsPerLiquidityCumulativeX128)
+                                    - uint256(beforeOrAt.secondsPerLiquidityCumulativeX128)
+                            ) * uint256(targetDelta) / uint256(observationTimeDelta)
                         )
-                ),
-                beforeOrAt.secondsPerLiquidityCumulativeX128
-                    + uint144(
-                        (
-                            uint256(atOrAfter.secondsPerLiquidityCumulativeX128)
-                                - uint256(beforeOrAt.secondsPerLiquidityCumulativeX128)
-                        ) * uint256(targetDelta) / uint256(observationTimeDelta)
-                    )
-            );
+                );
+            }
         }
     }
 

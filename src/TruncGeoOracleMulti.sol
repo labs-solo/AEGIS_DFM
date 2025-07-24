@@ -4,6 +4,7 @@ pragma solidity ^0.8.25;
 // - - - external deps - - -
 
 import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
+import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
 import {ReentrancyGuard} from "solmate/src/utils/ReentrancyGuard.sol";
 import {Owned} from "solmate/src/auth/Owned.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
@@ -111,7 +112,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
        Each pool owns a single observation array (65535 slots available, capped at 1024).
        Uses the official TruncatedOracle library for core functionality. */
     /// pool ⇒ observation array (lazily created)
-    mapping(PoolId => TruncatedOracle.Observation[65535]) internal _observations;
+    mapping(PoolId => TruncatedOracle.Observation[65535]) public observations;
 
     mapping(PoolId => ObservationState) public states;
 
@@ -212,9 +213,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         _validatePolicy(pc);
 
         // ---------- external read last (reduces griefing surface) ----------
-        TruncatedOracle.Observation[65535] storage obs = _observations[poolId];
-        (uint16 cardinality, uint16 cardinalityNext) = obs.initialize(uint32(block.timestamp), initialTick);
-        states[poolId] = ObservationState({index: 0, cardinality: cardinality, cardinalityNext: cardinalityNext});
+        states[poolId].index = 0; // Initialize index to 0
+        (states[poolId].cardinality, states[poolId].cardinalityNext) = observations[poolId].initialize(uint32(block.timestamp), initialTick);
 
         // Clamp defaultCap inside the validated range
         if (defaultCap < pc.minCap) defaultCap = pc.minCap;
@@ -234,23 +234,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     function recordObservation(PoolId poolId, int24 tickToRecord) external nonReentrant onlyHook {
 
         ObservationState storage state = states[poolId];
-        TruncatedOracle.Observation[65535] storage obs = _observations[poolId];
+        TruncatedOracle.Observation[65535] storage obs = observations[poolId];
         uint128 liquidity = StateLibrary.getLiquidity(poolManager, poolId);
 
         // Auto-grow cardinality during swaps until reaching MAX_CARDINALITY_TARGET slots
         if (state.cardinalityNext < MAX_CARDINALITY_TARGET) {
-            // Increment by 1 slot per swap until reaching the cap (1024)
-            uint16 targetCardinality = state.cardinalityNext + 1;
-            
-            // Cap at MAX_CARDINALITY_TARGET
-            if (targetCardinality > MAX_CARDINALITY_TARGET) {
-                targetCardinality = MAX_CARDINALITY_TARGET;
-            }
-            
-            // Only grow if there's actually growth to do
-            if (targetCardinality > state.cardinalityNext) {
-                state.cardinalityNext = obs.grow(state.cardinality, targetCardinality);
-            }
+            uint16 targetCardinality = uint16(Math.min(state.cardinalityNext + 1, MAX_CARDINALITY_TARGET));
+            state.cardinalityNext = obs.grow(state.cardinalityNext, targetCardinality);
         }
 
         // Get maxTicks for capping
@@ -301,7 +291,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
 
         ObservationState storage state = states[poolId];
         // ---- inline fast-path (no struct copy) ----------------------------
-        TruncatedOracle.Observation storage o = _observations[poolId][state.index];
+        TruncatedOracle.Observation storage o = observations[poolId][state.index];
         (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId); // fetch current tick
         return (currentTick, o.blockTimestamp);
     }
@@ -334,7 +324,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         uint128 liquidity = StateLibrary.getLiquidity(poolManager, poolId);
         (, int24 tick,,) = StateLibrary.getSlot0(poolManager, poolId);
 
-        return _observations[poolId].observe(time, secondsAgos, tick, state.index, liquidity, state.cardinality);
+        return observations[poolId].observe(time, secondsAgos, tick, state.index, liquidity, state.cardinality);
     }
 
     /// -----------------------------------------------------------------------
@@ -385,7 +375,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         ObservationState storage state = states[poolId];
 
         cardinalityNextOld = state.cardinalityNext;
-        cardinalityNextNew = _observations[poolId].grow(state.cardinalityNext, cardinalityNext);
+        cardinalityNextNew = observations[poolId].grow(state.cardinalityNext, cardinalityNext);
         state.cardinalityNext = cardinalityNextNew;
     }
 
