@@ -179,9 +179,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     /// -----------------------------------------------------------------------
     function enableOracleForPool(PoolKey calldata key) external onlyHook {
         PoolId poolId = key.toId();
-        if (states[poolId].cardinality > 0) {
-            revert Errors.OracleOperationFailed("enableOracleForPool", "Already enabled");
-        }
 
         /* ------------------------------------------------------------------ *
          * Pull policy parameters once and *sanity-check* them               *
