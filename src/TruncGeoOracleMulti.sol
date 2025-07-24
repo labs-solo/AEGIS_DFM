@@ -232,9 +232,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
      * @param tickToRecord The tick to record in the observation
      */
     function recordObservation(PoolId poolId, int24 tickToRecord) external nonReentrant onlyHook {
-        if (states[poolId].cardinality == 0) {
-            revert OracleNotInitialized(poolId);
-        }
 
         ObservationState storage state = states[poolId];
         TruncatedOracle.Observation[65535] storage obs = _observations[poolId];
