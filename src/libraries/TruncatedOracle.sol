@@ -18,11 +18,6 @@ library TruncatedOracle {
     /// @param targetTimestamp Invalid timestamp targeted to be observed
     error TargetPredatesOldestObservation(uint32 oldestTimestamp, uint32 targetTimestamp);
 
-
-
-    /// @dev emitted when the oracle had to truncate an excessive move
-    event TickCapped(int24 newTick);
-
     /// @dev **Packed** Observation – 256-bit exact fit
     ///      32 + 24 + 48 + 144 + 8 = 256
     struct Observation {
