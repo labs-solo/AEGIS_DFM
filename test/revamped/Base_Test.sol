@@ -102,9 +102,9 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
             Hooks.Permissions({
                 beforeInitialize: false,
                 afterInitialize: true,
-                beforeAddLiquidity: false,
+                beforeAddLiquidity: true,
                 afterAddLiquidity: false,
-                beforeRemoveLiquidity: false,
+                beforeRemoveLiquidity: true,
                 afterRemoveLiquidity: false,
                 beforeSwap: true,
                 afterSwap: true,

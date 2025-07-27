@@ -97,9 +97,9 @@ contract Spot is BaseHook, ISpot {
         return Hooks.Permissions({
             beforeInitialize: false,
             afterInitialize: true,
-            beforeAddLiquidity: false,
+            beforeAddLiquidity: true,
             afterAddLiquidity: false,
-            beforeRemoveLiquidity: false,
+            beforeRemoveLiquidity: true,
             afterRemoveLiquidity: false,
             beforeSwap: true,
             afterSwap: true,
@@ -355,6 +355,58 @@ contract Spot is BaseHook, ISpot {
         truncGeoOracle.initializeOracleForPool(key, tick);
         dynamicFeeManager.initialize(poolId, tick);
         return BaseHook.afterInitialize.selector;
+    }
+
+    /// @notice called in BaseHook.beforeAddLiquidity
+    /// @dev Records oracle observation to ensure accuracy in secondsPerLiquidityCumulativeX128 accumulator
+    function _beforeAddLiquidity(
+        address,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata,
+        bytes calldata
+    ) internal override returns (bytes4) {
+        PoolId poolId = key.toId();
+
+        // Get current tick for oracle update
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+
+        // Record observation with the current tick to ensure accurate secondsPerLiquidityCumulativeX128
+        try truncGeoOracle.recordObservation(poolId, currentTick) {
+            // Observation recorded successfully
+        } catch Error(string memory reason) {
+            emit OracleUpdateFailed(poolId, reason);
+        } catch (bytes memory lowLevelData) {
+            // Low-level oracle failure
+            emit OracleUpdateFailed(poolId, "LLOF");
+        }
+
+        return BaseHook.beforeAddLiquidity.selector;
+    }
+
+    /// @notice called in BaseHook.beforeRemoveLiquidity
+    /// @dev Records oracle observation to ensure accuracy in secondsPerLiquidityCumulativeX128 accumulator
+    function _beforeRemoveLiquidity(
+        address,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata,
+        bytes calldata
+    ) internal override returns (bytes4) {
+        PoolId poolId = key.toId();
+
+        // Get current tick for oracle update
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+
+        // Record observation with the current tick to ensure accurate secondsPerLiquidityCumulativeX128
+        try truncGeoOracle.recordObservation(poolId, currentTick) {
+            // Observation recorded successfully
+        } catch Error(string memory reason) {
+            emit OracleUpdateFailed(poolId, reason);
+        } catch (bytes memory lowLevelData) {
+            // Low-level oracle failure
+            emit OracleUpdateFailed(poolId, "LLOF");
+        }
+
+        return BaseHook.beforeRemoveLiquidity.selector;
     }
 
     // - - - internal helpers - - -
