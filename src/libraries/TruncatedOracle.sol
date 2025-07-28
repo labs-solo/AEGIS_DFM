@@ -315,10 +315,9 @@ library TruncatedOracle {
         uint128 liquidity,
         uint16 cardinality
     ) internal view returns (int48 tickCumulative, uint144 secondsPerLiquidityCumulativeX128) {
-        if (cardinality == 0) revert OracleCardinalityCannotBeZero();
-
         unchecked {
-            // base case: target is the current block? Handle large secondsAgo here.
+            if (cardinality == 0) revert OracleCardinalityCannotBeZero();
+
             if (secondsAgo == 0 || secondsAgo > type(uint32).max) {
                 Observation memory last = self[index];
                 if (last.blockTimestamp != time) {
