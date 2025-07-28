@@ -213,7 +213,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         _validatePolicy(pc);
 
         // ---------- external read last (reduces griefing surface) ----------
-        states[poolId].index = 0; // Initialize index to 0
         (states[poolId].cardinality, states[poolId].cardinalityNext) = observations[poolId].initialize(uint32(block.timestamp), initialTick);
 
         // Clamp defaultCap inside the validated range
