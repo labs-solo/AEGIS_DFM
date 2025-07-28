@@ -235,21 +235,6 @@ library TruncatedOracle {
         uint16 cardinality
     ) private view returns (Observation memory beforeOrAt, Observation memory atOrAfter) {
         unchecked {
-            // ===== fast-path: ring length 1  =====
-            if (cardinality == 1) {
-                Observation memory only = self[index];
-
-                // target newer  ➜ simulate forward
-                if (lte(time, only.blockTimestamp, target)) {
-                    if (only.blockTimestamp == target) return (only, only);
-                    return (only, transform(only, target, tick, liquidity, 0)); // No maxTicks for fast-path
-                }
-
-                // target older  ➜ invalid
-                revert TargetPredatesOldestObservation(only.blockTimestamp, target);
-            }
-
-            // ----- normal multi-element path -----
             // optimistically set before to the newest observation
             beforeOrAt = self[index];
 
