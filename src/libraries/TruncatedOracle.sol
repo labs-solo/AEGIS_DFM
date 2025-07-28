@@ -39,7 +39,7 @@ library TruncatedOracle {
      * @return Observation The newly populated observation
      */
     function transform(Observation memory last, uint32 blockTimestamp, int24 tick, uint128 liquidity, uint24 maxTicks)
-        internal
+        private
         pure
         returns (Observation memory)
     {
@@ -298,9 +298,9 @@ library TruncatedOracle {
         uint128 liquidity,
         uint16 cardinality
     ) internal view returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s) {
-        if (cardinality == 0) revert OracleCardinalityCannotBeZero();
-
         unchecked {
+            if (cardinality == 0) revert OracleCardinalityCannotBeZero();
+
             tickCumulatives = new int48[](secondsAgos.length);
             secondsPerLiquidityCumulativeX128s = new uint144[](secondsAgos.length);
             for (uint256 i = 0; i < secondsAgos.length; i++) {
