@@ -310,7 +310,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     function observe(PoolKey calldata key, uint32[] memory secondsAgos)
         public
         view
-        returns (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s)
+        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s)
     {
         PoolId poolId = key.toId();
 
@@ -341,22 +341,22 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         secondsAgos[0] = secondsAgo;
         secondsAgos[1] = 0;
 
-        (int48[] memory tickCumulatives, uint144[] memory secondsPerLiquidityCumulativeX128s) =
+        (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) =
             observe(key, secondsAgos);
 
-        int48 tickCumulativesDelta = tickCumulatives[1] - tickCumulatives[0];
-        uint144 secondsPerLiquidityCumulativesDelta =
+        int56 tickCumulativesDelta = tickCumulatives[1] - tickCumulatives[0];
+        uint160 secondsPerLiquidityCumulativesDelta =
             secondsPerLiquidityCumulativeX128s[1] - secondsPerLiquidityCumulativeX128s[0];
 
-        int48 secondsAgoI48 = int48(uint48(secondsAgo));
+        int56 secondsAgoI56 = int56(uint56(secondsAgo));
 
-        arithmeticMeanTick = int24(tickCumulativesDelta / secondsAgoI48);
+        arithmeticMeanTick = int24(tickCumulativesDelta / secondsAgoI56);
         // Always round to negative infinity
-        if (tickCumulativesDelta < 0 && (tickCumulativesDelta % secondsAgoI48 != 0)) arithmeticMeanTick--;
+        if (tickCumulativesDelta < 0 && (tickCumulativesDelta % secondsAgoI56 != 0)) arithmeticMeanTick--;
 
         // We are multiplying here instead of shifting to ensure that harmonicMeanLiquidity doesn't overflow uint128
-        uint192 secondsAgoX144 = uint192(secondsAgo) * type(uint144).max;
-        harmonicMeanLiquidity = uint128(secondsAgoX144 / (uint192(secondsPerLiquidityCumulativesDelta) << 32));
+        uint192 secondsAgoX160 = uint192(secondsAgo) * type(uint160).max;
+        harmonicMeanLiquidity = uint128(secondsAgoX160 / (uint192(secondsPerLiquidityCumulativesDelta) << 32));
     }
 
     /**
@@ -378,23 +378,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         state.cardinalityNext = cardinalityNextNew;
     }
 
-    /**
-     * @notice Updates cap frequency based on whether capping occurred
-     * @param poolId The pool identifier
-     * @param capOccurred Whether capping occurred during this swap
-     */
-    function updateCapFrequency(PoolId poolId, bool capOccurred) external onlyHook {
-        _updateCapFrequency(poolId, capOccurred);
-    }
 
-    /**
-     * @notice Gets the current cap frequency for a pool (for testing purposes)
-     * @param poolId The pool identifier
-     * @return The current cap frequency
-     */
-    function getCapFrequency(PoolId poolId) external view returns (uint64) {
-        return capFreq[poolId];
-    }
+
 
     /* ─────────────────── INTERNAL FUNCTIONS ────────────────────── */
 
@@ -406,7 +391,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
      * @param poolId The PoolId of the pool.
      * @param capOccurred True if a CAP event occurred in the current block.
      */
-    function _updateCapFrequency(PoolId poolId, bool capOccurred) internal {
+    function updateCapFrequency(PoolId poolId, bool capOccurred) external onlyHook {
         uint32 lastTs = uint32(lastFreqTs[poolId]);
         uint32 nowTs = uint32(block.timestamp);
         uint32 timeElapsed = nowTs - lastTs;

@@ -36,7 +36,7 @@ interface ITruncGeoOracleMulti {
      * @param poolId The pool identifier
      * @return The current cap frequency
      */
-    function getCapFrequency(PoolId poolId) external view returns (uint64);
+
 
     /**
      * @notice Pause or un-pause the adaptive cap algorithm for a pool.
