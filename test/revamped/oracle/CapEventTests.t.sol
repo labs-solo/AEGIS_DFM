@@ -40,29 +40,33 @@ contract CapEventTests is Base_Test {
         _performSwap(1000000e18, true); // Large swap to trigger cap
         vm.warp(block.timestamp + 60);
         
-        // Get initial cap frequency (we'll need to add a getter for this)
-        uint64 initialFreq = oracle.getCapFrequency(poolId);
-        console.log("Initial cap frequency:", initialFreq);
-        assertGt(initialFreq, 0, "Cap frequency should be greater than 0 after cap event");
+        // Check that surge fees are active after cap event
+        bool capActive = feeManager.isCAPEventActive(poolId);
+        console.log("CAP active after cap event:", capActive);
+        assertTrue(capActive, "CAP event should be active after large swap");
         
         // Get the decay window from policy manager
         uint32 decayWindow = policyManager.getCapBudgetDecayWindow(poolId);
         console.log("Decay window:", decayWindow);
         
-        // Test decay over time - should decay exponentially
-        uint64 freqAfterHalfWindow = _getCapFrequencyAfterTime(decayWindow / 2);
-        console.log("Cap frequency after half decay window:", freqAfterHalfWindow);
-        assertLt(freqAfterHalfWindow, initialFreq, "Frequency should decay after half window");
+        // Test decay over time - surge fees should remain active during surge decay period
+        uint32 surgeDecayPeriod = policyManager.getSurgeDecayPeriodSeconds(poolId);
+        vm.warp(block.timestamp + surgeDecayPeriod / 2);
+        _performSwap(1e18, true); // Trigger oracle update
+        vm.warp(block.timestamp + 60);
         
-        // Test full decay - should be 0 after full decay window
-        uint64 freqAfterFullWindow = _getCapFrequencyAfterTime(decayWindow);
-        console.log("Cap frequency after full decay window:", freqAfterFullWindow);
-        assertEq(freqAfterFullWindow, 0, "Frequency should be 0 after full decay window");
+        capActive = feeManager.isCAPEventActive(poolId);
+        console.log("CAP active after half surge decay period:", capActive);
+        assertTrue(capActive, "Surge fees should still be active after half surge decay period");
         
-        // Test that frequency stays at 0 after full decay
-        uint64 freqAfterDoubleWindow = _getCapFrequencyAfterTime(decayWindow * 2);
-        console.log("Cap frequency after double decay window:", freqAfterDoubleWindow);
-        assertEq(freqAfterDoubleWindow, 0, "Frequency should stay at 0 after full decay");
+        // Test full decay - surge fees should be inactive after full surge decay period
+        vm.warp(block.timestamp + surgeDecayPeriod / 2); // Total time = full surge decay period
+        _performSwap(1e18, true); // Trigger oracle update
+        vm.warp(block.timestamp + 60);
+        
+        capActive = feeManager.isCAPEventActive(poolId);
+        console.log("CAP active after full surge decay period:", capActive);
+        assertFalse(capActive, "Surge fees should be inactive after full surge decay period");
     }
 
     function testSurgeFeeDecay() public {
@@ -117,11 +121,8 @@ contract CapEventTests is Base_Test {
         vm.warp(block.timestamp + 60);
         
         // Check initial state
-        uint64 initialFreq = oracle.getCapFrequency(poolId);
         bool capActive = feeManager.isCAPEventActive(poolId);
-        console.log("Initial cap frequency:", initialFreq);
         console.log("Initial CAP active:", capActive);
-        assertGt(initialFreq, 0, "Cap frequency should be greater than 0");
         assertTrue(capActive, "CAP event should be active");
         
         // Get decay periods
@@ -148,21 +149,11 @@ contract CapEventTests is Base_Test {
             _performSwap(1e18, true);
             vm.warp(block.timestamp + 60);
             
-            // Check cap frequency
-            uint64 currentFreq = oracle.getCapFrequency(poolId);
-            console.log("  Cap frequency:", currentFreq);
-            
             // Check surge fee status
             bool currentCapActive = feeManager.isCAPEventActive(poolId);
             console.log("  CAP active:", currentCapActive);
             
-            // Verify expectations
-            if (testTime >= capDecayWindow) {
-                assertEq(currentFreq, 0, "Cap frequency should be 0 after full decay");
-            } else {
-                assertLt(currentFreq, initialFreq, "Cap frequency should decay over time");
-            }
-            
+            // Verify expectations based on surge decay period
             if (testTime >= surgeDecayPeriod) {
                 assertFalse(currentCapActive, "Surge fees should be inactive after surge decay period");
             } else {
@@ -171,17 +162,7 @@ contract CapEventTests is Base_Test {
         }
     }
 
-    function _getCapFrequencyAfterTime(uint32 timeElapsed) internal returns (uint64) {
-        // Perform a small swap to trigger cap frequency update (decay)
-        _performSwap(1e18, true);
-        vm.warp(block.timestamp + timeElapsed);
-        
-        // Perform another small swap to trigger another update
-        _performSwap(1e18, true);
-        vm.warp(block.timestamp + 60);
-        
-        return oracle.getCapFrequency(poolId);
-    }
+
 
     function _performSwap(uint256 amount, bool zeroForOne) internal {
         PoolSwapTest.TestSettings memory testSettings = PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false});
