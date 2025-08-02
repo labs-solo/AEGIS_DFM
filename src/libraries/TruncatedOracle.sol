@@ -48,12 +48,9 @@ library TruncatedOracle {
 
             // Apply tick movement capping if maxTicks > 0
             if (maxTicks > 0) {
-                int24 tickMovement = tick - last.prevTick;
-                if (tickMovement > int24(maxTicks)) {
-                    tick = last.prevTick + int24(maxTicks);
-                } else if (tickMovement < -int24(maxTicks)) {
-                    tick = last.prevTick - int24(maxTicks);
-                }
+                int24 movement = tick - last.prevTick;
+                if (movement > int24(maxTicks)) tick = last.prevTick + int24(maxTicks);
+                else if (movement < -int24(maxTicks)) tick = last.prevTick - int24(maxTicks);
             }
 
             return Observation({
@@ -116,11 +113,7 @@ library TruncatedOracle {
             if (last.blockTimestamp == blockTimestamp) return (index, cardinality);
 
             // if the conditions are right, we can bump the cardinality
-            if (cardinalityNext > cardinality && index == (cardinality - 1)) {
-                cardinalityUpdated = cardinalityNext;
-            } else {
-                cardinalityUpdated = cardinality;
-            }
+            cardinalityUpdated = (cardinalityNext > cardinality && index == (cardinality - 1)) ? cardinalityNext : cardinality;
 
             indexUpdated = (index + 1) % cardinalityUpdated;
             self[indexUpdated] = transform(last, blockTimestamp, tick, liquidity, maxTicks);

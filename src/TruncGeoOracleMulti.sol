@@ -10,7 +10,6 @@ import {Owned} from "solmate/src/auth/Owned.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
-import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 
 // - - - local deps - - -
@@ -28,8 +27,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     /* -------------------------------------------------------------------------- */
     /*                               Library constants                            */
     /* -------------------------------------------------------------------------- */
-    /* seconds in one day (for readability) */
-    uint32 internal constant ONE_DAY_SEC = 86_400;
+
     /* parts-per-million constant */
     uint32 internal constant PPM = 1_000_000;
     /* pre-computed ONE_DAY × PPM to avoid a mul on every cap event            *
@@ -37,19 +35,13 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     uint64 internal constant ONE_DAY_PPM = 86_400 * 1_000_000;
     /* one add (ONE_DAY_PPM) short of uint64::max */
     uint64 internal constant CAP_FREQ_MAX = type(uint64).max - ONE_DAY_PPM + 1;
-    /* minimum change required to emit MaxTicksPerBlockUpdated event */
-    uint24 internal constant EVENT_DIFF = 5;
     /* maximum cardinality for oracle observations */
     uint16 internal constant MAX_CARDINALITY_TARGET = 1024;
 
     // Custom errors
     error OnlyHook();
-    error ObservationOverflow(uint16 cardinality);
-    error ObservationTooOld(uint32 time, uint32 target);
-    error TooManyObservationsRequested();
     error OracleNotInitialized(PoolId poolId);
 
-    event TickCapParamChanged(PoolId indexed poolId, uint24 newMaxTicksPerBlock);
     event MaxTicksPerBlockUpdated(
         PoolId indexed poolId, uint24 oldMaxTicksPerBlock, uint24 newMaxTicksPerBlock, uint32 blockTimestamp
     );
@@ -172,11 +164,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
 
         // Clamp existing maxTicksPerBlock to new bounds
         uint24 currentCap = maxTicksPerBlock[poolId];
-        if (currentCap < pc.minCap) {
-            maxTicksPerBlock[poolId] = pc.minCap;
-        } else if (currentCap > pc.maxCap) {
-            maxTicksPerBlock[poolId] = pc.maxCap;
-        }
+        maxTicksPerBlock[poolId] = currentCap < pc.minCap ? pc.minCap : 
+                                   currentCap > pc.maxCap ? pc.maxCap : currentCap;
 
         emit PolicyCacheRefreshed(poolId);
     }
@@ -459,7 +448,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         // and auto-tune is not paused for this pool
         if (!autoTunePaused[poolId] && block.timestamp >= _lastMaxTickUpdate[poolId] + updateInterval) {
             // Target frequency = budgetPpm × 86 400 sec (computed only when needed)
-            uint64 targetFreq = uint64(budgetPpm) * ONE_DAY_SEC;
+            uint64 targetFreq = uint64(budgetPpm) * 86_400;
             if (currentFreq > targetFreq) {
                 // Too frequent caps -> Increase maxTicksPerBlock (loosen cap)
                 _autoTuneMaxTicks(poolId, pc, true); // re-use cached struct
@@ -508,10 +497,10 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
 
         uint24 diff = currentCap > newCap ? currentCap - newCap : newCap - currentCap;
 
-        // Only emit event if change is significant
-        if (diff >= EVENT_DIFF) {
+        
+        
             emit MaxTicksPerBlockUpdated(poolId, currentCap, newCap, uint32(block.timestamp));
             maxTicksPerBlock[poolId] = newCap;
-        }
+        
     }
 }
