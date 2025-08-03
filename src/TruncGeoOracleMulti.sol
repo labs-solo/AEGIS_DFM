@@ -446,7 +446,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
 
         // Only auto-tune if enough time has passed since last governance update
         // and auto-tune is not paused for this pool
-        if (!autoTunePaused[poolId] && block.timestamp >= _lastMaxTickUpdate[poolId] + updateInterval) {
+        if (block.timestamp >= _lastMaxTickUpdate[poolId] + updateInterval) {
             // Target frequency = budgetPpm × 86 400 sec (computed only when needed)
             uint64 targetFreq = uint64(budgetPpm) * 86_400;
             if (currentFreq > targetFreq) {

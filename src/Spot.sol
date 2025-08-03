@@ -268,15 +268,17 @@ contract Spot is BaseHook, ISpot {
         bool tickWasCapped = TruncatedOracle.abs(tickMovement) > maxTicks;
 
         // Update cap frequency in the oracle
-        try truncGeoOracle.updateCapFrequency(poolId, tickWasCapped) {
-            // Cap frequency updated successfully
-        } catch Error(string memory reason) {
-            emit OracleUpdateFailed(poolId, reason);
-        } catch (bytes memory lowLevelData) {
-            // Low-level oracle failure
-            emit OracleUpdateFailed(poolId, "LLOF");
-        }
 
+        if(!truncGeoOracle.autoTunePaused(poolId)) {
+            try truncGeoOracle.updateCapFrequency(poolId, tickWasCapped) {
+                // Cap frequency updated successfully
+            } catch Error(string memory reason) {
+                emit OracleUpdateFailed(poolId, reason);
+            } catch (bytes memory lowLevelData) {
+                // Low-level oracle failure
+                emit OracleUpdateFailed(poolId, "LLOF");
+            }
+        }
         // Notify Dynamic Fee Manager about the oracle update (with error handling)
         try dynamicFeeManager.notifyOracleUpdate(poolId, tickWasCapped) {
             // Oracle update notification succeeded

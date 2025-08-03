@@ -45,6 +45,13 @@ interface ITruncGeoOracleMulti {
      */
     function setAutoTunePaused(PoolId poolId, bool paused) external;
 
+    /**
+     * @notice Check if auto-tune is paused for a pool.
+     * @param poolId The pool identifier.
+     * @return True if auto-tune is paused, false otherwise.
+     */
+    function autoTunePaused(PoolId poolId) external view returns (bool);
+
 
 
     /**
