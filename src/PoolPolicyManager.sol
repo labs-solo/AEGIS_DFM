@@ -15,6 +15,7 @@ import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 import {Errors} from "./errors/Errors.sol";
 import {PolicyManagerErrors} from "./errors/PolicyManagerErrors.sol";
 import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title PoolPolicyManager
 /// @notice Consolidated policy manager implementing the IPoolPolicyManager interface
@@ -224,6 +225,20 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     function getBaseFeeFactor(PoolId poolId) external view override returns (uint32) {
         uint32 factor = _poolBaseFeeFactor[poolId];
         return factor == 0 ? DEFAULT_BASE_FEE_FACTOR_PPM : factor;
+    }
+
+    /// @inheritdoc IPoolPolicyManager
+    function getMinCap(PoolId poolId) external view override returns (uint24) {
+        uint24 minBaseFee = this.getMinBaseFee(poolId);
+        uint32 baseFeeFactor = this.getBaseFeeFactor(poolId);
+        return SafeCast.toUint24(minBaseFee / baseFeeFactor);
+    }
+
+    /// @inheritdoc IPoolPolicyManager
+    function getMaxCap(PoolId poolId) external view override returns (uint24) {
+        uint24 maxBaseFee = this.getMaxBaseFee(poolId);
+        uint32 baseFeeFactor = this.getBaseFeeFactor(poolId);
+        return SafeCast.toUint24(maxBaseFee / baseFeeFactor);
     }
 
     // === Dynamic Fee Configuration Setters ===

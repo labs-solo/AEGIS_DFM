@@ -152,6 +152,16 @@ interface IPoolPolicyManager {
     /// @param poolId The pool ID
     function getBaseFeeFactor(PoolId poolId) external view returns (uint32);
 
+    /// @notice Gets the minimum cap (in ticks) for the given pool
+    /// @param poolId The pool ID
+    /// @return Minimum cap in ticks
+    function getMinCap(PoolId poolId) external view returns (uint24);
+
+    /// @notice Gets the maximum cap (in ticks) for the given pool
+    /// @param poolId The pool ID
+    /// @return Maximum cap in ticks
+    function getMaxCap(PoolId poolId) external view returns (uint24);
+
     /// === Dynamic Fee Setter Functions ===
 
     /// @notice Sets the cap budget decay window for a pool

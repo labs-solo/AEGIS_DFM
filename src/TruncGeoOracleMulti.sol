@@ -30,6 +30,10 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
 
     /* parts-per-million constant */
     uint32 internal constant PPM = 1_000_000;
+
+    /* seconds in a day */
+    uint32 internal constant ONE_DAY_SECONDS = 86_400;
+
     /* pre-computed ONE_DAY × PPM to avoid a mul on every cap event            *
      * 86_400 * 1_000_000  ==  86 400 000 000  <  2¹²⁷ – safe for uint128      */
     uint64 internal constant ONE_DAY_PPM = 86_400 * 1_000_000;
@@ -153,9 +157,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     /// -----------------------------------------------------------------------
     function refreshPolicyCache(PoolId poolId) external onlyOwner {
         CachedPolicy storage pc = _policy[poolId];
-        pc.minCap = SafeCast.toUint24(policy.getMinBaseFee(poolId) / 100);
-        pc.maxCap = SafeCast.toUint24(policy.getMaxBaseFee(poolId) / 100);
         pc.stepPpm = policy.getBaseFeeStepPpm(poolId);
+        pc.minCap = policy.getMinCap(poolId);
+        pc.maxCap = policy.getMaxCap(poolId);
         pc.budgetPpm = policy.getDailyBudgetPpm(poolId);
         pc.decayWindow = policy.getCapBudgetDecayWindow(poolId);
         pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(poolId);
@@ -192,9 +196,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
          * ------------------------------------------------------------------ */
         uint24 defaultCap = SafeCast.toUint24(policy.getDefaultMaxTicksPerBlock(poolId));
         CachedPolicy storage pc = _policy[poolId];
-        pc.minCap = SafeCast.toUint24(policy.getMinBaseFee(poolId) / 100);
-        pc.maxCap = SafeCast.toUint24(policy.getMaxBaseFee(poolId) / 100);
         pc.stepPpm = policy.getBaseFeeStepPpm(poolId);
+        pc.minCap = policy.getMinCap(poolId);
+        pc.maxCap = policy.getMaxCap(poolId);
         pc.budgetPpm = policy.getDailyBudgetPpm(poolId);
         pc.decayWindow = policy.getCapBudgetDecayWindow(poolId);
         pc.updateInterval = policy.getBaseFeeUpdateIntervalSeconds(poolId);
@@ -448,7 +452,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         // and auto-tune is not paused for this pool
         if (block.timestamp >= _lastMaxTickUpdate[poolId] + updateInterval) {
             // Target frequency = budgetPpm × 86 400 sec (computed only when needed)
-            uint64 targetFreq = uint64(budgetPpm) * 86_400;
+            uint64 targetFreq = uint64(budgetPpm) * ONE_DAY_SECONDS;
             if (currentFreq > targetFreq) {
                 // Too frequent caps -> Increase maxTicksPerBlock (loosen cap)
                 _autoTuneMaxTicks(poolId, pc, true); // re-use cached struct
