@@ -31,8 +31,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     /* parts-per-million constant */
     uint32 internal constant PPM = 1_000_000;
 
-    /* seconds in a day */
-    uint32 internal constant ONE_DAY_SECONDS = 86_400;
 
     /* pre-computed ONE_DAY × PPM to avoid a mul on every cap event            *
      * 86_400 * 1_000_000  ==  86 400 000 000  <  2¹²⁷ – safe for uint128      */
@@ -171,6 +169,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         maxTicksPerBlock[poolId] = currentCap < pc.minCap ? pc.minCap : 
                                    currentCap > pc.maxCap ? pc.maxCap : currentCap;
 
+        // Seed the cap frequency counter to 99% of target to seed auto-tuning
+        capFreq[poolId] = uint64(uint64(pc.budgetPpm) * uint64(pc.decayWindow));
+
         emit PolicyCacheRefreshed(poolId);
     }
 
@@ -212,6 +213,10 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         if (defaultCap < pc.minCap) defaultCap = pc.minCap;
         if (defaultCap > pc.maxCap) defaultCap = pc.maxCap;
         maxTicksPerBlock[poolId] = defaultCap;
+
+        // Seed the cap frequency counter to 99% of target to seed auto-tuning
+        capFreq[poolId] = uint64(uint64(pc.budgetPpm) * uint64(pc.decayWindow));
+        lastFreqTs[poolId] = uint48(block.timestamp);
 
         // --- audit-aid event ----------------------------------------------------
         emit OracleConfigured(poolId, hook, owner, defaultCap);
@@ -451,8 +456,8 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         // Only auto-tune if enough time has passed since last governance update
         // and auto-tune is not paused for this pool
         if (block.timestamp >= _lastMaxTickUpdate[poolId] + updateInterval) {
-            // Target frequency = budgetPpm × 86 400 sec (computed only when needed)
-            uint64 targetFreq = uint64(budgetPpm) * ONE_DAY_SECONDS;
+            // Target frequency = budgetPpm × decayWindow (computed only when needed)
+            uint64 targetFreq = uint64(budgetPpm) * uint64(decayWindow);
             if (currentFreq > targetFreq) {
                 // Too frequent caps -> Increase maxTicksPerBlock (loosen cap)
                 _autoTuneMaxTicks(poolId, pc, true); // re-use cached struct
