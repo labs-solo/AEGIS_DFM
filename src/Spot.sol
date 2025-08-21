@@ -161,6 +161,7 @@ contract Spot is BaseHook, ISpot {
     /// @notice called in BaseHook.beforeSwap
     function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata)
         internal
+        virtual
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
@@ -248,7 +249,7 @@ contract Spot is BaseHook, ISpot {
         SwapParams calldata params,
         BalanceDelta delta,
         bytes calldata
-    ) internal override returns (bytes4, int128) {
+    ) internal virtual override returns (bytes4, int128) {
         PoolId poolId = key.toId();
 
         // NOTE: we do oracle updates this regardless of manual fee setting
@@ -346,7 +347,7 @@ contract Spot is BaseHook, ISpot {
     }
 
     /// @notice called in BaseHook.afterInitialize
-    function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick) internal override returns (bytes4) {
+    function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick) internal virtual override returns (bytes4) {
         PoolId poolId = key.toId();
 
         if (!LPFeeLibrary.isDynamicFee(key.fee)) {
@@ -366,7 +367,7 @@ contract Spot is BaseHook, ISpot {
         PoolKey calldata key,
         ModifyLiquidityParams calldata,
         bytes calldata
-    ) internal override returns (bytes4) {
+    ) internal virtual override returns (bytes4) {
         PoolId poolId = key.toId();
 
         // Get current tick for oracle update
@@ -392,7 +393,7 @@ contract Spot is BaseHook, ISpot {
         PoolKey calldata key,
         ModifyLiquidityParams calldata,
         bytes calldata
-    ) internal override returns (bytes4) {
+    ) internal virtual override returns (bytes4) {
         PoolId poolId = key.toId();
 
         // Get current tick for oracle update
