@@ -417,7 +417,7 @@ contract Spot is BaseHook, ISpot {
     /// @notice Private function to handle reinvestment with error handling
     /// @param key The pool key for reinvestment
     /// @dev Uses try-catch to prevent reinvestment failures from blocking swaps
-    function _tryReinvest(PoolKey calldata key) private {
+    function _tryReinvest(PoolKey calldata key) internal virtual {
         if (!reinvestmentPaused) {
             try liquidityManager.reinvest(key) returns (bool success) {
                 // Reinvestment attempted, success status is handled by the reinvest function
