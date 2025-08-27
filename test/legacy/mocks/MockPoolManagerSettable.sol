@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: UNLICENSED
 // Note: Changed license to UNLICENSED as per the diff's header
-pragma solidity 0.8.27;
+pragma solidity ^0.8.27;
 
 import {PoolId} from "v4-core/src/types/PoolId.sol";
 import {IExtsload} from "v4-core/src/interfaces/IExtsload.sol";

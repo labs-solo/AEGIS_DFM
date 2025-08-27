@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
+pragma solidity ^0.8.27;
 
 /// @title  LiquidityQ96 – strongly-typed wrapper for Uniswap V4 liquidity
 /// @dev    Stores liquidity as a uint256 Q64.96 fixed-point.

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
+pragma solidity ^0.8.27;
 
 import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";
