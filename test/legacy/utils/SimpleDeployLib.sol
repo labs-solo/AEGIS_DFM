@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.25;
+pragma solidity 0.8.27;
 
 import {Create2} from "@openzeppelin/contracts/utils/Create2.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";

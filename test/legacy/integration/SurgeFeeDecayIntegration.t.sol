@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.25; // Use caret for consistency
+pragma solidity 0.8.27; // Use caret for consistency
 
 import {Test, console2} from "forge-std/Test.sol"; // Added console2
 import {LocalSetup} from "./LocalSetup.t.sol";

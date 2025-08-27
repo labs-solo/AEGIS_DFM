@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity ^0.8.25;
+pragma solidity 0.8.27;
 
 import {Base_Test} from "../Base_Test.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";

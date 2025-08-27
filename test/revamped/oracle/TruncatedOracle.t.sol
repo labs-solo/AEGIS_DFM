@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.25;
+pragma solidity 0.8.27;
 
 import {Base_Test} from "../Base_Test.sol";
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.25;
+pragma solidity 0.8.27;
 
 // Shared constants across tests to avoid "identifier already declared" errors
 uint256 constant INITIAL_LP_USDC = 30_000e6; // 30 000 USDC (6 decimals)

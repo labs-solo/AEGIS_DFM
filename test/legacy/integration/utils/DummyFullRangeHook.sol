@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.25;
+pragma solidity 0.8.27;
 
 /// @title Dummy hook used only in unit-tests – now hardened with ownership
 contract DummyFullRangeHook {
