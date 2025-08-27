@@ -263,10 +263,33 @@ contract Spot is BaseHook, ISpot {
         // Get current tick after the swap
         (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
 
-        // Check if tick movement exceeded the cap
-        int24 tickMovement = currentTick - preSwapTick;
+        // Check if tick movement exceeded the cap based on perSwap vs perBlock setting
+        bool tickWasCapped;
+        bool perSwapMode = policyManager.getPerSwapMode(poolId);
         uint24 maxTicks = truncGeoOracle.maxTicksPerBlock(poolId);
-        bool tickWasCapped = TruncatedOracle.abs(tickMovement) > maxTicks;
+        
+        if (perSwapMode) {
+            // perSwap mode: compare tick movement within this single swap
+            int24 tickMovement = currentTick - preSwapTick;
+            tickWasCapped = TruncatedOracle.abs(tickMovement) > maxTicks;
+        } else {
+            // perBlock mode: compare total tick movement within the current block
+            // Get the block initial tick from the recorded observation
+            int24 blockInitialTick = preSwapTick; // Default to pre-swap tick
+            
+            // Access the observation directly from the public mapping
+            // Get the current index from the oracle state
+            (uint16 index, uint16 cardinality, uint16 cardinalityNext) = truncGeoOracle.states(poolId);
+            if (cardinality > 0) {
+                // Access the observation at the current index
+                (, int24 prevTick,,,) = truncGeoOracle.observations(poolId, index);
+                blockInitialTick = prevTick;
+            }
+            
+            // Compare total block movement
+            int24 totalBlockMovement = currentTick - blockInitialTick;
+            tickWasCapped = TruncatedOracle.abs(totalBlockMovement) > maxTicks;
+        }
 
         // Update cap frequency in the oracle
 
@@ -355,8 +378,20 @@ contract Spot is BaseHook, ISpot {
             revert Errors.InvalidFee();
         }
 
+
+        try policyManager.initialize(key) {
+            // Base fee bounds initialized successfully
+        } catch Error(string memory reason) {
+            // Log the error but don't revert the pool initialization
+            emit PolicyInitializationFailed(poolId, reason);
+        } catch (bytes memory lowLevelData) {
+            // Low-level failure
+            emit PolicyInitializationFailed(poolId, "LLOF");
+        }
+
         truncGeoOracle.initializeOracleForPool(key, tick);
         dynamicFeeManager.initialize(poolId, tick);
+
         return BaseHook.afterInitialize.selector;
     }
 

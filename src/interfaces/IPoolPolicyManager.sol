@@ -68,6 +68,24 @@ interface IPoolPolicyManager {
     /// @param factor The new base fee factor
     event BaseFeeFactorSet(PoolId indexed poolId, uint32 factor);
 
+    /// @notice Emitted when the minimum cap is set for a pool
+    event MinCapSet(PoolId indexed poolId, uint24 minCap);
+
+    /// @notice Emitted when the maximum cap is set for a pool
+    event MaxCapSet(PoolId indexed poolId, uint24 maxCap);
+
+    /// @notice Emitted when a pool's default max ticks per block is set
+    event DefaultMaxTicksPerBlockSet(PoolId indexed poolId, uint24 defaultMaxTicks);
+
+    /// @notice Emitted when the global default base fee factor is set
+    event DefaultBaseFeeFactorSet(uint32 defaultFactor);
+
+    /// @notice Emitted when the perSwap vs perBlock setting is changed for a pool
+    event PerSwapModeSet(PoolId indexed poolId, bool perSwap);
+
+    /// @notice Emitted when the global default perSwap vs perBlock mode is set
+    event DefaultPerSwapModeSet(bool perSwap);
+
     /// === Fee Configuration Functions ===
 
     /// @notice Sets the POL share percentage for a specific pool
@@ -212,4 +230,14 @@ interface IPoolPolicyManager {
     /// @param poolId The pool ID
     /// @param factor The new base fee factor (1 tick = X PPM)
     function setBaseFeeFactor(PoolId poolId, uint32 factor) external;
+
+    /// @notice Gets whether a pool uses perSwap (true) or perBlock (false) mode for tick movement comparison
+    /// @param poolId The pool ID
+    /// @return True if perSwap mode is enabled, false if perBlock mode is enabled
+    function getPerSwapMode(PoolId poolId) external view returns (bool);
+
+    /// @notice Sets whether a pool uses perSwap (true) or perBlock (false) mode for tick movement comparison
+    /// @param poolId The pool ID
+    /// @param perSwap True for perSwap mode, false for perBlock mode
+    function setPerSwapMode(PoolId poolId, bool perSwap) external;
 }

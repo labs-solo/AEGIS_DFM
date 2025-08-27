@@ -47,6 +47,8 @@ contract MockPolicyManager is IPoolPolicyManager {
         uint32 decayWindow;
         uint32 updateInterval;
         uint24 defaultMaxTicks;
+        uint24 minCap; // New
+        uint24 maxCap; // New
     }
 
     mapping(PoolId => Params) internal _p;
@@ -104,7 +106,7 @@ contract MockPolicyManager is IPoolPolicyManager {
     function setPoolPOLMultiplier(PoolId, uint32) external {}
     function setDefaultPOLMultiplier(uint32) external {}
 
-    function setPoolPOLShare(PoolId, uint256) external {}
+
     function setPoolSpecificPOLSharingEnabled(bool) external {}
 
     function getPoolPOLShare(PoolId) external pure returns (uint256) {
@@ -134,7 +136,9 @@ contract MockPolicyManager is IPoolPolicyManager {
         return 0;
     }
 
-    function getBaseFeeFactor(PoolId poolId) external view returns (uint32) {}
+    function getBaseFeeFactor(PoolId poolId) external view returns (uint32) {
+        return 100; // Default base fee factor
+    }
 
     // --- New functions ---
 
@@ -216,4 +220,45 @@ contract MockPolicyManager is IPoolPolicyManager {
     // Add missing interface implementations
     function setSurgeDecayPeriodSeconds(PoolId, uint32) external override {}
     function setSurgeFeeMultiplierPpm(PoolId, uint24) external override {}
+
+    // Add missing getMinCap and getMaxCap functions
+    function getMinCap(PoolId poolId) external view override returns (uint24) {
+        uint24 minCap = _p[poolId].minCap;
+        return minCap == 0 ? 5 : minCap; // Default to 5 ticks if not set
+    }
+
+    function getMaxCap(PoolId poolId) external view override returns (uint24) {
+        uint24 maxCap = _p[poolId].maxCap;
+        return maxCap == 0 ? 200 : maxCap; // Default to 200 ticks if not set
+    }
+
+    // Add setter functions for testing
+    function setMinCap(PoolId poolId, uint24 minCap) external {
+        _p[poolId].minCap = minCap;
+    }
+
+    function setMaxCap(PoolId poolId, uint24 maxCap) external {
+        _p[poolId].maxCap = maxCap;
+    }
+
+    // Add missing setPoolPOLShare function
+    function setPoolPOLShare(PoolId, uint256) external override {}
+
+    // Add missing perSwap mode functions
+    function getPerSwapMode(PoolId) external pure override returns (bool) {
+        return true; // Default to perSwap mode
+    }
+    
+    function setPerSwapMode(PoolId, bool) external override {
+        // No-op for mock
+    }
+
+    // Add global default perSwap mode functions
+    function getDefaultPerSwapMode() external pure returns (bool) {
+        return true; // Default to perSwap mode
+    }
+    
+    function setDefaultPerSwapMode(bool) external {
+        // No-op for mock
+    }
 }
