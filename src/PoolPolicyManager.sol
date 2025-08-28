@@ -52,6 +52,9 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @notice Default maximum cap (in ticks) for oracle bounds
     uint24 private constant DEFAULT_MAX_CAP = 400;
 
+    /// @notice Default pool POL share (10%)
+    uint256 private constant DEFAULT_POOL_POL_SHARE_PPM = 100_000; // 10% = 100,000 PPM
+
     /// @notice Maximum base fee factor to prevent overflow (1 tick = 1000 PPM max)
     uint32 private constant MAX_BASE_FEE_FACTOR_PPM = 1000;
 
@@ -341,6 +344,10 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
         // Initialize perSwap mode with current global default
         _poolPerSwapMode[poolId] = _defaultPerSwapMode;
+
+        // Initialize default POL share (10%)
+        _poolPolSharePpm[poolId] = DEFAULT_POOL_POL_SHARE_PPM;
+        emit PoolPOLShareChanged(poolId, DEFAULT_POOL_POL_SHARE_PPM);
 
         _baseFeeBoundsInitialized[poolId] = true;
 

@@ -39,6 +39,8 @@ importers:
         specifier: github:OpenZeppelin/uniswap-hooks
         version: https://codeload.github.com/OpenZeppelin/uniswap-hooks/tar.gz/a5937785d0c59386c5270e8dc2179ef759bf80b9
 
+  lib/forge-std: {}
+
 packages:
 
   '@openzeppelin/contracts@5.3.0':

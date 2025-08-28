@@ -5,6 +5,9 @@ pragma solidity ^0.8.27;
 
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 
 // - - - local test imports - - -
@@ -2123,5 +2126,86 @@ contract PoolPolicyManagerTest is Base_Test {
         currentInterval = policyManager.getBaseFeeUpdateIntervalSeconds(poolId);
         assertEq(currentStep, maxValidStep, "Maximum valid step should be settable");
         assertEq(currentInterval, validInterval, "Update interval should be updated with maximum valid step");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                      POOL INITIALIZATION POL SHARE TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_PoolInitializedWithDefaultPOLShare() public {
+        // Test that the existing pool (from setUp) has the correct default 10% POL share
+        
+        // Verify that the pool was initialized with the default 10% POL share
+        uint256 polShare = policyManager.getPoolPOLShare(poolId);
+        uint256 expectedDefaultPolShare = 100_000; // 10% = 100,000 PPM
+        
+        assertEq(polShare, expectedDefaultPolShare, "Pool should be initialized with 10% POL share");
+        
+        // Test that the default behavior is consistent by checking the constant
+        // We can verify this by setting a different value and then checking
+        // that the default behavior is maintained for new pools
+        
+        // Set a custom POL share for the existing pool
+        vm.startPrank(owner);
+        policyManager.setPoolPOLShare(poolId, 200_000); // 20%
+        vm.stopPrank();
+        
+        // Verify the custom value was set
+        polShare = policyManager.getPoolPOLShare(poolId);
+        assertEq(polShare, 200_000, "Custom POL share should be set correctly");
+        
+        // Reset back to default to verify the default value
+        vm.startPrank(owner);
+        policyManager.setPoolPOLShare(poolId, expectedDefaultPolShare);
+        vm.stopPrank();
+        
+        // Verify it's back to default
+        polShare = policyManager.getPoolPOLShare(poolId);
+        assertEq(polShare, expectedDefaultPolShare, "Pool should be reset to default 10% POL share");
+    }
+
+    function test_DefaultPOLShareIsCorrectlySet() public {
+        // Test that the existing pool (from setUp) has the correct default POL share
+        
+        uint256 polShare = policyManager.getPoolPOLShare(poolId);
+        uint256 expectedDefaultPolShare = 100_000; // 10% = 100,000 PPM
+        
+        assertEq(polShare, expectedDefaultPolShare, "Existing pool should have 10% POL share");
+        
+        // Verify that this is indeed the default by checking the constant
+        // The constant DEFAULT_POOL_POL_SHARE_PPM should be 100_000
+        // We can verify this by setting a different value and then checking
+        // that the default behavior is maintained for new pools
+        
+        // Set a custom POL share for the existing pool
+        vm.startPrank(owner);
+        policyManager.setPoolPOLShare(poolId, 200_000); // 20%
+        vm.stopPrank();
+        
+        // Verify the custom value was set
+        polShare = policyManager.getPoolPOLShare(poolId);
+        assertEq(polShare, 200_000, "Custom POL share should be set correctly");
+        
+        // Verify that the default value is correctly set to 10%
+        // We can test this by checking that the default behavior is consistent
+        // and that the value can be set and retrieved correctly
+        
+        // Test edge case: 0% POL share
+        vm.startPrank(owner);
+        policyManager.setPoolPOLShare(poolId, 0);
+        vm.stopPrank();
+        
+        // Verify zero value was set
+        polShare = policyManager.getPoolPOLShare(poolId);
+        assertEq(polShare, 0, "Zero POL share should be set correctly");
+        
+        // Test edge case: 100% POL share
+        vm.startPrank(owner);
+        policyManager.setPoolPOLShare(poolId, 1_000_000); // 100%
+        vm.stopPrank();
+        
+        // Verify 100% value was set
+        polShare = policyManager.getPoolPOLShare(poolId);
+        assertEq(polShare, 1_000_000, "100% POL share should be set correctly");
     }
 }
