@@ -197,8 +197,8 @@ sequenceDiagram
 | `baseFeeUpdateIntervalSeconds` | `86 400 s` | PolicyManager | Min 1 day between steps |
 | `targetCapsPerDay` | `4` | PolicyManager | Auto-tune target frequency |
 | `capBudgetDecayWindow` | `180 d` | PolicyManager | Leaky-bucket half-life |
-| `minBaseFeePpm` | `100` | PolicyManager | 0.01 % floor |
-| `maxBaseFeePpm` | `30 000` | PolicyManager | 3 % ceiling |
+| `minBaseFeePpm` | `10` | PolicyManager | 0.001 % floor |
+| `maxBaseFeePpm` | `100 000` | PolicyManager | 10 % ceiling |
 
 > **Tip:** per-pool overrides are always looked up first; `0` indicates "use global default".
 
