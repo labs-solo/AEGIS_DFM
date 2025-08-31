@@ -192,7 +192,7 @@ sequenceDiagram
 |--------|---------|----------|-------------|
 | `tickScalingFactor` | `1` | PolicyManager | Links fee % → allowed tick move |
 | `surgeFeeMultiplierPpm` | `3 000 000` | PolicyManager | Surge to `+300 %` of base |
-| `surgeDecayPeriodSeconds` | `3 600 s` | PolicyManager | Surge linear decay window |
+| `surgeDecayPeriodSeconds` | `21 600 s` | PolicyManager | Surge linear decay window |
 | `baseFeeStepPpm` | `20 000` | PolicyManager | Max ±2 % base-fee step |
 | `baseFeeUpdateIntervalSeconds` | `86 400 s` | PolicyManager | Min 1 day between steps |
 | `targetCapsPerDay` | `4` | PolicyManager | Auto-tune target frequency |
