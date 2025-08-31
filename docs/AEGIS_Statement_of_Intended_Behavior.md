@@ -136,7 +136,7 @@ baseFeePPM = maxTicksPerBlock × 28   // 28 ppm = 0.028 %
 ```
 
 * `maxTicksPerBlock` comes from the oracle's auto-tune loop.  
-* Bounds: `[minBaseFeePpm, maxBaseFeePpm]` (`100 ppm` – `30 000 ppm` by default).
+* Bounds: `[minBaseFeePpm, maxBaseFeePpm]` (`10 ppm` – `100 000 ppm` by default).
 * Adjustment cadence and step size are controlled by PolicyManager.
 
 ### 4.2 Surge Fee

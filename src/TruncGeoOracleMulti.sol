@@ -427,7 +427,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         uint32 decayWindow = pc.decayWindow;
         uint32 updateInterval = pc.updateInterval;
 
-        // 2️⃣  Apply exponential decay *only when no CAP in this block*.
+        // 2️⃣  Apply linear decay *only when no CAP in this block*.
         if (!capOccurred && timeElapsed > 0 && currentFreq > 0) {
             // decay factor = (window - elapsed) / window = 1 - elapsed / window
             // We use ppm to avoid floating point: (1e6 - elapsed * 1e6 / window)

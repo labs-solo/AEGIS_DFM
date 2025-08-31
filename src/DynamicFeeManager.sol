@@ -19,7 +19,7 @@ import {Errors} from "./errors/Errors.sol";
 /// @notice Manages dynamic fees for Uniswap v4 pools with base fees from oracle data and surge fees during capped periods
 /// @dev Implements a two-phase fee system:
 ///      1. Base fees calculated from oracle tick volatility data
-///      2. Surge fees applied during capped trading periods with exponential decay
+///      2. Surge fees applied during capped trading periods with linear decay
 contract DynamicFeeManager is IDynamicFeeManager, Owned {
     using PoolIdLibrary for PoolId;
     using DynamicFeeStateLibrary for DynamicFeeState;
@@ -221,7 +221,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         return uint32(calculatedFee);
     }
 
-    /// @notice Calculates surge fee with exponential decay
+    /// @notice Calculates surge fee with linear decay
     /// @param poolId The pool identifier
     /// @param feeState The current fee state
     /// @param oracleMaxTicks The maximum ticks per block from oracle (to avoid redundant calls)
@@ -250,7 +250,7 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         uint256 surgeMultiplierPpm = policyManager.getSurgeFeeMultiplierPpm(poolId);
         uint256 maxSurgeFee = oracleBaseFee * surgeMultiplierPpm / PPM_DENOMINATOR;
 
-        // Apply exponential decay: surgeFee = maxSurge * (remaining_time / total_time)
+        // Apply linear decay: surgeFee = maxSurge * (remaining_time / total_time)
         uint256 remainingTime = uint256(surgeDuration) - elapsedTime;
         return maxSurgeFee * remainingTime / surgeDuration;
     }
