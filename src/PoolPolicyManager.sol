@@ -275,13 +275,13 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @inheritdoc IPoolPolicyManager
     function getMinCap(PoolId poolId) external view override returns (uint24) {
         uint24 minCap = _poolMinCap[poolId];
-        return minCap == 0 ? DEFAULT_MIN_CAP : minCap; // Default to 5 ticks if not set
+        return minCap == 0 ? DEFAULT_MIN_CAP : minCap; // Default to 1 ticks if not set
     }
 
     /// @inheritdoc IPoolPolicyManager
     function getMaxCap(PoolId poolId) external view override returns (uint24) {
         uint24 maxCap = _poolMaxCap[poolId];
-        return maxCap == 0 ? DEFAULT_MAX_CAP : maxCap; // Default to 200 ticks if not set
+        return maxCap == 0 ? DEFAULT_MAX_CAP : maxCap; // Default to 400 ticks if not set
     }
 
     // === Dynamic Fee Configuration Setters ===
