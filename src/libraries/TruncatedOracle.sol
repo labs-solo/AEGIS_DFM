@@ -376,7 +376,7 @@ library TruncatedOracle {
     }
 
     /// @dev Multiplies tick (int24) by delta (uint32) in 256-bit space and
-    ///      ensures the product fits within the int48 accumulator range.
+    ///      ensures the product fits within the int56 accumulator range.
     function _mulTickDelta(int24 tick, uint32 delta) private pure returns (int256 p) {
         p = int256(int128(tick)) * int256(uint256(delta));
         require(p >= type(int56).min && p <= type(int56).max, "mul-overflow");
