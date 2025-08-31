@@ -146,8 +146,8 @@ surgeFeePPM₀ = baseFeePPM × surgeFeeMultiplierPpm / 1_000_000
 ```
 
 * Multiplier default: **300 %** (capped at 300 %).
-* Linear decay begins only _after_ the last capped trade and lasts
-  `surgeDecayPeriodSeconds` (default **1 h**).
+* Linear decay begins only _after_ a capped trade and lasts
+  `surgeDecayPeriodSeconds` (default **6 h**).
 
 ### 4.3 CAP Events
 
