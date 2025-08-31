@@ -132,7 +132,7 @@ Vault that compounds protocol fees into a full-range Uniswap position. It only t
 ### 4.1 Base Fee
 
 ```
-baseFeePPM = maxTicksPerBlock × 100   // 100 ppm = 0.01 %
+baseFeePPM = maxTicksPerBlock × 28   // 28 ppm = 0.028 %
 ```
 
 * `maxTicksPerBlock` comes from the oracle's auto-tune loop.  
