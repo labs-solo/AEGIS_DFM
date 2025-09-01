@@ -379,15 +379,7 @@ contract Spot is BaseHook, ISpot {
         }
 
 
-        try policyManager.initialize(key) {
-            // Base fee bounds initialized successfully
-        } catch Error(string memory reason) {
-            // Log the error but don't revert the pool initialization
-            emit PolicyInitializationFailed(poolId, reason);
-        } catch (bytes memory lowLevelData) {
-            // Low-level failure
-            emit PolicyInitializationFailed(poolId, "LLOF");
-        }
+        policyManager.initialize(key);
 
         truncGeoOracle.initializeOracleForPool(key, tick);
         dynamicFeeManager.initialize(poolId, tick);
@@ -408,7 +400,7 @@ contract Spot is BaseHook, ISpot {
         // Get current tick for oracle update
         (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
 
-        // Record observation with the current tick to ensure accurate secondsPerLiquidityCumulativeX128
+        // Record observation to ensure accurate secondsPerLiquidityCumulativeX128
         try truncGeoOracle.recordObservation(poolId, currentTick) {
             // Observation recorded successfully
         } catch Error(string memory reason) {
@@ -434,7 +426,7 @@ contract Spot is BaseHook, ISpot {
         // Get current tick for oracle update
         (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
 
-        // Record observation with the current tick to ensure accurate secondsPerLiquidityCumulativeX128
+        // Record observation to ensure accurate secondsPerLiquidityCumulativeX128
         try truncGeoOracle.recordObservation(poolId, currentTick) {
             // Observation recorded successfully
         } catch Error(string memory reason) {
