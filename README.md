@@ -26,13 +26,13 @@ Why you might care:
 ## 🏗️ Project Layout (High-Level)
 
 ```text
-contracts/
-├─ hooks/Spot.sol                 # central Uniswap V4 hook (fee router)
-├─ fee/DynamicFeeManager.sol      # base + surge fee engine
-├─ oracle/TruncGeoOracleMulti.sol # adaptive tick-cap oracle
-├─ policy/PoolPolicyManager.sol   # registry of risk parameters
-└─ pol/FullRangeLiquidityManager.sol # protocol-owned-liquidity vault
-scripts/                 # build / test / deploy helpers
+src/
+├─ Spot.sol                       # central Uniswap V4 hook (fee router)
+├─ DynamicFeeManager.sol          # base + surge fee engine
+├─ TruncGeoOracleMulti.sol        # adaptive tick-cap oracle
+├─ PoolPolicyManager.sol          # registry of risk parameters
+└─ FullRangeLiquidityManager.sol  # protocol-owned-liquidity vault
+script/                 # build / test / deploy helpers
 foundry.toml             # compiler + remappings
 package.json + pnpm-lock.yaml
 ```
@@ -66,8 +66,8 @@ curl -L https://foundry.paradigm.xyz | bash && foundryup
 ### 2. Clone & Install
 
 ```bash
-git clone https://github.com/labs-solo/venm.git    # repo still named venm for now
-cd venm
+git clone https://github.com/labs-solo/AEGIS_DFM.git
+cd AEGIS_DFM
 pnpm install --workspace-root                      # fetches ALL deps incl. Uniswap v4 core
 ```
 

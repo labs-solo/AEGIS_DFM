@@ -24,11 +24,11 @@ Adaptive tick-cap oracle safeguarding Uniswap V4 pools
 
 | Category | Variable(s) | Default / Range |
 |----------|------------|-----------------|
-| Ring buffer | `_pages[id][pageIdx]` (512 obs/page) · `states[id]` | Empty |
+| Ring buffer | `observations[id][65535]` (direct array) · `states[id]` | Empty |
 | Adaptive cap | `maxTicksPerBlock[id]` | uint24 1 – 500 bps |
 | Policy cache | `_policy[id]` (minCap, maxCap, stepPpm, budgetPpm, decayWindow, updateInterval) | All zero until validated |
 | Auto-tune flags | `_autoTunePaused[id]` bool, `_lastMaxTickUpdate[id]` uint32 | false, 0 |
-| Constants | `PAGE_SIZE`, `ONE_DAY_PPM`, `CAP_FREQ_MAX`, `EV_THRESHOLD` | Compile-time |
+| Constants | `ONE_DAY_PPM`, `CAP_FREQ_MAX`, `MAX_CARDINALITY_TARGET` | Compile-time |
 
 ## 4. External API (happy-path)
 
@@ -56,7 +56,7 @@ function getLatestObservation(PoolId pid)
 
 1. **Policy sanity** - `PolicyValidator.validate()` rejects zero/illogical caps.
 2. **Hook exclusivity** - `pushObservationAndCheckCap` reverts unless `msg.sender == hook`.
-3. **Ring bounds** - `states.cardinalityNext ≤ PAGE_SIZE` enforced by TruncatedOracle.
+3. **Ring bounds** - Auto-growth stops at `MAX_CARDINALITY_TARGET` (1024), but manual growth can reach full array size (65535).
 4. **Cap step-limit** - `maxTicksPerBlock` moves ≤ stepPpm per updateInterval.
 5. **Re-entrancy** - All mutating paths use `nonReentrant`.
 
@@ -70,7 +70,7 @@ function getLatestObservation(PoolId pid)
 ## 8. Dev & Ops Tips
 
 * Fuzz `pushObservationAndCheckCap` ±maxTicksPerBlock to cover cap-hit branch.
-* Keep `PAGE_SIZE` a power-of-two for cheap modulo masking.
+* Keep `MAX_CARDINALITY_TARGET` (1024) for efficient ring buffer operations.
 * Index `MaxTicksPerBlockUpdated` to plot real-time volatility.
 * Use `CAP_FREQ_MAX` to bound autotune gas in extreme markets.
 

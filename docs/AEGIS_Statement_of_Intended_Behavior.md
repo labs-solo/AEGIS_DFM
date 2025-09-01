@@ -195,7 +195,7 @@ sequenceDiagram
 | `surgeDecayPeriodSeconds` | `21 600 s` | PolicyManager | Surge linear decay window |
 | `baseFeeStepPpm` | `20 000` | PolicyManager | Max ±2 % base-fee step |
 | `baseFeeUpdateIntervalSeconds` | `86 400 s` | PolicyManager | Min 1 day between steps |
-| `targetCapsPerDay` | `4` | PolicyManager | Auto-tune target frequency |
+| `dailyBudgetPpm` | `1 000 000` | PolicyManager | Auto-tune target frequency (1 cap per day) |
 | `capBudgetDecayWindow` | `180 d` | PolicyManager | Leaky-bucket half-life |
 | `minBaseFeePpm` | `10` | PolicyManager | 0.001 % floor |
 | `maxBaseFeePpm` | `100 000` | PolicyManager | 10 % ceiling |
@@ -210,7 +210,7 @@ sequenceDiagram
 * **Step-limit** – `baseFeePPM` can change at most `baseFeeStepPpm` per interval.
 * **Hard Tick Cap** – Oracle clamps any tick delta > `maxTicksPerBlock`.
 * **Hook Exclusivity** – Only the authorised Spot hook may call write-paths on Oracle & FeeMgr.
-* **Gas Stipend** – External calls from Spot are limited to `100 k` gas; failure only disables surge for that swap.
+* **Error Handling** – External calls from Spot use try-catch blocks;
 * **Re-entrancy** – All mutators are `nonReentrant`; Spot additionally validates `msg.sender == PoolManager`.
 
 ---

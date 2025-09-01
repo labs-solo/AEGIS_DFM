@@ -77,7 +77,7 @@ Gas: deposit ≈ 240 k, withdraw ≈ 200 k.
 
 * Unit tests: fuzz `_afterSwap` with capped/uncapped ticks to ensure fee propagation.
 * Monitoring: track `ReinvestSkipped` reasons for tuning thresholds & cooldowns.
-* Gas: `GAS_STIPEND` (100 k) caps external-call grief; adjust only with profiling.
+* Gas: External calls use try-catch blocks to prevent failures from blocking swaps.
 * Docs: See sibling one-pagers for deep dives:
   * DynamicFeeManager → one-pager
   * FullRangeLiquidityManager → one-pager
