@@ -15,6 +15,7 @@ import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {Errors} from "../../../../src/errors/Errors.sol";
 
 import "forge-std/console2.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 contract PerSwapVsPerBlockTest is Base_Test {
     using StateLibrary for IPoolManager;
@@ -35,6 +36,9 @@ contract PerSwapVsPerBlockTest is Base_Test {
         // Get max ticks per block to know our target
         uint24 maxTicks = oracle.maxTicksPerBlock(poolId);
         
+        // Record logs to count CAP entries from the fee manager during this block
+        vm.recordLogs();
+
         // Perform multiple small swaps that individually are under the cap
         vm.startPrank(user1);
         
@@ -142,6 +146,27 @@ contract PerSwapVsPerBlockTest is Base_Test {
         
         // Check if a cap event actually occurred
         bool capEventActive = feeManager.isCAPEventActive(poolId);
+
+        // Validate only one CapToggled(true) was emitted during the swaps in this block
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 CAP_TOGGLED_SIG = keccak256("CapToggled(bytes32,bool)");
+        uint256 capEntries = 0;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (
+                logs[i].emitter == address(feeManager)
+                    && logs[i].topics.length > 1
+                    && logs[i].topics[0] == CAP_TOGGLED_SIG
+                    && logs[i].topics[1] == PoolId.unwrap(poolId)
+            ) {
+                bool entered = abi.decode(logs[i].data, (bool));
+                console2.log("CapToggled detected - entered:", entered);
+                console2.logBytes32(logs[i].topics[0]);
+                console2.logBytes32(logs[i].topics[1]);
+                if (entered) capEntries++;
+            }
+        }
+        console2.log("Cap entries counted (should be 1):", capEntries);
+        assertEq(capEntries, 1, "Expected exactly one cap entry in this block");
         
         // Log the key results
         console2.log("=== PerBlock Mode Test Results ===");

@@ -68,6 +68,9 @@ contract Spot is BaseHook, ISpot {
 
     bool public override reinvestmentPaused;
 
+    /// @notice Track last block a CAP event was counted per pool to dedupe per-block mode
+    mapping(PoolId => uint256) private lastCapEventBlock;
+
     // - - - Constructor - - -
 
     constructor(
@@ -289,6 +292,14 @@ contract Spot is BaseHook, ISpot {
             // Compare total block movement
             int24 totalBlockMovement = currentTick - blockInitialTick;
             tickWasCapped = TruncatedOracle.abs(totalBlockMovement) > maxTicks;
+
+            if (tickWasCapped) {
+                if (lastCapEventBlock[poolId] == block.number) {
+                    tickWasCapped = false;
+                } else {
+                    lastCapEventBlock[poolId] = block.number;
+                }
+            }
         }
 
         // Update cap frequency in the oracle
