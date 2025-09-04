@@ -96,7 +96,7 @@ contract Spot is BaseHook, ISpot {
         liquidityManager = _liquidityManager;
     }
 
-    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
+    function getHookPermissions() public pure virtual override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: false,
             afterInitialize: true,
