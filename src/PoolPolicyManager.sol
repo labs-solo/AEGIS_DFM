@@ -423,7 +423,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @inheritdoc IPoolPolicyManager
     function setBaseFeeFactor(PoolId poolId, uint32 factor) external override onlyOwner {
         // Validate factor is reasonable (0 means use default)
-        if (factor != 0 && (factor < 1 || factor > MAX_BASE_FEE_FACTOR_PPM)) {
+        if (factor != 0 && factor > MAX_BASE_FEE_FACTOR_PPM) {
             revert Errors.ParameterOutOfRange(factor, 1, MAX_BASE_FEE_FACTOR_PPM);
         }
 
