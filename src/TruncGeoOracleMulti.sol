@@ -503,10 +503,6 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         } else {
             newCap = currentCap > change + minCap ? currentCap - change : minCap;
         }
-
-        uint24 diff = currentCap > newCap ? currentCap - newCap : newCap - currentCap;
-
-        
         
             emit MaxTicksPerBlockUpdated(poolId, currentCap, newCap, uint32(block.timestamp));
             maxTicksPerBlock[poolId] = newCap;

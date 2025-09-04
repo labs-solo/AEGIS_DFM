@@ -375,9 +375,9 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @inheritdoc IPoolPolicyManager
     function setSurgeFeeMultiplierPpm(PoolId poolId, uint24 multiplier) external override onlyOwner {
-        if (multiplier == 0 || multiplier > MAX_SURGE_FEE_MULTIPLIER_PPM) revert Errors.ParameterOutOfRange(multiplier, 1, 10_000_000);
+        if (multiplier == 0 || multiplier > MAX_SURGE_FEE_MULTIPLIER_PPM) revert Errors.ParameterOutOfRange(multiplier, 1, MAX_SURGE_FEE_MULTIPLIER_PPM);
 
-        _poolDynamicFeeConfig[poolId].surgeFeeMultiplierPpm = multiplier;
+    _poolDynamicFeeConfig[poolId].surgeFeeMultiplierPpm = multiplier;
         emit SurgeFeeMultiplierSet(poolId, multiplier);
     }
 

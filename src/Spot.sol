@@ -429,24 +429,28 @@ contract Spot is BaseHook, ISpot {
     function _beforeRemoveLiquidity(
         address,
         PoolKey calldata key,
-        ModifyLiquidityParams calldata,
+        ModifyLiquidityParams calldata params,
         bytes calldata
     ) internal virtual override returns (bytes4) {
-        PoolId poolId = key.toId();
 
-        // Get current tick for oracle update
-        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+        // Only record observation if liquidityDelta is not 0
+        if (params.liquidityDelta != 0) {
 
-        // Record observation to ensure accurate secondsPerLiquidityCumulativeX128
-        try truncGeoOracle.recordObservation(poolId, currentTick) {
-            // Observation recorded successfully
-        } catch Error(string memory reason) {
-            emit OracleUpdateFailed(poolId, reason);
-        } catch (bytes memory lowLevelData) {
-            // Low-level oracle failure
-            emit OracleUpdateFailed(poolId, "LLOF");
-        }
+            PoolId poolId = key.toId();
 
+            // Get current tick for oracle update
+            (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+
+            // Record observation to ensure accurate secondsPerLiquidityCumulativeX128
+            try truncGeoOracle.recordObservation(poolId, currentTick) {
+                // Observation recorded successfully
+            } catch Error(string memory reason) {
+                emit OracleUpdateFailed(poolId, reason);
+            } catch (bytes memory lowLevelData) {
+                // Low-level oracle failure
+                emit OracleUpdateFailed(poolId, "LLOF");
+            }
+            }
         return BaseHook.beforeRemoveLiquidity.selector;
     }
 
