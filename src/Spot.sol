@@ -212,8 +212,8 @@ contract Spot is BaseHook, ISpot {
             Currency feeCurrency = params.zeroForOne ? key.currency0 : key.currency1;
 
             // Calculate hook fee amount
-            uint256 swapFeeAmount = FullMath.mulDiv(absAmount, dynamicFee, 1e6);
-            uint256 hookFeeAmount = FullMath.mulDiv(swapFeeAmount, protocolFeePPM, 1e6);
+            uint256 swapFeeAmount = FullMath.mulDivRoundingUp(absAmount, dynamicFee, 1e6);
+            uint256 hookFeeAmount = FullMath.mulDivRoundingUp(swapFeeAmount, protocolFeePPM, 1e6);
 
             if (hookFeeAmount > 0) {
                 // Mint fee to FRLM
@@ -346,8 +346,8 @@ contract Spot is BaseHook, ISpot {
 
                 // Calculate hook fee
                 uint256 absInputAmount = uint256(uint128(-inputAmount));
-                uint256 swapFeeAmount = FullMath.mulDiv(absInputAmount, dynamicFee, 1e6);
-                uint256 hookFeeAmount = FullMath.mulDiv(swapFeeAmount, protocolFeePPM, 1e6);
+                uint256 swapFeeAmount = FullMath.mulDivRoundingUp(absInputAmount, dynamicFee, 1e6);
+                uint256 hookFeeAmount = FullMath.mulDivRoundingUp(swapFeeAmount, protocolFeePPM, 1e6);
 
                 if (hookFeeAmount > 0) {
                     // Mint fee credit to FRLM
