@@ -32,7 +32,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     uint24 private constant DEFAULT_SURGE_FEE_MULTIPLIER_PPM = 3_000_000; // 300%
     uint24 private constant MAX_SURGE_FEE_MULTIPLIER_PPM = 10_000_000;
 
-    uint24 private constant DEFAULT_MAX_TICKS_PER_BLOCK = 25;
+
 
     /// @notice Maximum step for base fee updates (10% per step)
     uint32 private constant MAX_STEP_PPM = 100_000;
@@ -251,7 +251,10 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @inheritdoc IPoolPolicyManager
     function getDefaultMaxTicksPerBlock(PoolId poolId) external view override returns (uint24) {
         uint24 poolDefault = _poolDefaultMaxTicksPerBlock[poolId];
-        return poolDefault != 0 ? poolDefault : DEFAULT_MAX_TICKS_PER_BLOCK;
+        // poolDefault is guaranteed to be non-zero after initialization
+        // If somehow called before initialization, this would revert with zero value
+        if (poolDefault == 0) revert PolicyManagerErrors.ZeroValue();
+        return poolDefault;
     }
 
     /// @inheritdoc IPoolPolicyManager
