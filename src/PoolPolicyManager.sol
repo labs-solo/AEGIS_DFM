@@ -408,7 +408,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @inheritdoc IPoolPolicyManager
     function setPoolDailyBudgetPpm(PoolId poolId, uint32 newBudget) external override onlyOwner {
         // Validate: 0 means "use default", or 1 to 10*PPM_SCALE
-        if (newBudget != 0 && (newBudget < 1 || newBudget > 10 * PrecisionConstants.PPM_SCALE)) {
+        if (newBudget > 10 * PrecisionConstants.PPM_SCALE) {
             revert Errors.ParameterOutOfRange(newBudget, 1, 10 * PrecisionConstants.PPM_SCALE);
         }
 
