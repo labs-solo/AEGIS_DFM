@@ -16,7 +16,7 @@ contract PoolPolicyManagerInitTest is Test {
     uint24[] internal _tickSpacings;
 
     uint24 constant EXPECTED_MIN_DYNAMIC_FEE = 100; // 0.01 %
-    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 50000; // 5 %
+    uint24 constant EXPECTED_MAX_DYNAMIC_FEE = 100000; // 10 %
     uint24 constant EXPECTED_DEFAULT_DYNAMIC_FEE = 5000; // 0.5 %
 
     function setUp() public {
@@ -41,7 +41,7 @@ contract PoolPolicyManagerInitTest is Test {
     function testConstructorSetsDefaultFeeAllocations() public view {
         // (POL share, full-range share, LP share)
         uint256 pol = ppm.getPoolPOLShare(pid(1));
-        assertEq(pol, 100_000); // 10 %
+        assertEq(pol, 0); // Default is 0 for new pools
     }
 
     function testGetMinimumPOLTarget_UsesDefaultMultiplier() public view {
@@ -53,9 +53,9 @@ contract PoolPolicyManagerInitTest is Test {
 
     function testDefaultGetterFallbacks() public view {
         PoolId p = pid(42);
-        assertEq(ppm.getMinBaseFee(p), 100);
+        assertEq(ppm.getMinBaseFee(p), 10); // MIN_TRADING_FEE constant
         assertEq(ppm.getMaxBaseFee(p), EXPECTED_MAX_DYNAMIC_FEE);
-        assertEq(ppm.getSurgeDecayPeriodSeconds(p), 3_600);
+        assertEq(ppm.getSurgeDecayPeriodSeconds(p), 21_600); // 6 hours
         assertEq(ppm.getSurgeFeeMultiplierPpm(p), 3_000_000);
         assertEq(ppm.getBaseFeeStepPpm(p), 20_000);
         assertEq(ppm.getBaseFeeUpdateIntervalSeconds(p), 1 days);

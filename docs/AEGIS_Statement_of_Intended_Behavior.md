@@ -132,11 +132,11 @@ Vault that compounds protocol fees into a full-range Uniswap position. It only t
 ### 4.1 Base Fee
 
 ```
-baseFeePPM = maxTicksPerBlock × 100   // 100 ppm = 0.01 %
+baseFeePPM = maxTicksPerBlock × 28   // 28 ppm = 0.028 %
 ```
 
 * `maxTicksPerBlock` comes from the oracle's auto-tune loop.  
-* Bounds: `[minBaseFeePpm, maxBaseFeePpm]` (`100 ppm` – `30 000 ppm` by default).
+* Bounds: `[minBaseFeePpm, maxBaseFeePpm]` (`10 ppm` – `100 000 ppm` by default).
 * Adjustment cadence and step size are controlled by PolicyManager.
 
 ### 4.2 Surge Fee
@@ -146,8 +146,8 @@ surgeFeePPM₀ = baseFeePPM × surgeFeeMultiplierPpm / 1_000_000
 ```
 
 * Multiplier default: **300 %** (capped at 300 %).
-* Linear decay begins only _after_ the last capped trade and lasts
-  `surgeDecayPeriodSeconds` (default **1 h**).
+* Linear decay begins only _after_ a capped trade and lasts
+  `surgeDecayPeriodSeconds` (default **6 h**).
 
 ### 4.3 CAP Events
 
@@ -192,13 +192,13 @@ sequenceDiagram
 |--------|---------|----------|-------------|
 | `tickScalingFactor` | `1` | PolicyManager | Links fee % → allowed tick move |
 | `surgeFeeMultiplierPpm` | `3 000 000` | PolicyManager | Surge to `+300 %` of base |
-| `surgeDecayPeriodSeconds` | `3 600 s` | PolicyManager | Surge linear decay window |
+| `surgeDecayPeriodSeconds` | `21 600 s` | PolicyManager | Surge linear decay window |
 | `baseFeeStepPpm` | `20 000` | PolicyManager | Max ±2 % base-fee step |
 | `baseFeeUpdateIntervalSeconds` | `86 400 s` | PolicyManager | Min 1 day between steps |
-| `targetCapsPerDay` | `4` | PolicyManager | Auto-tune target frequency |
+| `dailyBudgetPpm` | `1 000 000` | PolicyManager | Auto-tune target frequency (1 cap per day) |
 | `capBudgetDecayWindow` | `180 d` | PolicyManager | Leaky-bucket half-life |
-| `minBaseFeePpm` | `100` | PolicyManager | 0.01 % floor |
-| `maxBaseFeePpm` | `30 000` | PolicyManager | 3 % ceiling |
+| `minBaseFeePpm` | `10` | PolicyManager | 0.001 % floor |
+| `maxBaseFeePpm` | `100 000` | PolicyManager | 10 % ceiling |
 
 > **Tip:** per-pool overrides are always looked up first; `0` indicates "use global default".
 
@@ -210,7 +210,7 @@ sequenceDiagram
 * **Step-limit** – `baseFeePPM` can change at most `baseFeeStepPpm` per interval.
 * **Hard Tick Cap** – Oracle clamps any tick delta > `maxTicksPerBlock`.
 * **Hook Exclusivity** – Only the authorised Spot hook may call write-paths on Oracle & FeeMgr.
-* **Gas Stipend** – External calls from Spot are limited to `100 k` gas; failure only disables surge for that swap.
+* **Error Handling** – External calls from Spot use try-catch blocks;
 * **Re-entrancy** – All mutators are `nonReentrant`; Spot additionally validates `msg.sender == PoolManager`.
 
 ---

@@ -196,6 +196,7 @@ library Errors {
     // --- Oracle ---
     error OracleOperationFailed(string operation, string reason);
     error OracleNotInitialized(PoolId poolId);
+    error OracleAlreadyInitialized(PoolId poolId);
     error OracleUpdateFailed(PoolId poolId, string reason);
     error OraclePriceInvalid(uint160 sqrtPriceX96);
     error OracleTickInvalid(int24 tick);

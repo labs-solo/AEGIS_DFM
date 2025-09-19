@@ -110,15 +110,15 @@ contract DynamicFeeManagerTest is Test {
 
         // Enable oracle for the pool
         vm.prank(address(fullRange));
-        oracle.enableOracleForPool(poolKey);
+        (, int24 initialTick,,) = poolManager.getSlot0(poolId);
+        oracle.initializeOracleForPool(poolKey, initialTick);
 
-        // Governor override removed – rely on the default MTB set during enableOracleForPool
+        // Governor override removed – rely on the default MTB set during initializeOracleForPool
 
         // Oracle auto-tune guard = 1 day; jump once so first tune is allowed
         vm.warp(block.timestamp + 1 days + 1);
 
         // Initialize DFM for the pool
-        (, int24 initialTick,,) = poolManager.getSlot0(poolId);
         vm.prank(address(this)); // Assuming deployer/governance can initialize
         dfm.initialize(poolId, initialTick);
     }

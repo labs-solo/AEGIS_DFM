@@ -20,9 +20,9 @@ import {TickMoveGuard} from "src/libraries/TickMoveGuard.sol";
 /*                             Harness / shim                                */
 /* ------------------------------------------------------------------------- */
 contract OracleHarness {
-    using TruncatedOracle for TruncatedOracle.Observation[512];
+    using TruncatedOracle for TruncatedOracle.Observation[65535];
 
-    TruncatedOracle.Observation[512] internal obs;
+    TruncatedOracle.Observation[65535] internal obs;
 
     uint16 public index;
     uint16 public card;
@@ -35,7 +35,7 @@ contract OracleHarness {
     }
 
     function push(uint32 ts, int24 tick_, uint128 liq) external {
-        (index, card) = obs.write(index, ts, tick_, liq, card, cardNext);
+        (index, card) = obs.write(index, ts, tick_, liq, card, cardNext, 1000); // maxTicks = 1000
     }
 
     function grow(uint16 next_) external {

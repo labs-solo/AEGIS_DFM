@@ -146,6 +146,11 @@ contract DeployScript is Script, UniswapV4Config {
         require(deployed.spot == hookAddress, "Hook address mismatch");
         console.log("Spot hook deployed at:", deployed.spot);
 
+        // Step 8: Post-deployment configuration - authorize Spot hook in PoolPolicyManager
+        console.log("Configuring post-deployment authorizations...");
+        policyManager.setAuthorizedHook(deployed.spot);
+        console.log("Spot hook authorized in PoolPolicyManager");
+
         vm.stopBroadcast();
 
         return deployed;
@@ -153,6 +158,7 @@ contract DeployScript is Script, UniswapV4Config {
 
     function getSpotHookFlags() internal pure returns (uint160) {
         return Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.AFTER_INITIALIZE_FLAG
+            | Hooks.BEFORE_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
             | Hooks.BEFORE_SWAP_RETURNS_DELTA_FLAG | Hooks.AFTER_SWAP_RETURNS_DELTA_FLAG;
     }
 

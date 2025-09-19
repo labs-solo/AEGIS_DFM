@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
+pragma solidity ^0.8.27;
 
 // - - - Solmate Deps - - -
 
@@ -8,6 +8,7 @@ import {Owned} from "solmate/src/auth/Owned.sol";
 // - - - V4 Deps - - -
 
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 
 // - - - Project Deps - - -
 
@@ -15,6 +16,7 @@ import {PrecisionConstants} from "./libraries/PrecisionConstants.sol";
 import {Errors} from "./errors/Errors.sol";
 import {PolicyManagerErrors} from "./errors/PolicyManagerErrors.sol";
 import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 
 /// @title PoolPolicyManager
 /// @notice Consolidated policy manager implementing the IPoolPolicyManager interface
@@ -22,14 +24,15 @@ import {IPoolPolicyManager} from "./interfaces/IPoolPolicyManager.sol";
 contract PoolPolicyManager is IPoolPolicyManager, Owned {
     // === Constants ===
 
-    uint24 private constant MIN_TRADING_FEE = 100; // 0.01%
-    uint24 private constant MAX_TRADING_FEE = 50_000; // 5%
+    uint24 private constant MIN_TRADING_FEE = 10; // 0.001%
+    uint24 private constant MAX_TRADING_FEE = 100_000; // 10%
 
-    uint32 private constant DEFAULT_CAP_BUDGET_DECAY_WINDOW = 15_552_000;
-    uint32 private constant DEFAULT_SURGE_DECAY_PERIOD_SECONDS = 3600;
-    uint24 private constant DEFAULT_SURGE_FEE_MULTIPLIER_PPM = 3_000_000;
+    uint32 private constant DEFAULT_CAP_BUDGET_DECAY_WINDOW = 15_552_000; // 180 days
+    uint32 private constant DEFAULT_SURGE_DECAY_PERIOD_SECONDS = 21600; // 6 hours
+    uint24 private constant DEFAULT_SURGE_FEE_MULTIPLIER_PPM = 3_000_000; // 300%
+    uint24 private constant MAX_SURGE_FEE_MULTIPLIER_PPM = 10_000_000;
 
-    uint24 private constant DEFAULT_MAX_TICKS_PER_BLOCK = 50;
+
 
     /// @notice Maximum step for base fee updates (10% per step)
     uint32 private constant MAX_STEP_PPM = 100_000;
@@ -40,8 +43,17 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @notice Default base fee update interval (1 day)
     uint32 private constant DEFAULT_BASE_FEE_UPDATE_INTERVAL_SECS = 1 days;
 
-    /// @notice Default base fee factor (1 tick = 100 PPM)
-    uint32 private constant DEFAULT_BASE_FEE_FACTOR_PPM = 100;
+    /// @notice Default base fee factor (1 tick = 28 PPM)
+    uint32 private constant DEFAULT_BASE_FEE_FACTOR_PPM = 28;
+
+    /// @notice Default minimum cap (in ticks) for oracle bounds
+    uint24 private constant DEFAULT_MIN_CAP = 1;
+
+    /// @notice Default maximum cap (in ticks) for oracle bounds
+    uint24 private constant DEFAULT_MAX_CAP = 400;
+
+    /// @notice Default pool POL share (10%)
+    uint256 private constant DEFAULT_POOL_POL_SHARE_PPM = 100_000; // 10% = 100,000 PPM
 
     /// @notice Maximum base fee factor to prevent overflow (1 tick = 1000 PPM max)
     uint32 private constant MAX_BASE_FEE_FACTOR_PPM = 1000;
@@ -90,6 +102,30 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @notice Pool-specific base fee factor for converting oracle ticks to PPM
     mapping(PoolId => uint32) private _poolBaseFeeFactor;
 
+    /// @notice Pool-specific minimum cap (in ticks) for oracle bounds
+    mapping(PoolId => uint24) private _poolMinCap;
+
+    /// @notice Pool-specific maximum cap (in ticks) for oracle bounds  
+    mapping(PoolId => uint24) private _poolMaxCap;
+
+    /// @notice Pool-specific default max ticks per block
+    mapping(PoolId => uint24) private _poolDefaultMaxTicksPerBlock;
+
+    /// @notice Pool-specific perSwap vs perBlock mode setting (true = perSwap, false = perBlock)
+    mapping(PoolId => bool) private _poolPerSwapMode;
+
+    /// @notice Global default for perSwap vs perBlock mode (true = perSwap, false = perBlock)
+    bool private _defaultPerSwapMode;
+
+    /// @notice Global default base fee factor (can be updated by owner)
+    uint32 private _defaultBaseFeeFactor;
+
+    /// @notice Address of an authorized hook allowed to perform certain one-time initializations
+    address public authorizedHook;
+
+    /// @notice Tracks whether base fee bounds have been initialized for each pool
+    mapping(PoolId => bool) private _baseFeeBoundsInitialized;
+
     /// @notice Constructor initializes the policy manager with default values
     /// @param _governance The owner of the contract
     /// @param _dailyBudget Initial daily budget
@@ -97,7 +133,9 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         if (_governance == address(0)) revert Errors.ZeroAddress();
         // Initialize global parameters
         _defaultCapBudgetDailyPpm = _dailyBudget == 0 ? 1_000_000 : uint32(_dailyBudget);
-        _capBudgetDecayWindow = 15_552_000; // 180 days
+        _capBudgetDecayWindow = DEFAULT_CAP_BUDGET_DECAY_WINDOW; // 180 days
+        _defaultBaseFeeFactor = DEFAULT_BASE_FEE_FACTOR_PPM; // Initialize with constant
+        _defaultPerSwapMode = true; // Default to perSwap mode
     }
 
     // === Fee Allocation Functions ===
@@ -114,6 +152,13 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
             _poolPolSharePpm[poolId] = newPolSharePpm;
             emit PoolPOLShareChanged(poolId, newPolSharePpm);
         }
+    }
+
+    /// @notice Sets the authorized hook address. Only callable by the owner.
+    /// @param hook The address of the authorized hook
+    function setAuthorizedHook(address hook) external onlyOwner {
+        if (hook == address(0)) revert Errors.ZeroAddress();
+        authorizedHook = hook;
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -204,8 +249,12 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     }
 
     /// @inheritdoc IPoolPolicyManager
-    function getDefaultMaxTicksPerBlock(PoolId) external pure override returns (uint24) {
-        return DEFAULT_MAX_TICKS_PER_BLOCK;
+    function getDefaultMaxTicksPerBlock(PoolId poolId) external view override returns (uint24) {
+        uint24 poolDefault = _poolDefaultMaxTicksPerBlock[poolId];
+        // poolDefault is guaranteed to be non-zero after initialization
+        // If somehow called before initialization, this would revert with zero value
+        if (poolDefault == 0) revert PolicyManagerErrors.ZeroValue();
+        return poolDefault;
     }
 
     /// @inheritdoc IPoolPolicyManager
@@ -223,7 +272,19 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @inheritdoc IPoolPolicyManager
     function getBaseFeeFactor(PoolId poolId) external view override returns (uint32) {
         uint32 factor = _poolBaseFeeFactor[poolId];
-        return factor == 0 ? DEFAULT_BASE_FEE_FACTOR_PPM : factor;
+        return factor == 0 ? _defaultBaseFeeFactor : factor;
+    }
+
+    /// @inheritdoc IPoolPolicyManager
+    function getMinCap(PoolId poolId) external view override returns (uint24) {
+        uint24 minCap = _poolMinCap[poolId];
+        return minCap == 0 ? DEFAULT_MIN_CAP : minCap; // Default to 1 ticks if not set
+    }
+
+    /// @inheritdoc IPoolPolicyManager
+    function getMaxCap(PoolId poolId) external view override returns (uint24) {
+        uint24 maxCap = _poolMaxCap[poolId];
+        return maxCap == 0 ? DEFAULT_MAX_CAP : maxCap; // Default to 400 ticks if not set
     }
 
     // === Dynamic Fee Configuration Setters ===
@@ -248,6 +309,53 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
         emit MaxBaseFeeSet(poolId, newMaxFee);
     }
 
+    /// @notice One-time initialization by owner or authorized hook to set base fee bounds from tick spacing
+    /// @param poolKey The pool key containing tick spacing
+    function initialize(PoolKey calldata poolKey) external {
+        if (msg.sender != owner && msg.sender != authorizedHook) revert Errors.UnauthorizedCaller(msg.sender);
+
+        PoolId poolId = poolKey.toId();
+
+        // If already initialized, return without changing state (truly one-time)
+        if (_baseFeeBoundsInitialized[poolId]) {
+            return;
+        }
+
+        // Calculate normal fee from tick spacing: feePpm = clamp(tickSpacing * 50, 100, 10_000)
+        uint24 normalFeePpm;
+        if (poolKey.tickSpacing <= 0) {
+            normalFeePpm = 100;
+        } else {
+            uint256 calculatedFeePpm = uint256(uint24(poolKey.tickSpacing)) * 50;
+            if (calculatedFeePpm < 100) calculatedFeePpm = 100;
+            if (calculatedFeePpm > 10_000) calculatedFeePpm = 10_000;
+            normalFeePpm = uint24(calculatedFeePpm);
+        }
+
+        uint24 startingMaxTicksPerBlock = uint24(normalFeePpm / this.getBaseFeeFactor(poolId));
+        if (startingMaxTicksPerBlock == 0) startingMaxTicksPerBlock = 1;
+        _poolDefaultMaxTicksPerBlock[poolId] = startingMaxTicksPerBlock;
+
+        uint24 minBaseFee = 10; // .001%
+        uint24 maxBaseFee = 30_000; // 3%
+        
+        _poolDynamicFeeConfig[poolId].minBaseFeePpm = minBaseFee;
+        emit MinBaseFeeSet(poolId, minBaseFee);
+
+        _poolDynamicFeeConfig[poolId].maxBaseFeePpm = maxBaseFee;
+        emit MaxBaseFeeSet(poolId, maxBaseFee);
+
+        // Initialize perSwap mode with current global default
+        _poolPerSwapMode[poolId] = _defaultPerSwapMode;
+
+        // Initialize default POL share (10%)
+        _poolPolSharePpm[poolId] = DEFAULT_POOL_POL_SHARE_PPM;
+        emit PoolPOLShareChanged(poolId, DEFAULT_POOL_POL_SHARE_PPM);
+
+        _baseFeeBoundsInitialized[poolId] = true;
+
+    }
+
     /// @inheritdoc IPoolPolicyManager
     function setCapBudgetDecayWindow(PoolId poolId, uint32 newCapBudgetDecayWindow) external override onlyOwner {
         if (newCapBudgetDecayWindow == 0 || newCapBudgetDecayWindow > type(uint32).max) {
@@ -270,9 +378,9 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
 
     /// @inheritdoc IPoolPolicyManager
     function setSurgeFeeMultiplierPpm(PoolId poolId, uint24 multiplier) external override onlyOwner {
-        if (multiplier == 0 || multiplier > 3_000_000) revert Errors.ParameterOutOfRange(multiplier, 1, 3_000_000);
+        if (multiplier == 0 || multiplier > MAX_SURGE_FEE_MULTIPLIER_PPM) revert Errors.ParameterOutOfRange(multiplier, 1, MAX_SURGE_FEE_MULTIPLIER_PPM);
 
-        _poolDynamicFeeConfig[poolId].surgeFeeMultiplierPpm = multiplier;
+    _poolDynamicFeeConfig[poolId].surgeFeeMultiplierPpm = multiplier;
         emit SurgeFeeMultiplierSet(poolId, multiplier);
     }
 
@@ -300,7 +408,7 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @inheritdoc IPoolPolicyManager
     function setPoolDailyBudgetPpm(PoolId poolId, uint32 newBudget) external override onlyOwner {
         // Validate: 0 means "use default", or 1 to 10*PPM_SCALE
-        if (newBudget != 0 && (newBudget < 1 || newBudget > 10 * PrecisionConstants.PPM_SCALE)) {
+        if (newBudget > 10 * PrecisionConstants.PPM_SCALE) {
             revert Errors.ParameterOutOfRange(newBudget, 1, 10 * PrecisionConstants.PPM_SCALE);
         }
 
@@ -318,11 +426,94 @@ contract PoolPolicyManager is IPoolPolicyManager, Owned {
     /// @inheritdoc IPoolPolicyManager
     function setBaseFeeFactor(PoolId poolId, uint32 factor) external override onlyOwner {
         // Validate factor is reasonable (0 means use default)
-        if (factor != 0 && (factor < 1 || factor > MAX_BASE_FEE_FACTOR_PPM)) {
+        if (factor != 0 && factor > MAX_BASE_FEE_FACTOR_PPM) {
             revert Errors.ParameterOutOfRange(factor, 1, MAX_BASE_FEE_FACTOR_PPM);
         }
 
         _poolBaseFeeFactor[poolId] = factor;
         emit BaseFeeFactorSet(poolId, factor);
+    }
+
+    /// @notice Sets the minimum cap (in ticks) for oracle bounds
+    /// @param poolId The pool ID
+    /// @param minCap The minimum cap in ticks
+    function setMinCap(PoolId poolId, uint24 minCap) external onlyOwner {
+        if (minCap == 0) revert PolicyManagerErrors.ZeroValue();
+        
+        uint24 maxCap = this.getMaxCap(poolId);
+        if (minCap > maxCap) {
+            revert Errors.ParameterOutOfRange(minCap, 1, maxCap);
+        }
+
+        _poolMinCap[poolId] = minCap;
+        emit MinCapSet(poolId, minCap);
+    }
+
+    /// @notice Sets the maximum cap (in ticks) for oracle bounds
+    /// @param poolId The pool ID  
+    /// @param maxCap The maximum cap in ticks
+    function setMaxCap(PoolId poolId, uint24 maxCap) external onlyOwner {
+        if (maxCap == 0) revert PolicyManagerErrors.ZeroValue();
+        
+        uint24 minCap = this.getMinCap(poolId);
+        if (maxCap < minCap) {
+            revert Errors.ParameterOutOfRange(maxCap, minCap, type(uint24).max);
+        }
+
+        _poolMaxCap[poolId] = maxCap;
+        emit MaxCapSet(poolId, maxCap);
+    }
+
+    /// @notice Sets the default max ticks per block for a specific pool
+    /// @param poolId The pool ID
+    /// @param defaultMaxTicks The default max ticks per block
+    function setDefaultMaxTicksPerBlock(PoolId poolId, uint24 defaultMaxTicks) external onlyOwner {
+        if (defaultMaxTicks == 0) revert PolicyManagerErrors.ZeroValue();
+        
+        _poolDefaultMaxTicksPerBlock[poolId] = defaultMaxTicks;
+        emit DefaultMaxTicksPerBlockSet(poolId, defaultMaxTicks);
+    }
+
+    /// @notice Gets the global default base fee factor
+    /// @return The global default base fee factor
+    function getDefaultBaseFeeFactor() external view returns (uint32) {
+        return _defaultBaseFeeFactor;
+    }
+
+    /// @notice Sets the global default base fee factor
+    /// @param factor The new default base fee factor
+    function setDefaultBaseFeeFactor(uint32 factor) external onlyOwner {
+        if (factor == 0 || factor > MAX_BASE_FEE_FACTOR_PPM) {
+            revert Errors.ParameterOutOfRange(factor, 1, MAX_BASE_FEE_FACTOR_PPM);
+        }
+        
+        _defaultBaseFeeFactor = factor;
+        emit DefaultBaseFeeFactorSet(factor);
+    }
+
+    /// @inheritdoc IPoolPolicyManager
+    function getPerSwapMode(PoolId poolId) external view override returns (bool) {
+        // Return the stored value (which was set during initialization or explicitly changed)
+        return _poolPerSwapMode[poolId];
+    }
+
+    /// @inheritdoc IPoolPolicyManager
+    function setPerSwapMode(PoolId poolId, bool perSwap) external override onlyOwner {
+        // Store the setting
+        _poolPerSwapMode[poolId] = perSwap;
+        emit PerSwapModeSet(poolId, perSwap);
+    }
+
+    /// @notice Gets the global default for perSwap vs perBlock mode
+    /// @return True if the global default is perSwap mode, false if perBlock mode
+    function getDefaultPerSwapMode() external view returns (bool) {
+        return _defaultPerSwapMode;
+    }
+
+    /// @notice Sets the global default for perSwap vs perBlock mode
+    /// @param perSwap True for perSwap mode as default, false for perBlock mode as default
+    function setDefaultPerSwapMode(bool perSwap) external onlyOwner {
+        _defaultPerSwapMode = perSwap;
+        emit DefaultPerSwapModeSet(perSwap);
     }
 }

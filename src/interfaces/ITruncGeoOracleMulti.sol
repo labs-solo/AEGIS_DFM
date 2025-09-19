@@ -11,10 +11,48 @@ import {PoolId} from "v4-core/src/types/PoolId.sol";
  */
 interface ITruncGeoOracleMulti {
     /**
-     * @notice Enable the oracle for a pool
+     * @notice Initialize the oracle for a pool
      * @param key The pool key
+     * @param initialTick The initial tick to seed the oracle with
      */
-    function enableOracleForPool(bytes calldata key) external;
+    function initializeOracleForPool(bytes calldata key, int24 initialTick) external;
+
+    /**
+     * @notice Records a new observation for the given pool
+     * @param poolId The pool identifier
+     * @param tickToRecord The tick to record in the observation
+     */
+    function recordObservation(PoolId poolId, int24 tickToRecord) external;
+
+    /**
+     * @notice Updates cap frequency based on whether capping occurred
+     * @param poolId The pool identifier
+     * @param capOccurred Whether capping occurred during this swap
+     */
+    function updateCapFrequency(PoolId poolId, bool capOccurred) external;
+
+    /**
+     * @notice Gets the current cap frequency for a pool (for testing purposes)
+     * @param poolId The pool identifier
+     * @return The current cap frequency
+     */
+
+
+    /**
+     * @notice Pause or un-pause the adaptive cap algorithm for a pool.
+     * @param poolId       Target PoolId.
+     * @param paused    True to disable auto-tune, false to resume.
+     */
+    function setAutoTunePaused(PoolId poolId, bool paused) external;
+
+    /**
+     * @notice Check if auto-tune is paused for a pool.
+     * @param poolId The pool identifier.
+     * @return True if auto-tune is paused, false otherwise.
+     */
+    function autoTunePaused(PoolId poolId) external view returns (bool);
+
+
 
     /**
      * @notice Updates oracle observations for a pool.

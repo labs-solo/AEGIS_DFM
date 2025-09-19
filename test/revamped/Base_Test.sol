@@ -102,9 +102,9 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
             Hooks.Permissions({
                 beforeInitialize: false,
                 afterInitialize: true,
-                beforeAddLiquidity: false,
+                beforeAddLiquidity: true,
                 afterAddLiquidity: false,
-                beforeRemoveLiquidity: false,
+                beforeRemoveLiquidity: true,
                 afterRemoveLiquidity: false,
                 beforeSwap: true,
                 afterSwap: true,
@@ -171,6 +171,10 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
 
         // Verify the hook address is as expected
         require(address(spot) == hookAddress, "Hook address mismatch");
+
+        // Set the authorized hook in policy manager so Spot can call initializeBaseFeeBounds
+        vm.prank(owner);
+        policyManager.setAuthorizedHook(address(spot));
 
         // Initialize the pool with the Spot hook
         poolKey = PoolKey(

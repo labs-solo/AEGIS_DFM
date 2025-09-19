@@ -45,10 +45,7 @@ contract PoolPolicyManager_Admin_Test is Test {
         bool willEmit = (prevPpm != newPpm);
 
         EventTools.expectEmitIf(this, willEmit, false, false, false, true);
-        emit FeeConfigChanged(newPpm, 0, 1_000_000 - newPpm, EXPECTED_MIN_DYNAMIC_FEE);
-
-        // Also expect the PolicySet event
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), address(0), OWNER);
+        emit PoolPOLShareChanged(PoolId.wrap(bytes32(0)), newPpm);
 
         vm.prank(OWNER);
         ppm.setPoolPOLShare(PoolId.wrap(bytes32(0)), newPpm);
@@ -60,7 +57,7 @@ contract PoolPolicyManager_Admin_Test is Test {
     function testProtocolFeeAbove100Reverts() public {
         vm.prank(OWNER);
         // Test with a value above MAX_PPM (1_000_000)
-        vm.expectRevert(abi.encodeWithSelector(Errors.AllocationSumError.selector, 1_100_000, 0, 0, 1_000_000));
+        vm.expectRevert(abi.encodeWithSelector(Errors.ParameterOutOfRange.selector, 1_100_000, 0, 1_000_000));
         ppm.setPoolPOLShare(PoolId.wrap(bytes32(0)), 1_100_000); // 110% PPM
     }
 
@@ -79,9 +76,7 @@ contract PoolPolicyManager_Admin_Test is Test {
     }
 
     /*───────────────── helpers & events ─────────────────*/
-    event FeeConfigChanged(
-        uint256 polSharePpm, uint256 fullRangeSharePpm, uint256 lpSharePpm, uint256 minimumTradingFeePpm
-    );
+    event PoolPOLShareChanged(PoolId indexed poolId, uint256 polSharePpm);
 
     event AuthorizedReinvestorSet(address indexed reinvestor, bool isAuthorized);
 

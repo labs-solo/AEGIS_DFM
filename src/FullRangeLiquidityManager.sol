@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
+pragma solidity ^0.8.27;
 
 // - - - OZ Deps - - -
 
@@ -619,7 +619,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             } else {
                 // Handle ERC20 donation
                 uint256 balanceBefore = currency0.balanceOfSelf();
-                IERC20Minimal(Currency.unwrap(currency0)).transferFrom(msg.sender, address(this), amount0);
+                IERC20(Currency.unwrap(currency0)).safeTransferFrom(msg.sender, address(this), amount0);
                 uint256 balanceAfter = currency0.balanceOfSelf();
                 donated0 = balanceAfter - balanceBefore; // Account for potential transfer fees
             }
@@ -640,7 +640,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             } else {
                 // Handle ERC20 donation
                 uint256 balanceBefore = currency1.balanceOfSelf();
-                IERC20Minimal(Currency.unwrap(currency1)).transferFrom(msg.sender, address(this), amount1);
+                IERC20(Currency.unwrap(currency1)).safeTransferFrom(msg.sender, address(this), amount1);
                 uint256 balanceAfter = currency1.balanceOfSelf();
                 donated1 = balanceAfter - balanceBefore; // Account for potential transfer fees
             }
@@ -1080,13 +1080,13 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         } else {
             if (msg.value != 0) revert Errors.NonzeroNativeValue();
             if (amount0 > 0) {
-                IERC20Minimal(Currency.unwrap(currency0)).transferFrom(payer, address(this), amount0);
+                IERC20(Currency.unwrap(currency0)).safeTransferFrom(payer, address(this), amount0);
             }
         }
 
         if (amount1 > 0) {
             // Given ordering currency1 is guaranteed to NOT be address(0)
-            IERC20Minimal(Currency.unwrap(currency1)).transferFrom(payer, address(this), amount1);
+            IERC20(Currency.unwrap(currency1)).safeTransferFrom(payer, address(this), amount1);
         }
     }
 

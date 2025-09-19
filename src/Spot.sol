@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: BUSL-1.1
-pragma solidity 0.8.27;
+pragma solidity ^0.8.27;
 
 // - - - Solmate Deps - - -
 
@@ -34,6 +34,7 @@ import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol
 
 import {TickMoveGuard} from "./libraries/TickMoveGuard.sol";
 import {Math} from "./libraries/Math.sol";
+import {TruncatedOracle} from "./libraries/TruncatedOracle.sol";
 
 // - - - Project Interfaces - - -
 
@@ -67,6 +68,9 @@ contract Spot is BaseHook, ISpot {
 
     bool public override reinvestmentPaused;
 
+    /// @notice Track last block a CAP event was counted per pool to dedupe per-block mode
+    mapping(PoolId => uint256) private lastCapEventBlock;
+
     // - - - Constructor - - -
 
     constructor(
@@ -92,13 +96,13 @@ contract Spot is BaseHook, ISpot {
         liquidityManager = _liquidityManager;
     }
 
-    function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
+    function getHookPermissions() public pure virtual override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
             beforeInitialize: false,
             afterInitialize: true,
-            beforeAddLiquidity: false,
+            beforeAddLiquidity: true,
             afterAddLiquidity: false,
-            beforeRemoveLiquidity: false,
+            beforeRemoveLiquidity: true,
             afterRemoveLiquidity: false,
             beforeSwap: true,
             afterSwap: true,
@@ -160,6 +164,7 @@ contract Spot is BaseHook, ISpot {
     /// @notice called in BaseHook.beforeSwap
     function _beforeSwap(address sender, PoolKey calldata key, SwapParams calldata params, bytes calldata)
         internal
+        virtual
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
@@ -187,6 +192,16 @@ contract Spot is BaseHook, ISpot {
             tstore(add(poolId, 1), preSwapTick) // use next slot for pre-swap tick
         }
 
+        // Record observation with the pre-swap tick (no capping applied yet)
+        try truncGeoOracle.recordObservation(poolId, preSwapTick) {
+            // Observation recorded successfully
+        } catch Error(string memory reason) {
+            emit OracleUpdateFailed(poolId, reason);
+        } catch (bytes memory lowLevelData) {
+            // Low-level oracle failure
+            emit OracleUpdateFailed(poolId, "LLOF");
+        }
+
         // Calculate protocol fee based on policy
         uint256 protocolFeePPM = policyManager.getPoolPOLShare(poolId);
 
@@ -197,8 +212,8 @@ contract Spot is BaseHook, ISpot {
             Currency feeCurrency = params.zeroForOne ? key.currency0 : key.currency1;
 
             // Calculate hook fee amount
-            uint256 swapFeeAmount = FullMath.mulDiv(absAmount, dynamicFee, 1e6);
-            uint256 hookFeeAmount = FullMath.mulDiv(swapFeeAmount, protocolFeePPM, 1e6);
+            uint256 swapFeeAmount = FullMath.mulDivRoundingUp(absAmount, dynamicFee, 1e6);
+            uint256 hookFeeAmount = FullMath.mulDivRoundingUp(swapFeeAmount, protocolFeePPM, 1e6);
 
             if (hookFeeAmount > 0) {
                 // Mint fee to FRLM
@@ -237,7 +252,7 @@ contract Spot is BaseHook, ISpot {
         SwapParams calldata params,
         BalanceDelta delta,
         bytes calldata
-    ) internal override returns (bytes4, int128) {
+    ) internal virtual override returns (bytes4, int128) {
         PoolId poolId = key.toId();
 
         // NOTE: we do oracle updates this regardless of manual fee setting
@@ -248,22 +263,65 @@ contract Spot is BaseHook, ISpot {
             preSwapTick := tload(add(poolId, 1))
         }
 
-        // Push observation to oracle & check cap (with error handling)
-        try truncGeoOracle.pushObservationAndCheckCap(poolId, preSwapTick) returns (bool capped) {
-            // Notify Dynamic Fee Manager about the oracle update (with error handling)
-            try dynamicFeeManager.notifyOracleUpdate(poolId, capped) {
-                // Oracle update notification succeeded
-            } catch Error(string memory reason) {
-                emit FeeManagerNotificationFailed(poolId, reason);
-            } catch (bytes memory lowLevelData) {
-                // Low-level fee manager failure
-                emit FeeManagerNotificationFailed(poolId, "LLFM");
+        // Get current tick after the swap
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+
+        // Check if tick movement exceeded the cap based on perSwap vs perBlock setting
+        bool tickWasCapped;
+        bool perSwapMode = policyManager.getPerSwapMode(poolId);
+        uint24 maxTicks = truncGeoOracle.maxTicksPerBlock(poolId);
+        
+        if (perSwapMode) {
+            // perSwap mode: compare tick movement within this single swap
+            int24 tickMovement = currentTick - preSwapTick;
+            tickWasCapped = TruncatedOracle.abs(tickMovement) > maxTicks;
+        } else {
+            // perBlock mode: compare total tick movement within the current block
+            // Get the block initial tick from the recorded observation
+            int24 blockInitialTick = preSwapTick; // Default to pre-swap tick
+            
+            // Access the observation directly from the public mapping
+            // Get the current index from the oracle state
+            (uint16 index, uint16 cardinality, uint16 cardinalityNext) = truncGeoOracle.states(poolId);
+            if (cardinality > 0) {
+                // Access the observation at the current index
+                (, int24 prevTick,,,) = truncGeoOracle.observations(poolId, index);
+                blockInitialTick = prevTick;
             }
+            
+            // Compare total block movement
+            int24 totalBlockMovement = currentTick - blockInitialTick;
+            tickWasCapped = TruncatedOracle.abs(totalBlockMovement) > maxTicks;
+
+            if (tickWasCapped) {
+                if (lastCapEventBlock[poolId] == block.number) {
+                    tickWasCapped = false;
+                } else {
+                    lastCapEventBlock[poolId] = block.number;
+                }
+            }
+        }
+
+        // Update cap frequency in the oracle
+
+        if(!truncGeoOracle.autoTunePaused(poolId)) {
+            try truncGeoOracle.updateCapFrequency(poolId, tickWasCapped) {
+                // Cap frequency updated successfully
+            } catch Error(string memory reason) {
+                emit OracleUpdateFailed(poolId, reason);
+            } catch (bytes memory lowLevelData) {
+                // Low-level oracle failure
+                emit OracleUpdateFailed(poolId, "LLOF");
+            }
+        }
+        // Notify Dynamic Fee Manager about the oracle update (with error handling)
+        try dynamicFeeManager.notifyOracleUpdate(poolId, tickWasCapped) {
+            // Oracle update notification succeeded
         } catch Error(string memory reason) {
-            emit OracleUpdateFailed(poolId, reason);
+            emit FeeManagerNotificationFailed(poolId, reason);
         } catch (bytes memory lowLevelData) {
-            // Low-level oracle failure
-            emit OracleUpdateFailed(poolId, "LLOF");
+            // Low-level fee manager failure
+            emit FeeManagerNotificationFailed(poolId, "LLFM");
         }
 
         // Handle exactOut case in afterSwap (params.amountSpecified > 0)
@@ -288,8 +346,8 @@ contract Spot is BaseHook, ISpot {
 
                 // Calculate hook fee
                 uint256 absInputAmount = uint256(uint128(-inputAmount));
-                uint256 swapFeeAmount = FullMath.mulDiv(absInputAmount, dynamicFee, 1e6);
-                uint256 hookFeeAmount = FullMath.mulDiv(swapFeeAmount, protocolFeePPM, 1e6);
+                uint256 swapFeeAmount = FullMath.mulDivRoundingUp(absInputAmount, dynamicFee, 1e6);
+                uint256 hookFeeAmount = FullMath.mulDivRoundingUp(swapFeeAmount, protocolFeePPM, 1e6);
 
                 if (hookFeeAmount > 0) {
                     // Mint fee credit to FRLM
@@ -323,7 +381,7 @@ contract Spot is BaseHook, ISpot {
     }
 
     /// @notice called in BaseHook.afterInitialize
-    function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick) internal override returns (bytes4) {
+    function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick) internal virtual override returns (bytes4) {
         PoolId poolId = key.toId();
 
         if (!LPFeeLibrary.isDynamicFee(key.fee)) {
@@ -331,9 +389,69 @@ contract Spot is BaseHook, ISpot {
             revert Errors.InvalidFee();
         }
 
-        truncGeoOracle.enableOracleForPool(key);
+
+        policyManager.initialize(key);
+
+        truncGeoOracle.initializeOracleForPool(key, tick);
         dynamicFeeManager.initialize(poolId, tick);
+
         return BaseHook.afterInitialize.selector;
+    }
+
+    /// @notice called in BaseHook.beforeAddLiquidity
+    /// @dev Records oracle observation to ensure accuracy in secondsPerLiquidityCumulativeX128 accumulator
+    function _beforeAddLiquidity(
+        address,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata,
+        bytes calldata
+    ) internal virtual override returns (bytes4) {
+        PoolId poolId = key.toId();
+
+        // Get current tick for oracle update
+        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+
+        // Record observation to ensure accurate secondsPerLiquidityCumulativeX128
+        try truncGeoOracle.recordObservation(poolId, currentTick) {
+            // Observation recorded successfully
+        } catch Error(string memory reason) {
+            emit OracleUpdateFailed(poolId, reason);
+        } catch (bytes memory lowLevelData) {
+            // Low-level oracle failure
+            emit OracleUpdateFailed(poolId, "LLOF");
+        }
+
+        return BaseHook.beforeAddLiquidity.selector;
+    }
+
+    /// @notice called in BaseHook.beforeRemoveLiquidity
+    /// @dev Records oracle observation to ensure accuracy in secondsPerLiquidityCumulativeX128 accumulator
+    function _beforeRemoveLiquidity(
+        address,
+        PoolKey calldata key,
+        ModifyLiquidityParams calldata params,
+        bytes calldata
+    ) internal virtual override returns (bytes4) {
+
+        // Only record observation if liquidityDelta is not 0
+        if (params.liquidityDelta != 0) {
+
+            PoolId poolId = key.toId();
+
+            // Get current tick for oracle update
+            (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
+
+            // Record observation to ensure accurate secondsPerLiquidityCumulativeX128
+            try truncGeoOracle.recordObservation(poolId, currentTick) {
+                // Observation recorded successfully
+            } catch Error(string memory reason) {
+                emit OracleUpdateFailed(poolId, reason);
+            } catch (bytes memory lowLevelData) {
+                // Low-level oracle failure
+                emit OracleUpdateFailed(poolId, "LLOF");
+            }
+            }
+        return BaseHook.beforeRemoveLiquidity.selector;
     }
 
     // - - - internal helpers - - -
@@ -341,7 +459,7 @@ contract Spot is BaseHook, ISpot {
     /// @notice Private function to handle reinvestment with error handling
     /// @param key The pool key for reinvestment
     /// @dev Uses try-catch to prevent reinvestment failures from blocking swaps
-    function _tryReinvest(PoolKey calldata key) private {
+    function _tryReinvest(PoolKey calldata key) internal virtual {
         if (!reinvestmentPaused) {
             try liquidityManager.reinvest(key) returns (bool success) {
                 // Reinvestment attempted, success status is handled by the reinvest function

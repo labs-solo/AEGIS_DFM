@@ -10,7 +10,7 @@ import {TruncGeoOracleMulti} from "../TruncGeoOracleMulti.sol";
 /// @dev This contract manages dynamic fee adjustments with surge pricing during high-activity periods.
 ///      The system works in two phases:
 ///      1. Base fee calculation from oracle data (tick volatility)
-///      2. Surge fee application during capped trading periods with exponential decay
+///      2. Surge fee application during capped trading periods with linear decay
 ///
 ///      Integration Requirements:
 ///      - Hook must call initialize() once during pool creation
@@ -87,7 +87,7 @@ interface IDynamicFeeManager {
 
     /// @notice Gets the current fee state for a pool
     /// @dev The base fee is calculated from current oracle data (tick volatility).
-    ///      The surge fee is calculated with exponential decay from the cap start time.
+    ///      The surge fee is calculated with linear decay from the cap start time.
     ///      Total effective fee = baseFee + surgeFee
     /// @param poolId The pool identifier to query
     /// @return baseFee The current base fee in parts per million
@@ -96,7 +96,7 @@ interface IDynamicFeeManager {
 
     /// @notice Checks if a pool is currently in a capped trading state
     /// @dev A pool enters capped state when tick movements are restricted due to high volatility.
-    ///      While capped, surge fees are applied with exponential decay over time.
+    ///      While capped, surge fees are applied with linear decay over time.
     /// @param poolId The pool identifier to query
     /// @return True if the pool is currently experiencing capped trading conditions
     function isCAPEventActive(PoolId poolId) external view returns (bool);

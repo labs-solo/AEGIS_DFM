@@ -48,12 +48,9 @@ contract PoolPolicyManager_Fee is Test {
 
         bool willEmit = (prevPol != 120_000);
 
-        // Expect FeeConfigChanged event
+        // Expect PoolPOLShareChanged event
         EventTools.expectEmitIf(this, willEmit, true, true, true, true);
-        emit FeeConfigChanged(120_000, 0, 880_000, 200);
-
-        // Expect PolicySet event
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), address(0), OWNER);
+        emit PoolPOLShareChanged(PoolId.wrap(bytes32(0)), 120_000);
 
         vm.prank(OWNER);
         ppm.setPoolPOLShare(PoolId.wrap(bytes32(0)), 120_000);
@@ -71,14 +68,15 @@ contract PoolPolicyManager_Fee is Test {
 
         bool willEmit = (prevPol != 150_000);
 
-        // Expect FeeConfigChanged event
+        // Expect PoolPOLShareChanged event
         EventTools.expectEmitIf(this, willEmit, true, true, true, true);
-        emit FeeConfigChanged(150_000, 50_000, 800_000, 200);
-
-        // Check PolicySet event
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), address(0), OWNER);
+        emit PoolPOLShareChanged(PoolId.wrap(bytes32(0)), 150_000);
 
         vm.prank(OWNER);
+        ppm.setPoolPOLShare(PoolId.wrap(bytes32(0)), 150_000);
+
+        uint256 pol = ppm.getPoolPOLShare(pid(0));
+        assertEq(pol, 150_000);
     }
 
     /* ------------------------------------------------------------ */
@@ -93,30 +91,16 @@ contract PoolPolicyManager_Fee is Test {
 
         // A) default (global settings)
         uint256 polA = ppm.getPoolPOLShare(pool); // Use global polSharePpm
-        // Assuming default polSharePpm is 100_000 (10%) from constructor
-        assertEq(polA, 100_000);
+        // Default polSharePpm is 0 for new pools
+        assertEq(polA, 0);
 
-        // B) enable feature & set override
-        // Assume it's initially disabled since we're enabling it
-        bool willEmitEnabled = true;
-
-        // Expect PolicySet for enabling the feature
-        EventTools.expectEmitIf(this, willEmitEnabled, false, false, false, true);
-        emit PoolSpecificPOLSharingEnabled(true);
-
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), address(1), OWNER); // address(1) for true
-
-        vm.prank(OWNER);
-
-        // Check if pool already has the desired share
+        // B) set pool-specific override
         uint256 currentPoolShare = ppm.getPoolPOLShare(pool);
         bool willEmitShare = (currentPoolShare != 123_456);
 
-        // Expect PolicySet for setting the pool share
-        EventTools.expectEmitIf(this, willEmitShare, false, false, false, true);
+        // Expect PoolPOLShareChanged event
+        EventTools.expectEmitIf(this, willEmitShare, true, true, true, true);
         emit PoolPOLShareChanged(pool, 123_456);
-
-        EventTools.expectPolicySetIf(this, true, pool, address(uint160(123_456)), OWNER);
 
         vm.prank(OWNER);
         ppm.setPoolPOLShare(pool, 123_456);
@@ -124,17 +108,15 @@ contract PoolPolicyManager_Fee is Test {
         uint256 polB = ppm.getPoolPOLShare(pool);
         assertEq(polB, 123_456);
 
-        // C) disable feature → revert to global
-        // Expect PolicySet for disabling the feature
-        EventTools.expectEmitIf(this, true, false, false, false, true);
-        emit PoolSpecificPOLSharingEnabled(false);
-
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), address(0), OWNER); // address(0) for false
+        // C) set back to 0 (default)
+        EventTools.expectEmitIf(this, true, true, true, true, true);
+        emit PoolPOLShareChanged(pool, 0);
 
         vm.prank(OWNER);
+        ppm.setPoolPOLShare(pool, 0);
 
         uint256 polC = ppm.getPoolPOLShare(pool);
-        assertEq(polC, 100_000); // Back to global default
+        assertEq(polC, 0); // Back to default
     }
 
     /* ------------------------------------------------------------ */
@@ -146,27 +128,17 @@ contract PoolPolicyManager_Fee is Test {
         fr = bound(fr, 0, EventTools.MAX_PPM - pol);
         uint256 lp = EventTools.MAX_PPM - pol - fr;
 
-        // Expect FeeConfigChanged and PolicySet
-        // Note: Fuzzing makes exact value checks hard for FeeConfigChanged
-        // We can check the PolicySet event reliably though
-        EventTools.expectPolicySetIf(this, true, PoolId.wrap(bytes32(0)), address(0), OWNER);
-
+        // Set a pool-specific POL share
         vm.prank(OWNER);
-        ppm.getPoolPOLShare(PoolId.wrap(bytes32(0)));
+        ppm.setPoolPOLShare(PoolId.wrap(bytes32(0)), pol);
 
-        uint256 a = ppm.getPoolPOLShare(pid(1));
-        assertEq(a, EventTools.MAX_PPM);
+        uint256 a = ppm.getPoolPOLShare(pid(0));
+        assertEq(a, pol);
     }
 
     /* ------------------------------------------------------------ */
     /*                            Events                             */
     /* ------------------------------------------------------------ */
-    event FeeConfigChanged(
-        uint256 polSharePpm, uint256 fullRangeSharePpm, uint256 lpSharePpm, uint256 minimumTradingFeePpm
-    );
-    event PoolPOLMultiplierChanged(PoolId indexed poolId, uint32 multiplier);
-    event DefaultPOLMultiplierChanged(uint32 multiplier);
-    event PoolSpecificPOLSharingEnabled(bool enabled);
     event PoolPOLShareChanged(PoolId indexed poolId, uint256 polSharePpm);
 
     /* ------------------------------------------------------------ */

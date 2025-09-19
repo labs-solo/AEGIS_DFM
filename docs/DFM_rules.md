@@ -67,13 +67,13 @@
 
 ### Spot.sol
 
-39. **Gas‑stipend guard** – external calls are limited to 100 000 gas; reinvest calls are excluded.
+39. **Error handling** – external calls use try-catch blocks to prevent failures from blocking swaps
 40. Transient storage words (`tstore`/`tload`) never overlap (`poolId`, `poolId+1`).
 41. `_beforeSwap` rejects negative deltas on “exact‑in” path (`InvalidSwapDelta`).
 42. `_afterInitialize` reverts if initial `sqrtPriceX96 == 0` (`InvalidPrice`).
 43. Skip reinvest when `feesToReinvest == 0` to save gas.
 44. Every Spot callback validates `msg.sender == PoolManager` (Single Trusted Hook).
-45. After each swap, the oracle → DFM → Spot fee flow must succeed (bounded by gas‑stipend) or the entire swap reverts.
+45. After each swap, the oracle → DFM → Spot fee flow must succeed (bounded by try-catch) or the entire swap reverts.
 46. `ensure(deadline)` plus user min‑amount checks propagate to `FullRangeLiquidityManager`.
 
 ### DynamicFeeManager.sol
@@ -106,7 +106,7 @@
 66. `enableOracleForPool` validates and clamps the initial `maxTicksPerBlock` into \[`minCap`, `maxCap`].
 67. Cached policy must satisfy: `minCap ≤ maxCap`, `stepPpm ≤ 1e6`, `budgetPpm ≤ 1e6`, `decayWindow > 0`, `updateInterval > 0`.
 68. `pushObservationAndCheckCap` callable only by authorised hook.
-69. Cardinality never exceeds `PAGE_SIZE = 512` per leaf; ring‑buffer wraps correctly.
+69. Cardinality increases to `MAX_CARDINALITY_TARGET = 1024` per pool; ring‑buffer wraps correctly.
 70. `maxTicksPerBlock` can move ≤ `stepPpm` every `updateInterval` (Cap Step‑Limit).
 71. All mutators inherit `nonReentrant`.
 72. Cap‑frequency counter `capFreq` saturates at `CAP_FREQ_MAX` (no `uint64` overflow).

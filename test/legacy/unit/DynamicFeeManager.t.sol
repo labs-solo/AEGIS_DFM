@@ -35,12 +35,21 @@ contract MockPolicy {
     uint256 public decay; // seconds
     uint24 public multiplier; // ppm
     uint32 public window; // secs – used by back-compat view
+    uint24 public minBaseFee = 100; // 0.01%
+    uint24 public maxBaseFee = 50000; // 5%
+    uint32 public baseFeeFactor = 28; // Default from PoolPolicyManager
 
     // ---- setters ----
     function setParams(uint256 _decay, uint24 _multiplier, uint32 _window) external {
         decay = _decay;
         multiplier = _multiplier;
         window = _window;
+    }
+
+    function setBaseFeeParams(uint24 _minBaseFee, uint24 _maxBaseFee, uint32 _baseFeeFactor) external {
+        minBaseFee = _minBaseFee;
+        maxBaseFee = _maxBaseFee;
+        baseFeeFactor = _baseFeeFactor;
     }
 
     // ---- getters consumed by DFM ----
@@ -54,6 +63,18 @@ contract MockPolicy {
 
     function getCapBudgetDecayWindow(PoolId /*pid*/ ) external view returns (uint32) {
         return window;
+    }
+
+    function getMinBaseFee(PoolId /*pid*/ ) external view returns (uint24) {
+        return minBaseFee;
+    }
+
+    function getMaxBaseFee(PoolId /*pid*/ ) external view returns (uint24) {
+        return maxBaseFee;
+    }
+
+    function getBaseFeeFactor(PoolId /*pid*/ ) external view returns (uint32) {
+        return baseFeeFactor;
     }
 
     // -------- unused functions --------
@@ -145,7 +166,7 @@ contract DynamicFeeManagerUnitTest is Test {
     event AlreadyInitialized(PoolId indexed id);
     event CapToggled(PoolId indexed id, bool inCap);
     event FeeStateChanged(
-        PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent, uint32 timestamp
+        PoolId indexed poolId, uint256 baseFeePpm, uint256 surgeFeePpm, bool inCapEvent, uint40 timestamp
     );
 
     function _initAsOwner() internal {
@@ -156,8 +177,8 @@ contract DynamicFeeManagerUnitTest is Test {
 
     function testInitializeByOwner() public {
         _initAsOwner();
-        // base fee derived from oracle cap (50 * 100)
-        assertEq(dfm.baseFeeFromCap(PID), 5_000);
+        // base fee derived from oracle cap (50 * 28)
+        assertEq(dfm.baseFeeFromCap(PID), 1_400);
     }
 
     function testInitializeIdempotent() public {
@@ -173,12 +194,12 @@ contract DynamicFeeManagerUnitTest is Test {
     function testInitializeByAuthorizedHook() public {
         vm.prank(HOOK);
         dfm.initialize(PID, 0);
-        assertEq(dfm.baseFeeFromCap(PID), 5_000);
+        assertEq(dfm.baseFeeFromCap(PID), 1_400);
     }
 
     function testInitializeUnauthorized() public {
         vm.prank(NON_HOOK);
-        vm.expectRevert(Errors.UnauthorizedCaller.selector);
+        vm.expectRevert(abi.encodeWithSelector(Errors.UnauthorizedCaller.selector, NON_HOOK));
         dfm.initialize(PID, 0);
     }
 
@@ -215,7 +236,7 @@ contract DynamicFeeManagerUnitTest is Test {
 
         // Then expect FeeStateChanged event
         vm.expectEmit(true, true, false, true);
-        emit FeeStateChanged(PID, baseFee, baseFee * policy.multiplier() / 1e6, true, uint32(block.timestamp));
+        emit FeeStateChanged(PID, baseFee, baseFee * policy.multiplier() / 1e6, true, uint40(block.timestamp));
 
         // Trigger CAP event via hook - ensure we're pranked as HOOK before the call
         vm.prank(HOOK);
@@ -257,7 +278,7 @@ contract DynamicFeeManagerUnitTest is Test {
     function testNotifyOracleUpdateUnauthorized() public {
         _initAsOwner();
         vm.prank(NON_HOOK);
-        vm.expectRevert(Errors.UnauthorizedCaller.selector);
+        vm.expectRevert(abi.encodeWithSelector(Errors.UnauthorizedCaller.selector, NON_HOOK));
         dfm.notifyOracleUpdate(PID, true);
     }
 

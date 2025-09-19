@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity 0.8.27;
+pragma solidity ^0.8.27;
 
 // - - - v4-core src imports - - -
 
 import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 
 // - - - local test imports - - -
@@ -19,8 +22,8 @@ import {PrecisionConstants} from "src/libraries/PrecisionConstants.sol";
 import {IPoolPolicyManager} from "src/interfaces/IPoolPolicyManager.sol";
 
 contract PoolPolicyManagerTest is Base_Test {
-    uint24 MIN_TRADING_FEE = 100; // 0.01% (minimum allowed)
-    uint24 MAX_TRADING_FEE = 50_000; // 5% (maximum allowed)
+    uint24 MIN_TRADING_FEE = 10; // 0.001% (minimum allowed)
+    uint24 MAX_TRADING_FEE = 100_000; // 10% (maximum allowed)
     uint32 DEFAULT_BASE_FEE_STEP_PPM = 20_000;
 
     function setUp() public override {
@@ -420,9 +423,9 @@ contract PoolPolicyManagerTest is Base_Test {
     }
 
     function test_Revert_SetManualFee_WhenBelowMinimum() public {
-        // Setup: Define fee values below the minimum allowed (100 = 0.01%)
-        uint24 belowMinFee1 = 99; // Just below minimum
-        uint24 belowMinFee2 = 50; // Half of minimum
+        // Setup: Define fee values below the minimum allowed (10 = 0.001%)
+        uint24 belowMinFee1 = 9; // Just below minimum
+        uint24 belowMinFee2 = 5; // Half of minimum
         uint24 belowMinFee3 = 0; // Zero
 
         // Get the initial manual fee state to verify no change happens
@@ -432,13 +435,13 @@ contract PoolPolicyManagerTest is Base_Test {
         vm.startPrank(owner);
 
         // Expect the transaction to revert with ParameterOutOfRange error
-        // The error should contain the invalid value, minimum (100), and maximum (50,000)
+        // The error should contain the invalid value, minimum (10), and maximum (100,000)
         vm.expectRevert(
             abi.encodeWithSelector(
                 Errors.ParameterOutOfRange.selector,
                 belowMinFee1,
-                100, // MIN_TRADING_FEE
-                50_000 // MAX_TRADING_FEE
+                10, // MIN_TRADING_FEE
+                100_000 // MAX_TRADING_FEE
             )
         );
 
@@ -450,8 +453,8 @@ contract PoolPolicyManagerTest is Base_Test {
             abi.encodeWithSelector(
                 Errors.ParameterOutOfRange.selector,
                 belowMinFee2,
-                100, // MIN_TRADING_FEE
-                50_000 // MAX_TRADING_FEE
+                10, // MIN_TRADING_FEE
+                100_000 // MAX_TRADING_FEE
             )
         );
 
@@ -462,8 +465,8 @@ contract PoolPolicyManagerTest is Base_Test {
             abi.encodeWithSelector(
                 Errors.ParameterOutOfRange.selector,
                 belowMinFee3,
-                100, // MIN_TRADING_FEE
-                50_000 // MAX_TRADING_FEE
+                10, // MIN_TRADING_FEE
+                100_000 // MAX_TRADING_FEE
             )
         );
 
@@ -476,7 +479,7 @@ contract PoolPolicyManagerTest is Base_Test {
         assertEq(currentIsSet, initialIsSet, "Manual fee flag should not have changed");
 
         // Verification: Confirm that the minimum value can be set (boundary test)
-        uint24 minValidFee = 100; // Minimum allowed fee (0.01%)
+        uint24 minValidFee = 10; // Minimum allowed fee (0.001%)
 
         vm.startPrank(owner);
         policyManager.setManualFee(poolId, minValidFee);
@@ -489,9 +492,9 @@ contract PoolPolicyManagerTest is Base_Test {
     }
 
     function test_Revert_SetManualFee_WhenAboveMaximum() public {
-        // Setup: Define fee values above the maximum allowed (50,000 = 5%)
-        uint24 aboveMaxFee1 = 50_001; // Just above maximum
-        uint24 aboveMaxFee2 = 100_000; // Double the maximum
+        // Setup: Define fee values above the maximum allowed (100,000 = 10%)
+        uint24 aboveMaxFee1 = 100_001; // Just above maximum
+        uint24 aboveMaxFee2 = 200_000; // Double the maximum
         uint24 aboveMaxFee3 = type(uint24).max; // Maximum uint24 value
 
         // Get the initial manual fee state to verify no change happens
@@ -501,13 +504,13 @@ contract PoolPolicyManagerTest is Base_Test {
         vm.startPrank(owner);
 
         // Expect the transaction to revert with ParameterOutOfRange error
-        // The error should contain the invalid value, minimum (100), and maximum (50,000)
+        // The error should contain the invalid value, minimum (10), and maximum (100,000)
         vm.expectRevert(
             abi.encodeWithSelector(
                 Errors.ParameterOutOfRange.selector,
                 aboveMaxFee1,
-                100, // MIN_TRADING_FEE
-                50_000 // MAX_TRADING_FEE
+                10, // MIN_TRADING_FEE
+                100_000 // MAX_TRADING_FEE
             )
         );
 
@@ -519,8 +522,8 @@ contract PoolPolicyManagerTest is Base_Test {
             abi.encodeWithSelector(
                 Errors.ParameterOutOfRange.selector,
                 aboveMaxFee2,
-                100, // MIN_TRADING_FEE
-                50_000 // MAX_TRADING_FEE
+                10, // MIN_TRADING_FEE
+                100_000 // MAX_TRADING_FEE
             )
         );
 
@@ -531,8 +534,8 @@ contract PoolPolicyManagerTest is Base_Test {
             abi.encodeWithSelector(
                 Errors.ParameterOutOfRange.selector,
                 aboveMaxFee3,
-                100, // MIN_TRADING_FEE
-                50_000 // MAX_TRADING_FEE
+                10, // MIN_TRADING_FEE
+                100_000 // MAX_TRADING_FEE
             )
         );
 
@@ -545,7 +548,7 @@ contract PoolPolicyManagerTest is Base_Test {
         assertEq(currentIsSet, initialIsSet, "Manual fee flag should not have changed");
 
         // Verification: Confirm that the maximum value can be set (boundary test)
-        uint24 maxValidFee = 50_000; // Maximum allowed fee (5%)
+        uint24 maxValidFee = 100_000; // Maximum allowed fee (10%)
 
         vm.startPrank(owner);
         policyManager.setManualFee(poolId, maxValidFee);
@@ -787,9 +790,9 @@ contract PoolPolicyManagerTest is Base_Test {
     }
 
     function test_Revert_SetMinBaseFee_WhenBelowMinimumAllowed() public {
-        // Setup: Define fee values below the absolute minimum allowed (100 = 0.01%)
-        uint24 belowMinFee1 = 99; // Just below minimum
-        uint24 belowMinFee2 = 50; // Half of minimum
+        // Setup: Define fee values below the absolute minimum allowed (10 = 0.001%)
+        uint24 belowMinFee1 = 9; // Just below minimum
+        uint24 belowMinFee2 = 5; // Half of minimum
         uint24 belowMinFee3 = 0; // Zero
 
         // Get the initial min base fee value to verify no change happens
@@ -806,7 +809,7 @@ contract PoolPolicyManagerTest is Base_Test {
             abi.encodeWithSelector(
                 PolicyManagerErrors.InvalidFeeRange.selector,
                 belowMinFee1,
-                100, // MIN_TRADING_FEE
+                10, // MIN_TRADING_FEE
                 currentMaxFee
             )
         );
@@ -819,7 +822,7 @@ contract PoolPolicyManagerTest is Base_Test {
             abi.encodeWithSelector(
                 PolicyManagerErrors.InvalidFeeRange.selector,
                 belowMinFee2,
-                100, // MIN_TRADING_FEE
+                10, // MIN_TRADING_FEE
                 currentMaxFee
             )
         );
@@ -831,7 +834,7 @@ contract PoolPolicyManagerTest is Base_Test {
             abi.encodeWithSelector(
                 PolicyManagerErrors.InvalidFeeRange.selector,
                 belowMinFee3,
-                100, // MIN_TRADING_FEE
+                10, // MIN_TRADING_FEE
                 currentMaxFee
             )
         );
@@ -844,7 +847,7 @@ contract PoolPolicyManagerTest is Base_Test {
         assertEq(currentMinBaseFee, initialMinBaseFee, "Min base fee should not have changed");
 
         // Verification: Confirm that the minimum value can be set (boundary test)
-        uint24 minValidFee = 100; // Minimum allowed fee (0.01%)
+        uint24 minValidFee = 10; // Minimum allowed fee (0.001%)
 
         vm.startPrank(owner);
         policyManager.setMinBaseFee(poolId, minValidFee);
@@ -891,7 +894,7 @@ contract PoolPolicyManagerTest is Base_Test {
             abi.encodeWithSelector(
                 PolicyManagerErrors.InvalidFeeRange.selector,
                 slightlyAboveMaxFee,
-                100, // MIN_TRADING_FEE
+                10, // MIN_TRADING_FEE
                 specificMaxFee
             )
         );
@@ -903,7 +906,7 @@ contract PoolPolicyManagerTest is Base_Test {
             abi.encodeWithSelector(
                 PolicyManagerErrors.InvalidFeeRange.selector,
                 wayAboveMaxFee,
-                100, // MIN_TRADING_FEE
+                10, // MIN_TRADING_FEE
                 specificMaxFee
             )
         );
@@ -955,7 +958,7 @@ contract PoolPolicyManagerTest is Base_Test {
                 PolicyManagerErrors.InvalidFeeRange.selector,
                 wayBelowMinFee,
                 specificMinFee,
-                50_000 // MAX_TRADING_FEE
+                100_000 // MAX_TRADING_FEE
             )
         );
 
@@ -968,7 +971,7 @@ contract PoolPolicyManagerTest is Base_Test {
                 PolicyManagerErrors.InvalidFeeRange.selector,
                 slightlyBelowMinFee,
                 specificMinFee,
-                50_000 // MAX_TRADING_FEE
+                100_000 // MAX_TRADING_FEE
             )
         );
 
@@ -1367,13 +1370,13 @@ contract PoolPolicyManagerTest is Base_Test {
         vm.startPrank(owner);
 
         // Expect the transaction to revert with ParameterOutOfRange error
-        // The error should contain the invalid value (0), minimum (1), and maximum (3,000,000)
+        // The error should contain the invalid value (0), minimum (1), and maximum (10,000,000)
         vm.expectRevert(
             abi.encodeWithSelector(
                 Errors.ParameterOutOfRange.selector,
                 zeroMultiplier,
                 1, // Minimum (0.0001%)
-                3_000_000 // Maximum (300%)
+                10_000_000 // Maximum (1000%)
             )
         );
 
@@ -1409,10 +1412,10 @@ contract PoolPolicyManagerTest is Base_Test {
     }
 
     function test_Revert_SetSurgeFeeMultiplierPpm_WhenAboveMaximum() public {
-        // Setup: Define surge fee multiplier values above the maximum allowed (3,000,000 = 300%)
-        uint24 justAboveMaxMultiplier = 3_000_001; // Just above maximum
-        uint24 slightlyAboveMaxMultiplier = 3_500_000; // 350% (50% above maximum)
-        uint24 farAboveMaxMultiplier = 10_000_000; // 1000% (far above maximum)
+        // Setup: Define surge fee multiplier values above the maximum allowed (10,000,000 = 1000%)
+        uint24 justAboveMaxMultiplier = 10_000_001; // Just above maximum
+        uint24 slightlyAboveMaxMultiplier = 15_000_000; // 1500% (50% above maximum)
+        uint24 farAboveMaxMultiplier = 15_000_000; // 1500% (far above maximum)
 
         // Get the initial multiplier value to verify no change happens
         uint24 initialMultiplier = policyManager.getSurgeFeeMultiplierPpm(poolId);
@@ -1421,13 +1424,13 @@ contract PoolPolicyManagerTest is Base_Test {
         vm.startPrank(owner);
 
         // Expect the transaction to revert with ParameterOutOfRange error
-        // The error should contain the invalid value, minimum (1), and maximum (3,000,000)
+        // The error should contain the invalid value, minimum (1), and maximum (10,000,000)
         vm.expectRevert(
             abi.encodeWithSelector(
                 Errors.ParameterOutOfRange.selector,
                 justAboveMaxMultiplier,
                 1, // Minimum (0.0001%)
-                3_000_000 // Maximum (300%)
+                10_000_000 // Maximum (1000%)
             )
         );
 
@@ -1440,7 +1443,7 @@ contract PoolPolicyManagerTest is Base_Test {
                 Errors.ParameterOutOfRange.selector,
                 slightlyAboveMaxMultiplier,
                 1, // Minimum (0.0001%)
-                3_000_000 // Maximum (300%)
+                10_000_000 // Maximum (1000%)
             )
         );
 
@@ -1452,7 +1455,7 @@ contract PoolPolicyManagerTest is Base_Test {
                 Errors.ParameterOutOfRange.selector,
                 farAboveMaxMultiplier,
                 1, // Minimum (0.0001%)
-                3_000_000 // Maximum (300%)
+                10_000_000 // Maximum (1000%)
             )
         );
 
@@ -1464,7 +1467,7 @@ contract PoolPolicyManagerTest is Base_Test {
         assertEq(currentMultiplier, initialMultiplier, "Surge fee multiplier should not have changed");
 
         // Verification: Confirm that the maximum value can be set (boundary test)
-        uint24 maxValidMultiplier = 3_000_000; // Maximum allowed (300%)
+        uint24 maxValidMultiplier = 10_000_000; // Maximum allowed (1000%)
 
         vm.startPrank(owner);
         policyManager.setSurgeFeeMultiplierPpm(poolId, maxValidMultiplier);
@@ -1475,7 +1478,7 @@ contract PoolPolicyManagerTest is Base_Test {
         assertEq(currentMultiplier, maxValidMultiplier, "Maximum valid multiplier should be settable");
 
         // Additional verification: Confirm that a value just below maximum can be set
-        uint24 justBelowMaxMultiplier = 2_999_999; // Just below maximum (299.9999%)
+        uint24 justBelowMaxMultiplier = 9_999_999; // Just below maximum (999.9999%)
 
         vm.startPrank(owner);
         policyManager.setSurgeFeeMultiplierPpm(poolId, justBelowMaxMultiplier);
@@ -1970,34 +1973,26 @@ contract PoolPolicyManagerTest is Base_Test {
         assertEq(updatedStep, DEFAULT_BASE_FEE_STEP_PPM, "When step is set to zero, getter should return default value");
         assertEq(updatedInterval, shortInterval, "Update interval should still be updated with zero step");
 
-        // Test with zero interval (should be allowed)
-        // Expect event to be emitted with correct parameters
-        vm.expectEmit(true, true, true, true);
-        emit IPoolPolicyManager.BaseFeeParamsSet(poolId, midStep, 0);
+        // Test with zero interval (should be rejected by contract)
+        // Expect the transaction to revert because zero interval is not allowed
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                Errors.ParameterOutOfRange.selector,
+                0, // invalid value
+                1, // minimum
+                type(uint32).max // maximum
+            )
+        );
 
-        // Call the function with zero interval
+        // Call the function with zero interval - should revert
         policyManager.setBaseFeeParams(poolId, midStep, 0);
 
-        // Get updated values
+        // After revert, verify the values are still the same as before the failed attempt
+        // (from the zero step test: step=20000 default, interval=3600)
         updatedStep = policyManager.getBaseFeeStepPpm(poolId);
         updatedInterval = policyManager.getBaseFeeUpdateIntervalSeconds(poolId);
-
-        // Check if zero interval uses default or keeps zero
-        uint32 DEFAULT_BASE_FEE_UPDATE_INTERVAL_SECS = 1 days; // Default value from the contract
-
-        // The behavior for zero interval depends on how getBaseFeeUpdateIntervalSeconds is implemented
-        // If it's similar to getBaseFeeStepPpm, it would return the default value
-        // Let's check both possibilities
-        if (updatedInterval == 0) {
-            assertEq(updatedInterval, 0, "Update interval should be set to zero if no default is used");
-        } else {
-            assertEq(
-                updatedInterval,
-                DEFAULT_BASE_FEE_UPDATE_INTERVAL_SECS,
-                "Update interval should return default value when set to zero"
-            );
-        }
-        assertEq(updatedStep, midStep, "Base fee step should still be updated with zero interval");
+        assertEq(updatedStep, 20000, "Base fee step should remain unchanged after failed zero interval attempt");
+        assertEq(updatedInterval, 3600, "Update interval should remain unchanged after failed zero interval attempt");
 
         // Test with maximum interval value
         uint32 maxInterval = type(uint32).max;
@@ -2131,5 +2126,86 @@ contract PoolPolicyManagerTest is Base_Test {
         currentInterval = policyManager.getBaseFeeUpdateIntervalSeconds(poolId);
         assertEq(currentStep, maxValidStep, "Maximum valid step should be settable");
         assertEq(currentInterval, validInterval, "Update interval should be updated with maximum valid step");
+    }
+
+    /*//////////////////////////////////////////////////////////////
+                      POOL INITIALIZATION POL SHARE TESTS
+    //////////////////////////////////////////////////////////////*/
+
+    function test_PoolInitializedWithDefaultPOLShare() public {
+        // Test that the existing pool (from setUp) has the correct default 10% POL share
+        
+        // Verify that the pool was initialized with the default 10% POL share
+        uint256 polShare = policyManager.getPoolPOLShare(poolId);
+        uint256 expectedDefaultPolShare = 100_000; // 10% = 100,000 PPM
+        
+        assertEq(polShare, expectedDefaultPolShare, "Pool should be initialized with 10% POL share");
+        
+        // Test that the default behavior is consistent by checking the constant
+        // We can verify this by setting a different value and then checking
+        // that the default behavior is maintained for new pools
+        
+        // Set a custom POL share for the existing pool
+        vm.startPrank(owner);
+        policyManager.setPoolPOLShare(poolId, 200_000); // 20%
+        vm.stopPrank();
+        
+        // Verify the custom value was set
+        polShare = policyManager.getPoolPOLShare(poolId);
+        assertEq(polShare, 200_000, "Custom POL share should be set correctly");
+        
+        // Reset back to default to verify the default value
+        vm.startPrank(owner);
+        policyManager.setPoolPOLShare(poolId, expectedDefaultPolShare);
+        vm.stopPrank();
+        
+        // Verify it's back to default
+        polShare = policyManager.getPoolPOLShare(poolId);
+        assertEq(polShare, expectedDefaultPolShare, "Pool should be reset to default 10% POL share");
+    }
+
+    function test_DefaultPOLShareIsCorrectlySet() public {
+        // Test that the existing pool (from setUp) has the correct default POL share
+        
+        uint256 polShare = policyManager.getPoolPOLShare(poolId);
+        uint256 expectedDefaultPolShare = 100_000; // 10% = 100,000 PPM
+        
+        assertEq(polShare, expectedDefaultPolShare, "Existing pool should have 10% POL share");
+        
+        // Verify that this is indeed the default by checking the constant
+        // The constant DEFAULT_POOL_POL_SHARE_PPM should be 100_000
+        // We can verify this by setting a different value and then checking
+        // that the default behavior is maintained for new pools
+        
+        // Set a custom POL share for the existing pool
+        vm.startPrank(owner);
+        policyManager.setPoolPOLShare(poolId, 200_000); // 20%
+        vm.stopPrank();
+        
+        // Verify the custom value was set
+        polShare = policyManager.getPoolPOLShare(poolId);
+        assertEq(polShare, 200_000, "Custom POL share should be set correctly");
+        
+        // Verify that the default value is correctly set to 10%
+        // We can test this by checking that the default behavior is consistent
+        // and that the value can be set and retrieved correctly
+        
+        // Test edge case: 0% POL share
+        vm.startPrank(owner);
+        policyManager.setPoolPOLShare(poolId, 0);
+        vm.stopPrank();
+        
+        // Verify zero value was set
+        polShare = policyManager.getPoolPOLShare(poolId);
+        assertEq(polShare, 0, "Zero POL share should be set correctly");
+        
+        // Test edge case: 100% POL share
+        vm.startPrank(owner);
+        policyManager.setPoolPOLShare(poolId, 1_000_000); // 100%
+        vm.stopPrank();
+        
+        // Verify 100% value was set
+        polShare = policyManager.getPoolPOLShare(poolId);
+        assertEq(polShare, 1_000_000, "100% POL share should be set correctly");
     }
 }
