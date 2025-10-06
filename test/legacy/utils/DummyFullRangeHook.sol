@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.27;
+pragma solidity ^0.8.26;
 
 import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
 import {PoolId} from "v4-core/src/types/PoolId.sol";

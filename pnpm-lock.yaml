@@ -12,10 +12,10 @@ importers:
         specifier: 5.3.0
         version: 5.3.0
       '@uniswap/v4-core':
-        specifier: git+https://github.com/labs-solo/v4-core.git#use-sol-0.8.27
+        specifier: git+https://github.com/labs-solo/v4-core.git#use-sol-0.8.26
         version: https://codeload.github.com/labs-solo/v4-core/tar.gz/1dc32430eee5be3677ff5992959b6e0221b5fead
       '@uniswap/v4-periphery':
-        specifier: git+https://github.com/labs-solo/v4-periphery.git#use-sol-0.8.27
+        specifier: git+https://github.com/labs-solo/v4-periphery.git#use-sol-0.8.26
         version: https://codeload.github.com/labs-solo/v4-periphery/tar.gz/026a6d84510ef114850c560ba710a3a194b20390
       ds-test:
         specifier: github:dapphub/ds-test#master
