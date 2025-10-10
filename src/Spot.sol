@@ -86,10 +86,6 @@ contract Spot is BaseHook, ISpot {
         if (address(_oracle) == address(0)) revert Errors.ZeroAddress();
         if (address(_dynamicFeeManager) == address(0)) revert Errors.ZeroAddress();
 
-        if (_liquidityManager.authorizedHookAddress() != address(this)) {
-            revert Errors.InvalidHookAuthorization(_liquidityManager.authorizedHookAddress(), address(this));
-        }
-
         policyManager = _policyManager;
         truncGeoOracle = _oracle;
         dynamicFeeManager = _dynamicFeeManager;
