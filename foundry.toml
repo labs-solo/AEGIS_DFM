@@ -5,26 +5,16 @@ out = "out"
 libs = ["lib"]
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
 dotenv = true
-solc_version = "0.8.26"
+solc_version = "0.8.27"
 evm_version = "cancun"
 # Fast compilation settings for development
 viaIR = true
-optimizer = true
-optimizer_runs = 10000
+optimizer = false
 
 # NOTE: the default profile will be used for dev compilation and testing
 
 # Production profile - full optimization
 [profile.production]
-src = "src"
-test = "test"
-out = "out"
-libs = ["lib"]
-fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
-dotenv = true
-solc_version = "0.8.26"
-evm_version = "cancun"
-# Fast compilation settings for development
 viaIR = true
 optimizer = true
 optimizer_runs = 10000
