@@ -34,6 +34,22 @@ abstract contract UniswapV4Config {
             });
         }
 
+        if (chainId == 1) {
+            // Ethereum Mainnet
+            return UniswapV4Raw({
+                poolManager: 0x000000000004444c5dc75cB358380D2e3dE08A90,
+                positionManager: 0xbD216513d74C8cf14cf4747E6AaA6420FF64ee9e
+            });
+        }
+
+        if (chainId == 8453) {
+            // Base Mainnet
+            return UniswapV4Raw({
+                poolManager: 0x498581fF718922c3f8e6A244956aF099B2652b2b,
+                positionManager: 0x7C5f5A4bBd8fD63184577525326123B519429bDc
+            });
+        }
+
         revert("Unsupported chain");
     }
 }
