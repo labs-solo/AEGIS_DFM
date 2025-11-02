@@ -11,6 +11,8 @@ broadcast/
 # Node modules
 node_modules/
 
+dependencies/
+
 # Scripts with sensitive API keys
 script/run_with_alchemy.sh
 

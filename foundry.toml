@@ -1,8 +1,8 @@
 [profile.default]
 src = "src"
-test = "test"
+test = "test/revamped"
 out = "out"
-libs = ["lib"]
+libs = ["dependencies"]
 fs_permissions = [{ access = "read-write", path = ".forge-snapshots/"}, { access = "read-write", path = "log/"}, { access = "read", path = "env"}]
 dotenv = true
 solc_version = "0.8.26"
@@ -28,3 +28,17 @@ mainnet = { key = "${ETHERSCAN_API_KEY}", url = "https://api.etherscan.io/api" }
 unichain = { key = "${UNICHAIN_API_KEY}", url = "https://unichain.blockscout.com/api" }
 
 # See more config options https://github.com/foundry-rs/foundry/tree/master/crates/config
+
+# Soldeer dependency management
+[dependencies]
+"@openzeppelin-contracts" = "5.3.0"
+forge-std = "1.9.7"
+solmate = { version = "main", git = "https://github.com/transmissions11/solmate.git", branch = "main" }
+v4-core = { version = "main", git = "https://github.com/Uniswap/v4-core.git", branch = "main" }
+v4-periphery = { version = "main", git = "https://github.com/Uniswap/v4-periphery.git", branch = "main" }
+permit2 = { version = "main", git = "https://github.com/Uniswap/permit2.git", branch = "main" }
+uniswap-hooks = { version = "master", git = "https://github.com/OpenZeppelin/uniswap-hooks.git", branch = "master" }
+# Dependencies will be automatically added here by soldeer
+
+[soldeer]
+recursive_deps = true
