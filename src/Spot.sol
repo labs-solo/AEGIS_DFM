@@ -74,13 +74,12 @@ contract Spot is BaseHook, ISpot {
     // - - - Constructor - - -
 
     constructor(
-        IPoolManager _manager,
         IFullRangeLiquidityManager _liquidityManager,
         PoolPolicyManager _policyManager,
         TruncGeoOracleMulti _oracle,
         IDynamicFeeManager _dynamicFeeManager
-    ) BaseHook(_manager) {
-        if (address(_manager) == address(0)) revert Errors.ZeroAddress();
+    ) BaseHook(_liquidityManager.poolManager()) {
+        if (address(_liquidityManager.poolManager()) == address(0)) revert Errors.ZeroAddress();
         if (address(_liquidityManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_oracle) == address(0)) revert Errors.ZeroAddress();

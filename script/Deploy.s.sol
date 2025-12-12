@@ -95,7 +95,6 @@ contract DeployScript is Script, UniswapV4Config {
             hookFlags,
             type(Spot).creationCode,
             abi.encode(
-                address(uniswapV4.poolManager),
                 liquidityManagerAddress,
                 policyManagerAddress,
                 oracleAddress,
@@ -141,7 +140,7 @@ contract DeployScript is Script, UniswapV4Config {
 
         // Step 7: Deploy Spot hook using precomputed addresses
         console.log("Deploying Spot hook...");
-        Spot spot = new Spot{salt: salt}(uniswapV4.poolManager, liquidityManager, policyManager, oracle, feeManager);
+        Spot spot = new Spot{salt: salt}(liquidityManager, policyManager, oracle, feeManager);
         deployed.spot = address(spot);
         require(deployed.spot == hookAddress, "Hook address mismatch");
         console.log("Spot hook deployed at:", deployed.spot);
