@@ -23,15 +23,7 @@
     "t:iu": "pnpm t:i && pnpm t:u"
   },
   "devDependencies": {
-    "@openzeppelin/contracts": "5.3.0",
-    "@uniswap/v4-core": "git+https://github.com/Uniswap/v4-core.git",
-    "@uniswap/v4-periphery": "git+https://github.com/Uniswap/v4-periphery.git",
-    "ds-test": "github:dapphub/ds-test#master",
-    "forge-std": "github:foundry-rs/forge-std#v1.9.7",
     "patch-package": "^8.0.0",
-    "permit2": "git+https://github.com/Uniswap/permit2.git#main",
-    "prettier": "^3.3.3",
-    "solmate": "github:transmissions11/solmate#main",
-    "uniswap-hooks": "github:OpenZeppelin/uniswap-hooks"
+    "prettier": "^3.3.3"
   }
 }
