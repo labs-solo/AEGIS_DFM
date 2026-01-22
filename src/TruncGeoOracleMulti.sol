@@ -302,13 +302,12 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     }
 
     /// -----------------------------------------------------------------------
-    /// @notice Returns cumulative tick and seconds-per-liquidity for each `secondsAgo`.
-    /// @dev Typed to mirror Uniswap V3 so off-the-shelf TWAP helpers "just work".
+    /// @notice Returns cumulative tick values for each `secondsAgo`.
     /// -----------------------------------------------------------------------
     function observe(PoolKey calldata key, uint32[] memory secondsAgos)
         public
         view
-        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s)
+        returns (int56[] memory tickCumulatives)
     {
         PoolId poolId = key.toId();
 
@@ -321,7 +320,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         uint128 liquidity = StateLibrary.getLiquidity(poolManager, poolId);
         (, int24 tick,,) = StateLibrary.getSlot0(poolManager, poolId);
 
-        return observations[poolId].observe(time, secondsAgos, tick, state.index, liquidity, state.cardinality);
+        (tickCumulatives,) =
+            observations[poolId].observe(time, secondsAgos, tick, state.index, liquidity, state.cardinality);
+        return tickCumulatives;
     }
 
     /// -----------------------------------------------------------------------
@@ -331,7 +332,7 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     function consult(PoolKey calldata key, uint32 secondsAgo)
         public
         view
-        returns (int24 arithmeticMeanTick, uint128 harmonicMeanLiquidity)
+        returns (int24 arithmeticMeanTick)
     {
         require(secondsAgo != 0, "BP");
 
@@ -339,22 +340,15 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         secondsAgos[0] = secondsAgo;
         secondsAgos[1] = 0;
 
-        (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) =
-            observe(key, secondsAgos);
+        int56[] memory tickCumulatives = observe(key, secondsAgos);
 
         int56 tickCumulativesDelta = tickCumulatives[1] - tickCumulatives[0];
-        uint160 secondsPerLiquidityCumulativesDelta =
-            secondsPerLiquidityCumulativeX128s[1] - secondsPerLiquidityCumulativeX128s[0];
 
         int56 secondsAgoI56 = int56(uint56(secondsAgo));
 
         arithmeticMeanTick = int24(tickCumulativesDelta / secondsAgoI56);
         // Always round to negative infinity
         if (tickCumulativesDelta < 0 && (tickCumulativesDelta % secondsAgoI56 != 0)) arithmeticMeanTick--;
-
-        // We are multiplying here instead of shifting to ensure that harmonicMeanLiquidity doesn't overflow uint128
-        uint192 secondsAgoX160 = uint192(secondsAgo) * type(uint160).max;
-        harmonicMeanLiquidity = uint128(secondsAgoX160 / (uint192(secondsPerLiquidityCumulativesDelta) << 32));
     }
 
     /**

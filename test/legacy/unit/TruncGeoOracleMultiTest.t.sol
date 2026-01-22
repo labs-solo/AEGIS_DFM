@@ -477,7 +477,7 @@ contract TruncGeoOracleMultiTest is Test {
         sa[2] = 20;
 
         // call observe()
-        (int56[] memory tc,) = oracle.observe(poolKey, sa);
+        int56[] memory tc = oracle.observe(poolKey, sa);
 
         // tick-seconds cumulatives should be increasing with age
         assertEq(tc.length, 3, "length mismatch");
@@ -495,7 +495,7 @@ contract TruncGeoOracleMultiTest is Test {
         // ⏱️  fast-path cross-check (secondsAgo == 0)
         uint32[] memory zero = new uint32[](1);
         zero[0] = 0;
-        (int56[] memory tcNow,) = oracle.observe(poolKey, zero);
+        int56[] memory tcNow = oracle.observe(poolKey, zero);
         assertEq(tcNow.length, 1);
         console.log("tcNow[0]:", tcNow[0]);
 

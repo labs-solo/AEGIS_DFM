@@ -93,14 +93,11 @@ interface ITruncGeoOracleMulti {
      * @param key The pool key.
      * @param secondsAgos Array of time offsets.
      * @return tickCumulatives The tick cumulative values.
-     * @return secondsPerLiquidityCumulativeX128s The seconds per liquidity cumulative values.
      */
-    /// @notice Returns cumulative tick and seconds-per-liquidity for each `secondsAgo`.
-    /// @dev Typed to mirror Uniswap V3 so off-the-shelf TWAP helpers "just work".
     function observe(bytes calldata key, uint32[] calldata secondsAgos)
         external
         view
-        returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s);
+        returns (int56[] memory tickCumulatives);
 
     /**
      * @notice Increases the cardinality of the oracle observation array

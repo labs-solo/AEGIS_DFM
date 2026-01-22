@@ -99,9 +99,9 @@ contract Spot is BaseHook, ISpot {
         return Hooks.Permissions({
             beforeInitialize: false,
             afterInitialize: true,
-            beforeAddLiquidity: true,
+            beforeAddLiquidity: false,
             afterAddLiquidity: false,
-            beforeRemoveLiquidity: true,
+            beforeRemoveLiquidity: false,
             afterRemoveLiquidity: false,
             beforeSwap: true,
             afterSwap: true,
@@ -397,61 +397,6 @@ contract Spot is BaseHook, ISpot {
         return BaseHook.afterInitialize.selector;
     }
 
-    /// @notice called in BaseHook.beforeAddLiquidity
-    /// @dev Records oracle observation to ensure accuracy in secondsPerLiquidityCumulativeX128 accumulator
-    function _beforeAddLiquidity(
-        address,
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata,
-        bytes calldata
-    ) internal virtual override returns (bytes4) {
-        PoolId poolId = key.toId();
-
-        // Get current tick for oracle update
-        (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
-
-        // Record observation to ensure accurate secondsPerLiquidityCumulativeX128
-        try truncGeoOracle.recordObservation(poolId, currentTick) {
-            // Observation recorded successfully
-        } catch Error(string memory reason) {
-            emit OracleUpdateFailed(poolId, reason);
-        } catch (bytes memory lowLevelData) {
-            // Low-level oracle failure
-            emit OracleUpdateFailed(poolId, "LLOF");
-        }
-
-        return BaseHook.beforeAddLiquidity.selector;
-    }
-
-    /// @notice called in BaseHook.beforeRemoveLiquidity
-    /// @dev Records oracle observation to ensure accuracy in secondsPerLiquidityCumulativeX128 accumulator
-    function _beforeRemoveLiquidity(
-        address,
-        PoolKey calldata key,
-        ModifyLiquidityParams calldata params,
-        bytes calldata
-    ) internal virtual override returns (bytes4) {
-
-        // Only record observation if liquidityDelta is not 0
-        if (params.liquidityDelta != 0) {
-
-            PoolId poolId = key.toId();
-
-            // Get current tick for oracle update
-            (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
-
-            // Record observation to ensure accurate secondsPerLiquidityCumulativeX128
-            try truncGeoOracle.recordObservation(poolId, currentTick) {
-                // Observation recorded successfully
-            } catch Error(string memory reason) {
-                emit OracleUpdateFailed(poolId, reason);
-            } catch (bytes memory lowLevelData) {
-                // Low-level oracle failure
-                emit OracleUpdateFailed(poolId, "LLOF");
-            }
-            }
-        return BaseHook.beforeRemoveLiquidity.selector;
-    }
 
     // - - - internal helpers - - -
 
