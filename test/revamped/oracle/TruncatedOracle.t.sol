@@ -50,10 +50,9 @@ contract OracleTest is Base_Test {
         secondsAgos[0] = 120; // 2 minutes ago
         secondsAgos[1] = 0;   // current
         
-        (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) = oracle.observe(poolKey, secondsAgos);
+        (int56[] memory tickCumulatives) = oracle.observe(poolKey, secondsAgos);
         
         assertEq(tickCumulatives.length, 2);
-        assertEq(secondsPerLiquidityCumulativeX128s.length, 2);
         
         // Should have different values for different times
         assertTrue(tickCumulatives[0] != tickCumulatives[1]);
@@ -86,7 +85,7 @@ contract OracleTest is Base_Test {
             secondsAgos[0] = period;
             secondsAgos[1] = 0;
             
-            (int56[] memory tickCumulatives, ) = oracle.observe(poolKey, secondsAgos);
+            (int56[] memory tickCumulatives) = oracle.observe(poolKey, secondsAgos);
             int56 tickCumulativeDelta = tickCumulatives[1] - tickCumulatives[0];
             
             // Calculate TWAP manually
@@ -194,7 +193,7 @@ contract OracleTest is Base_Test {
         
         assertEq(index, 0);
         assertEq(cardinality, 1);
-        assertEq(cardinalityNext, 2); // cardinalityNext grows to 2 after first observation is recorded
+        assertEq(cardinalityNext, 1);
         
         // Record some observations and check state transitions
         for (uint16 i = 0; i < 20; i++) {
@@ -247,7 +246,7 @@ contract OracleTest is Base_Test {
         uint32[] memory secondsAgos = new uint32[](1);
         secondsAgos[0] = 60; // 1 minute ago
         
-        try oracle.observe(poolKey, secondsAgos) returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) {
+        try oracle.observe(poolKey, secondsAgos) returns (int56[] memory tickCumulatives) {
             console.log("Observe succeeded with no history");
         } catch Error(string memory reason) {
             console.log("Observe failed with reason:", reason);
@@ -258,7 +257,7 @@ contract OracleTest is Base_Test {
         // Try to observe with limited history (should fail)
         secondsAgos[0] = 3600; // 1 hour ago (more than our 10 minutes of history)
         
-        try oracle.observe(poolKey, secondsAgos) returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) {
+        try oracle.observe(poolKey, secondsAgos) returns (int56[] memory tickCumulatives) {
             console.log("Observe succeeded with limited history");
         } catch Error(string memory reason) {
             console.log("Observe failed with reason:", reason);
@@ -305,17 +304,15 @@ contract OracleTest is Base_Test {
         for (uint i = 0; i < periods.length; i++) {
             uint32 period = periods[i];
             
-            try oracle.consult(poolKey, period) returns (int24 twapTick, uint128 harmonicMeanLiquidity) {
+            try oracle.consult(poolKey, period) returns (int24 twapTick) {
                 twapTicks[i] = twapTick;
                 
                 console.log("Consult period:", period, "seconds");
                 console.log("- TWAP tick:", twapTick);
-                console.log("- Harmonic mean liquidity:", harmonicMeanLiquidity);
                 console.log("- Current vs TWAP difference:", int256(currentTick) - int256(twapTick));
                 
                 // Verify TWAP is reasonable
                 assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
-                assertTrue(harmonicMeanLiquidity > 0, "Harmonic mean liquidity should be positive");
                 
             } catch Error(string memory reason) {
                 console.log("Consult failed for period", period, "with reason:", reason);
@@ -368,7 +365,6 @@ contract OracleTest is Base_Test {
         console.log("\n=== Consult Test Summary ===");
         console.log("SUCCESS: All consult calls succeeded");
         console.log("SUCCESS: TWAP calculations are reasonable");
-        console.log("SUCCESS: Harmonic mean liquidity is positive");
         console.log("SUCCESS: TWAP approaches current tick as period decreases");
         console.log("SUCCESS: Unidirectional swap TWAP smoothing verified");
     }
@@ -509,13 +505,10 @@ contract OracleTest is Base_Test {
         for (uint i = 0; i < periods.length; i++) {
             uint32 period = periods[i];
             
-            try oracle.consult(poolKey, period) returns (int24 twapTick, uint128 harmonicMeanLiquidity) {
+            try oracle.consult(poolKey, period) returns (int24 twapTick) {
                 console.log("Consult period:", period);
                 console.log("TWAP tick:", twapTick);
-                console.log("Harmonic mean liquidity:", harmonicMeanLiquidity);
                 console.log("- Current vs TWAP tick difference:", int256(latestTick) - int256(twapTick));
-                console.log("- Current liquidity: 100000000000000000000000");
-                console.log("- Harmonic mean liquidity ratio:", (harmonicMeanLiquidity * 100) / 100000000000000000000000, "%");
             } catch Error(string memory reason) {
                 console.log("Consult period:");
                 console.log(period);
@@ -535,7 +528,7 @@ contract OracleTest is Base_Test {
         secondsAgos[2] = 600;  // 10 minutes ago
         secondsAgos[3] = 0;    // now
         
-        try oracle.observe(poolKey, secondsAgos) returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) {
+        try oracle.observe(poolKey, secondsAgos) returns (int56[] memory tickCumulatives) {
             console.log("Observe successful");
             console.log("Cumulative ticks:", tickCumulatives.length);
             for (uint i = 0; i < secondsAgos.length; i++) {
@@ -564,7 +557,7 @@ contract OracleTest is Base_Test {
         periods[2] = 1800; // 30 minutes
         
         for (uint i = 0; i < periods.length; i++) {
-            try oracle.consult(poolKey, periods[i]) returns (int24 twapTick, uint128 harmonicMeanLiquidity) {
+            try oracle.consult(poolKey, periods[i]) returns (int24 twapTick) {
                 console.log("Consult success, TWAP tick:", twapTick);
             } catch {
                 console.log("Consult failed for period:");
@@ -577,7 +570,7 @@ contract OracleTest is Base_Test {
         secondsAgos[0] = 300; // 5 minutes ago
         secondsAgos[1] = 0;   // now
         
-        try oracle.observe(poolKey, secondsAgos) returns (int56[] memory tickCumulatives, uint160[] memory secondsPerLiquidityCumulativeX128s) {
+        try oracle.observe(poolKey, secondsAgos) returns (int56[] memory tickCumulatives) {
             console.log("Observe successful");
         } catch {
             console.log("Observe failed");
@@ -625,13 +618,13 @@ contract OracleTest is Base_Test {
             _performSwap(1e18, true);
             vm.warp(block.timestamp + 60);
             // Call consult and assert it succeeds
-            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
+            try oracle.consult(poolKey, 600) returns (int24 twapTick) {
                 assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
             } catch { revert("Consult failed after swap in initial 1024 loop"); }
         }
 
         // Call consult and assert it succeeds
-        try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128 harmonicMeanLiquidity) {
+        try oracle.consult(poolKey, 600) returns (int24 twapTick) {
             console.log("Consult after 1024 swaps succeeded. TWAP tick:", twapTick);
             assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
         } catch Error(string memory reason) {
@@ -660,7 +653,7 @@ contract OracleTest is Base_Test {
         for (uint i = 0; i < 80; i++) {
             _performSwap(1e18, true);
             vm.warp(block.timestamp + 60);
-            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
+            try oracle.consult(poolKey, 600) returns (int24 twapTick) {
                 assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
             } catch { revert("Consult failed after swap in 80 loop"); }
         }
@@ -688,7 +681,7 @@ contract OracleTest is Base_Test {
         for (uint i = 0; i < swapsToZero; i++) {
             _performSwap(1e18, true);
             vm.warp(block.timestamp + 60);
-            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
+            try oracle.consult(poolKey, 600) returns (int24 twapTick) {
                 assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
             } catch { revert("Consult failed after swap in wrap-to-0 loop"); }
         }
@@ -704,7 +697,7 @@ contract OracleTest is Base_Test {
         for (uint i = 0; i < 5; i++) {
             _performSwap(1e18, true);
             vm.warp(block.timestamp + 60);
-            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
+            try oracle.consult(poolKey, 600) returns (int24 twapTick) {
                 assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
             } catch { revert("Consult failed after swap in final 5 loop"); }
         }
@@ -769,7 +762,7 @@ contract OracleTest is Base_Test {
         secondsAgos[2] = 0;   // now
         
         int56[] memory oracleCumulatives;
-        try oracle.observe(poolKey, secondsAgos) returns (int56[] memory tickCumulatives, uint160[] memory) {
+        try oracle.observe(poolKey, secondsAgos) returns (int56[] memory tickCumulatives) {
             oracleCumulatives = tickCumulatives;
             console.log("Oracle cumulative values:");
             console.log("  10min ago:", oracleCumulatives[0]);
@@ -807,7 +800,7 @@ contract OracleTest is Base_Test {
         console.log("\nPhase 4: Verifying against oracle consult function...");
         
         // Test 5-minute period
-        try oracle.consult(poolKey, 300) returns (int24 oracle5min, uint128 harmonicMeanLiquidity5min) {
+        try oracle.consult(poolKey, 300) returns (int24 oracle5min) {
             console.log("5-minute period:");
             console.log("  Manual TWAP:", twap5min);
             console.log("  Oracle TWAP:", oracle5min);
@@ -822,7 +815,7 @@ contract OracleTest is Base_Test {
         }
         
         // Test 10-minute period
-        try oracle.consult(poolKey, 600) returns (int24 oracle10min, uint128 harmonicMeanLiquidity10min) {
+        try oracle.consult(poolKey, 600) returns (int24 oracle10min) {
             console.log("10-minute period:");
             console.log("  Manual TWAP:", twap10min);
             console.log("  Oracle TWAP:", oracle10min);
@@ -891,7 +884,7 @@ contract OracleTest is Base_Test {
         secondsAgos[0] = 300; // 5 minutes ago
         secondsAgos[1] = 0;   // current
         
-        (int56[] memory tickCumulatives,) = oracle.observe(poolKey, secondsAgos);
+        (int56[] memory tickCumulatives) = oracle.observe(poolKey, secondsAgos);
         console.log("TWAP calculation successful, cumulative delta:", tickCumulatives[1] - tickCumulatives[0]);
         
         // The key collision fix ensures that:
@@ -905,4 +898,4 @@ contract OracleTest is Base_Test {
 
 
 
-} 
+}

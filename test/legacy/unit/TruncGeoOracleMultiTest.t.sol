@@ -62,6 +62,7 @@ contract TruncGeoOracleMultiTest is Test {
     /* ------------------------------------------------------- */
     function setUp() public {
         console.log("Setting up test...");
+        vm.warp(START_TS);
         policy = new MockPolicyManager();
         poolManager = new MockPoolManager();
 
@@ -367,6 +368,8 @@ contract TruncGeoOracleMultiTest is Test {
         uint16 pushes = 530; // crosses page boundary (PAGE_SIZE = 512)
         uint24 cap = oracle.maxTicksPerBlock(pid);
 
+        oracle.increaseCardinalityNext(poolKey, pushes + 1);
+
         for (uint16 i = 1; i <= pushes; ++i) {
             // safe ladder-cast: uint24 -> uint256 -> int256 -> int24
             poolManager.setTick(pid, int24(int256(uint256(cap) - 1))); // stay under cap
@@ -377,7 +380,7 @@ contract TruncGeoOracleMultiTest is Test {
 
         //  Bootstrap slot (index 0) + our `pushes` writes
         (, uint16 cardinality,) = oracle.states(pid);
-        assertEq(cardinality, pushes + 1, "cardinality wrong after multi-page growth (must include bootstrap slot)");
+        assertEq(cardinality, pushes + 2, "cardinality wrong after multi-page growth (must include bootstrap slot)");
 
         // ── latest observation must be the last one we wrote ──
         (int24 tick,) = oracle.getLatestObservation(pid);
@@ -469,12 +472,13 @@ contract TruncGeoOracleMultiTest is Test {
         // ── write second & third observations ──
         _advanceAndPush(10, 10); // 10 s after bootstrap
         _advanceAndPush(30, 10); // another 10 s later (now total 20 s)
+        vm.warp(block.timestamp + 10);
 
         // build query [0,10,20]
         uint32[] memory sa = new uint32[](3);
         sa[0] = 0;
-        sa[1] = 10;
-        sa[2] = 20;
+        sa[1] = 5;
+        sa[2] = 10;
 
         // call observe()
         int56[] memory tc = oracle.observe(poolKey, sa);

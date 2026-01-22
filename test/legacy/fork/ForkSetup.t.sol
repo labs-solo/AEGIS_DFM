@@ -34,8 +34,8 @@ import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "src/interfaces/IDynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
 import {ITruncGeoOracleMulti} from "src/interfaces/ITruncGeoOracleMulti.sol";
-import {SimpleDeployLib} from "test/legacy/utils/SimpleDeployLib.sol";
 import {SpotFlags} from "test/legacy/utils/SpotFlags.sol";
+import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 
 // Test Routers
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
@@ -143,6 +143,12 @@ contract ForkSetup is Test {
         emit log_named_string("Selected fork RPC alias", rpcAlias);
         emit log_named_uint("Selected fork block number", forkBlock);
 
+        try vm.rpcUrl(rpcAlias) returns (string memory) {} catch {
+            emit log_named_string("Missing RPC alias, skipping fork tests", rpcAlias);
+            vm.skip(true);
+            return 0;
+        }
+
         if (forkBlock > 0) {
             forkId = vm.createSelectFork(rpcAlias, forkBlock); // Uses combined cheatcode
             if (forkId == 0) {
@@ -208,31 +214,42 @@ contract ForkSetup is Test {
             IWETH9(WETH_ADDRESS)
         );
 
+        uint256 deployerNonce = vm.getNonce(deployerEOA);
+        address oracleAddress = computeCreateAddress(deployerEOA, deployerNonce);
+        address feeManagerAddress = computeCreateAddress(deployerEOA, deployerNonce + 1);
+        address liquidityManagerAddress = computeCreateAddress(deployerEOA, deployerNonce + 2);
+
+        uint160 hookFlags = uint160(SpotFlags.required());
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            deployerEOA,
+            hookFlags,
+            type(Spot).creationCode,
+            abi.encode(liquidityManagerAddress, address(policyManager), oracleAddress, feeManagerAddress)
+        );
+
+        emit log_string("Deploying TruncGeoOracleMulti...");
+        truncGeoOracle = new TruncGeoOracleMulti(poolManager, policyManager, hookAddress, deployerEOA);
+        require(address(truncGeoOracle) == oracleAddress, "Oracle address mismatch");
+        oracle = ITruncGeoOracleMulti(address(truncGeoOracle));
+
+        emit log_string("Deploying DynamicFeeManager...");
+        DynamicFeeManager dfmImpl = new DynamicFeeManager(deployerEOA, policyManager, oracleAddress, hookAddress);
+        dynamicFeeManager = IDynamicFeeManager(address(dfmImpl));
+        require(address(dynamicFeeManager) == feeManagerAddress, "FeeManager address mismatch");
+
         emit log_string("Deploying LiquidityManager...");
         FullRangeLiquidityManager liquidityManagerImpl =
-            new FullRangeLiquidityManager(poolManager, posm, truncGeoOracle, deployerEOA);
+            new FullRangeLiquidityManager(poolManager, posm, truncGeoOracle, hookAddress);
         liquidityManager = IFullRangeLiquidityManager(address(liquidityManagerImpl));
-        emit log_named_address("LiquidityManager deployed at", address(liquidityManager));
-        require(address(liquidityManager) != address(0), "LiquidityManager deployment failed");
+        require(address(liquidityManager) == liquidityManagerAddress, "LiquidityManager address mismatch");
 
-        // -------------------------------------------------------
-        // Fast-path deployment (no CREATE2 mining) when SIMPLE_DEPLOY=true
-        // -------------------------------------------------------
-        bool simpleDeploy = vm.envBool("SIMPLE_DEPLOY");
-        if (simpleDeploy) {
-            emit log_string("[SimpleDeploy] Fast-path enabled - deploying via SimpleDeployLib");
+        emit log_string("Deploying Spot hook...");
+        Spot spot = new Spot{salt: salt}(liquidityManagerImpl, policyManager, truncGeoOracle, dfmImpl);
+        fullRange = spot;
+        actualHookAddress = address(spot);
+        require(actualHookAddress == hookAddress, "Hook address mismatch");
 
-            SimpleDeployLib.Deployed memory sd =
-                SimpleDeployLib.deployAll(poolManager, policyManager, liquidityManager, deployerEOA);
-
-            truncGeoOracle = sd.oracle;
-            oracle = ITruncGeoOracleMulti(address(sd.oracle));
-            dynamicFeeManager = sd.dfm;
-            fullRange = sd.hook;
-            actualHookAddress = address(sd.hook);
-        }
-
-        // Deterministic CREATE2 path removed – integration tests now rely exclusively on SimpleDeploy.
+        policyManager.setAuthorizedHook(actualHookAddress);
 
         // --- Configure Contracts ---
         emit log_string("Configuring contracts...");
@@ -426,7 +443,7 @@ contract ForkSetup is Test {
         assertEq(authorizedHook, actualHookAddress, "LM authorized hook mismatch");
 
         // Check Oracle hook address
-        address oracleHook = oracle.getHookAddress();
+        address oracleHook = truncGeoOracle.hook();
         assertEq(oracleHook, actualHookAddress, "Hook salt drifted - deterministic address mismatch");
 
         // Check DFM hook address

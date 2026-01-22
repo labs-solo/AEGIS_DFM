@@ -84,8 +84,12 @@ contract LiquidityComparisonTest is LocalSetup {
 
     function test_compareDirectVsFRLM() public {
         // Test constants
-        uint256 amount0 = 29_999_999_973; // 29 999 999 .973  USDC (6 dec)
-        uint256 amount1 = 10 ether; // 10 WETH
+        uint256 amountUsdc = 29_999_999_973; // 29 999 999 .973  USDC (6 dec)
+        uint256 amountWeth = 10 ether; // 10 WETH
+
+        bool token0IsUsdc = Currency.unwrap(poolKey.currency0) == address(usdc);
+        uint256 amount0 = token0IsUsdc ? amountUsdc : amountWeth;
+        uint256 amount1 = token0IsUsdc ? amountWeth : amountUsdc;
 
         // Get current pool price
         (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(manager_, poolKey.toId());

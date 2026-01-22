@@ -85,53 +85,48 @@ contract HookValidate is Test {
             IWETH9(address(weth9))
         );
 
-        // 3. Mine the hook address first so we can pass it to contracts that need it
+        // 3. Precompute addresses to break the hook/oracle/LM cycle
+        uint256 deployerNonce = vm.getNonce(address(this));
+        address oracleAddress = vm.computeCreateAddress(address(this), deployerNonce);
+        address feeManagerAddress = vm.computeCreateAddress(address(this), deployerNonce + 1);
+        address liquidityManagerAddress = vm.computeCreateAddress(address(this), deployerNonce + 2);
+
         bytes memory args = abi.encode(
-            IPoolManager(address(stub)),
-            address(0), // liquidityManager - will update after deployment
+            liquidityManagerAddress,
             address(policyManager),
-            address(0), // oracle - will update after deployment
-            address(0), // feeManager - will update after deployment
-            address(this) // initialOwner
+            oracleAddress,
+            feeManagerAddress
         );
         (, bytes32 salt) = HookMiner.find(address(this), SpotFlags.required(), type(Spot).creationCode, args);
         address hookAddr =
             Create2.computeAddress(salt, keccak256(abi.encodePacked(type(Spot).creationCode, args)), address(this));
 
         // 4. Deploy contracts that need the hook address upfront
-
-        // Deploy TruncGeoOracle
         TruncGeoOracleMulti oracle = new TruncGeoOracleMulti(
             IPoolManager(address(stub)),
             policyManager,
-            hookAddr, // authorized hook address
-            address(this) // owner
+            hookAddr,
+            address(this)
         );
+        require(address(oracle) == oracleAddress, "Oracle address mismatch");
 
-        // Deploy DynamicFeeManager
         DynamicFeeManager feeManager = new DynamicFeeManager(
-            address(this), // owner
+            address(this),
             policyManager,
             address(oracle),
-            hookAddr // authorized hook address
+            hookAddr
         );
+        require(address(feeManager) == feeManagerAddress, "FeeManager address mismatch");
 
         FullRangeLiquidityManager liquidityManager = new FullRangeLiquidityManager(
             IPoolManager(address(stub)),
             positionManager,
             oracle,
-            hookAddr // authorized hook address
+            hookAddr
         );
+        require(address(liquidityManager) == liquidityManagerAddress, "LiquidityManager address mismatch");
 
         // 5. Now deploy the actual hook with the real addresses
-        args = abi.encode(
-            IPoolManager(address(stub)),
-            address(liquidityManager),
-            address(policyManager),
-            address(oracle),
-            address(feeManager),
-            address(this) // initialOwner
-        );
         address payable actualHookAddr =
             payable(Create2.deploy(0, salt, abi.encodePacked(type(Spot).creationCode, args)));
 

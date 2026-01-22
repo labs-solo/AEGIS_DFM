@@ -102,9 +102,9 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
             Hooks.Permissions({
                 beforeInitialize: false,
                 afterInitialize: true,
-                beforeAddLiquidity: true,
+                beforeAddLiquidity: false,
                 afterAddLiquidity: false,
-                beforeRemoveLiquidity: true,
+                beforeRemoveLiquidity: false,
                 afterRemoveLiquidity: false,
                 beforeSwap: true,
                 afterSwap: true,
@@ -118,23 +118,23 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
         );
 
         // Precompute deployment addresses for oracle, feeManager, and liquidityManager
+        uint256 ownerNonce = vm.getNonce(owner);
+
         // 1. Precompute oracle address
-        address oracleAddress = computeCreateAddress(owner, vm.getNonce(owner));
+        address oracleAddress = computeCreateAddress(owner, ownerNonce);
 
         // 2. Precompute feeManager address
-        address feeManagerAddress = computeCreateAddress(owner, vm.getNonce(owner) + 1);
+        address feeManagerAddress = computeCreateAddress(owner, ownerNonce + 1);
 
         // 3. Precompute liquidityManager address
-        address liquidityManagerAddress = computeCreateAddress(owner, vm.getNonce(owner) + 2);
+        address liquidityManagerAddress = computeCreateAddress(owner, ownerNonce + 2);
 
         // Now mine the hook address with the correct precomputed addresses
         (address hookAddress, bytes32 salt) = HookMiner.find(
             owner,
             spotFlags,
             type(Spot).creationCode,
-            abi.encode(
-                address(manager), liquidityManagerAddress, address(policyManager), oracleAddress, feeManagerAddress
-            )
+            abi.encode(liquidityManagerAddress, address(policyManager), oracleAddress, feeManagerAddress)
         );
 
         // Deploy TruncGeoOracleMulti with the precomputed hook address

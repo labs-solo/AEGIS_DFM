@@ -109,9 +109,10 @@ contract DynamicFeeManagerTest is Test {
         policyManager.setParams(poolId, pp);
 
         // Enable oracle for the pool
-        vm.prank(address(fullRange));
         (, int24 initialTick,,) = poolManager.getSlot0(poolId);
+        vm.startPrank(address(fullRange));
         oracle.initializeOracleForPool(poolKey, initialTick);
+        vm.stopPrank();
 
         // Governor override removed – rely on the default MTB set during initializeOracleForPool
 

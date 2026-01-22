@@ -45,8 +45,8 @@ import {DynamicFeeManager} from "src/DynamicFeeManager.sol";
 import {IDynamicFeeManager} from "src/interfaces/IDynamicFeeManager.sol";
 import {TruncGeoOracleMulti} from "src/TruncGeoOracleMulti.sol";
 import {ITruncGeoOracleMulti} from "src/interfaces/ITruncGeoOracleMulti.sol";
-import {SimpleDeployLib} from "test/legacy/utils/SimpleDeployLib.sol";
 import {SpotFlags} from "test/legacy/utils/SpotFlags.sol";
+import {HookMiner} from "v4-periphery/src/utils/HookMiner.sol";
 
 // Test Routers
 import {PoolModifyLiquidityTest} from "v4-core/src/test/PoolModifyLiquidityTest.sol";
@@ -196,24 +196,43 @@ contract LocalSetup is Test, PosmTestSetup {
             poolManager, IAllowanceTransfer(PERMIT2_ADDRESS), uint256(300_000), IPositionDescriptor(address(0)), _WETH9
         );
 
+        // Precompute deployment addresses to break the hook/oracle/LM cycle
+        uint256 deployerNonce = vm.getNonce(deployerEOA);
+        address oracleAddress = computeCreateAddress(deployerEOA, deployerNonce);
+        address feeManagerAddress = computeCreateAddress(deployerEOA, deployerNonce + 1);
+        address liquidityManagerAddress = computeCreateAddress(deployerEOA, deployerNonce + 2);
+
+        uint160 hookFlags = uint160(SpotFlags.required());
+        (address hookAddress, bytes32 salt) = HookMiner.find(
+            deployerEOA,
+            hookFlags,
+            type(Spot).creationCode,
+            abi.encode(liquidityManagerAddress, address(policyManager), oracleAddress, feeManagerAddress)
+        );
+
+        emit log_string("Deploying TruncGeoOracleMulti...");
+        truncGeoOracle = new TruncGeoOracleMulti(poolManager, policyManager, hookAddress, deployerEOA);
+        require(address(truncGeoOracle) == oracleAddress, "Oracle address mismatch");
+        oracle = ITruncGeoOracleMulti(address(truncGeoOracle));
+
+        emit log_string("Deploying DynamicFeeManager...");
+        DynamicFeeManager dfmImpl = new DynamicFeeManager(deployerEOA, policyManager, oracleAddress, hookAddress);
+        dynamicFeeManager = IDynamicFeeManager(address(dfmImpl));
+        require(address(dynamicFeeManager) == feeManagerAddress, "FeeManager address mismatch");
+
         emit log_string("Deploying LiquidityManager...");
         FullRangeLiquidityManager liquidityManagerImpl =
-            new FullRangeLiquidityManager(poolManager, posm, truncGeoOracle, deployerEOA);
+            new FullRangeLiquidityManager(poolManager, posm, truncGeoOracle, hookAddress);
         liquidityManager = IFullRangeLiquidityManager(address(liquidityManagerImpl));
-        emit log_named_address("LiquidityManager deployed at", address(liquidityManager));
-        require(address(liquidityManager) != address(0), "LiquidityManager deployment failed");
+        require(address(liquidityManager) == liquidityManagerAddress, "LiquidityManager address mismatch");
 
-        // Deploy all other contracts using SimpleDeployLib
-        emit log_string("Deploying remaining contracts via SimpleDeployLib...");
+        emit log_string("Deploying Spot hook...");
+        Spot spot = new Spot{salt: salt}(liquidityManagerImpl, policyManager, truncGeoOracle, dfmImpl);
+        fullRange = spot;
+        actualHookAddress = address(spot);
+        require(actualHookAddress == hookAddress, "Hook address mismatch");
 
-        SimpleDeployLib.Deployed memory sd =
-            SimpleDeployLib.deployAll(poolManager, policyManager, liquidityManager, deployerEOA);
-
-        truncGeoOracle = sd.oracle;
-        oracle = ITruncGeoOracleMulti(address(sd.oracle));
-        dynamicFeeManager = sd.dfm;
-        fullRange = sd.hook;
-        actualHookAddress = address(sd.hook);
+        policyManager.setAuthorizedHook(actualHookAddress);
 
         // --- Configure Contracts ---
         emit log_string("Configuring contracts...");
@@ -375,7 +394,7 @@ contract LocalSetup is Test, PosmTestSetup {
         assertEq(authorizedHook, actualHookAddress, "LM authorized hook mismatch");
 
         // Check Oracle hook address
-        address oracleHook = oracle.getHookAddress();
+        address oracleHook = truncGeoOracle.hook();
         assertEq(oracleHook, actualHookAddress, "Oracle hook address mismatch");
 
         // Check DFM hook address
@@ -469,12 +488,20 @@ contract LocalSetup is Test, PosmTestSetup {
         // Fund the governor unconditionally.
         if (amt0 > 0) {
             vm.startPrank(deployerEOA);
-            MockERC20(t0).mint(deployerEOA, amt0);
+            if (t0 == address(_WETH9)) {
+                IWETH9(t0).deposit{value: amt0}();
+            } else {
+                MockERC20(t0).mint(deployerEOA, amt0);
+            }
             vm.stopPrank();
         }
         if (amt1 > 0) {
             vm.startPrank(deployerEOA);
-            MockERC20(t1).mint(deployerEOA, amt1);
+            if (t1 == address(_WETH9)) {
+                IWETH9(t1).deposit{value: amt1}();
+            } else {
+                MockERC20(t1).mint(deployerEOA, amt1);
+            }
             vm.stopPrank();
         }
 

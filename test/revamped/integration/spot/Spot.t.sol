@@ -539,9 +539,9 @@ contract SpotTest is Base_Test {
         // Verify expected permissions are set
         assertEq(permissions.beforeInitialize, false);
         assertEq(permissions.afterInitialize, true);
-        assertEq(permissions.beforeAddLiquidity, true);
+        assertEq(permissions.beforeAddLiquidity, false);
         assertEq(permissions.afterAddLiquidity, false);
-        assertEq(permissions.beforeRemoveLiquidity, true);
+        assertEq(permissions.beforeRemoveLiquidity, false);
         assertEq(permissions.afterRemoveLiquidity, false);
         assertEq(permissions.beforeSwap, true);
         assertEq(permissions.afterSwap, true);
@@ -564,8 +564,12 @@ contract SpotTest is Base_Test {
         // Wait a bit before first consult to ensure we have observations
         vm.warp(block.timestamp + 30);
         
-        (int24 arithmeticMeanTick1, uint128 harmonicMeanLiquidity1) = oracle.consult(poolKey, 30);
-        console.log("Harmonic mean liquidity (30s):", harmonicMeanLiquidity1);
+        int24 arithmeticMeanTick1 = oracle.consult(poolKey, 30);
+        console.log("Arithmetic mean tick (30s):", arithmeticMeanTick1);
+        assertTrue(
+            arithmeticMeanTick1 >= TickMath.MIN_TICK && arithmeticMeanTick1 <= TickMath.MAX_TICK,
+            "Tick should be within valid range"
+        );
         
         // Add liquidity
         vm.warp(block.timestamp + 60); // Move forward 1 minute
@@ -576,24 +580,26 @@ contract SpotTest is Base_Test {
         vm.stopPrank();
         
         (int24 afterAddTick, uint32 afterAddTimestamp) = oracle.getLatestObservation(poolId);
-        (int24 arithmeticMeanTick2, uint128 harmonicMeanLiquidity2) = oracle.consult(poolKey, 30);
+        int24 arithmeticMeanTick2 = oracle.consult(poolKey, 30);
         
         console.log("\n=== AFTER ADDING LIQUIDITY ===");
         console.log("Tick:", afterAddTick);
         console.log("Timestamp:", afterAddTimestamp);
-        console.log("Harmonic mean liquidity (30s):", harmonicMeanLiquidity2);
+        console.log("Arithmetic mean tick (30s):", arithmeticMeanTick2);
         console.log("Shares received:", sharesReceived);
-        
-        // Verify liquidity changes
-        console.log("Liquidity comparison - Before:", harmonicMeanLiquidity1, "After:", harmonicMeanLiquidity2);
+        assertTrue(
+            arithmeticMeanTick2 >= TickMath.MIN_TICK && arithmeticMeanTick2 <= TickMath.MAX_TICK,
+            "Tick should be within valid range"
+        );
         
         // Wait longer to see the effect more clearly
         vm.warp(block.timestamp + 60);
-        (int24 arithmeticMeanTick2b, uint128 harmonicMeanLiquidity2b) = oracle.consult(poolKey, 30);
-        console.log("Liquidity after waiting 60s more (30s window):", harmonicMeanLiquidity2b);
-        
-        // Now the 30s window should reflect more of the post-deposit liquidity
-        assertGt(harmonicMeanLiquidity2b, harmonicMeanLiquidity1, "Liquidity should be higher in post-deposit period");
+        int24 arithmeticMeanTick2b = oracle.consult(poolKey, 30);
+        console.log("Arithmetic mean tick after waiting 60s more (30s window):", arithmeticMeanTick2b);
+        assertTrue(
+            arithmeticMeanTick2b >= TickMath.MIN_TICK && arithmeticMeanTick2b <= TickMath.MAX_TICK,
+            "Tick should be within valid range"
+        );
         
         // Remove liquidity
         vm.warp(block.timestamp + 60); // Move forward another 1 minute
@@ -604,26 +610,27 @@ contract SpotTest is Base_Test {
         vm.stopPrank();
         
         (int24 afterRemoveTick, uint32 afterRemoveTimestamp) = oracle.getLatestObservation(poolId);
-        (int24 arithmeticMeanTick3, uint128 harmonicMeanLiquidity3) = oracle.consult(poolKey, 30);
+        int24 arithmeticMeanTick3 = oracle.consult(poolKey, 30);
         
         console.log("\n=== AFTER REMOVING LIQUIDITY ===");
         console.log("Tick:", afterRemoveTick);
         console.log("Timestamp:", afterRemoveTimestamp);
-        console.log("Harmonic mean liquidity (30s):", harmonicMeanLiquidity3);
+        console.log("Arithmetic mean tick (30s):", arithmeticMeanTick3);
         console.log("Tokens withdrawn - Token0:", amount0Withdrawn);
         console.log("Tokens withdrawn - Token1:", amount1Withdrawn);
+        assertTrue(
+            arithmeticMeanTick3 >= TickMath.MIN_TICK && arithmeticMeanTick3 <= TickMath.MAX_TICK,
+            "Tick should be within valid range"
+        );
         
         // Wait longer to see the effect of withdrawal
         vm.warp(block.timestamp + 60);
-        (int24 arithmeticMeanTick3b, uint128 harmonicMeanLiquidity3b) = oracle.consult(poolKey, 30);
-        console.log("Liquidity after waiting 60s more (30s window):", harmonicMeanLiquidity3b);
-        
-        // Verify liquidity changes
-        console.log("Liquidity comparison - Post-add:", harmonicMeanLiquidity2b, "Post-remove:", harmonicMeanLiquidity3b);
-        
-        // The post-withdrawal liquidity should be lower than post-deposit liquidity
-        assertLt(harmonicMeanLiquidity3b, harmonicMeanLiquidity2b, "Liquidity should be lower after withdrawal");
-        assertGt(harmonicMeanLiquidity3b, 0, "Liquidity should still be positive after partial withdrawal");
+        int24 arithmeticMeanTick3b = oracle.consult(poolKey, 30);
+        console.log("Arithmetic mean tick after waiting 60s more (30s window):", arithmeticMeanTick3b);
+        assertTrue(
+            arithmeticMeanTick3b >= TickMath.MIN_TICK && arithmeticMeanTick3b <= TickMath.MAX_TICK,
+            "Tick should be within valid range"
+        );
     }
 
     /*//////////////////////////////////////////////////////////////

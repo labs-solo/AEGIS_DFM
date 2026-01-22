@@ -48,10 +48,13 @@ contract DeploymentAndConfigTest is LocalSetup {
 
     /// @notice Test A2: Verify PoolManager linkages are correct.
     function test_VerifyPoolManagerLinkages() public {
-        // Use interface instead of concrete type
-        assertEq(Owned(address(liquidityManager)).owner(), deployerEOA, "LM owner mismatch");
         assertEq(
-            FullRangeLiquidityManager(payable(address(liquidityManager))).poolManager.address,
+            address(FullRangeLiquidityManager(payable(address(liquidityManager))).policyManager()),
+            address(policyManager),
+            "LM->PolicyManager link mismatch"
+        );
+        assertEq(
+            address(FullRangeLiquidityManager(payable(address(liquidityManager))).poolManager()),
             address(poolManager),
             "LM->PoolManager link mismatch"
         );
@@ -81,7 +84,7 @@ contract DeploymentAndConfigTest is LocalSetup {
         // address linkedPoolManager = liquidityManager.poolManager(); // Example getter
         // assertEq(linkedPoolManager, address(poolManager), "PoolManager linkage in LiquidityManager mismatch");
         assertEq(
-            FullRangeLiquidityManager(payable(address(liquidityManager))).poolManager.address,
+            address(FullRangeLiquidityManager(payable(address(liquidityManager))).poolManager()),
             address(poolManager),
             "LiquidityManager.poolManager mismatch"
         );
