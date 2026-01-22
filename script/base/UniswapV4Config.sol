@@ -50,6 +50,21 @@ abstract contract UniswapV4Config {
             });
         }
 
+        if (chainId == 143) {
+            // Monad Mainnet
+            return UniswapV4Raw({
+                poolManager: 0x188d586Ddcf52439676Ca21A244753fA19F9Ea8e,
+                positionManager: 0x5b7eC4a94fF9beDb700fb82aB09d5846972F4016
+            });
+        }
+        if (chainId == 196) {
+            // OKX Mainnet
+            return UniswapV4Raw({
+                poolManager: 0x360E68faCcca8cA495c1B759Fd9EEe466db9FB32,
+                positionManager: 0xbc9f3A5D767dD46E040F1CA48Ab17f29F59DC806
+            });
+        }
+
         revert("Unsupported chain");
     }
 }

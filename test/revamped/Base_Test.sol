@@ -166,7 +166,7 @@ abstract contract Base_Test is PosmTestSetup, MainUtils {
 
         // Finally, deploy the Spot hook with all dependencies
         // Constructor(manager, liquidityManager, policyManager, oracle, feeManager)
-        spot = new Spot{salt: salt}(manager, liquidityManager, policyManager, oracle, feeManager);
+        spot = new Spot{salt: salt}(liquidityManager, policyManager, oracle, feeManager);
         vm.stopPrank();
 
         // Verify the hook address is as expected
