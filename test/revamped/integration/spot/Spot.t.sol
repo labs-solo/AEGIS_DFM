@@ -564,7 +564,7 @@ contract SpotTest is Base_Test {
         // Wait a bit before first consult to ensure we have observations
         vm.warp(block.timestamp + 30);
         
-        int24 arithmeticMeanTick1 = oracle.consult(poolKey, 30);
+        (int24 arithmeticMeanTick1,) = oracle.consult(poolKey, 30);
         console.log("Arithmetic mean tick (30s):", arithmeticMeanTick1);
         assertTrue(
             arithmeticMeanTick1 >= TickMath.MIN_TICK && arithmeticMeanTick1 <= TickMath.MAX_TICK,
@@ -580,7 +580,7 @@ contract SpotTest is Base_Test {
         vm.stopPrank();
         
         (int24 afterAddTick, uint32 afterAddTimestamp) = oracle.getLatestObservation(poolId);
-        int24 arithmeticMeanTick2 = oracle.consult(poolKey, 30);
+        (int24 arithmeticMeanTick2,) = oracle.consult(poolKey, 30);
         
         console.log("\n=== AFTER ADDING LIQUIDITY ===");
         console.log("Tick:", afterAddTick);
@@ -594,7 +594,7 @@ contract SpotTest is Base_Test {
         
         // Wait longer to see the effect more clearly
         vm.warp(block.timestamp + 60);
-        int24 arithmeticMeanTick2b = oracle.consult(poolKey, 30);
+        (int24 arithmeticMeanTick2b,) = oracle.consult(poolKey, 30);
         console.log("Arithmetic mean tick after waiting 60s more (30s window):", arithmeticMeanTick2b);
         assertTrue(
             arithmeticMeanTick2b >= TickMath.MIN_TICK && arithmeticMeanTick2b <= TickMath.MAX_TICK,
@@ -610,7 +610,7 @@ contract SpotTest is Base_Test {
         vm.stopPrank();
         
         (int24 afterRemoveTick, uint32 afterRemoveTimestamp) = oracle.getLatestObservation(poolId);
-        int24 arithmeticMeanTick3 = oracle.consult(poolKey, 30);
+        (int24 arithmeticMeanTick3,) = oracle.consult(poolKey, 30);
         
         console.log("\n=== AFTER REMOVING LIQUIDITY ===");
         console.log("Tick:", afterRemoveTick);
@@ -625,7 +625,7 @@ contract SpotTest is Base_Test {
         
         // Wait longer to see the effect of withdrawal
         vm.warp(block.timestamp + 60);
-        int24 arithmeticMeanTick3b = oracle.consult(poolKey, 30);
+        (int24 arithmeticMeanTick3b,) = oracle.consult(poolKey, 30);
         console.log("Arithmetic mean tick after waiting 60s more (30s window):", arithmeticMeanTick3b);
         assertTrue(
             arithmeticMeanTick3b >= TickMath.MIN_TICK && arithmeticMeanTick3b <= TickMath.MAX_TICK,

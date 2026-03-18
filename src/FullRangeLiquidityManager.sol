@@ -267,7 +267,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             (, int24 currentTick,,) = StateLibrary.getSlot0(poolManager, poolId);
 
             // Get TWAP tick from oracle
-            int24 twapTick = oracle.consult(key, _reinvestmentTwap);
+            (int24 twapTick,) = oracle.consult(key, _reinvestmentTwap);
 
             // Check if current tick is within tolerance of TWAP
             int24 tickDeviation = currentTick > twapTick ? currentTick - twapTick : twapTick - currentTick;

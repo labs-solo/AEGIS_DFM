@@ -304,7 +304,7 @@ contract OracleTest is Base_Test {
         for (uint i = 0; i < periods.length; i++) {
             uint32 period = periods[i];
             
-            try oracle.consult(poolKey, period) returns (int24 twapTick) {
+            try oracle.consult(poolKey, period) returns (int24 twapTick, uint128) {
                 twapTicks[i] = twapTick;
                 
                 console.log("Consult period:", period, "seconds");
@@ -505,7 +505,7 @@ contract OracleTest is Base_Test {
         for (uint i = 0; i < periods.length; i++) {
             uint32 period = periods[i];
             
-            try oracle.consult(poolKey, period) returns (int24 twapTick) {
+            try oracle.consult(poolKey, period) returns (int24 twapTick, uint128) {
                 console.log("Consult period:", period);
                 console.log("TWAP tick:", twapTick);
                 console.log("- Current vs TWAP tick difference:", int256(latestTick) - int256(twapTick));
@@ -557,7 +557,7 @@ contract OracleTest is Base_Test {
         periods[2] = 1800; // 30 minutes
         
         for (uint i = 0; i < periods.length; i++) {
-            try oracle.consult(poolKey, periods[i]) returns (int24 twapTick) {
+            try oracle.consult(poolKey, periods[i]) returns (int24 twapTick, uint128) {
                 console.log("Consult success, TWAP tick:", twapTick);
             } catch {
                 console.log("Consult failed for period:");
@@ -618,13 +618,13 @@ contract OracleTest is Base_Test {
             _performSwap(1e18, true);
             vm.warp(block.timestamp + 60);
             // Call consult and assert it succeeds
-            try oracle.consult(poolKey, 600) returns (int24 twapTick) {
+            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
                 assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
             } catch { revert("Consult failed after swap in initial 1024 loop"); }
         }
 
         // Call consult and assert it succeeds
-        try oracle.consult(poolKey, 600) returns (int24 twapTick) {
+        try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
             console.log("Consult after 1024 swaps succeeded. TWAP tick:", twapTick);
             assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
         } catch Error(string memory reason) {
@@ -653,7 +653,7 @@ contract OracleTest is Base_Test {
         for (uint i = 0; i < 80; i++) {
             _performSwap(1e18, true);
             vm.warp(block.timestamp + 60);
-            try oracle.consult(poolKey, 600) returns (int24 twapTick) {
+            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
                 assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
             } catch { revert("Consult failed after swap in 80 loop"); }
         }
@@ -681,7 +681,7 @@ contract OracleTest is Base_Test {
         for (uint i = 0; i < swapsToZero; i++) {
             _performSwap(1e18, true);
             vm.warp(block.timestamp + 60);
-            try oracle.consult(poolKey, 600) returns (int24 twapTick) {
+            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
                 assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
             } catch { revert("Consult failed after swap in wrap-to-0 loop"); }
         }
@@ -697,7 +697,7 @@ contract OracleTest is Base_Test {
         for (uint i = 0; i < 5; i++) {
             _performSwap(1e18, true);
             vm.warp(block.timestamp + 60);
-            try oracle.consult(poolKey, 600) returns (int24 twapTick) {
+            try oracle.consult(poolKey, 600) returns (int24 twapTick, uint128) {
                 assertTrue(twapTick >= -887272 && twapTick <= 887272, "TWAP should be within valid range");
             } catch { revert("Consult failed after swap in final 5 loop"); }
         }
@@ -800,7 +800,7 @@ contract OracleTest is Base_Test {
         console.log("\nPhase 4: Verifying against oracle consult function...");
         
         // Test 5-minute period
-        try oracle.consult(poolKey, 300) returns (int24 oracle5min) {
+        try oracle.consult(poolKey, 300) returns (int24 oracle5min, uint128) {
             console.log("5-minute period:");
             console.log("  Manual TWAP:", twap5min);
             console.log("  Oracle TWAP:", oracle5min);
@@ -815,7 +815,7 @@ contract OracleTest is Base_Test {
         }
         
         // Test 10-minute period
-        try oracle.consult(poolKey, 600) returns (int24 oracle10min) {
+        try oracle.consult(poolKey, 600) returns (int24 oracle10min, uint128) {
             console.log("10-minute period:");
             console.log("  Manual TWAP:", twap10min);
             console.log("  Oracle TWAP:", oracle10min);
