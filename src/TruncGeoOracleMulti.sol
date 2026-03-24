@@ -328,11 +328,12 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     /// -----------------------------------------------------------------------
     /// @notice Returns the arithmetic mean tick, weighted by time.
     /// @dev    Reverts if `secondsAgo` is 0 or if the oracle is not initialized.
+    /// @dev    harmonicMeanLiquidity is always returned as 0 since liquidity hooks were removed. Value returns 0 to avoid downstream implimentation errors expecting this return signature.
     /// -----------------------------------------------------------------------
     function consult(PoolKey calldata key, uint32 secondsAgo)
         public
         view
-        returns (int24 arithmeticMeanTick)
+        returns (int24 arithmeticMeanTick, uint128 harmonicMeanLiquidity)
     {
         require(secondsAgo != 0, "BP");
 
@@ -349,6 +350,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         arithmeticMeanTick = int24(tickCumulativesDelta / secondsAgoI56);
         // Always round to negative infinity
         if (tickCumulativesDelta < 0 && (tickCumulativesDelta % secondsAgoI56 != 0)) arithmeticMeanTick--;
+
+        // Return 0 for liquidity since beforeAddLiquidity/beforeRemoveLiquidity hooks were removed
+        harmonicMeanLiquidity = 0;
     }
 
     /**
