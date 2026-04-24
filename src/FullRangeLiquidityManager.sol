@@ -1127,6 +1127,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         (PoolKey memory key,) = positionManager.getPoolAndPositionInfo(tokenId);
         PoolId poolId = key.toId();
 
+        if (positionIds[poolId] != tokenId) return;
+        if (address(key.hooks) != authorizedHookAddress) return;
+        if (positionManager.ownerOf(tokenId) != address(this)) return;
+
         // Process fees accrued
         _processFeeNotification(poolId, key.currency0, key.currency1, feesAccrued);
 
