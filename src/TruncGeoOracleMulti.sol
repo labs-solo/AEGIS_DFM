@@ -456,7 +456,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         if (block.timestamp >= _lastMaxTickUpdate[poolId] + updateInterval) {
             // Target frequency = budgetPpm × decayWindow (computed only when needed)
             uint64 targetFreq = uint64(budgetPpm) * uint64(decayWindow);
-            if (currentFreq > targetFreq) {
+            if (currentFreq == targetFreq) {
+                // Exactly on budget: no cap change.
+            } else if (currentFreq > targetFreq) {
                 // Too frequent caps -> Increase maxTicksPerBlock (loosen cap)
                 _autoTuneMaxTicks(poolId, pc, true); // re-use cached struct
             } else {
