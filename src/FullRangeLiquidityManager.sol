@@ -307,9 +307,16 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // Approve tokens for position operations
         _approveTokensForPosition(key.currency0, key.currency1);
 
+        uint256 balance0Before = key.currency0.balanceOfSelf();
+        uint256 balance1Before = key.currency1.balanceOfSelf();
+
         // Add liquidity to position
         (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) =
             _addLiquidityToPosition(key, total0, total1, 0, 0);
+
+        // Use actual balance deltas rather than the helper's pessimistic +1 return values
+        amount0Used = balance0Before - key.currency0.balanceOfSelf();
+        amount1Used = balance1Before - key.currency1.balanceOfSelf();
 
         // Restore any unused amounts and accrued NFT fees to pendingFees
         // Update accountedBalances for tokens used in position
@@ -477,9 +484,16 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // Approve tokens for position operations
         _approveTokensForPosition(key.currency0, key.currency1);
 
+        uint256 balance0Before = key.currency0.balanceOfSelf();
+        uint256 balance1Before = key.currency1.balanceOfSelf();
+
         // Add liquidity to position
         (liquidityAdded, amount0Used, amount1Used) =
             _addLiquidityToPosition(key, amount0Desired, amount1Desired, amount0Min, amount1Min);
+
+        // Use actual balance deltas rather than the helper's pessimistic +1 return values
+        amount0Used = balance0Before - key.currency0.balanceOfSelf();
+        amount1Used = balance1Before - key.currency1.balanceOfSelf();
 
         // Calculate unused amounts
         unusedAmount0 = amount0Desired - amount0Used;
@@ -487,16 +501,11 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
 
         // Refund any unused tokens to the payer, not the caller
         if (unusedAmount0 > 0) {
-            uint256 balance0 = key.currency0.balanceOfSelf();
-            // NOTE: we do Math.min as it's possible that there's a unit loss in the LiquidityAmounts math
-            uint256 transfer0 = Math.min(unusedAmount0, balance0);
-            key.currency0.transfer(payer, transfer0);
+            key.currency0.transfer(payer, unusedAmount0);
         }
 
         if (unusedAmount1 > 0) {
-            uint256 balance1 = key.currency1.balanceOfSelf();
-            uint256 transfer1 = Math.min(unusedAmount1, balance1);
-            key.currency1.transfer(payer, transfer1);
+            key.currency1.transfer(payer, unusedAmount1);
         }
 
         // shares correspond 1:1 with liquidity
