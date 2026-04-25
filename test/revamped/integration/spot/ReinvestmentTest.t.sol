@@ -20,6 +20,8 @@ import {SwapParams} from "v4-core/src/types/PoolOperation.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
 import {FullMath} from "v4-core/src/libraries/FullMath.sol";
+import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {PositionConfig} from "v4-periphery/test/shared/PositionConfig.sol";
 import {MockERC20} from "solmate/src/test/utils/mocks/MockERC20.sol";
 import {Errors} from "../../../../src/errors/Errors.sol";
 
@@ -36,6 +38,71 @@ contract ReinvestmentTest is Base_Test {
         
         // Base_Test already funds and approves tokens for user1 and user2
         // We just need to add additional test users if needed
+    }
+
+    function test_NotifyModifyLiquidity_IgnoresForeignSubscribedPosition() public {
+        int24 minTick = TickMath.minUsableTick(poolKey.tickSpacing);
+        int24 maxTick = TickMath.maxUsableTick(poolKey.tickSpacing);
+        PositionConfig memory config = PositionConfig({poolKey: poolKey, tickLower: minTick, tickUpper: maxTick});
+
+        approvePosmFor(user2);
+
+        uint256 attackerTokenId = lpm.nextTokenId();
+        vm.startPrank(user2);
+        mint(config, 10_000 ether, user2, "");
+        lpm.subscribe(attackerTokenId, address(liquidityManager), "");
+        vm.stopPrank();
+
+        vm.prank(owner);
+        policyManager.setManualFee(poolId, 3000);
+
+        vm.startPrank(user1);
+        SwapParams memory params =
+            SwapParams({zeroForOne: true, amountSpecified: -int256(100 ether), sqrtPriceLimitX96: MIN_PRICE_LIMIT});
+        swapRouter.swap(poolKey, params, PoolSwapTest.TestSettings({takeClaims: true, settleUsingBurn: false}), "");
+        vm.stopPrank();
+
+        (uint256 pending0Before, uint256 pending1Before) = liquidityManager.getPendingFees(poolId);
+        uint256 accounted0Before = liquidityManager.accountedBalances(currency0);
+        uint256 accounted1Before = liquidityManager.accountedBalances(currency1);
+
+        vm.prank(user2);
+        collect(attackerTokenId, config, "");
+
+        (uint256 pending0After, uint256 pending1After) = liquidityManager.getPendingFees(poolId);
+        assertEq(pending0After, pending0Before, "Foreign NFT must not poison pending token0 fees");
+        assertEq(pending1After, pending1Before, "Foreign NFT must not poison pending token1 fees");
+        assertEq(
+            liquidityManager.accountedBalances(currency0), accounted0Before, "Foreign NFT must not poison token0 accounting"
+        );
+        assertEq(
+            liquidityManager.accountedBalances(currency1), accounted1Before, "Foreign NFT must not poison token1 accounting"
+        );
+    }
+
+    function test_Reinvest_AllowsImbalancedFullRangeUsage() public {
+        PoolKey memory skewedKey = PoolKey(currency0, currency1, poolKey.fee, 120, poolKey.hooks);
+        PoolId skewedPoolId = skewedKey.toId();
+
+        manager.initialize(skewedKey, TickMath.getSqrtPriceAtTick(600_000));
+
+        vm.prank(owner);
+        liquidityManager.setReinvestmentTwap(0);
+
+        vm.startPrank(user1);
+        liquidityManager.donate(skewedKey, 1 ether, 1 ether);
+        vm.warp(block.timestamp + REINVEST_COOLDOWN + 1);
+
+        bool success = liquidityManager.reinvest(skewedKey);
+        vm.stopPrank();
+
+        (uint256 shares,,) = liquidityManager.getProtocolOwnedLiquidity(skewedPoolId);
+        (uint256 pending0, uint256 pending1) = liquidityManager.getPendingFees(skewedPoolId);
+
+        assertTrue(success, "Reinvest should tolerate underused weak leg");
+        assertGt(shares, 0, "Should mint protocol-owned liquidity");
+        assertLt(1 ether - pending0, MIN_REINVEST_AMOUNT, "Weak leg can be used below raw threshold");
+        assertGt(1 ether - pending1, MIN_REINVEST_AMOUNT, "Limiting leg should be meaningfully consumed");
     }
 
     /**
