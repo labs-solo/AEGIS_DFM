@@ -311,12 +311,11 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         uint256 balance1Before = key.currency1.balanceOfSelf();
 
         // Add liquidity to position
-        (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) =
-            _addLiquidityToPosition(key, total0, total1, 0, 0);
+        uint256 liquidityAdded = _addLiquidityToPosition(key, total0, total1);
 
-        // Use actual balance deltas rather than the helper's pessimistic +1 return values
-        amount0Used = balance0Before - key.currency0.balanceOfSelf();
-        amount1Used = balance1Before - key.currency1.balanceOfSelf();
+        // Use actual balance deltas for accounting
+        uint256 amount0Used = balance0Before - key.currency0.balanceOfSelf();
+        uint256 amount1Used = balance1Before - key.currency1.balanceOfSelf();
 
         // Restore any unused amounts and accrued NFT fees to pendingFees
         // Update accountedBalances for tokens used in position
@@ -488,12 +487,15 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         uint256 balance1Before = key.currency1.balanceOfSelf();
 
         // Add liquidity to position
-        (liquidityAdded, amount0Used, amount1Used) =
-            _addLiquidityToPosition(key, amount0Desired, amount1Desired, amount0Min, amount1Min);
+        liquidityAdded = _addLiquidityToPosition(key, amount0Desired, amount1Desired);
 
-        // Use actual balance deltas rather than the helper's pessimistic +1 return values
+        // Use actual balance deltas for accounting
         amount0Used = balance0Before - key.currency0.balanceOfSelf();
         amount1Used = balance1Before - key.currency1.balanceOfSelf();
+
+        // Validate minimum amounts against the actual token balance changes
+        if (amount0Used < amount0Min) revert Errors.TooLittleAmount0(amount0Min, amount0Used);
+        if (amount1Used < amount1Min) revert Errors.TooLittleAmount1(amount1Min, amount1Used);
 
         // Calculate unused amounts
         unusedAmount0 = amount0Desired - amount0Used;
@@ -741,31 +743,25 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
     function _addLiquidityToPosition(
         PoolKey calldata key,
         uint256 amount0Desired,
-        uint256 amount1Desired,
-        uint256 amount0Min,
-        uint256 amount1Min
-    ) internal returns (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) {
+        uint256 amount1Desired
+    ) internal returns (uint256 liquidityAdded) {
         // Check if position exists
         uint256 positionId = positionIds[key.toId()];
 
         if (positionId == 0) {
             // Create new position
-            (liquidityAdded, amount0Used, amount1Used) =
-                _mintNewPosition(key, amount0Desired, amount1Desired, amount0Min, amount1Min);
+            liquidityAdded = _mintNewPosition(key, amount0Desired, amount1Desired);
         } else {
             // Increase existing position
-            (liquidityAdded, amount0Used, amount1Used) =
-                _increaseLiquidity(key, positionId, amount0Desired, amount1Desired, amount0Min, amount1Min);
+            liquidityAdded = _increaseLiquidity(key, positionId, amount0Desired, amount1Desired);
         }
     }
 
     function _mintNewPosition(
         PoolKey calldata key,
         uint256 amount0Desired,
-        uint256 amount1Desired,
-        uint256 amount0Min,
-        uint256 amount1Min
-    ) internal returns (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) {
+        uint256 amount1Desired
+    ) internal returns (uint256 liquidityAdded) {
         uint256 positionId;
         PoolId poolId = key.toId();
         // Calculate optimal liquidity for full range position
@@ -785,7 +781,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         if (liquidity <= MIN_LOCKED_LIQUIDITY || TransientStateLibrary.isUnlocked(poolManager)) {
             // NOTE: we early return if not much liquidity would be minted
             // Also if the PoolManager is unlocked we cannot PositionManager.subscribe to the NFT
-            return (0, 0, 0);
+            return 0;
         }
 
         // If native ETH then since we pass along the entire desired value
@@ -851,33 +847,20 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         positionIds[poolId] = positionId;
         positionManager.subscribe(positionId, address(this), "");
 
-        // Calculate actual amounts used based on the liquidity minted
-        (amount0Used, amount1Used) =
-            LiquidityAmounts.getAmountsForLiquidity(sqrtPriceX96, sqrtPriceLowerX96, sqrtPriceUpperX96, liquidity);
-
-        // Validate minimum amounts
-        if (amount0Used < amount0Min) revert Errors.TooLittleAmount0(amount0Min, amount0Used);
-        if (amount1Used < amount1Min) revert Errors.TooLittleAmount1(amount1Min, amount1Used);
-
         // Subtract MIN_LOCKED_LIQUIDITY from the shares to be minted
         // This effectively locks MIN_LOCKED_LIQUIDITY in the position
         liquidityAdded = uint256(liquidity) - MIN_LOCKED_LIQUIDITY;
 
         // NOTE: for v1 we want 1:1 share liquidity correspondence
         _mint(address(0), uint256(PoolId.unwrap(poolId)), MIN_LOCKED_LIQUIDITY);
-
-        // round up just to be pessimistic regarding the amount taken
-        return (liquidityAdded, Math.min(amount0Used + 1, amount0Desired), Math.min(amount1Used + 1, amount1Desired));
     }
 
     function _increaseLiquidity(
         PoolKey calldata key,
         uint256 positionId,
         uint256 amount0Desired,
-        uint256 amount1Desired,
-        uint256 amount0Min,
-        uint256 amount1Min
-    ) internal returns (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) {
+        uint256 amount1Desired
+    ) internal returns (uint256 liquidityAdded) {
         // Calculate optimal liquidity increase
         (uint160 sqrtPriceX96,,,) = StateLibrary.getSlot0(poolManager, key.toId());
         int24 minTick = TickMath.minUsableTick(key.tickSpacing);
@@ -894,7 +877,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
 
         if (liquidity < MIN_LOCKED_LIQUIDITY) {
             // NOTE: we early return if not much liquidity would be added
-            return (0, 0, 0);
+            return 0;
         }
 
         // If native ETH then since we pass along the entire desired value
@@ -954,17 +937,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             );
         }
 
-        // Calculate actual amounts used
-        (amount0Used, amount1Used) =
-            LiquidityAmounts.getAmountsForLiquidity(sqrtPriceX96, sqrtPriceLowerX96, sqrtPriceUpperX96, liquidity);
-
-        // Validate minimum amounts
-        if (amount0Used < amount0Min) revert Errors.TooLittleAmount0(amount0Min, amount0Used);
-        if (amount1Used < amount1Min) revert Errors.TooLittleAmount1(amount1Min, amount1Used);
-
         liquidityAdded = uint256(liquidity);
-
-        return (liquidityAdded, Math.min(amount0Used + 1, amount0Desired), Math.min(amount1Used + 1, amount1Desired));
     }
 
     /// @notice Internal function to handle withdrawal of liquidity
