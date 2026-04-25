@@ -171,8 +171,12 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         uint24 maxTicksPerBlock = oracle.maxTicksPerBlock(poolId);
         uint256 currentSurgeFee = _calculateSurge(poolId, currentState, maxTicksPerBlock);
 
-        if (currentSurgeFee == 0) {
-            DynamicFeeState updatedState = currentState.setInCap(false);
+        uint40 capStartTime = currentState.capStart();
+        uint32 surgeDuration = uint32(policyManager.getSurgeDecayPeriodSeconds(poolId));
+        uint40 elapsedTime = currentTimestamp > capStartTime ? currentTimestamp - capStartTime : 0;
+
+        if (currentSurgeFee == 0 && surgeDuration != 0 && elapsedTime >= surgeDuration) {
+            DynamicFeeState updatedState = currentState.setInCap(false).setCapStart(0);
             _poolFeeState[poolId] = updatedState;
 
             emit CapToggled(poolId, false);
@@ -231,6 +235,8 @@ contract DynamicFeeManager is IDynamicFeeManager, Owned {
         view
         returns (uint256)
     {
+        if (!feeState.inCap()) return 0;
+
         uint40 capStartTime = feeState.capStart();
         if (capStartTime == 0) return 0;
 
