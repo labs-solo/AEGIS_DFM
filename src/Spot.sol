@@ -79,7 +79,9 @@ contract Spot is BaseHook, ISpot {
         TruncGeoOracleMulti _oracle,
         IDynamicFeeManager _dynamicFeeManager
     ) BaseHook(_liquidityManager.poolManager()) {
-        if (address(_liquidityManager.poolManager()) == address(0)) revert Errors.ZeroAddress();
+        if (address(_liquidityManager.poolManager()) == address(0)) {
+            revert Errors.ZeroAddress();
+        }
         if (address(_liquidityManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_policyManager) == address(0)) revert Errors.ZeroAddress();
         if (address(_oracle) == address(0)) revert Errors.ZeroAddress();
@@ -193,8 +195,9 @@ contract Spot is BaseHook, ISpot {
 
         // Record observation with the pre-swap tick (no capping applied yet)
         try truncGeoOracle.recordObservation(poolId, preSwapTick) {
-            // Observation recorded successfully
-        } catch Error(string memory reason) {
+        // Observation recorded successfully
+        }
+        catch Error(string memory reason) {
             emit OracleUpdateFailed(poolId, reason);
         } catch (bytes memory lowLevelData) {
             // Low-level oracle failure
@@ -207,6 +210,8 @@ contract Spot is BaseHook, ISpot {
         // Handle exactIn case in beforeSwap
         if (params.amountSpecified < 0 && protocolFeePPM > 0) {
             // exactIn case - we can charge the fee here
+            if (params.amountSpecified == type(int256).min) revert Errors.InvalidAmount();
+
             uint256 absAmount = uint256(-params.amountSpecified);
             Currency feeCurrency = params.zeroForOne ? key.currency0 : key.currency1;
 
@@ -269,7 +274,7 @@ contract Spot is BaseHook, ISpot {
         bool tickWasCapped;
         bool perSwapMode = policyManager.getPerSwapMode(poolId);
         uint24 maxTicks = truncGeoOracle.maxTicksPerBlock(poolId);
-        
+
         if (perSwapMode) {
             // perSwap mode: compare tick movement within this single swap
             int24 tickMovement = currentTick - preSwapTick;
@@ -278,7 +283,7 @@ contract Spot is BaseHook, ISpot {
             // perBlock mode: compare total tick movement within the current block
             // Get the block initial tick from the recorded observation
             int24 blockInitialTick = preSwapTick; // Default to pre-swap tick
-            
+
             // Access the observation directly from the public mapping
             // Get the current index from the oracle state
             (uint16 index, uint16 cardinality, uint16 cardinalityNext) = truncGeoOracle.states(poolId);
@@ -287,7 +292,7 @@ contract Spot is BaseHook, ISpot {
                 (, int24 prevTick,,,) = truncGeoOracle.observations(poolId, index);
                 blockInitialTick = prevTick;
             }
-            
+
             // Compare total block movement
             int24 totalBlockMovement = currentTick - blockInitialTick;
             tickWasCapped = TruncatedOracle.abs(totalBlockMovement) > maxTicks;
@@ -303,10 +308,11 @@ contract Spot is BaseHook, ISpot {
 
         // Update cap frequency in the oracle
 
-        if(!truncGeoOracle.autoTunePaused(poolId)) {
+        if (!truncGeoOracle.autoTunePaused(poolId)) {
             try truncGeoOracle.updateCapFrequency(poolId, tickWasCapped) {
-                // Cap frequency updated successfully
-            } catch Error(string memory reason) {
+            // Cap frequency updated successfully
+            }
+            catch Error(string memory reason) {
                 emit OracleUpdateFailed(poolId, reason);
             } catch (bytes memory lowLevelData) {
                 // Low-level oracle failure
@@ -315,8 +321,9 @@ contract Spot is BaseHook, ISpot {
         }
         // Notify Dynamic Fee Manager about the oracle update (with error handling)
         try dynamicFeeManager.notifyOracleUpdate(poolId, tickWasCapped) {
-            // Oracle update notification succeeded
-        } catch Error(string memory reason) {
+        // Oracle update notification succeeded
+        }
+        catch Error(string memory reason) {
             emit FeeManagerNotificationFailed(poolId, reason);
         } catch (bytes memory lowLevelData) {
             // Low-level fee manager failure
@@ -336,6 +343,7 @@ contract Spot is BaseHook, ISpot {
                 // Get the actual input amount (should be positive) from the delta
                 int128 inputAmount = zeroIsInput ? delta.amount0() : delta.amount1();
                 if (inputAmount > 0) revert Errors.InvalidSwapDelta(); // NOTE: invariant check
+                if (inputAmount == type(int128).min) revert Errors.InvalidSwapDelta();
 
                 // Get the dynamic fee(could be actual base+surge or manual)
                 uint24 dynamicFee;
@@ -380,14 +388,18 @@ contract Spot is BaseHook, ISpot {
     }
 
     /// @notice called in BaseHook.afterInitialize
-    function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick) internal virtual override returns (bytes4) {
+    function _afterInitialize(address, PoolKey calldata key, uint160, int24 tick)
+        internal
+        virtual
+        override
+        returns (bytes4)
+    {
         PoolId poolId = key.toId();
 
         if (!LPFeeLibrary.isDynamicFee(key.fee)) {
             // Only allow dynamic fee pools to be created
             revert Errors.InvalidFee();
         }
-
 
         policyManager.initialize(key);
 
@@ -397,7 +409,6 @@ contract Spot is BaseHook, ISpot {
         return BaseHook.afterInitialize.selector;
     }
 
-
     // - - - internal helpers - - -
 
     /// @notice Private function to handle reinvestment with error handling
@@ -405,10 +416,13 @@ contract Spot is BaseHook, ISpot {
     /// @dev Uses try-catch to prevent reinvestment failures from blocking swaps
     function _tryReinvest(PoolKey calldata key) internal virtual {
         if (!reinvestmentPaused) {
-            try liquidityManager.reinvest(key) returns (bool success) {
-                // Reinvestment attempted, success status is handled by the reinvest function
-                // No additional action needed here
-            } catch Error(string memory reason) {
+            try liquidityManager.reinvest(key) returns (
+                bool success
+            ) {
+            // Reinvestment attempted, success status is handled by the reinvest function
+            // No additional action needed here
+            }
+            catch Error(string memory reason) {
                 // Log the error but don't revert the swap
                 emit ReinvestmentFailed(key.toId(), reason);
             } catch (bytes memory lowLevelData) {
