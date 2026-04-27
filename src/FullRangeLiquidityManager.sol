@@ -309,7 +309,7 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
 
         // Add liquidity to position
         (uint256 liquidityAdded, uint256 amount0Used, uint256 amount1Used) =
-            _addLiquidityToPosition(key, total0, total1, MIN_REINVEST_AMOUNT, MIN_REINVEST_AMOUNT);
+            _addLiquidityToPosition(key, total0, total1, 0, 0);
 
         // Restore any unused amounts and accrued NFT fees to pendingFees
         // Update accountedBalances for tokens used in position
@@ -325,6 +325,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
             erc6909_0: 0,
             erc6909_1: 0
         });
+
+        if (liquidityAdded == 0) {
+            return false;
+        }
 
         // Mint ERC6909 shares to this contract (protocol-owned)
         _mint(address(this), uint256(PoolId.unwrap(poolId)), liquidityAdded);
@@ -1122,6 +1126,10 @@ contract FullRangeLiquidityManager is IFullRangeLiquidityManager, ISubscriber, E
         // Get position info to determine pool key
         (PoolKey memory key,) = positionManager.getPoolAndPositionInfo(tokenId);
         PoolId poolId = key.toId();
+
+        if (positionIds[poolId] != tokenId) return;
+        if (address(key.hooks) != authorizedHookAddress) return;
+        if (positionManager.ownerOf(tokenId) != address(this)) return;
 
         // Process fees accrued
         _processFeeNotification(poolId, key.currency0, key.currency1, feesAccrued);

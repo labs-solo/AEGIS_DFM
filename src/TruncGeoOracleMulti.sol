@@ -272,10 +272,10 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
     /**
      * @notice Gets the latest observation for a pool.
      * @param poolId The PoolId of the pool.
-     * @return tick The tick from the latest observation.
-     * @return blockTimestamp The timestamp of the latest observation.
+     * @return tick The current live tick from the pool's slot0 at call time.
+     * @return blockTimestamp The timestamp of the latest stored observation.
      */
-    /// @notice Return the most recent observation stored for `poolId`.
+    /// @notice Return the current live tick with the timestamp of the most recent stored observation for `poolId`.
     /// @dev    - Gas optimisation -
     ///         We *do not* copy the whole `Observation` struct to memory.
     ///         Instead we keep a **storage** reference and read only the
@@ -456,7 +456,9 @@ contract TruncGeoOracleMulti is ReentrancyGuard, Owned {
         if (block.timestamp >= _lastMaxTickUpdate[poolId] + updateInterval) {
             // Target frequency = budgetPpm × decayWindow (computed only when needed)
             uint64 targetFreq = uint64(budgetPpm) * uint64(decayWindow);
-            if (currentFreq > targetFreq) {
+            if (currentFreq == targetFreq) {
+                // Exactly on budget: no cap change.
+            } else if (currentFreq > targetFreq) {
                 // Too frequent caps -> Increase maxTicksPerBlock (loosen cap)
                 _autoTuneMaxTicks(poolId, pc, true); // re-use cached struct
             } else {

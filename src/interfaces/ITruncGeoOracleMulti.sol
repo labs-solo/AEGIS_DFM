@@ -120,7 +120,7 @@ interface ITruncGeoOracleMulti {
     function getHookAddress() external view returns (address);
 
     /**
-     * @notice Query the latest observation for a given pool.
+     * @notice Returns the current live tick (from slot0) and the timestamp of the latest stored observation for a pool.
      */
     function getLatestObservation(PoolId poolId) external view returns (int24 tick, uint32 timestamp);
 

@@ -275,6 +275,28 @@ contract DynamicFeeManagerUnitTest is Test {
         assertFalse(dfm.isCAPEventActive(PID));
     }
 
+    function testCapDoesNotExitWhenSurgeRoundsToZeroBeforeDecayEnds() public {
+        policy.setParams(3600, 715, 15_552_000);
+        _initAsOwner();
+
+        vm.prank(HOOK);
+        dfm.notifyOracleUpdate(PID, true);
+
+        vm.warp(block.timestamp + 1);
+        (, uint256 roundedSurge) = dfm.getFeeState(PID);
+        assertEq(roundedSurge, 0, "surge should round to zero with small amplitude");
+
+        vm.prank(HOOK);
+        dfm.notifyOracleUpdate(PID, false);
+        assertTrue(dfm.isCAPEventActive(PID), "CAP should remain active until full decay period elapses");
+
+        vm.warp(block.timestamp + policy.decay());
+
+        vm.prank(HOOK);
+        dfm.notifyOracleUpdate(PID, false);
+        assertFalse(dfm.isCAPEventActive(PID), "CAP should exit after full decay period");
+    }
+
     function testNotifyOracleUpdateUnauthorized() public {
         _initAsOwner();
         vm.prank(NON_HOOK);
