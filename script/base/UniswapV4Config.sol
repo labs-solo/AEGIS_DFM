@@ -58,10 +58,10 @@ abstract contract UniswapV4Config {
             });
         }
         if (chainId == 196) {
-            // OKX Mainnet
+            // X Layer Mainnet
             return UniswapV4Raw({
                 poolManager: 0x360E68faCcca8cA495c1B759Fd9EEe466db9FB32,
-                positionManager: 0xbc9f3A5D767dD46E040F1CA48Ab17f29F59DC806
+                positionManager: 0xcF1EAFC6928dC385A342E7C6491d371d2871458b
             });
         }
         if (chainId == 137) {
@@ -107,7 +107,7 @@ abstract contract UniswapV4Config {
             });
         }
         if (chainId == 57073) {
-            // Ink Mainnet 
+            // Ink Mainnet
             return UniswapV4Raw({
                 poolManager: 0x360E68faCcca8cA495c1B759Fd9EEe466db9FB32,
                 positionManager: 0x1b35d13a2E2528f192637F14B05f0Dc0e7dEB566
@@ -141,11 +141,47 @@ abstract contract UniswapV4Config {
                 positionManager: 0xf7965f3981e4D5BC383BfBCb61501763e9068CA9
             });
         }
-        if (chainId == 4326) {
-            // Mega ETH Mainnet
+
+        if (chainId == 1301) {
+            // Unichain Sepolia
             return UniswapV4Raw({
-                poolManager: 0xaCB7e78fa05D562e0A5D3089ec896D57D057d38E,
-                positionManager: 0x9AE0921E981AAa7308f176F8d4F9129b9247C89D
+                poolManager: 0x00B036B58a818B1BC34d502D3fE730Db729e62AC,
+                positionManager: 0xf969Aee60879C54bAAed9F3eD26147Db216Fd664
+            });
+        }
+        if (chainId == 11155111) {
+            // Sepolia
+            return UniswapV4Raw({
+                poolManager: 0xE03A1074c86CFeDd5C142C4F04F1a1536e203543,
+                positionManager: 0x429ba70129df741B2Ca2a85BC3A2a3328e5c09b4
+            });
+        }
+        if (chainId == 84532) {
+            // Base Sepolia
+            return UniswapV4Raw({
+                poolManager: 0x05E73354cFDd6745C338b50BcFDfA3Aa6fA03408,
+                positionManager: 0x4B2C77d209D3405F41a037Ec6c77F7F5b8e2ca80
+            });
+        }
+        if (chainId == 421614) {
+            // Arbitrum Sepolia
+            return UniswapV4Raw({
+                poolManager: 0xFB3e0C6F74eB1a21CC1Da29aeC80D2Dfe6C9a317,
+                positionManager: 0xAc631556d3d4019C95769033B5E719dD77124BAc
+            });
+        }
+        if (chainId == 420120000) {
+            // interop-alpha-0
+            return UniswapV4Raw({
+                poolManager: 0x9131B9084E6017Be19c6a0ef23f73dbB1Bf41f96,
+                positionManager: 0x4498FE0b1DF6B476453440664A16E269B7587D0F
+            });
+        }
+        if (chainId == 420120001) {
+            // interop-alpha-1
+            return UniswapV4Raw({
+                poolManager: 0x9131B9084E6017Be19c6a0ef23f73dbB1Bf41f96,
+                positionManager: 0x4498FE0b1DF6B476453440664A16E269B7587D0F
             });
         }
         revert("Unsupported chain");
