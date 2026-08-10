@@ -57,6 +57,13 @@ abstract contract UniswapV4Config {
                 positionManager: 0x5b7eC4a94fF9beDb700fb82aB09d5846972F4016
             });
         }
+        if (chainId == 4663) {
+            // Robinhood Chain Mainnet
+            return UniswapV4Raw({
+                poolManager: 0x8366a39CC670B4001A1121B8F6A443A643e40951,
+                positionManager: 0x58daec3116aae6D93017bAAea7749052E8a04fA7
+            });
+        }
         if (chainId == 196) {
             // X Layer Mainnet
             return UniswapV4Raw({
